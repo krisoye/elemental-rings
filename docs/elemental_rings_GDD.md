@@ -1,27 +1,28 @@
 # Elemental Rings — Game Design Document
-**Version 2.0 | Engine: Godot 4.x**
+**Version 3.0 | Stack: Phaser.js + Colyseus | Multiplayer-first**
 
 ---
 
 ## Table of Contents
 1. [Game Overview](#1-game-overview)
-2. [Element System](#2-element-system)
-3. [Ring System](#3-ring-system)
-4. [Fusion System](#4-fusion-system)
-5. [Battle System](#5-battle-system)
-6. [Status Effects](#6-status-effects)
-7. [Player Progression](#7-player-progression)
-8. [Staking Economy](#8-staking-economy)
-9. [Overworld](#9-overworld)
-10. [UI and Information Display](#10-ui-and-information-display)
-11. [Build Sequence for Claude Code](#11-build-sequence-for-claude-code)
-12. [Open Questions](#12-open-questions)
+2. [Tech Stack & Architecture](#2-tech-stack--architecture)
+3. [Element System](#3-element-system)
+4. [Ring System](#4-ring-system)
+5. [Fusion System](#5-fusion-system)
+6. [Battle System](#6-battle-system)
+7. [Status Effects](#7-status-effects)
+8. [Player Progression](#8-player-progression)
+9. [Staking Economy](#9-staking-economy)
+10. [Overworld](#10-overworld)
+11. [UI and Information Display](#11-ui-and-information-display)
+12. [Build Sequence for Claude Code](#12-build-sequence-for-claude-code)
+13. [Open Questions](#13-open-questions)
 
 ---
 
 ## 1. Game Overview
 
-**Elemental Rings** is a top-down isometric RPG (Zelda: A Link to the Past visual style) built in Godot 4.x. The core gameplay loop is a turn-based duel system built on rock-paper-scissors elemental logic, layered with resource management, bluffing, ring progression, and a staking economy.
+**Elemental Rings** is a multiplayer browser-based top-down RPG (Zelda: A Link to the Past visual style). The core gameplay loop is a turn-based duel system built on rock-paper-scissors elemental logic, layered with resource management, bluffing, ring progression, and a staking economy. Players battle each other in real time or fight AI opponents — all from a web browser with no installation required.
 
 ### Core Loop
 - Leave camp with a 10-ring loadout chosen for the current biome
@@ -37,7 +38,59 @@ Nobody dies. Monsters flee when beaten and steal a ring when they win. NPCs hand
 
 ---
 
-## 2. Element System
+---
+
+## 2. Tech Stack & Architecture
+
+### 2.1 Stack Overview
+
+| Layer | Technology | Role |
+|---|---|---|
+| **Client** | Phaser.js (TypeScript) | Browser canvas rendering, input handling, animation |
+| **Server** | Colyseus (Node.js + TypeScript) | Authoritative game state, battle logic, matchmaking |
+| **Testing** | Playwright | Browser-driven E2E tests — presses real keys at real timings |
+| **Dev server** | Vite | Hot-reload dev server for the Phaser client |
+| **Deployment** | game-da-god (192.168.4.140) | LAN-accessible Colyseus server + static Phaser client |
+| **Mobile** | Capacitor | Wraps Phaser as a native iOS/Android app |
+| **Desktop/Steam** | Electron + Greenworks | Wraps Phaser as a native desktop app for Steam distribution |
+
+### 2.2 Architecture Principle: Server is Authoritative
+
+All game logic — the battle state machine, BlockResolver, ElementSystem, timing classification, rally chain, gauge updates — runs **on the Colyseus server**. Clients are dumb renderers:
+
+```
+Browser (Phaser)                   Colyseus server (game-da-god)
+─────────────────                  ──────────────────────────────
+Player presses key 2     →  WS     BattleRoom receives move
+                                   Server resolves exchange
+                                   Server validates timing
+                                   Server computes relationship
+                                   Server advances state machine
+Render orb + outcome     ←  WS     Server broadcasts new state
+```
+
+Neither client can cheat timing, spoof element matchups, or manipulate rally state — the server has the only copy of truth.
+
+### 2.3 Multiplayer Modes
+
+| Mode | Description |
+|---|---|
+| **Human vs Human (LAN)** | Two devices on the home network, Phase 1 target |
+| **Human vs Human (online)** | Port-forward game-da-god or move Colyseus to a VPS |
+| **Human vs NPC** | AI opponent runs as a server-side bot in the same BattleRoom |
+| **Spectate** | Any connected client can observe an ongoing room (future) |
+
+### 2.4 Development Workflow
+
+During development everything runs on **small-boss** — both the Colyseus server and the Vite dev server. Production deployment pushes the server to game-da-god as a systemd service (same pattern as existing MCP services). Any device on the LAN opens `http://192.168.4.140:8080` in a browser to play.
+
+### 2.5 Testing Philosophy
+
+Because the client runs in a real browser, **Playwright can simulate actual gameplay** — press a key at a specific time, wait for the orb animation, assert on DOM state, read game state from JavaScript. This replaces headless Godot testing and gives genuine end-to-end coverage of the full stack including timing-sensitive input.
+
+---
+
+## 3. Element System
 
 ### 2.1 The Five Base Elements
 All elements in the game derive from five base elements. These are the only elements shown in simplified UI views.
@@ -99,7 +152,7 @@ Shadow is the only element that cannot be fused or crafted from base elements. I
 
 ---
 
-## 3. Ring System
+## 4. Ring System
 
 ### 3.1 Inventory
 - **Starting inventory cap:** 10 rings (one per finger — thematic starting point)
@@ -138,7 +191,7 @@ Shadow is the only element that cannot be fused or crafted from base elements. I
 
 ---
 
-## 4. Fusion System
+## 5. Fusion System
 
 ### 4.1 Core Rules
 - Fusion can only happen **in the overworld at a specific shrine** — never during a duel
@@ -193,7 +246,7 @@ At the shrine the player combines two maxed parent rings. A catalyst cost (fusio
 
 ---
 
-## 5. Battle System
+## 6. Battle System
 
 ### 5.1 The Loadout System
 
@@ -325,7 +378,7 @@ After losing a duel:
 
 ---
 
-## 6. Status Effects
+## 7. Status Effects
 
 Status effects are managed through persistent **element gauges** — one per base element per player. The gauge model replaces the rolling-window combo system used in earlier drafts.
 
@@ -338,7 +391,7 @@ Each player maintains five status gauges — one per base element: Fire, Water, 
 
 Successful blocks and parries — including intermediate rally volleys — do not move gauges. A rally that terminates in a heart loss emits one gauge delta on the terminating volley only.
 
-**Implementation (Phase 1 hook):** Gauge deltas are emitted by `BattleManager` via `EventBus.status_gauge_delta(player_id, components, delta)` — the payloads above are produced now (no consumer until Phase 4). Concretely: no-block / mistime → +1 on the defender; heart loss → +1 on the defender. Parry/rally continuation volleys emit no gauge delta.
+**Server implementation:** Gauge deltas are computed by the Colyseus BattleRoom after each exchange and broadcast to both clients as part of the state update. No-block / mistime → +1 on the defender. Parry/rally continuation volleys emit no gauge delta.
 
 **Fusion ring decomposition:**
 A fused ring contributes to gauges based on its full recursive decomposition into base elements.
@@ -388,7 +441,7 @@ Shadow operates outside the gauge system.
 
 ---
 
-## 7. Player Progression
+## 8. Player Progression
 
 ### 7.1 Player XP
 - Player XP = **aggregate XP of all rings currently in the player's possession**
@@ -409,7 +462,7 @@ Shadow operates outside the gauge system.
 
 ---
 
-## 8. Staking Economy
+## 9. Staking Economy
 
 ### 8.1 Core Rules
 - Every duel requires both players to **stake a ring** before the duel begins
@@ -462,12 +515,12 @@ No artificial matchmaking is needed. The economy self-regulates:
 
 ---
 
-## 9. Overworld
+## 10. Overworld
 
 ### 9.1 Visual Style
 - Top-down isometric perspective
 - Reference: *The Legend of Zelda: A Link to the Past*
-- Engine: Godot 4.x with built-in TileMap and isometric support
+- Renderer: Phaser.js canvas with tilemap support
 
 ### 9.2 Biomes
 Each biome has NPCs and monsters that lean toward specific element distributions, requiring players to prepare appropriate counter-rings before entering.
@@ -520,7 +573,7 @@ NPCs should feel like distinct opponents, not just difficulty levels:
 
 ---
 
-## 10. UI and Information Display
+## 11. UI and Information Display
 
 ### 10.1 Overworld Detection HUD
 When within detection range of an enemy, both parties see:
@@ -556,39 +609,51 @@ When the Recharge Pulse triggers (necklace stake position, player is losing), a 
 
 ---
 
-## 11. Build Sequence for Claude Code
+## 12. Build Sequence for Claude Code
 
-Build in phases so the game is playable at each stage before moving to the next. Each prompt below is designed to be copy-pasted into Claude Code as the opening instruction for that phase.
+Build in phases so the game is playable and testable at each stage before moving to the next. All phases use **Phaser.js (client) + Colyseus (server) + TypeScript**. Playwright provides E2E test coverage at each phase — actual browser interaction, real key presses, real timings.
 
-### Phase 1 — Battle Engine (Start Here)
-> **Note (v2.2):** The battle model was changed to the **active timed-block** system — see §5.3–5.7. The authoritative implementation spec now lives in GitHub issue #11. The original simultaneous-secret prompt below is retained for historical context only.
+### Phase 1 — Battle Core (Colyseus Server)
 
-> "Build a standalone battle scene in Godot 4.x for a game called Elemental Rings. Two players face off in a turn-based duel. Each player has 5 ring slots representing their dominant hand battle rings. Each ring has an element type chosen from: Fire, Water, Earth, Wind, Wood — and a use count (Tier 1 default = 3 uses). On each turn the attacker picks a ring to attack with and the defender picks a ring to block with. Implement the damage rules: if the attacker's element beats the defender's element the defender's ring costs 2 uses; if the defender's element beats the attacker's element the attacker's ring costs 2 uses; otherwise both cost 1 use (neutral). Implement neutral block rules: first neutral in a duel both rings cost 1 use only; second neutral both rings cost 1 use and both players lose a heart. If a ring reaches 0 uses it is extinguished and cannot be used for the rest of the duel. If a defending ring is extinguished by an attack the attack goes through and the defender loses a heart. Each player starts with 3 hearts. The player who loses all hearts loses the duel. Include a HUD showing each player's hearts, element type icons, and use count per element updated in real time."
+Build the authoritative Colyseus `BattleRoom` in TypeScript. All battle logic runs here: ElementSystem (pentagon matchup table), BlockResolver (timing classification, relationship, resolve), the state machine (attack-select → defend-window → resolve), and the rally chain (§6.4). No client yet — test with two Playwright tabs connecting to the server and exchanging moves programmatically. Deliverable: two tabs can play a complete battle to conclusion, with every exchange resolving correctly and every timing classification (PARRY / BLOCK / MISTIME / NO_BLOCK) producing the right outcome. All 15+ unit scenarios from the Godot prototype must pass as Playwright assertions.
 
-### Phase 2 — Ring Inventory and Loadout System
-> "Add a full ring management system to Elemental Rings in Godot 4.x. Rings have: element type, current uses, max uses (tier-based: Tier 1 = 3, Tier 2 = 5, Tier 3 = 7), current XP, XP cap (Tier 1 = 100, Tier 2 = 300, Tier 3 = 800), and tier. The player has a full inventory (starting cap 10, expandable to 99). When leaving camp the player selects a 10-ring loadout split into a dominant hand (5 rings) and off hand (5 rings). Before each duel the player selects which 5 rings from their loadout go into the battle hand. Implement the off hand passive recharge: whenever a dominant hand ring is used in battle the most exhausted off hand ring recovers 1 use. Implement the neutral recharge bonus: on a neutral block the most exhausted off hand ring is fully recharged. Add a post-battle screen where the player can reorganize their loadout and optionally keep a won ring by sending a loadout ring back to inventory. Add an XP gain system: rings earn XP based on how many times they were used in the last duel. Add a camp scene where sleeping advances the game day and fully recharges all rings (Tier 1 instant, Tier 2+ require one full day)."
+### Phase 2 — Phaser Client
 
-### Phase 3 — Staking System and Jewelry Positions
-> "Add the staking system to Elemental Rings in Godot 4.x. Before each duel both players select a staked ring from their full inventory and choose a jewelry position: dominant hand bracelet, off hand bracelet, or necklace. Dominant hand bracelet — Elemental Aura: same-element battle rings gain +1 use at duel start; staked ring loses 1 use per battle. Off hand bracelet — Defensive Ward: first heart damage is negated and staked ring loses 1 use instead; staked ring also loses 1 use per battle. Necklace — Recharge Pulse: once per battle when the player has more hearts lost than the opponent, the most exhausted battle ring is fully recharged and a visual pulse plays; staked ring loses 1 use per battle and 1 additional use on trigger. The staked ring's jewelry position must be visible in the overworld detection HUD. On duel loss the loser's staked ring (with all its XP) transfers to the winner. The staked ring cannot be changed once the player enters detection range of an enemy."
+Build the browser client. Telegraph orb (element-colored Phaser tween crossing from attacker sprite to defender sprite over 0.9 s). Battle hand UI (5 slot cards, highlight on press). HUD (hearts, ring use counts, role labels ATTACKING / DEFENDING). Keyboard input: P1 = keys 1-5, P2 = keys 6-0; touch input: tap the slot card. Client renders whatever the server broadcasts — it holds no game state of its own. Playwright tests: assert orb appears on attack, assert slot highlights on keypress, assert HUD updates after resolution. Deliverable: two browser tabs on the LAN produce a visually complete playable exchange.
 
-### Phase 4 — Status Effects (Gauge System)
-> "Add the status effect gauge system to the Elemental Rings battle in Godot 4.x. Each player has five persistent gauges — Fire, Water, Earth, Wind, Wood — starting at 0 with a default threshold of 4 and a soft cap at 8. On every battle exchange: if the attacker scores a strong hit, increment each base element component of their ring by 1 on the defender's matching gauges; if the defender scores a perfect counter, decrement those same gauges by 1; on a neutral block, no gauge change. Fused rings decompose recursively to base elements (Lightning = Fire ×2, Mud = Water ×1 + Earth ×1, Frost = Water ×2 + Wind ×1, Obsidian = Fire ×1 + Earth ×1 + Water ×1). When a gauge reaches threshold, apply the corresponding status: Burning (Fire) — lose 1 full heart per turn; Drowning (Water) — all attacks cost +1 use; Petrified (Earth) — all defenses cost +1 use; Scattered (Wind) — attacks always resolve neutral (no strong hits); Entangled (Wood) — highest-uses ring in battle hand loses 1 use per turn. Statuses are independent and stack. When a gauge drops below threshold, the status ends but can be rebuilt by the attacker. Add Shadow as a separate passive outside the gauge system: 25% chance per connecting Shadow hit to inflict Cursed (target's highest XP ring loses half its remaining uses for the rest of the duel, cannot be cured). Display all five gauges with current values and threshold in the battle HUD for both players, alongside active status icons."
+### Phase 3 — NPC AI Opponents
 
-### Phase 5 — Fusion System
-> "Add ring fusion to Elemental Rings in Godot 4.x. Fusion rules: both parent rings must be maxed at their XP cap. The fused ring inherits the combined XP of both parents. The fused ring uses reset to the full max uses of the new tier. Fusion can only be performed at a shrine scene in the overworld. Gate each fusion behind a recipe unlock flag (discovered = true/false). Implement these recipes: Fire + Fire = Lightning, Water + Water = Ice, Earth + Earth = Metal, Wind + Wind = Storm, Wood + Wood = Nature, Water + Earth = Mud, Fire + Earth = Lava, Fire + Wood = Ash, Water + Fire = Steam, Ice + Wind = Frost, Fire + Metal = Magma. In the battle HUD fused rings display as both their component base elements — a Mud ring adds its uses to both Water and Earth counters in the aggregate display."
+Add AI bots as server-side Colyseus clients. The AI runs inside the `BattleRoom` — it receives the same state messages a human would and calls the same `submitMove(slot, pressTime)` method. Personality types (§10.5): Aggressive, Defensive, Status-hunter, Resilient. Deliverable: a human player on one tab can complete a full battle against an AI opponent; the AI makes contextually appropriate decisions and feels like a distinct opponent.
 
-### Phase 6 — NPC Battle AI
-> "Add NPC opponents to Elemental Rings in Godot 4.x. Each NPC has a predefined ring loadout, a staked ring with a jewelry position, and a personality type: Aggressive (prioritizes strongest ring, attack-forward, prefers dominant hand bracelet stake), Defensive (holds strong rings in reserve, tries to exhaust player uses, prefers off hand bracelet stake), Status-hunter (builds methodically toward status effect triggers), Resilient (prefers necklace stake, activates comeback mechanics deliberately). NPCs are aware of the element display information available to both players and make decisions based on visible opponent data. Monster NPCs steal one random inventory ring on win and drop a ring as loot on loss. NPC duelists stake a ring and award it to the player on loss. First encounter of a fusion-type NPC drops the shrine map for that fusion recipe."
+### Phase 4 — Ring Inventory and Loadout System
 
-### Phase 7 — Overworld
-> "Build an isometric top-down overworld for Elemental Rings in Godot 4.x in the visual style of Zelda: A Link to the Past. Use Godot's TileMap with isometric tiles and placeholder art. Include: player movement with collision detection, at least two distinct biomes (Forest as starter biome, Swamp as second), experience-gated region transitions, NPC and monster placement with detection radius triggers, a camp location where the player can sleep to recharge rings and manage inventory, shrine locations for fusion, and underground cave areas for Shadow ring drops. When the player enters an enemy's detection radius both parties' overworld HUDs activate showing element types, hearts, aggregate uses, and staked ring jewelry position. The player can turn back to flee before formally agreeing to duel."
+Persistent player state: JWT auth, ring inventory stored server-side (PostgreSQL or file-backed JSON). Pre-duel loadout selection screen (pick 5 from 10). Off hand passive recharge drip (§6.6). Post-battle ring management screen (keep won ring, return one to inventory). Ring XP tracking. Camp scene: sleep to recharge all rings. Deliverable: a player can carry persistent rings across multiple sessions, level them up, and manage a real loadout.
+
+### Phase 5 — Staking Economy
+
+Jewelry position selection before each duel (dominant hand bracelet / off hand bracelet / necklace) with corresponding passive buffs (§9). Stake escrow during duel, ring transfer on loss. Stake lock-in once player enters detection range. Deliverable: full staking loop playable end-to-end between two human players.
+
+### Phase 6 — Status Effects (Gauge System)
+
+Five per-player element gauges (§7). Gauge increments on heart loss, threshold triggers status effects (Burning, Drowning, Petrified, Scattered, Entangled). Shadow passive (25% Cursed). Gauge display in battle HUD. Deliverable: status effects fire correctly and influence battle outcomes.
+
+### Phase 7 — Fusion System
+
+Shrine mechanic: fuse two maxed parent rings into a higher-tier ring at a shrine location (§5). Recipe discovery gated by defeating fusion-type opponents. Deliverable: player can discover and execute all Tier 2 fusion recipes.
+
+### Phase 8 — Overworld
+
+Browser-rendered top-down overworld (Phaser tilemap, Zelda: A Link to the Past visual style, placeholder art from itch.io). Player movement, collision, at least two biomes (Forest, Swamp). Detection radius triggers (§10.3), camp location, shrine locations, underground caves for Shadow drops. NPCs and monsters placed in the world. Deliverable: a navigable world where organic encounters lead into duels.
+
+### Phase 9 — Distribution
+
+Android/iOS packaging via Capacitor (wrap Phaser client as native WebView app). Steam/desktop packaging via Electron + Greenworks SDK (achievements, cloud saves). Internet matchmaking via public Colyseus server (VPS or Fly.io). Deliverable: submittable builds for Google Play, App Store, and Steam.
 
 ---
 
-## 12. Open Questions
+## 13. Open Questions
 
-Items flagged for future design sessions:
-
+**Game design (engine-agnostic):**
 - Full element relationship web — all matchups documented for all 11 named elements
 - Ring passive and active abilities unlocked at XP milestones
 - Exact heart count per duel (3 or 5?)
@@ -598,22 +663,32 @@ Items flagged for future design sessions:
 - Inventory expansion milestones and exact costs
 - Shadow ring drop rate and underground area density
 - Whether heavily depleted rings take two game days to recharge (vs always one)
-- Recharge timer for rings sitting in inventory while player is in the field
 - Monster respawn cycle — real time vs in-game day cycle
 - Named/boss monster design and unique ring rewards
 - Environmental passives per biome — flagged for a later design pass
-- Game name — "Elemental Rings" is a working title
-- Art asset sourcing strategy (itch.io isometric packs recommended as starting point)
 - Nature/Bloom fusion — final name TBD
 - Whether monster stolen rings retain their specific position in the world (trackable) or just re-enter the monster loot pool
 - Status gauge threshold scaling formula with player XP and augmentations
-- Whether the gauge soft cap at 2× threshold is the right ceiling
 - Playtesting tune for status severity now that gauges persist indefinitely (Burning at 1 full heart/turn especially)
+
+**Tech / multiplayer:**
+- Database choice for persistent player state (PostgreSQL vs Redis vs file-backed JSON for Phase 4)
+- Internet matchmaking provider (self-hosted VPS vs Fly.io vs Colyseus Cloud) and timing relative to LAN-first phases
+- Account system — username/password, OAuth (Google/Discord), or anonymous session with optional persistence
+- Touch input layout for mobile — full slot-card tap vs dedicated P1/P2 split screen for local co-op on a tablet
+- Spectator mode — open observation or invite-only
+- Art asset sourcing strategy — itch.io top-down packs as placeholder, custom art for release
 
 ---
 
+*Document version 3.0 — Updated May 2026*
+*v3.0 changes: Pivoted from Godot 4.x to **Phaser.js + Colyseus** multiplayer stack. Added §2 Tech Stack & Architecture (server-authoritative model, LAN deployment on game-da-god, Playwright E2E testing, Capacitor/Electron distribution). Rewrote §12 Build Sequence for 9 TypeScript/Playwright phases replacing Godot GDScript prompts. Updated §13 Open Questions to include tech/multiplayer items. Removed all Godot-specific implementation notes (EventBus, GDScript, Godot TileMap) from body text. Game design content (§3–§11) unchanged.*
+
 *Document version 2.2 — Updated May 2026*
-*v2.2 changes: Replaced the simultaneous-secret turn model (§5.3) with the **active timed-block** model — the attacker throws (telegraphed by base-element color) and the defender must pick the correct ring AND time the block. Rewrote §5.4 around two axes (timing: parry/block/mistime/no-block; element: strong/neutral/weak), with the attacker paying 1 to throw and a parry adding a reflect onto the attacker's thrown ring. Updated §5.5 (timed neutral block), §5.7 (reflect overflow on the attacker), §5.8 (heart-loss sources), §6.1 (gauge deltas for unblocked hits and reflect overflow), §10.3 (attack telegraphed before defense). Authoritative implementation spec: GitHub issue #11.*
+*v2.2 changes: Replaced the simultaneous-secret turn model (§6.3) with the **active timed-block** model and added the rally mechanic (§6.4). Rewrote §6.4 damage rules around two axes (timing: parry/block/mistime/no-block; element: strong/neutral/weak). Removed auto-reflect in favour of interactive rally volley chain walking the pentagon.*
+
+*Document version 2.0/2.1 — Updated May 2026*
+*v2.0: Loadout system, dominant/off hand split, staking jewelry positions, detection/approach system, biomes, NPC categories, monster flee/steal mechanics. v2.1: Simplified neutral block rules, persistent gauge model replacing rolling-window combo system, attrition-based statuses.*
 
 *Document version 2.1 — Updated May 2026*
 *v2.1 changes: Simplified §5.5 neutral block rules (removed first/second neutral distinction and the neutral recharge bonus). Rewrote §6 from rolling-window combo system to persistent gauge model — gauges change ±1 per base element component on strong hits / perfect counters, neutrals don't move gauges. Replaced restrictive status effects (Petrified, Scattered, Entangled) with attrition-based effects that never restrict ring choice. Eliminated separate fusion statuses (§6.2) — fused rings now decompose recursively to base elements (Lightning = Fire ×2, Frost = Water ×2 + Wind ×1, etc). Burning now deals 1 full heart per turn. Updated Phase 4 build prompt accordingly.*
