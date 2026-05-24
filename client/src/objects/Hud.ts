@@ -6,6 +6,7 @@ import Phaser from 'phaser';
  */
 export class Hud extends Phaser.GameObjects.Container {
   private readonly banner: Phaser.GameObjects.Text;
+  private readonly opponentName: Phaser.GameObjects.Text;
 
   constructor(scene: Phaser.Scene) {
     super(scene, 0, 0);
@@ -17,10 +18,22 @@ export class Hud extends Phaser.GameObjects.Container {
         padding: { x: 12, y: 6 },
       })
       .setOrigin(0.5);
+    // Opponent label (top-left); blank for human opponents, personality for AI.
+    this.opponentName = scene.add.text(16, 16, '', {
+      fontSize: '16px',
+      color: '#ffcc66',
+    });
     scene.add.existing(this);
   }
 
   updateFromState(state: any, myId: string): void {
+    // Show the opponent's displayName (set only for AI opponents).
+    const oppId = Array.from(state.players.keys()).find((id: any) => id !== myId) as
+      | string
+      | undefined;
+    const opp = oppId ? state.players.get(oppId) : undefined;
+    this.opponentName.setText(opp?.displayName ? `VS ${opp.displayName}` : '');
+
     if (state.phase === 'ENDED') {
       const won = state.winnerId === myId;
       this.banner.setText(won ? 'YOU WIN!' : 'YOU LOSE!');

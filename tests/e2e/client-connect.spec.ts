@@ -1,33 +1,27 @@
 import { test, expect } from '@playwright/test';
+import { setupBattle, closeBattle } from './helpers';
 
-const URL = 'http://localhost:8080';
-
-test('scenario 1: two tabs connect and reach BattleScene', async ({ browser }) => {
-  const p1ctx = await browser.newContext();
-  const p2ctx = await browser.newContext();
-  const p1 = await p1ctx.newPage();
-  const p2 = await p2ctx.newPage();
-
-  await p1.goto(URL);
-  await p1.waitForFunction(() => (window as any).__room !== null, { timeout: 8000 });
-  await p2.goto(URL);
+// After the Phase-3 routing change, the page lands in EncounterScene and
+// connects to nothing until a selection fires. setupBattle drives both tabs
+// through the PvP path (EncounterScene → PvP → LobbyScene → battle room).
+test('scenario 1: two tabs connect via PvP and reach BattleScene', async ({ browser }) => {
+  const h = await setupBattle(browser);
 
   await Promise.all([
-    p1.waitForFunction(() => (window as any).__scene?.constructor.name === 'BattleScene', {
+    h.p1.waitForFunction(() => (window as any).__scene?.constructor.name === 'BattleScene', {
       timeout: 10000,
     }),
-    p2.waitForFunction(() => (window as any).__scene?.constructor.name === 'BattleScene', {
+    h.p2.waitForFunction(() => (window as any).__scene?.constructor.name === 'BattleScene', {
       timeout: 10000,
     }),
   ]);
 
   const [phase1, phase2] = await Promise.all([
-    p1.evaluate(() => (window as any).__room?.state?.phase),
-    p2.evaluate(() => (window as any).__room?.state?.phase),
+    h.p1.evaluate(() => (window as any).__room?.state?.phase),
+    h.p2.evaluate(() => (window as any).__room?.state?.phase),
   ]);
   expect(phase1).toBe('ATTACK_SELECT');
   expect(phase2).toBe('ATTACK_SELECT');
 
-  await p1ctx.close();
-  await p2ctx.close();
+  await closeBattle(h);
 });

@@ -9,11 +9,24 @@ export interface BattleHandles {
   p2ctx: BrowserContext;
 }
 
+/** Wait until the EncounterScene hub is active and its selection hook is ready. */
+export async function waitForEncounter(page: import('@playwright/test').Page): Promise<void> {
+  await page.waitForFunction(
+    () =>
+      (window as any).__scene === null &&
+      typeof (window as any).__encounterSelect === 'function',
+    { timeout: 10000 },
+  );
+}
+
 /**
  * Open two independent browser contexts (two distinct Colyseus sessions) and
- * drive them into a live battle. p1 connects first and creates the room; p2
- * joins it. Resolves once both pages observe the ATTACK_SELECT phase (both
- * duelists joined and the server has started the battle).
+ * drive them into a live PvP battle. After the Phase-3 routing change the page
+ * lands in the EncounterScene and connects to nothing until a selection fires,
+ * so each page triggers the PvP path via the deterministic `__encounterSelect`
+ * hook (identical code path to clicking the PvP marker → LobbyScene →
+ * connectToRoom('battle')). p1 selects first so it creates the `battle` room;
+ * p2 then joins the same room. Resolves once both pages observe ATTACK_SELECT.
  */
 export async function setupBattle(browser: Browser): Promise<BattleHandles> {
   const p1ctx = await browser.newContext({ hasTouch: true });
@@ -21,10 +34,15 @@ export async function setupBattle(browser: Browser): Promise<BattleHandles> {
   const p1 = await p1ctx.newPage();
   const p2 = await p2ctx.newPage();
 
+  // p1 selects PvP first (creates the room) and connects before p2 joins it.
   await p1.goto(URL);
+  await waitForEncounter(p1);
+  await p1.evaluate(() => (window as any).__encounterSelect('PVP'));
   await p1.waitForFunction(() => (window as any).__room !== null, { timeout: 8000 });
 
   await p2.goto(URL);
+  await waitForEncounter(p2);
+  await p2.evaluate(() => (window as any).__encounterSelect('PVP'));
 
   await p1.waitForFunction(() => (window as any).__room?.state?.phase === 'ATTACK_SELECT', {
     timeout: 10000,

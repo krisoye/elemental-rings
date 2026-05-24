@@ -1,5 +1,18 @@
 export enum ElementEnum { FIRE=0, WATER=1, EARTH=2, WIND=3, WOOD=4 }
 export type PhaseType = 'WAITING'|'ATTACK_SELECT'|'DEFEND_WINDOW'|'RESOLVE'|'ENDED';
+
+// Server-side NPC personalities (§10.5). Bluffing is deferred to Phase 5.
+export type AIPersonality = 'AGGRESSIVE' | 'DEFENSIVE' | 'STATUS_HUNTER' | 'RESILIENT';
+
+// Options passed to a BattleRoom on creation. PvP `battle` rooms pass nothing;
+// `battle-ai` rooms pass `{ vsAI: true, personality, aiSeed? }` so the room
+// seats a virtual AI player and locks itself.
+export interface BattleRoomOptions {
+  vsAI?: boolean;
+  personality?: AIPersonality;
+  aiSeed?: number;
+}
+
 export interface SelectAttackPayload { slot: number }
 // pressTime is retained for future client-side lag compensation, but the server
 // IGNORES it for timing authority — it timestamps on message arrival instead.

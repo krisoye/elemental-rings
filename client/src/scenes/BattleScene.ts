@@ -21,16 +21,21 @@ export class BattleScene extends Phaser.Scene {
   revealedOpponentElements: Set<number> = new Set();
   private prevPhase = '';
   private prevRallyActive = false;
+  private returnScene = 'EncounterScene';
+  private returning = false;
 
   constructor() {
     super({ key: 'BattleScene' });
   }
 
-  init(): void {
+  init(data?: { returnScene?: string }): void {
     // Reset per-start state (scene may be re-entered on a rematch).
     this.revealedOpponentElements = new Set();
     this.prevPhase = '';
     this.prevRallyActive = false;
+    this.returning = false;
+    // Scene to return to when the duel ends (Encounter hub for vsAI, Lobby for PvP).
+    this.returnScene = data?.returnScene ?? 'EncounterScene';
   }
 
   create(): void {
@@ -54,6 +59,7 @@ export class BattleScene extends Phaser.Scene {
       this.opponentDuelist.updateFromState(state, myId, this.revealedOpponentElements);
       this.hud.updateFromState(state, myId);
       this.checkPhaseTransition(state, myId);
+      this.checkEnded(state, myId);
     };
     room.onStateChange(onState);
 
@@ -94,6 +100,28 @@ export class BattleScene extends Phaser.Scene {
       // pressTime is retained for future lag comp; the server timestamps on arrival.
       window.__room!.send('submitDefense', { slot, pressTime: Date.now() });
     }
+  }
+
+  /**
+   * On phase ENDED, show a brief winner banner then return to the originating
+   * scene (Encounter hub for vsAI, Lobby for PvP). Guarded so it fires once.
+   */
+  private checkEnded(state: any, myId: string): void {
+    if (state.phase !== 'ENDED' || this.returning) return;
+    this.returning = true;
+
+    const won = state.winnerId === myId;
+    this.add
+      .text(512, 288, won ? 'YOU WIN!' : 'YOU LOSE!', {
+        fontSize: '48px',
+        color: won ? '#44ff44' : '#ff4444',
+        backgroundColor: '#000000aa',
+        padding: { x: 20, y: 12 },
+      })
+      .setOrigin(0.5)
+      .setDepth(1000);
+
+    this.time.delayedCall(2000, () => this.scene.start(this.returnScene));
   }
 
   /** Launch the orb telegraph when a defend window opens, including rally volleys. */
