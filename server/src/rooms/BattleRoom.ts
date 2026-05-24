@@ -146,6 +146,10 @@ export class BattleRoom extends Room<{ state: BattleState }> {
       // Swap roles: former defender becomes attacker in DEFEND_WINDOW (no ATTACK_SELECT)
       state.currentAttackerId = defenderId;
       state.attackerSelectedSlot = this.defenseSlot;
+      // Attacker always pays 1 use to throw — charge the volleyed ring
+      const volleyRing = defenderPlayer.hand[this.defenseSlot];
+      volleyRing.currentUses = Math.max(0, volleyRing.currentUses - 1);
+      volleyRing.isExtinguished = volleyRing.currentUses === 0;
       this.defenseSubmitted = false;
       this.defenseSlot = -1;
       this.defensePressTime = 0;
