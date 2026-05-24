@@ -1,5 +1,5 @@
 # Elemental Rings — Game Design Document
-**Version 3.0 | Stack: Phaser.js + Colyseus | Multiplayer-first**
+**Version 3.1 | Stack: Phaser.js + Colyseus | Multiplayer-first**
 
 ---
 
@@ -35,8 +35,6 @@
 
 ### Tone
 Nobody dies. Monsters flee when beaten and steal a ring when they win. NPCs hand over their staked ring on loss and walk away. The world is alive, consequential, but never grim.
-
----
 
 ---
 
@@ -92,7 +90,7 @@ Because the client runs in a real browser, **Playwright can simulate actual game
 
 ## 3. Element System
 
-### 2.1 The Five Base Elements
+### 3.1 The Five Base Elements
 All elements in the game derive from five base elements. These are the only elements shown in simplified UI views.
 
 | Element | Symbol |
@@ -103,7 +101,7 @@ All elements in the game derive from five base elements. These are the only elem
 | Wind | 🌪 |
 | Wood | 🌿 |
 
-### 2.2 Base Element Relationships
+### 3.2 Base Element Relationships
 
 | Attacker | Beats | Loses To |
 |---|---|---|
@@ -113,7 +111,7 @@ All elements in the game derive from five base elements. These are the only elem
 | Earth | Wind | Wood |
 | Wind | Water | Earth |
 
-### 2.3 Derived Elements (Tier 2 Fusions)
+### 3.3 Derived Elements (Tier 2 Fusions)
 
 | Fusion Name | Components | Beats | Loses To |
 |---|---|---|---|
@@ -131,13 +129,13 @@ All elements in the game derive from five base elements. These are the only elem
 
 *Frost flash-freezes Fire as a counterintuitive surprise counter — intentional design. Rewards experimentation over meta-solving.
 
-### 2.4 Triple Fusions (Tier 3 — Rare)
+### 3.4 Triple Fusions (Tier 3 — Rare)
 
 | Fusion Name | Components | Beats | Loses To |
 |---|---|---|---|
 | Obsidian | Fire + Earth + Water | Most elements | Storm, Lava |
 
-### 2.5 Shadow (Special Case)
+### 3.5 Shadow (Special Case)
 Shadow is the only element that cannot be fused or crafted from base elements. It exists outside the normal system.
 
 - **How to obtain:** Rare drop only, found in dark/underground areas of the overworld
@@ -148,19 +146,19 @@ Shadow is the only element that cannot be fused or crafted from base elements. I
 **Shadow relationships:**
 - Beats: Lightning, Wind
 - Loses to: Fire, Earth
-- **Passive ability:** Every Shadow attack has a 25% chance to inflict Cursed regardless of the element matchup (see Section 6)
+- **Passive ability:** Every Shadow attack has a 25% chance to inflict Cursed regardless of the element matchup (see Section 7)
 
 ---
 
 ## 4. Ring System
 
-### 3.1 Inventory
+### 4.1 Inventory
 - **Starting inventory cap:** 10 rings (one per finger — thematic starting point)
 - **Maximum inventory cap:** 99 rings
 - **Inventory expansion:** Unlocked through buying, finding, or sacrificing rings/experience over time
 - Rings sitting in inventory recharge on the game day timer even while the player is in the field
 
-### 3.2 Ring Tiers and Stats
+### 4.2 Ring Tiers and Stats
 
 | Tier | Description | Max Uses | XP Cap |
 |---|---|---|---|
@@ -169,7 +167,7 @@ Shadow is the only element that cannot be fused or crafted from base elements. I
 | 3 | Advanced fusions (two Tier 2 parents) | 7 | 800 |
 | 4 | Triple fusions — extremely rare | TBD | TBD |
 
-### 3.3 Ring Uses
+### 4.3 Ring Uses
 - Uses are consumed during battle (attacking and defending)
 - **Uses are NOT permanently lost.** All rings fully recharge after one game day
 - A game day advances when the player sleeps at camp — the player controls the pace
@@ -179,13 +177,13 @@ Shadow is the only element that cannot be fused or crafted from base elements. I
 - Heavily depleted rings (more than half their uses spent) may require two full game days — TBD on tuning
 - If a ring is extinguished mid-battle (uses reach 0) it cannot be used for the rest of that duel
 
-### 3.4 Ring XP
+### 4.4 Ring XP
 - Rings earn XP through use in battle — more uses in a duel = more XP for that ring
 - XP is permanent and carries through fusion
 - Losing a ring via staking means losing all XP associated with it
-- The staked ring earns passive XP through the use-per-battle cost of its buff (see Section 8)
+- The staked ring earns passive XP through the use-per-battle cost of its buff (see Section 9)
 
-### 3.5 Ring Abilities
+### 4.5 Ring Abilities
 - Rings unlock passive and active abilities as they accumulate XP
 - Ability design: *flagged for future design session*
 
@@ -193,14 +191,14 @@ Shadow is the only element that cannot be fused or crafted from base elements. I
 
 ## 5. Fusion System
 
-### 4.1 Core Rules
+### 5.1 Core Rules
 - Fusion can only happen **in the overworld at a specific shrine** — never during a duel
 - Both parent rings must be **maxed out** at their tier's XP cap before fusion is possible
 - The fused ring **inherits XP** from both parent rings (XP is additive)
 - The fused ring's uses **reset to the full max uses of the new tier** regardless of parent rings' remaining uses
 - Fusing is a long-term gain (higher tier, more uses, more power) but a short-term cost (uses reset, must recharge)
 
-### 4.2 Same-Element Upgrade Paths
+### 5.2 Same-Element Upgrade Paths
 
 | Input | Output | Thematic Logic |
 |---|---|---|
@@ -210,7 +208,7 @@ Shadow is the only element that cannot be fused or crafted from base elements. I
 | Wind + Wind | Storm | Air pressure concentrated into force |
 | Wood + Wood | Nature/Bloom | Life energy distilled |
 
-### 4.3 Cross-Element Fusion Paths
+### 5.3 Cross-Element Fusion Paths
 
 | Input | Output |
 |---|---|
@@ -223,7 +221,7 @@ Shadow is the only element that cannot be fused or crafted from base elements. I
 | Water + Fire | Steam |
 | Fire + Earth + Water | Obsidian (Tier 3) |
 
-### 4.4 Fusion Unlock Mechanism (Discovery + Cost Hybrid)
+### 5.4 Fusion Unlock Mechanism (Discovery + Cost Hybrid)
 
 Fusions are **discovered through gameplay**, then **executed with a resource cost** at a shrine.
 
@@ -236,7 +234,7 @@ The shrine is located in the overworld, often in an experience-gated region. The
 **Step 3 — Fusion Execution:**
 At the shrine the player combines two maxed parent rings. A catalyst cost (fusion stones found through exploration) is required for standard Tier 2 fusions. Ring sacrifice is reserved only for the rarest Tier 4 fusions.
 
-### 4.5 Fusion Cost Summary
+### 5.5 Fusion Cost Summary
 
 | Tier | Cost |
 |---|---|
@@ -248,7 +246,7 @@ At the shrine the player combines two maxed parent rings. A catalyst cost (fusio
 
 ## 6. Battle System
 
-### 5.1 The Loadout System
+### 6.1 The Loadout System
 
 The player manages three layers of ring access:
 
@@ -264,23 +262,23 @@ The player manages three layers of ring access:
 
 **Choosing the loadout:** The player selects which 10 rings to carry based on the biome they're entering and the opponents they expect to face. This is the primary strategic decision made at camp.
 
-### 5.2 Pre-Duel Setup
+### 6.2 Pre-Duel Setup
 - Each player selects **5 battle rings** from their 10-ring loadout
-- Each player confirms their **staked ring** and its **jewelry position** (see Section 8)
+- Each player confirms their **staked ring** and its **jewelry position** (see Section 9)
 - Both players can see each other's element types, hearts, and aggregate uses from detection range before committing
 - Once both players formally agree to duel, the battle begins
 
-### 5.3 Turn Structure (Active Timed Block)
+### 6.3 Turn Structure (Active Timed Block)
 Combat is an **active, reaction-timed** exchange — not a hidden simultaneous selection. On each turn:
 1. The **attacker** selects which ring to attack with using a single keypress (1–5) and "throws" it. The attack costs the attacker **1 use** up front, regardless of the outcome.
 2. The attack is **telegraphed**: the attacking ring's base-element color(s) travel across the screen toward the defender. Fused rings show all of their component colors (e.g. a Mud ring shows blue + brown).
 3. The **defender** must choose the correct ring AND time the block — a single keypress (1–5) that must land within the timing window as the incoming attack arrives.
-4. The block is resolved on two independent axes — **timing** (parry / block / mistime / no-block) and **element** (strong / neutral / weak). See §5.4.
+4. The block is resolved on two independent axes — **timing** (parry / block / mistime / no-block) and **element** (strong / neutral / weak). See §6.4.
 5. Roles swap — the defender becomes the attacker next turn.
 
-Because the defender sees the incoming element before committing, there is no simultaneous hidden selection. Bluffing lives in the loadout, stake, and jewelry layers (§8), not in the turn itself.
+Because the defender sees the incoming element before committing, there is no simultaneous hidden selection. Bluffing lives in the loadout, stake, and jewelry layers (§9), not in the turn itself.
 
-### 5.4 Damage Rules
+### 6.4 Damage Rules
 The attacker always pays **1 use to throw**. The defender's response — its **timing** and its **element relationship** to the attack — determines everything else.
 
 **Timing axis** — the defender's keypress relative to the moment the telegraph arrives:
@@ -325,7 +323,7 @@ The attacker always pays **1 use to throw**. The defender's response — its **t
 
 On the two failure rows (**no-block**, **mistime**) the element axis is irrelevant — timing failed and the attack lands uncontested. **No-block** is a deliberate sacrifice (save the ring use, take a heart); **mistime** is the punished attempt (lose a heart AND burn the attempted ring's use; a ring drained to exactly 0 this way is extinguished, no extra heart).
 
-**Gauge only fills on an uncontested hit.** No-block and mistime let the attack land, so the defender's matching element gauge increases (§6). A weak catch loses a heart but the attack *was* caught — so it moves **no gauge**. Heart loss and gauge gain are independent: weak = heart but no gauge; no-block/mistime = heart and gauge.
+**Gauge only fills on an uncontested hit.** No-block and mistime let the attack land, so the defender's matching element gauge increases (§7). A weak catch loses a heart but the attack *was* caught — so it moves **no gauge**. Heart loss and gauge gain are independent: weak = heart but no gauge; no-block/mistime = heart and gauge.
 
 **Rally (Parry + Strong = active counter).** Instead of an automatic reflect, the exchange continues as an interactive volley chain:
 
@@ -347,35 +345,35 @@ A strong element with only **Block** timing is a safe block but forfeits the ral
 
 *The same logic applies to all element matchups across all tiers.*
 
-### 5.5 Neutral Block Rules
+### 6.5 Neutral Block Rules
 A neutral block occurs when the defender blocks (timing = block or parry) with an element that has no relationship to the attack.
 
 - The defender's ring spends 1 use; the attacker's thrown ring already spent its 1 use
 - No heart damage
-- No status gauge change — gauges only move on uncontested hits (no-block, mistime); a caught attack never moves a gauge (see §6)
+- No status gauge change — gauges only move on uncontested hits (no-block, mistime); a caught attack never moves a gauge (see §7)
 
 Neutrals are pure attrition exchanges. A correctly-timed neutral block is always safe; the tension is whether to spend a use blocking or to no-block and take the heart to conserve it.
 
-### 5.6 Off Hand Passive Recharge
+### 6.6 Off Hand Passive Recharge
 - Whenever a dominant hand ring is used in battle (attack or defense), the **most exhausted ring on the off hand recovers 1 use**
 - This rewards sustained fighting across multiple encounters
 - Players should keep their most depleted rings on the off hand between fights to maximize recovery
 - Managing which rings sit on which hand between encounters is a meaningful micro-decision
 
-### 5.7 Extinguished Rings
+### 6.7 Extinguished Rings
 - A ring is **extinguished** whenever its `current_uses` reaches 0 during a battle, regardless of which outcome drained it (throw, block cost, or weak-catch cost)
 - Extinguishment itself never costs a heart — a ring simply becomes unusable at 0 uses
-- Any heart loss is decided by the outcome table (§5.4), not by the ring reaching 0. A weak catch costs a heart because of the element mismatch, independent of whether that catch happened to drain the ring to 0
+- Any heart loss is decided by the outcome table (§6.4), not by the ring reaching 0. A weak catch costs a heart because of the element mismatch, independent of whether that catch happened to drain the ring to 0
 - Extinguished rings cannot be used for the rest of the duel
 - The opponent can see which element types are exhausted from the HUD
 
-### 5.8 Hearts
-- Each player starts a duel with a set number of hearts (exact count TBD — suggest 3 or 5)
+### 6.8 Hearts
+- Each player starts a duel with **3 hearts**
 - Hearts are lost when an attack lands uncontested (no-block or mistime), on a weak catch (block or parry with an element the attack beats), or via status effect damage
 - When all hearts are gone that player loses the duel
 - Hearts reset between duels
 
-### 5.9 Post-Battle Loadout Management
+### 6.9 Post-Battle Loadout Management
 After winning a duel:
 1. The player receives the opponent's staked ring
 2. The player must decide: keep the won ring in the loadout (replacing something) or send it directly to inventory
@@ -387,7 +385,7 @@ After losing a duel:
 2. A monster opponent also steals one random ring from the player's full inventory (not just the loadout)
 3. An NPC opponent only takes the staked ring
 
-### 5.10 Monster Encounters
+### 6.10 Monster Encounters
 - Monsters always initiate encounters in the overworld
 - The player can **flee** before formally agreeing to duel — always free, no penalty
 - Once a duel is formally agreed, fleeing is not possible
@@ -402,14 +400,14 @@ After losing a duel:
 
 Status effects are managed through persistent **element gauges** — one per base element per player. The gauge model replaces the rolling-window combo system used in earlier drafts.
 
-### 6.1 Gauge Mechanics
+### 7.1 Gauge Mechanics
 
 Each player maintains five status gauges — one per base element: Fire, Water, Earth, Wind, Wood. All gauges start at 0 and floor at 0.
 
 **Gauge changes per battle exchange:**
 - **Uncontested hit** (no-block or mistime): +1 per base element component of the attacking ring, added to the defender's matching gauges.
 
-A gauge only moves when the attack lands uncontested. A **weak catch** loses a heart but the attack *was* caught, so it moves **no gauge** — heart loss and gauge gain are independent (see §5.4). Successful blocks and parries — including intermediate rally volleys — never move gauges. A rally that terminates in an uncontested hit emits one gauge delta on the terminating volley; a rally that terminates in a weak catch emits none.
+A gauge only moves when the attack lands uncontested. A **weak catch** loses a heart but the attack *was* caught, so it moves **no gauge** — heart loss and gauge gain are independent (see §6.4). Successful blocks and parries — including intermediate rally volleys — never move gauges. A rally that terminates in an uncontested hit emits one gauge delta on the terminating volley; a rally that terminates in a weak catch emits none.
 
 **Server implementation:** Gauge deltas are computed by the Colyseus BattleRoom after each exchange. The `resolveBlock` result carries a `gaugeIncreases` flag — `true` only for no-block and mistime, `false` for any caught attack (neutral, strong, or weak). Gauges are broadcast to both clients as part of the state update.
 
@@ -431,7 +429,7 @@ A fused ring contributes to gauges based on its full recursive decomposition int
 | Magma | Fire + Metal (= Fire + Earth + Earth) | Fire ×1, Earth ×2 |
 | Obsidian | Fire + Earth + Water | Fire ×1, Earth ×1, Water ×1 |
 
-A perfect counter against a fused ring decrements those same gauges by the same amounts.
+A caught attack against a fused ring moves no gauge — the decomposition above applies only to uncontested hits.
 
 **Status threshold:** Default **4**. The threshold scales upward with player experience and augmentations in late-game progression (formula TBD).
 
@@ -439,7 +437,7 @@ A perfect counter against a fused ring decrements those same gauges by the same 
 - Gauge drops below threshold → status ends, but the attacker can always rebuild it
 - Gauges have a soft cap at **2× threshold** to keep HUD numbers readable
 
-### 6.2 Base Element Statuses
+### 7.2 Base Element Statuses
 
 | Element | Status | Effect | How to Reduce Gauge |
 |---|---|---|---|
@@ -451,7 +449,7 @@ A perfect counter against a fused ring decrements those same gauges by the same 
 
 Each status is independent — multiple can be active simultaneously and stack their effects.
 
-### 6.3 Shadow Status (Unique)
+### 7.3 Shadow Status (Unique)
 
 Shadow operates outside the gauge system.
 
@@ -463,18 +461,18 @@ Shadow operates outside the gauge system.
 
 ## 8. Player Progression
 
-### 7.1 Player XP
+### 8.1 Player XP
 - Player XP = **aggregate XP of all rings currently in the player's possession**
 - Rings earn XP through use in battle
 - Losing a ring through staking permanently reduces player XP
 - Winning a staked ring from an opponent permanently increases player XP
 
-### 7.2 World Access Gating
+### 8.2 World Access Gating
 - Higher player XP unlocks new areas of the overworld
 - Losing significant XP through staking can **revoke access** to areas previously unlocked
 - This creates genuine long-term stakes beyond any individual duel
 
-### 7.3 Inventory Expansion
+### 8.3 Inventory Expansion
 - Starting cap: 10 rings
 - Expanded through gameplay milestones — buying, finding, or sacrificing
 - Hard cap: 99 rings
@@ -484,20 +482,20 @@ Shadow operates outside the gauge system.
 
 ## 9. Staking Economy
 
-### 8.1 Core Rules
+### 9.1 Core Rules
 - Every duel requires both players to **stake a ring** before the duel begins
 - The staked ring does not have to be one of the 5 battle rings or even in the loadout — it can be any ring in the player's possession
 - The staked ring is held in escrow for the duration of the duel
 - **Loser forfeits their staked ring and all XP associated with it**
 - **Winner receives the staked ring and its full XP**
 
-### 8.2 Changing the Staked Ring
+### 9.2 Changing the Staked Ring
 - The staked ring can be changed **freely at any time in the overworld**
 - Once the player enters **detection range of an enemy**, the staked ring locks in for that encounter
 - The lock releases if the player flees or moves out of detection range without dueling
 - This prevents last-second stake-swapping once an opponent has already evaluated the offer
 
-### 8.3 The Stake Jewelry System
+### 9.3 The Stake Jewelry System
 The staked ring is worn on the body — not on the fingers. Its position determines which passive buff it provides during battle. The position is visible to both players from detection range, adding a strategic information layer to the pre-duel approach.
 
 **Dominant Hand Bracelet — Elemental Aura (Offensive)**
@@ -520,13 +518,13 @@ The staked ring is worn on the body — not on the fingers. Its position determi
 - Cost: The staked ring loses 1 use per battle and 1 additional use when the pulse triggers
 - Posture signal: Resilient — dangerous when down, built for attrition
 
-### 8.4 Staked Ring XP
+### 9.4 Staked Ring XP
 - The staked ring earns passive XP through its use-per-battle cost even if it never fights directly
 - A ring used as a permanent stake slowly levels up through its passive role
 - Higher XP stakes provide stronger buffs — a maxed Tier 2 staked ring provides noticeably more than a Tier 1
 - This creates a reason to stake high-value rings even at personal risk
 
-### 8.5 Natural Self-Regulation
+### 9.5 Natural Self-Regulation
 No artificial matchmaking is needed. The economy self-regulates:
 - Experienced players won't challenge weak players — winning a low-XP ring wastes a valuable inventory slot
 - Weak players won't challenge strong players — staking a good ring is too risky
@@ -537,12 +535,12 @@ No artificial matchmaking is needed. The economy self-regulates:
 
 ## 10. Overworld
 
-### 9.1 Visual Style
+### 10.1 Visual Style
 - Top-down isometric perspective
 - Reference: *The Legend of Zelda: A Link to the Past*
 - Renderer: Phaser.js canvas with tilemap support
 
-### 9.2 Biomes
+### 10.2 Biomes
 Each biome has NPCs and monsters that lean toward specific element distributions, requiring players to prepare appropriate counter-rings before entering.
 
 | Biome | Dominant Elements | Key Weaknesses to Bring | Notable Content |
@@ -556,14 +554,14 @@ Each biome has NPCs and monsters that lean toward specific element distributions
 
 Environmental passives (e.g. Fire rings losing uses faster in snow) are flagged for a **future design pass** and are not implemented in the initial build.
 
-### 9.3 Detection and Approach
+### 10.3 Detection and Approach
 - When the player gets within a certain distance of an enemy both parties begin to see each other's information
 - **Visible from detection range:** element types in loadout, hearts, aggregate uses per element type, staked ring jewelry position
 - As both parties continue to approach they can **formally agree to duel**
 - The player can always turn back and flee before formally agreeing — no penalty
 - Once formally agreed the duel begins and the 5 battle ring selection screen appears
 
-### 9.4 NPC Categories
+### 10.4 NPC Categories
 
 | Category | Behavior | Stakes | Notes |
 |---|---|---|---|
@@ -573,7 +571,7 @@ Environmental passives (e.g. Fire rings losing uses faster in snow) are flagged 
 | Monsters | Always initiate; player can flee | Drop ring on loss; steal ring on win | Respawn on day cycle; named monsters do not |
 | Boss NPCs | Fixed locations; high XP; unique rings | Rare/unique rings | Primary unlock mechanism for rare fusions and world areas |
 
-### 9.5 NPC Personality Types
+### 10.5 NPC Personality Types
 NPCs should feel like distinct opponents, not just difficulty levels:
 - **Aggressive** — opens with strongest ring, burns through uses fast, likely wearing stake on dominant hand bracelet
 - **Defensive** — holds strong rings in reserve, tries to exhaust player uses, likely wearing stake on off hand bracelet
@@ -581,7 +579,7 @@ NPCs should feel like distinct opponents, not just difficulty levels:
 - **Status-hunter** — builds methodically toward status effect triggers
 - **Resilient** — likely wearing stake as necklace, dangerous when low on hearts
 
-### 9.6 Key Locations
+### 10.6 Key Locations
 
 | Location | Purpose |
 |---|---|
@@ -595,14 +593,14 @@ NPCs should feel like distinct opponents, not just difficulty levels:
 
 ## 11. UI and Information Display
 
-### 10.1 Overworld Detection HUD
+### 11.1 Overworld Detection HUD
 When within detection range of an enemy, both parties see:
 - Opponent's **element types** in loadout (base element view; fused rings show as both component elements)
 - Opponent's **hearts**
 - Opponent's **aggregate uses per base element type**
 - Opponent's **staked ring jewelry position** (dominant hand bracelet / off hand bracelet / necklace)
 
-### 10.2 Battle HUD
+### 11.2 Battle HUD
 During a duel, both players see for each opponent:
 - **Hearts remaining**
 - **Element types** in battle hand (same fused ring display rule as overworld)
@@ -615,16 +613,16 @@ During a duel, both players see for each opponent:
 - Earth shows: 5 uses
 The opponent knows Water and Earth are present but must infer whether that's one Mud ring, two separate rings, or both.
 
-### 10.3 Ring Reveal
+### 11.3 Ring Reveal
 The attack is **telegraphed before the defender commits**: when the attacker throws, the attacking ring's base-element color(s) travel across the screen toward the defender (fused rings show all component colors). The defender therefore sees the attacker's element identity — revealed by the orb color crossing the screen — *before* choosing a ring. The exact ring identity — including whether it is a fused ring and its specific tier — becomes fully visible to both players at the moment the block resolves.
 
-### 10.4 Extinguished Ring Visibility
+### 11.4 Extinguished Ring Visibility
 When a ring is extinguished during battle the use count for that element type drops to 0 and the element icon becomes inactive in the HUD. Both players can see exactly which element types are exhausted.
 
-### 10.5 Status Effect Display
+### 11.5 Status Effect Display
 Active status effects are shown in the battle HUD alongside the affected player's hearts. The status name, icon, and remaining duration (in turns) are visible to both players.
 
-### 10.6 Necklace Pulse Visual
+### 11.6 Necklace Pulse Visual
 When the Recharge Pulse triggers (necklace stake position, player is losing), a visible elemental pulse effect plays — color matching the staked ring's element. Both players see this. It signals that a ring was just recharged, changing the opponent's calculus going forward.
 
 ---
@@ -635,11 +633,11 @@ Build in phases so the game is playable and testable at each stage before moving
 
 ### Phase 1 — Battle Core (Colyseus Server)
 
-Build the authoritative Colyseus `BattleRoom` in TypeScript. All battle logic runs here: ElementSystem (pentagon matchup table), BlockResolver (timing classification, relationship, resolve), the state machine (attack-select → defend-window → resolve), and the rally chain (§6.4). No client yet — test with two Playwright tabs connecting to the server and exchanging moves programmatically. Deliverable: two tabs can play a complete battle to conclusion, with every exchange resolving correctly and every timing classification (PARRY / BLOCK / MISTIME / NO_BLOCK) producing the right outcome. All 15+ unit scenarios from the Godot prototype must pass as Playwright assertions.
+Build the authoritative Colyseus `BattleRoom` in TypeScript. All battle logic runs here: ElementSystem (pentagon matchup table), BlockResolver (timing classification, relationship, resolve), the state machine (attack-select → defend-window → resolve), and the rally chain (§6.4). No client yet — test with Vitest unit tests (ElementSystem, BlockResolver) and `@colyseus/testing` integration tests (two SDK clients driving real server exchanges). Deliverable: all timing classifications (PARRY / BLOCK / MISTIME / NO_BLOCK) and all element relationships produce correct outcomes across all 8 Block Resolution Table combinations; a full 3-heart KO sequence resolves correctly.
 
 ### Phase 2 — Phaser Client
 
-Build the browser client. Telegraph orb (element-colored Phaser tween crossing from attacker sprite to defender sprite over 0.9 s). Battle hand UI (5 slot cards, highlight on press). HUD (hearts, ring use counts, role labels ATTACKING / DEFENDING). Keyboard input: P1 = keys 1-5, P2 = keys 6-0; touch input: tap the slot card. Client renders whatever the server broadcasts — it holds no game state of its own. Playwright tests: assert orb appears on attack, assert slot highlights on keypress, assert HUD updates after resolution. Deliverable: two browser tabs on the LAN produce a visually complete playable exchange.
+Build the browser client. Telegraph orb (element-colored Phaser tween crossing from attacker sprite to defender sprite over 0.9 s). Battle hand UI (5 slot cards, highlight on press). HUD (hearts, ring use counts, role labels ATTACKING / DEFENDING). Keyboard input: each player uses keys 1-5 in their own browser window; touch input: tap the slot card. Client renders whatever the server broadcasts — it holds no game state of its own. Playwright tests: assert orb appears on attack, assert slot highlights on keypress, assert HUD updates after resolution. Deliverable: two browser tabs on the LAN produce a visually complete playable exchange.
 
 ### Phase 3 — NPC AI Opponents
 
@@ -655,7 +653,7 @@ Jewelry position selection before each duel (dominant hand bracelet / off hand b
 
 ### Phase 6 — Status Effects (Gauge System)
 
-Five per-player element gauges (§7). Gauge increments on heart loss, threshold triggers status effects (Burning, Drowning, Petrified, Scattered, Entangled). Shadow passive (25% Cursed). Gauge display in battle HUD. Deliverable: status effects fire correctly and influence battle outcomes.
+Five per-player element gauges (§7). Gauge increments on uncontested hit (no-block or mistime); threshold triggers status effects (Burning, Drowning, Petrified, Scattered, Entangled). Shadow passive (25% Cursed). Gauge display in battle HUD. Deliverable: status effects fire correctly and influence battle outcomes.
 
 ### Phase 7 — Fusion System
 
@@ -676,7 +674,7 @@ Android/iOS packaging via Capacitor (wrap Phaser client as native WebView app). 
 **Game design (engine-agnostic):**
 - Full element relationship web — all matchups documented for all 11 named elements
 - Ring passive and active abilities unlocked at XP milestones
-- Exact heart count per duel (3 or 5?)
+- ~~Exact heart count per duel~~ → settled: **3 hearts**
 - Exact catalyst (fusion stone) costs per tier
 - Tier 4 triple fusion full details
 - NPC personality tuning and difficulty progression curve
@@ -701,14 +699,14 @@ Android/iOS packaging via Capacitor (wrap Phaser client as native WebView app). 
 
 ---
 
+*Document version 3.1 — Updated May 2026*
+*v3.1 changes: GDD consistency pass. Fixed all subsection numbers (were off by 1 vs ToC throughout). Added §6.4 Block Resolution Table expanded row-per-outcome format. Corrected: hearts settled at 3 (was TBD); parry costs 1 use only (volley is free); gauge fills only on uncontested hit, not on caught attacks including fused rings (removed erroneous "perfect counter decrements gauges" note). Updated Phase 1 build description to reflect Vitest/@colyseus/testing (not Playwright/Godot). Updated Phase 2 keyboard layout (each player uses 1–5 in own window). Fixed all §-cross-references (§5.4→§6.4, §6→§7 for status effects, §8→§9 for staking). Removed duplicate combined v2.0/2.1 changelog entry. Marked hearts open question as resolved.*
+
 *Document version 3.0 — Updated May 2026*
 *v3.0 changes: Pivoted from Godot 4.x to **Phaser.js + Colyseus** multiplayer stack. Added §2 Tech Stack & Architecture (server-authoritative model, LAN deployment on game-da-god, Playwright E2E testing, Capacitor/Electron distribution). Rewrote §12 Build Sequence for 9 TypeScript/Playwright phases replacing Godot GDScript prompts. Updated §13 Open Questions to include tech/multiplayer items. Removed all Godot-specific implementation notes (EventBus, GDScript, Godot TileMap) from body text. Game design content (§3–§11) unchanged.*
 
 *Document version 2.2 — Updated May 2026*
 *v2.2 changes: Replaced the simultaneous-secret turn model (§6.3) with the **active timed-block** model and added the rally mechanic (§6.4). Rewrote §6.4 damage rules around two axes (timing: parry/block/mistime/no-block; element: strong/neutral/weak). Removed auto-reflect in favour of interactive rally volley chain walking the pentagon.*
-
-*Document version 2.0/2.1 — Updated May 2026*
-*v2.0: Loadout system, dominant/off hand split, staking jewelry positions, detection/approach system, biomes, NPC categories, monster flee/steal mechanics. v2.1: Simplified neutral block rules, persistent gauge model replacing rolling-window combo system, attrition-based statuses.*
 
 *Document version 2.1 — Updated May 2026*
 *v2.1 changes: Simplified §5.5 neutral block rules (removed first/second neutral distinction and the neutral recharge bonus). Rewrote §6 from rolling-window combo system to persistent gauge model — gauges change ±1 per base element component on strong hits / perfect counters, neutrals don't move gauges. Replaced restrictive status effects (Petrified, Scattered, Entangled) with attrition-based effects that never restrict ring choice. Eliminated separate fusion statuses (§6.2) — fused rings now decompose recursively to base elements (Lightning = Fire ×2, Frost = Water ×2 + Wind ×1, etc). Burning now deals 1 full heart per turn. Updated Phase 4 build prompt accordingly.*
