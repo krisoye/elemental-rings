@@ -82,6 +82,8 @@ On the two failure rows (**no-block**, **mistime**) the element axis is irreleva
 
 **Gauge only fills on an uncontested hit.** No-block and mistime let the attack land, so the defender's matching element gauge increases (§7). A weak catch loses a heart but the attack *was* caught — so it moves **no gauge**. Heart loss and gauge gain are independent: weak = heart but no gauge; no-block/mistime = heart and gauge.
 
+**Fusion ring resolution.** A fusion ring's two components are each resolved independently. On No-block or Mistime all components land. On a timed defense the defending ring auto-aligns to the attack component it is strongest against; the remaining component resolves as No-block. See §3.4 for the full rule and outcome tables.
+
 **Rally (Parry + Strong = active counter).** Instead of an automatic reflect, the exchange continues as an interactive volley chain:
 
 1. The original attacker becomes the new **rally-defender**; the parrying player becomes the **rally-attacker**.

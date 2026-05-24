@@ -56,7 +56,63 @@ Fusion rings combine two different base elements. There are **10 fusion rings** 
 
 **Gauge rule:** only triangle-element components contribute gauges. Wind and Earth components contribute nothing. A dual-triangle fusion (e.g. Steam = Fire + Water) fills **both** parent gauges on an uncontested hit. See §7.1 for the full per-fusion table.
 
-**Fusion matchup rules — Open Question.** The Strong/Neutral/Weak relationship of a fusion ring when it attacks or defends against another element has **not** yet been finalized. To be resolved in a future design session.
+### Fusion Resolution
+
+**A fusion ring = 2 components, 1 use.** Whether attacking or defending, each component is assessed independently under the standard timing × element table (§6.4). The combined outcome is the union of all component resolutions.
+
+#### Attacking with a fusion ring
+
+On an uncontested hit (No-block or Mistime) every component lands — up to two hearts and two gauge increments for the cost of one ring use. This is what makes fusion attacks dangerous.
+
+| Timing | Outcome |
+|--------|---------|
+| No-block | −1 ♥ per component · +1 gauge per triangle component |
+| Mistime | −1 ♥ per component · +1 gauge per triangle component · defender ring −1 use |
+| Block / Parry | Each component resolved independently — see auto-align rule below |
+
+#### Defending against a fusion attack — Auto-Align Rule
+
+A single defense ring can only engage **one** attack component. It automatically aligns to whichever component it is **strongest** against (STRONG > NEUTRAL > WEAK). The remaining component resolves as **NO_BLOCK** regardless of timing.
+
+**Tiebreaker:** when equally matched against both components, align to the component listed first on the ring (always deterministic).
+
+**Example — Forest (Water + Wood) attack vs single base-element defense (Parry timing):**
+
+| Defense ring | Auto-aligns to | Engaged component result | Unengaged component (NO_BLOCK) | Net outcome |
+|---|---|---|---|---|
+| **Fire** | Wood (Strong) | Parry Strong → rally · Fire volley | Water → −1 ♥ · +Water gauge | −1 ♥ · +Water gauge · rally |
+| **Water** | Water (Neutral) | Parry Neutral → safe | Wood → −1 ♥ · +Wood gauge | −1 ♥ · +Wood gauge |
+| **Wood** | Wood (Neutral) | Parry Neutral → safe | Water → −1 ♥ · +Water gauge | −1 ♥ · +Water gauge |
+
+No single base-element ring fully stops a dual-triangle fusion attack. The defender always absorbs at least one heart.
+
+**Example — Forest (Water + Wood) attack — all timing outcomes with Fire defense:**
+
+| Timing | Wood component (Fire aligned) | Water component (NO_BLOCK) | Net |
+|--------|-------------------------------|---------------------------|-----|
+| No-block | −1 ♥ · +Wood gauge | −1 ♥ · +Water gauge | −2 ♥ · +2 gauges |
+| Mistime | −1 ♥ · +Wood gauge · def −1 use | −1 ♥ · +Water gauge | −2 ♥ · +2 gauges · def −1 use |
+| Block | Block Strong → safe | −1 ♥ · +Water gauge | −1 ♥ · +Water gauge |
+| Parry | Parry Strong → rally | −1 ♥ · +Water gauge | −1 ♥ · +Water gauge · rally |
+
+#### Countering fusion attacks with a fusion defense
+
+A fusion defense ring applies the same auto-align rule per component — giving the defender two coverage slots instead of one. A well-chosen fusion defense can neutralise both components of an incoming fusion attack.
+
+**Example — Forest (Water + Wood) attack vs Steam (Fire + Water) defense (Parry timing):**
+
+| Defense component | Attack component aligned to | Relationship | Result |
+|---|---|---|---|
+| Fire | Wood | Strong | Parry Strong → rally · Fire volley |
+| Water | Water | Neutral | Parry Neutral → safe |
+
+Net: safe on both components · rally triggered. Steam fully covers Forest.
+
+Fusion defense rings are the primary tool for cleanly answering fusion attacks — their component choice directly determines which attacks they can absorb without heart loss.
+
+#### Open Question (narrowed)
+
+Fusion-vs-fusion component assignment when the optimal matching is ambiguous (two components each better against different opponents) is unspecified. Resolve during implementation of issue #20.
 
 ### 3.5 Shadow (Special Case)
 Shadow is the only element that cannot be fused or crafted from base elements. It exists outside the normal system.
