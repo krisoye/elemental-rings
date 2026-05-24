@@ -11,7 +11,7 @@ Each section lives in its own file. Read only what you need.
 |---|---------|------|-------|
 | 1 | Game Overview | [gdd-01-overview.md](gdd-01-overview.md) | Core loop, tone |
 | 2 | Tech Stack & Architecture | [gdd-02-tech-stack.md](gdd-02-tech-stack.md) | Server-authoritative model, LAN deployment |
-| 3 | Element System | [gdd-03-element-system.md](gdd-03-element-system.md) | Pentagon, fused elements, Shadow |
+| 3 | Element System | [gdd-03-element-system.md](gdd-03-element-system.md) | Triangle (Fire/Water/Wood), Wind/Earth asymmetry, fusions |
 | 4 | Ring System | [gdd-04-ring-system.md](gdd-04-ring-system.md) | Tiers, uses, XP, recharge |
 | 5 | Fusion System | [gdd-05-fusion-system.md](gdd-05-fusion-system.md) | Recipes, shrine mechanic, costs |
 | 6 | Battle System | [gdd-06-battle-system.md](gdd-06-battle-system.md) | **Block Resolution Table, timing, rally** — read for any combat work |
@@ -27,7 +27,7 @@ Each section lives in its own file. Read only what you need.
 
 ## Quick Reference
 
-**Element pentagon:** FIRE > WOOD > EARTH > WIND > WATER > FIRE  
+**Element triangle:** FIRE > WOOD > WATER > FIRE · Wind = neutral attack / weak defense · Earth = weak attack / neutral defense  
 **Block Resolution Table:** see [§6.4](gdd-06-battle-system.md)  
 **Timing windows:** PARRY ±175 ms · BLOCK ±200 ms · Telegraph 900 ms  
 **Hearts per duel:** 3 · **Starting uses per ring:** 3 · **Gauge threshold:** 4  
@@ -35,6 +35,9 @@ Each section lives in its own file. Read only what you need.
 ---
 
 ## Changelog
+
+*Document version 4.0 — Updated May 2026*
+*v4.0 changes: Replaced 5-element pentagon with triangle (Fire/Water/Wood) + asymmetric neutrals (Wind/Earth). Redesigned loadout from free hand selection to 5 named slots (Thumb/A1/A2/D1/D2). Removed off-hand system. Phase-locked input: attack/defense buttons only active in correct phase. Fusion rings are pre-equipped (no chord input). Gauges and statuses reduced to 3 (triangle elements only).*
 
 *Document version 3.1 — Updated May 2026*
 *v3.1 changes: GDD consistency pass. Fixed all subsection numbers (were off by 1 vs ToC throughout). Added §6.4 Block Resolution Table expanded row-per-outcome format. Corrected: hearts settled at 3; parry costs 1 use only (volley is free); gauge fills only on uncontested hit. Fixed all cross-references. Split into per-section files; build sequence moved to [GitHub Issue #14](https://github.com/krisoye/elemental-rings/issues/14).*

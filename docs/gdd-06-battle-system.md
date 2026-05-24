@@ -2,33 +2,33 @@
 
 ### 6.1 The Loadout System
 
-The player manages three layers of ring access:
+The player equips **5 rings on their dominant hand** before a duel, each in a named slot:
 
-| Layer | Size | When Chosen |
-|---|---|---|
-| Full Inventory | Up to 99 rings | Managed at camp |
-| Field Loadout | 10 rings | Chosen when leaving camp |
-| Battle Hand | 5 rings | Chosen just before a duel begins |
+| Slot  | Button | Role |
+|-------|--------|------|
+| Thumb | —      | Staked ring: passive ability only (see §9). Never pressed in combat. |
+| A1    | A1     | Attack slot 1 |
+| A2    | A2     | Attack slot 2 |
+| D1    | D1     | Defense slot 1 |
+| D2    | D2     | Defense slot 2 |
 
-**Dominant Hand (5 rings):** The active battle hand. These rings are used for attacking and defending in duels.
-
-**Off Hand (5 rings):** The reserve hand. These rings recover 1 use whenever a dominant hand ring is used in battle (passive recharge drip). Off hand rings can be swapped into the dominant hand between battles.
-
-**Choosing the loadout:** The player selects which 10 rings to carry based on the biome they're entering and the opponents they expect to face. This is the primary strategic decision made at camp.
+**Button mapping is slot-locked:** the A1 button always fires whatever ring is in the A1 slot, regardless of element. There is no element-to-button locking. Ring identity (element, tier, fusion type) is visible on the HUD during battle.
 
 ### 6.2 Pre-Duel Setup
-- Each player selects **5 battle rings** from their 10-ring loadout
-- Each player confirms their **staked ring** and its **jewelry position** (see Section 9)
-- Both players can see each other's element types, hearts, and aggregate uses from detection range before committing
+- Each player assigns **5 rings to their slots** (Thumb, A1, A2, D1, D2) from their inventory
+- The **Thumb ring is staked** (see Section 9) — it grants a passive ability but is never pressed in combat
+- Both players can see each other's element types and aggregate uses from detection range before committing
 - Once both players formally agree to duel, the battle begins
 
 ### 6.3 Turn Structure (Active Timed Block)
 Combat is an **active, reaction-timed** exchange — not a hidden simultaneous selection. On each turn:
-1. The **attacker** selects which ring to attack with using a single keypress (1–5) and "throws" it. The attack costs the attacker **1 use** up front, regardless of the outcome.
-2. The attack is **telegraphed**: the attacking ring's base-element color(s) travel across the screen toward the defender. Fused rings show all of their component colors (e.g. a Mud ring shows blue + brown).
-3. The **defender** must choose the correct ring AND time the block — a single keypress (1–5) that must land within the timing window as the incoming attack arrives.
-4. The block is resolved on two independent axes — **timing** (parry / block / mistime / no-block) and **element** (strong / neutral / weak). See §6.4.
+1. The **attacker** presses **A1 or A2** to fire the ring in that slot. The attack costs **1 use** up front, regardless of the outcome.
+2. The attack is **telegraphed**: the ring's element color(s) travel across the screen toward the defender over a **900 ms** window. Fused rings show all of their component colors (e.g. a Mud ring shows blue + brown).
+3. The **defender** presses **D1 or D2** to fire the ring in that slot — it must land within the timing window as the incoming attack arrives.
+4. The block is resolved on two independent axes — **timing** (parry / block / mistime / no-block) and **element relationship** (strong / neutral / weak). See §6.4.
 5. Roles swap — the defender becomes the attacker next turn.
+
+**Phase-locked input:** Attack buttons (A1/A2) only register during the **attack phase**. Defense buttons (D1/D2) only register during the **defense phase**. Wrong-phase presses are silently ignored — protective, not punishing. The phase transition is the most visually prominent UI moment in a battle.
 
 Because the defender sees the incoming element before committing, there is no simultaneous hidden selection. Bluffing lives in the loadout, stake, and jewelry layers (§9), not in the turn itself.
 
@@ -44,10 +44,13 @@ The attacker always pays **1 use to throw**. The defender's response — its **t
 | **Mistime** | pressed, but outside the block window |
 | **No-block** | no key pressed |
 
-**Element axis** — the defender's ring vs the attack's base-element component(s):
-- **Strong** — defender's element beats the attack (parry-eligible)
-- **Neutral** — no relationship
-- **Weak** — the attack beats the defender's element
+**Element axis** — the defender's ring vs the attack's element:
+- **Triangle matchups (Fire/Water/Wood):** Fire beats Wood; Wood beats Water; Water beats Fire. The matching Strong/Neutral/Weak relationship is determined by this cycle.
+- **Wind attacking:** always **Neutral** — no element can counter Wind offensively.
+- **Wind defending:** always **Weak** — Wind defense costs a use and still loses the heart.
+- **Earth attacking:** always **Weak** — Earth attacks never carry elemental advantage.
+- **Earth defending:** always **Neutral** — Earth defense is never elementally punished.
+- **Fusion rings:** matchup TBD (§3.4 Open Question). Gauge contributions come from triangle components only.
 
 ### Block Resolution Table
 
@@ -79,6 +82,8 @@ On the two failure rows (**no-block**, **mistime**) the element axis is irreleva
 
 **Gauge only fills on an uncontested hit.** No-block and mistime let the attack land, so the defender's matching element gauge increases (§7). A weak catch loses a heart but the attack *was* caught — so it moves **no gauge**. Heart loss and gauge gain are independent: weak = heart but no gauge; no-block/mistime = heart and gauge.
 
+**Fusion ring resolution.** A fusion ring's two components are each resolved independently. On No-block or Mistime all components land. On a timed defense the defending ring auto-aligns to the attack component it is strongest against; the remaining component resolves as No-block. See §3.4 for the full rule and outcome tables.
+
 **Rally (Parry + Strong = active counter).** Instead of an automatic reflect, the exchange continues as an interactive volley chain:
 
 1. The original attacker becomes the new **rally-defender**; the parrying player becomes the **rally-attacker**.
@@ -108,38 +113,32 @@ A neutral block occurs when the defender blocks (timing = block or parry) with a
 
 Neutrals are pure attrition exchanges. A correctly-timed neutral block is always safe; the tension is whether to spend a use blocking or to no-block and take the heart to conserve it.
 
-### 6.6 Off Hand Passive Recharge
-- Whenever a dominant hand ring is used in battle (attack or defense), the **most exhausted ring on the off hand recovers 1 use**
-- This rewards sustained fighting across multiple encounters
-- Players should keep their most depleted rings on the off hand between fights to maximize recovery
-- Managing which rings sit on which hand between encounters is a meaningful micro-decision
-
-### 6.7 Extinguished Rings
+### 6.6 Extinguished Rings
 - A ring is **extinguished** whenever its `current_uses` reaches 0 during a battle, regardless of which outcome drained it (throw, block cost, or weak-catch cost)
 - Extinguishment itself never costs a heart — a ring simply becomes unusable at 0 uses
 - Any heart loss is decided by the outcome table (§6.4), not by the ring reaching 0. A weak catch costs a heart because of the element mismatch, independent of whether that catch happened to drain the ring to 0
 - Extinguished rings cannot be used for the rest of the duel
 - The opponent can see which element types are exhausted from the HUD
 
-### 6.8 Hearts
+### 6.7 Hearts
 - Each player starts a duel with **3 hearts**
 - Hearts are lost when an attack lands uncontested (no-block or mistime), on a weak catch (block or parry with an element the attack beats), or via status effect damage
 - When all hearts are gone that player loses the duel
 - Hearts reset between duels
 
-### 6.9 Post-Battle Loadout Management
+### 6.8 Post-Battle Loadout Management
 After winning a duel:
 1. The player receives the opponent's staked ring
 2. The player must decide: keep the won ring in the loadout (replacing something) or send it directly to inventory
 3. If keeping it: choose which loadout ring to send back to inventory — including exhausted rings
-4. The player can then reorganize their 10-ring loadout freely — moving rings between dominant and off hand to prepare for the next encounter
+4. The player can then reorganize their slots freely — reassigning rings to the Thumb/A1/A2/D1/D2 slots to prepare for the next encounter
 
 After losing a duel:
 1. The player's staked ring is forfeited to the opponent
 2. A monster opponent also steals one random ring from the player's full inventory (not just the loadout)
 3. An NPC opponent only takes the staked ring
 
-### 6.10 Monster Encounters
+### 6.9 Monster Encounters
 - Monsters always initiate encounters in the overworld
 - The player can **flee** before formally agreeing to duel — always free, no penalty
 - Once a duel is formally agreed, fleeing is not possible
