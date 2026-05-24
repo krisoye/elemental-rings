@@ -8,6 +8,8 @@ import { classifyTiming, resolveBlock } from '../game/BlockResolver';
 import {
   TELEGRAPH_MS,
   DEFEND_WINDOW_MS,
+  BLOCK_WINDOW_MS,
+  PARRY_WINDOW_MS,
   STARTING_HEARTS,
   STARTING_USES,
 } from '../game/constants';
@@ -116,7 +118,7 @@ export class BattleRoom extends Room<{ state: BattleState }> {
       : null;
 
     const offsetMs = this.defensePressTime - this.impactTime;
-    const timing = classifyTiming(offsetMs, this.defenseSubmitted);
+    const timing = classifyTiming(offsetMs, this.defenseSubmitted, PARRY_WINDOW_MS, BLOCK_WINDOW_MS);
     const rel = defenderRing
       ? relationship(attackerRing.element, defenderRing.element)
       : 'NEUTRAL';

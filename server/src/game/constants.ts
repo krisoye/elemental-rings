@@ -3,4 +3,4 @@ export const BLOCK_WINDOW_MS = 200;
 export const PARRY_WINDOW_MS = 175;
 export const STARTING_HEARTS = 3;
 export const STARTING_USES = 3;
-export const DEFEND_WINDOW_MS = TELEGRAPH_MS + BLOCK_WINDOW_MS; // 1080
+export const DEFEND_WINDOW_MS = TELEGRAPH_MS + BLOCK_WINDOW_MS; // 1100

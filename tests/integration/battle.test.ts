@@ -227,8 +227,8 @@ describe('Scenario 6: post-impact BLOCK (+150ms) -> no heart lost', () => {
     attacker.send('selectAttack', { slot: 0 }); // FIRE
     await room.waitForNextPatch();
 
-    // impact + 130ms: |130| > 125 (PARRY_WINDOW_MS) but <= 200 (BLOCK_WINDOW_MS). FIRE vs FIRE = NEUTRAL.
-    await pressDefenseAt(room, defender, 0, 130);
+    // impact + 190ms: |190| > 175 (PARRY_WINDOW_MS) but <= 200 (BLOCK_WINDOW_MS). FIRE vs FIRE = NEUTRAL.
+    await pressDefenseAt(room, defender, 0, 190);
 
     const defenderState = room.state.players.get(defenderId);
     expect(defenderState.hearts).toBe(3);
@@ -291,7 +291,7 @@ describe('Scenario 8: WEAK block -> heart lost, -1 use (not -2)', () => {
     attacker.send('selectAttack', { slot: 0 }); // FIRE
     await room.waitForNextPatch();
 
-    await pressDefenseAt(room, defender, 4, 130); // WOOD, BLOCK timing
+    await pressDefenseAt(room, defender, 4, 190); // WOOD, BLOCK timing (190ms > PARRY_WINDOW_MS=175)
 
     const defenderState = room.state.players.get(defenderId);
     expect(defenderState.hand[4].currentUses).toBe(2); // 3 - 1 (not 3 - 2)
@@ -311,8 +311,8 @@ describe('Scenario 9: BLOCK + STRONG -> no heart, no gauge', () => {
     attacker.send('selectAttack', { slot: 0 }); // FIRE
     await room.waitForNextPatch();
 
-    // WATER(1) beats FIRE(0) -> STRONG. Offset +130ms > PARRY_WINDOW_MS(125) -> BLOCK.
-    await pressDefenseAt(room, defender, 1, 130); // WATER, BLOCK timing
+    // WATER(1) beats FIRE(0) -> STRONG. Offset +190ms > PARRY_WINDOW_MS(175) -> BLOCK (no rally).
+    await pressDefenseAt(room, defender, 1, 190); // WATER, BLOCK timing
 
     const defenderState = room.state.players.get(defenderId);
     expect(defenderState.hearts).toBe(3);              // no heart lost on STRONG catch
