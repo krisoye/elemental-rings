@@ -118,7 +118,7 @@ test('scenario 4: duel completes and returns to EncounterScene', async ({ browse
         room?.state?.phase === 'ATTACK_SELECT' &&
         room?.state?.currentAttackerId === room?.sessionId
       ) {
-        room.send('selectAttack', { slot: 0 });
+        room.send('selectAttack', { slot: 'a1' });
       }
     });
   }, 300);

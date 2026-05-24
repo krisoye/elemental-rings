@@ -1,5 +1,16 @@
 import Phaser from 'phaser';
-import { ELEMENT_COLORS, GAUGE_THRESHOLD, OPPONENT_X, OPPONENT_Y } from '../Constants';
+import {
+  ELEMENT_COLORS,
+  GAUGE_THRESHOLD,
+  GAUGE_ELEMENTS,
+  GAUGE_KEYS,
+  OPPONENT_X,
+  OPPONENT_Y,
+} from '../Constants';
+
+// Combat slots whose remaining uses count toward the opponent's aggregate (the
+// thumb is a passive staked ring and is excluded).
+const COMBAT_SLOTS = ['a1', 'a2', 'd1', 'd2'] as const;
 
 /**
  * Partial-information panel for the opponent. Shows hearts, aggregate remaining
@@ -52,29 +63,29 @@ export class OpponentDuelist extends Phaser.GameObjects.Container {
     const hearts = opp.hearts ?? 0;
     this.heartsText.setText('♥'.repeat(hearts) + '♡'.repeat(Math.max(0, 3 - hearts)));
 
-    // Aggregate remaining uses across all non-extinguished rings.
+    // Aggregate remaining uses across the four non-extinguished combat slots.
     let totalUses = 0;
-    for (let i = 0; i < opp.hand.length; i++) {
-      if (!opp.hand[i].isExtinguished) totalUses += opp.hand[i].currentUses;
+    for (const key of COMBAT_SLOTS) {
+      const ring = opp[key];
+      if (ring && !ring.isExtinguished) totalUses += ring.currentUses;
     }
     this.usesText.setText(`Uses: ${totalUses}`);
 
-    // Element dots: only color elements that have been revealed.
+    // Element dots: only color base elements that have been revealed.
     for (let el = 0; el < 5; el++) {
       this.elementDots[el].setFillStyle(revealedElements.has(el) ? ELEMENT_COLORS[el] : 0x555555);
     }
 
-    // Status overlay: first gauge at/above threshold tints the panel.
-    const gaugeKeys = ['fireGauge', 'waterGauge', 'earthGauge', 'windGauge', 'woodGauge'];
-    let activeGauge = -1;
-    for (let i = 0; i < 5; i++) {
-      if ((opp[gaugeKeys[i]] ?? 0) >= GAUGE_THRESHOLD) {
-        activeGauge = i;
+    // Status overlay: first triangle gauge at/above threshold tints the panel.
+    let activeEl = -1;
+    for (let i = 0; i < GAUGE_KEYS.length; i++) {
+      if ((opp[GAUGE_KEYS[i]] ?? 0) >= GAUGE_THRESHOLD) {
+        activeEl = GAUGE_ELEMENTS[i];
         break;
       }
     }
-    if (activeGauge >= 0) {
-      this.statusOverlay.setFillStyle(ELEMENT_COLORS[activeGauge], 0.3);
+    if (activeEl >= 0) {
+      this.statusOverlay.setFillStyle(ELEMENT_COLORS[activeEl], 0.3);
       this.statusOverlay.setVisible(true);
     } else {
       this.statusOverlay.setVisible(false);

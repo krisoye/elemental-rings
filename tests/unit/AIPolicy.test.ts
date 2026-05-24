@@ -1,25 +1,39 @@
 import { describe, test, expect } from 'vitest';
-import { decideAttack, decideDefense, BoardView } from '../../server/src/game/ai/AIPolicy';
+import {
+  decideAttack,
+  decideDefense,
+  BoardView,
+  AttackSlotView,
+  DefenseSlotView,
+} from '../../server/src/game/ai/AIPolicy';
 import { AI_PROFILES, makeRng } from '../../server/src/game/ai/AIProfiles';
 import { counterOf } from '../../server/src/game/ElementSystem';
+import { ElementEnum } from '../../shared/types';
 
-// ElementEnum: FIRE=0, WATER=1, EARTH=2, WIND=3, WOOD=4
-// counterOf(x) = element that BEATS x (the STRONG counter to an attack of x).
-//   counterOf(FIRE)=WATER, counterOf(WATER)=WIND, counterOf(EARTH)=WOOD,
-//   counterOf(WIND)=EARTH, counterOf(WOOD)=FIRE.
+const { FIRE, WATER, EARTH, WIND, WOOD } = ElementEnum;
 
-/** Full element-indexed hand, all rings fresh and usable. */
-function fullHand() {
-  return [0, 1, 2, 3, 4].map((element) => ({
-    element,
-    currentUses: 3,
-    isExtinguished: false,
-  }));
+function ring(element: number, currentUses = 3, isExtinguished = false) {
+  return { element, currentUses, isExtinguished };
+}
+
+/** Default named-slot board: a1=FIRE, a2=WATER, d1=WOOD, d2=EARTH. */
+function attackSlots(a1 = FIRE, a2 = WATER): AttackSlotView[] {
+  return [
+    { key: 'a1', ring: ring(a1) },
+    { key: 'a2', ring: ring(a2) },
+  ];
+}
+function defenseSlots(d1 = WOOD, d2 = EARTH): DefenseSlotView[] {
+  return [
+    { key: 'd1', ring: ring(d1) },
+    { key: 'd2', ring: ring(d2) },
+  ];
 }
 
 function view(overrides: Partial<BoardView> = {}): BoardView {
   return {
-    hand: fullHand(),
+    attackSlots: attackSlots(),
+    defenseSlots: defenseSlots(),
     hearts: 3,
     incomingElement: -1,
     opponentUsableElements: [],
@@ -28,131 +42,158 @@ function view(overrides: Partial<BoardView> = {}): BoardView {
   };
 }
 
-describe('counterOf (pentagon counters)', () => {
-  test('WATER counters FIRE', () => expect(counterOf(0)).toBe(1));
-  test('WIND counters WATER', () => expect(counterOf(1)).toBe(3));
-  test('WOOD counters EARTH', () => expect(counterOf(2)).toBe(4));
-  test('EARTH counters WIND', () => expect(counterOf(3)).toBe(2));
-  test('FIRE counters WOOD', () => expect(counterOf(4)).toBe(0));
+describe('counterOf (triangle counters)', () => {
+  test('WATER counters FIRE', () => expect(counterOf(FIRE)).toBe(WATER));
+  test('FIRE counters WOOD', () => expect(counterOf(WOOD)).toBe(FIRE));
+  test('WOOD counters WATER', () => expect(counterOf(WATER)).toBe(WOOD));
 });
 
-describe('Aggressive', () => {
-  const profile = AI_PROFILES.AGGRESSIVE;
-
-  test('defense: picks STRONG counter at PARRY timing (offset 0) when available', () => {
-    const d = decideDefense(view({ incomingElement: 0 }), profile, makeRng(1)); // FIRE incoming
-    expect(d.slot).toBe(counterOf(0)); // WATER
-    expect(d.pressOffsetMs).toBe(0); // chases the parry
+describe('decideAttack selects from a1|a2', () => {
+  test('Aggressive: picks an attack the opponent cannot strong-counter', () => {
+    // Opponent holds only WATER (the counter to FIRE). Aggressive should avoid
+    // throwing FIRE (a1) and pick WATER (a2) — WATER's counter is WOOD, not held.
+    const a = decideAttack(view({ opponentUsableElements: [WATER] }), AI_PROFILES.AGGRESSIVE, makeRng(7));
+    expect(['a1', 'a2']).toContain(a.slot);
+    expect(a.slot).toBe('a2'); // WATER attack
   });
 
-  test('defense: when counter ring is exhausted, falls back to a non-WEAK catch (no null)', () => {
-    const hand = fullHand();
-    hand[counterOf(0)] = { element: 1, currentUses: 0, isExtinguished: true }; // WATER gone
-    const d = decideDefense(view({ hand, incomingElement: 0 }), profile, makeRng(1));
-    expect(d.slot).toBeGreaterThanOrEqual(0);
-    expect(d.pressOffsetMs).not.toBeNull(); // Aggressive never deliberately no-blocks
+  test('Defensive: spends the fewest-use attack slot', () => {
+    const v = view({ attackSlots: [{ key: 'a1', ring: ring(FIRE, 1) }, { key: 'a2', ring: ring(WATER, 3) }] });
+    const a = decideAttack(v, AI_PROFILES.DEFENSIVE, makeRng(3));
+    expect(a.slot).toBe('a1'); // fewest uses
   });
 
-  test('attack: throws an element the opponent cannot strong-counter', () => {
-    // Opponent only holds WATER (the counter to FIRE). Aggressive should avoid FIRE.
-    const a = decideAttack(view({ opponentUsableElements: [1] }), profile, makeRng(7));
-    expect(counterOf(a.slot)).not.toBe(1); // chosen element's counter is not held
+  test('STATUS_HUNTER: commits to a triangle element and repeats it', () => {
+    const a1 = decideAttack(view(), AI_PROFILES.STATUS_HUNTER, makeRng(5));
+    expect([FIRE, WATER]).toContain(a1.committedElement); // a triangle element it holds
+    const slotEl = a1.slot === 'a1' ? FIRE : WATER;
+    expect(slotEl).toBe(a1.committedElement);
+
+    // Next turn carries the committed element forward.
+    const a2 = decideAttack(view({ committedElement: a1.committedElement }), AI_PROFILES.STATUS_HUNTER, makeRng(99));
+    expect(a2.committedElement).toBe(a1.committedElement);
+  });
+
+  test('STATUS_HUNTER: re-commits when the committed element is no longer usable', () => {
+    // Committed to FIRE but a1 (FIRE) is extinguished; only WATER (a2) usable.
+    const v = view({
+      attackSlots: [{ key: 'a1', ring: ring(FIRE, 0, true) }, { key: 'a2', ring: ring(WATER, 3) }],
+      committedElement: FIRE,
+    });
+    const a = decideAttack(v, AI_PROFILES.STATUS_HUNTER, makeRng(5));
+    expect(a.slot).toBe('a2');
+    expect(a.committedElement).toBe(WATER);
+  });
+
+  test('RESILIENT healthy: most-uses attack slot', () => {
+    const v = view({ attackSlots: [{ key: 'a1', ring: ring(FIRE, 1) }, { key: 'a2', ring: ring(WATER, 3) }] });
+    const a = decideAttack(v, AI_PROFILES.RESILIENT, makeRng(2));
+    expect(a.slot).toBe('a2'); // most uses
+  });
+
+  test('RESILIENT low-heart: borrows the unparryable Aggressive pick', () => {
+    const a = decideAttack(
+      view({ hearts: 1, opponentUsableElements: [WATER] }),
+      AI_PROFILES.RESILIENT,
+      makeRng(8),
+    );
+    expect(a.slot).toBe('a2'); // avoid FIRE (counter WATER is held)
+  });
+
+  test('fallback: no usable attack slot → a1', () => {
+    const v = view({
+      attackSlots: [{ key: 'a1', ring: ring(FIRE, 0, true) }, { key: 'a2', ring: ring(WATER, 0, true) }],
+    });
+    const a = decideAttack(v, AI_PROFILES.AGGRESSIVE, makeRng(1));
+    expect(a.slot).toBe('a1');
   });
 });
 
-describe('Defensive', () => {
-  const profile = AI_PROFILES.DEFENSIVE;
-
-  test('attack: spends the fewest-use ring first', () => {
-    const hand = fullHand();
-    hand[2].currentUses = 1; // EARTH is lowest
-    const a = decideAttack(view({ hand }), profile, makeRng(3));
-    expect(a.slot).toBe(2);
+describe('decideDefense selects from d1|d2', () => {
+  test('Aggressive: STRONG defense slot at PARRY timing when available', () => {
+    // Incoming WATER; WOOD (d1) beats WATER → STRONG. PARRY timing (offset 0).
+    const d = decideDefense(view({ incomingElement: WATER }), AI_PROFILES.AGGRESSIVE, makeRng(1));
+    expect(d.slot).toBe('d1'); // WOOD
+    expect(d.pressOffsetMs).toBe(0);
   });
 
-  test('defense: picks a NEUTRAL catch (not the STRONG counter) when it does block', () => {
-    // Force "block" branch with a seed whose first draw exceeds noBlockProb (0.3).
-    // mulberry32(seed=2) first next() is deterministic; if it no-blocks, the slot is -1.
-    const d = decideDefense(view({ incomingElement: 0 }), profile, makeRng(2));
-    if (d.pressOffsetMs === null) {
-      expect(d.slot).toBe(-1); // deliberate no-block is a valid Defensive outcome
+  test('Aggressive: no STRONG slot → safe NEUTRAL catch at BLOCK timing', () => {
+    // Incoming FIRE; d1=WOOD (WEAK), d2=EARTH (NEUTRAL). Picks EARTH at BLOCK.
+    const d = decideDefense(view({ incomingElement: FIRE }), AI_PROFILES.AGGRESSIVE, makeRng(1));
+    expect(d.slot).toBe('d2'); // EARTH neutral
+    expect(d.pressOffsetMs).toBe(190);
+  });
+
+  test('Earth defense is always a safe NEUTRAL catch (never WEAK)', () => {
+    // Whatever the incoming triangle element, EARTH (d2) is a valid neutral catch.
+    const d = decideDefense(view({ incomingElement: WOOD }), AI_PROFILES.AGGRESSIVE, makeRng(1));
+    // WOOD incoming: d1=WOOD NEUTRAL (same), d2=EARTH NEUTRAL. No STRONG → neutral catch.
+    expect(['d1', 'd2']).toContain(d.slot);
+    expect(d.pressOffsetMs).toBe(190);
+  });
+
+  test('avoids WIND defense (always WEAK)', () => {
+    // d1=WIND (WEAK), d2=EARTH (NEUTRAL). Must pick EARTH.
+    const v = view({ defenseSlots: defenseSlots(WIND, EARTH), incomingElement: FIRE });
+    const d = decideDefense(v, AI_PROFILES.AGGRESSIVE, makeRng(1));
+    expect(d.slot).toBe('d2'); // EARTH, not WIND
+  });
+
+  test('Defensive: never the STRONG slot when it catches (reserves rally), uses BLOCK timing', () => {
+    const d = decideDefense(view({ incomingElement: WATER }), AI_PROFILES.DEFENSIVE, makeRng(2));
+    if (d.slot === null) {
+      expect(d.pressOffsetMs).toBeNull(); // deliberate no-block is valid for Defensive
     } else {
-      expect(d.slot).not.toBe(counterOf(0)); // reserves the STRONG ring
-      expect(d.pressOffsetMs).toBe(190); // BLOCK timing, not parry
+      // WOOD (d1) is STRONG vs WATER; Defensive should take the NEUTRAL EARTH (d2).
+      expect(d.slot).toBe('d2');
+      expect(d.pressOffsetMs).toBe(190);
     }
   });
 
-  test('defense: sometimes deliberately no-blocks across seeds', () => {
+  test('Defensive: sometimes deliberately no-blocks across seeds', () => {
     let noBlocks = 0;
     for (let s = 0; s < 200; s++) {
-      const d = decideDefense(view({ incomingElement: 0 }), profile, makeRng(s));
-      if (d.pressOffsetMs === null) noBlocks++;
+      const d = decideDefense(view({ incomingElement: FIRE }), AI_PROFILES.DEFENSIVE, makeRng(s));
+      if (d.slot === null) noBlocks++;
     }
-    expect(noBlocks).toBeGreaterThan(0); // ~30% expected
+    expect(noBlocks).toBeGreaterThan(0);
     expect(noBlocks).toBeLessThan(200);
   });
-});
 
-describe('Status-hunter', () => {
-  const profile = AI_PROFILES.STATUS_HUNTER;
-
-  test('attack: commits to one element and repeats it across turns', () => {
-    const a1 = decideAttack(view(), profile, makeRng(5));
-    const committed = a1.committedElement;
-    expect(a1.slot).toBe(committed);
-    // Next turn carries the committed element forward.
-    const a2 = decideAttack(view({ committedElement: committed }), profile, makeRng(99));
-    expect(a2.slot).toBe(committed);
-    expect(a2.committedElement).toBe(committed);
-  });
-
-  test('attack: re-commits when the committed element is extinguished', () => {
-    const committed = 2; // EARTH
-    const hand = fullHand();
-    hand[committed] = { element: committed, currentUses: 0, isExtinguished: true };
-    const a = decideAttack(view({ hand, committedElement: committed }), profile, makeRng(5));
-    expect(a.slot).not.toBe(committed);
-    expect(a.committedElement).toBe(a.slot);
+  test('no usable defense slot → deliberate no-block', () => {
+    const v = view({
+      defenseSlots: [{ key: 'd1', ring: ring(WOOD, 0, true) }, { key: 'd2', ring: ring(EARTH, 0, true) }],
+      incomingElement: FIRE,
+    });
+    const d = decideDefense(v, AI_PROFILES.AGGRESSIVE, makeRng(1));
+    expect(d.slot).toBeNull();
+    expect(d.pressOffsetMs).toBeNull();
   });
 });
 
-describe('Resilient sharpens at low hearts', () => {
-  const profile = AI_PROFILES.RESILIENT;
-
-  test('healthy: frequently no-blocks; low-heart: defends sharply (never null) vs a counterable attack', () => {
-    // Healthy (3 hearts): a counterable attack still often results in no-block (noBlockProb 0.4).
+describe('RESILIENT sharpens at low hearts', () => {
+  test('healthy frequently no-blocks; low-heart commits the STRONG slot', () => {
     let healthyNoBlocks = 0;
     for (let s = 0; s < 200; s++) {
-      const d = decideDefense(view({ incomingElement: 0, hearts: 3 }), profile, makeRng(s));
-      if (d.pressOffsetMs === null) healthyNoBlocks++;
+      const d = decideDefense(view({ incomingElement: WATER, hearts: 3 }), AI_PROFILES.RESILIENT, makeRng(s));
+      if (d.slot === null) healthyNoBlocks++;
     }
     expect(healthyNoBlocks).toBeGreaterThan(0);
 
-    // Low (1 heart): lowHeartNoBlockProb=0; always commits the STRONG counter.
     for (let s = 0; s < 50; s++) {
-      const d = decideDefense(view({ incomingElement: 0, hearts: 1 }), profile, makeRng(s));
-      expect(d.pressOffsetMs).not.toBeNull();
-      expect(d.slot).toBe(counterOf(0)); // WATER — sharp strong-parry
+      const d = decideDefense(view({ incomingElement: WATER, hearts: 1 }), AI_PROFILES.RESILIENT, makeRng(s));
+      expect(d.slot).toBe('d1'); // WOOD — STRONG parry vs WATER
+      expect(d.pressOffsetMs).toBe(0);
     }
-  });
-
-  test('low-heart attack borrows the unparryable Aggressive pick', () => {
-    // Opponent holds only WATER (counter to FIRE). Low-heart Resilient should
-    // avoid throwing FIRE, like Aggressive.
-    const a = decideAttack(view({ hearts: 1, opponentUsableElements: [1] }), profile, makeRng(8));
-    expect(counterOf(a.slot)).not.toBe(1);
   });
 });
 
 describe('determinism', () => {
-  test('same seed -> identical attack and defense decisions', () => {
+  test('same seed → identical attack and defense decisions', () => {
     const p = AI_PROFILES.DEFENSIVE;
-    const a1 = decideAttack(view(), p, makeRng(42));
-    const a2 = decideAttack(view(), p, makeRng(42));
-    expect(a1).toEqual(a2);
-
-    const d1 = decideDefense(view({ incomingElement: 0 }), p, makeRng(42));
-    const d2 = decideDefense(view({ incomingElement: 0 }), p, makeRng(42));
-    expect(d1).toEqual(d2);
+    expect(decideAttack(view(), p, makeRng(42))).toEqual(decideAttack(view(), p, makeRng(42)));
+    expect(decideDefense(view({ incomingElement: FIRE }), p, makeRng(42))).toEqual(
+      decideDefense(view({ incomingElement: FIRE }), p, makeRng(42)),
+    );
   });
 });

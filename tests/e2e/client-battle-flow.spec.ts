@@ -35,19 +35,19 @@ async function lastResult(page: Page): Promise<any> {
   return page.evaluate(() => (window as any).__lastExchangeResult);
 }
 
-test('scenario 2: attacker selects slot 0 -> DEFEND_WINDOW', async ({ browser }) => {
+test('scenario 2: attacker presses A1 (key 1) -> DEFEND_WINDOW, attackerSlot=a1', async ({ browser }) => {
   const h = await setupBattle(browser);
   const { attacker } = await attackerDefender(h.p1, h.p2);
 
-  await attacker.keyboard.press('1');
+  await attacker.keyboard.press('1'); // A1 = FIRE
 
   await waitForDefendWindow(attacker);
   const [phase, slot, result] = await attacker.evaluate(() => {
     const s = (window as any).__room.state;
-    return [s.phase, s.attackerSelectedSlot, (window as any).__lastExchangeResult];
+    return [s.phase, s.attackerSlot, (window as any).__lastExchangeResult];
   });
   expect(phase).toBe('DEFEND_WINDOW');
-  expect(slot).toBe(0);
+  expect(slot).toBe('a1');
   expect(result).toBeNull();
 
   await closeBattle(h);
@@ -57,10 +57,10 @@ test('scenario 3: BLOCK + NEUTRAL costs a use, no heart', async ({ browser }) =>
   const h = await setupBattle(browser);
   const { attacker, defender } = await attackerDefender(h.p1, h.p2);
 
-  await attacker.keyboard.press('1'); // FIRE
+  await attacker.keyboard.press('1'); // A1 = FIRE
   await waitForDefendWindow(defender);
   await defender.waitForTimeout(BLOCK_SLEEP_MS);
-  await defender.keyboard.press('1'); // FIRE vs FIRE = NEUTRAL
+  await defender.keyboard.press('4'); // D2 = EARTH — always NEUTRAL
 
   await waitForExchangeResult(defender);
   const result = await lastResult(defender);
@@ -69,9 +69,9 @@ test('scenario 3: BLOCK + NEUTRAL costs a use, no heart', async ({ browser }) =>
   expect(result.defenderHeartLost).toBe(false);
 
   // Wait for the use decrement diff to apply, then confirm no heart was lost.
-  await waitForMyRingUses(defender, 0, 2);
+  await waitForMyRingUses(defender, 'd2', 2);
   const me = await readMe(defender);
-  expect(me.hand[0].currentUses).toBe(2);
+  expect(me.d2.currentUses).toBe(2);
   expect(me.hearts).toBe(3);
 
   await closeBattle(h);
@@ -81,10 +81,10 @@ test('scenario 4: BLOCK + WEAK loses a heart', async ({ browser }) => {
   const h = await setupBattle(browser);
   const { attacker, defender } = await attackerDefender(h.p1, h.p2);
 
-  await attacker.keyboard.press('1'); // FIRE
+  await attacker.keyboard.press('1'); // A1 = FIRE
   await waitForDefendWindow(defender);
   await defender.waitForTimeout(BLOCK_SLEEP_MS);
-  await defender.keyboard.press('5'); // WOOD — FIRE beats WOOD => WEAK
+  await defender.keyboard.press('3'); // D1 = WOOD — FIRE beats WOOD => WEAK
 
   await waitForExchangeResult(defender);
   const result = await lastResult(defender);
@@ -94,10 +94,10 @@ test('scenario 4: BLOCK + WEAK loses a heart', async ({ browser }) => {
 
   // Wait for the heart-loss diff to apply before asserting on state.
   await waitForMyHearts(defender, 2);
-  await waitForMyRingUses(defender, 4, 2);
+  await waitForMyRingUses(defender, 'd1', 2);
   const me = await readMe(defender);
   expect(me.hearts).toBe(2);
-  expect(me.hand[4].currentUses).toBe(2); // WOOD ring
+  expect(me.d1.currentUses).toBe(2); // WOOD ring
 
   await closeBattle(h);
 });
@@ -174,10 +174,9 @@ test('scenario 6: uncontested FIRE attacks score a KO', async ({ browser }) => {
 });
 
 test('scenario 8: PARRY+STRONG triggers rally and fires return orb', async ({ browser }) => {
-  // FIRE(0) attack, WATER(1) defense in PARRY timing → STRONG → rally.
+  // WATER(a2) attack, WOOD(d1) defense in PARRY timing → STRONG → rally.
   // Verifies: rallyContinues=true in exchangeResult, attacker is now rally-defender
   // (sees DEFEND! banner), and the return orb fires (__orbLaunchCount === 2).
-  // Depends on fix/rally-orb-visual (DEFEND_WINDOW→DEFEND_WINDOW detection).
   const h = await setupBattle(browser);
   const { attacker, defender } = await attackerDefender(h.p1, h.p2);
 
@@ -185,14 +184,14 @@ test('scenario 8: PARRY+STRONG triggers rally and fires return orb', async ({ br
   await attacker.evaluate(() => { (window as any).__orbLaunchCount = 0; });
   await defender.evaluate(() => { (window as any).__orbLaunchCount = 0; });
 
-  // Attacker throws FIRE (slot 0 = key '1')
-  await attacker.keyboard.press('1');
+  // Attacker throws WATER (A2 = key '2')
+  await attacker.keyboard.press('2');
 
-  // Defender waits for DEFEND_WINDOW then presses WATER (slot 1 = key '2')
-  // at ~880ms — just before impact (900ms), inside ±175ms parry window.
+  // Defender waits for DEFEND_WINDOW then presses WOOD (D1 = key '3') at ~880ms —
+  // just before impact (900ms), inside the parry window. WOOD beats WATER → STRONG.
   await waitForDefendWindow(defender);
   await defender.waitForTimeout(880);
-  await defender.keyboard.press('2'); // WATER
+  await defender.keyboard.press('3'); // WOOD
 
   // Wait for exchangeResult to confirm rallyContinues
   await waitForExchangeResult(defender);

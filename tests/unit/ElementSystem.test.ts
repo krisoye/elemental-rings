@@ -1,49 +1,163 @@
 import { describe, test, expect } from 'vitest';
-import { resolve, relationship } from '../../server/src/game/ElementSystem';
+import {
+  resolve,
+  counterOf,
+  isFusion,
+  fusionParents,
+  componentsOf,
+  triangleComponentsOf,
+} from '../../server/src/game/ElementSystem';
+import { ElementEnum } from '../../shared/types';
 
-// ElementEnum: FIRE=0, WATER=1, EARTH=2, WIND=3, WOOD=4
-// BEATS: FIRE>WOOD, WATER>FIRE, EARTH>WIND, WIND>WATER, WOOD>EARTH
+const { FIRE, WATER, EARTH, WIND, WOOD } = ElementEnum;
+const {
+  STEAM,
+  WILDFIRE,
+  INFERNO,
+  MAGMA,
+  TIDAL,
+  STORM,
+  MUD,
+  THORNADO,
+  BLOOM,
+  DUST,
+} = ElementEnum;
 
-describe('ElementSystem.resolve', () => {
-  test('FIRE beats WOOD', () => expect(resolve(0, 4)).toBe(1));
-  test('WATER beats FIRE', () => expect(resolve(1, 0)).toBe(1));
-  test('EARTH beats WIND', () => expect(resolve(2, 3)).toBe(1));
-  test('WIND beats WATER', () => expect(resolve(3, 1)).toBe(1));
-  test('WOOD beats EARTH', () => expect(resolve(4, 2)).toBe(1));
+const BASE = [FIRE, WATER, EARTH, WIND, WOOD];
+const NAME: Record<number, string> = {
+  [FIRE]: 'FIRE',
+  [WATER]: 'WATER',
+  [EARTH]: 'EARTH',
+  [WIND]: 'WIND',
+  [WOOD]: 'WOOD',
+};
 
-  test('WOOD loses to FIRE', () => expect(resolve(4, 0)).toBe(-1));
-  test('FIRE loses to WATER', () => expect(resolve(0, 1)).toBe(-1));
-  test('WIND loses to EARTH', () => expect(resolve(3, 2)).toBe(-1));
-  test('WATER loses to WIND', () => expect(resolve(1, 3)).toBe(-1));
-  test('EARTH loses to WOOD', () => expect(resolve(2, 4)).toBe(-1));
+// Triangle cycle: Fire→Wood→Water→Fire. beats[a] = the element a defeats.
+const beats: Record<number, number> = { [FIRE]: WOOD, [WOOD]: WATER, [WATER]: FIRE };
+const isTri = (e: number): boolean => e === FIRE || e === WATER || e === WOOD;
 
-  test('FIRE vs FIRE = neutral', () => expect(resolve(0, 0)).toBe(0));
-  test('WATER vs WATER = neutral', () => expect(resolve(1, 1)).toBe(0));
-  test('EARTH vs EARTH = neutral', () => expect(resolve(2, 2)).toBe(0));
-  test('WIND vs WIND = neutral', () => expect(resolve(3, 3)).toBe(0));
-  test('WOOD vs WOOD = neutral', () => expect(resolve(4, 4)).toBe(0));
+/** Reference defender-standing (the Block Resolution Table input). */
+function expectedDefense(att: number, def: number): 'STRONG' | 'NEUTRAL' | 'WEAK' {
+  if (def === WIND) return 'WEAK';
+  if (def === EARTH) return 'NEUTRAL';
+  if (isTri(def)) {
+    if (att === WIND || att === EARTH) return 'NEUTRAL';
+    if (isTri(att)) {
+      if (beats[def] === att) return 'STRONG';
+      if (beats[att] === def) return 'WEAK';
+      return 'NEUTRAL';
+    }
+  }
+  return 'NEUTRAL';
+}
 
-  // Cross-element non-adjacent neutrals (elements that don't beat each other)
-  test('FIRE vs EARTH = neutral', () => expect(resolve(0, 2)).toBe(0));
-  test('FIRE vs WIND = neutral', () => expect(resolve(0, 3)).toBe(0));
-  test('WATER vs EARTH = neutral', () => expect(resolve(1, 2)).toBe(0));
-  test('WATER vs WOOD = neutral', () => expect(resolve(1, 4)).toBe(0));
-  test('EARTH vs FIRE = neutral', () => expect(resolve(2, 0)).toBe(0));
-  test('WIND vs FIRE = neutral', () => expect(resolve(3, 0)).toBe(0));
-  test('WIND vs EARTH = neutral', () => expect(resolve(3, 2)).toBe(-1)); // EARTH beats WIND
-  test('WOOD vs WATER = neutral', () => expect(resolve(4, 1)).toBe(0));
-  test('WOOD vs WIND = neutral', () => expect(resolve(4, 3)).toBe(0));
+/** Reference attacker-standing (mirror). */
+function expectedAttack(att: number, def: number): 'STRONG' | 'NEUTRAL' | 'WEAK' {
+  if (att === WIND) return 'NEUTRAL';
+  if (att === EARTH) return 'WEAK';
+  if (isTri(att)) {
+    if (def === WIND) return 'STRONG';
+    if (def === EARTH) return 'NEUTRAL';
+    if (isTri(def)) {
+      if (beats[att] === def) return 'STRONG';
+      if (beats[def] === att) return 'WEAK';
+      return 'NEUTRAL';
+    }
+  }
+  return 'NEUTRAL';
+}
+
+describe('resolve — full 5x5 base truth table, both roles', () => {
+  for (const att of BASE) {
+    for (const def of BASE) {
+      test(`defense: ${NAME[att]} attack vs ${NAME[def]} defense`, () => {
+        expect(resolve(att, def, 'defense')).toBe(expectedDefense(att, def));
+      });
+      test(`attack: ${NAME[att]} attack vs ${NAME[def]} defense`, () => {
+        expect(resolve(att, def, 'attack')).toBe(expectedAttack(att, def));
+      });
+    }
+  }
 });
 
-describe('ElementSystem.relationship', () => {
-  // relationship(attackerEl, defenderEl) from defender's perspective
-  // STRONG means defender's element beats attacker's element
-  test('WATER defender vs FIRE attacker = STRONG', () => expect(relationship(0, 1)).toBe('STRONG'));
-  test('FIRE defender vs WATER attacker = WEAK', () => expect(relationship(1, 0)).toBe('WEAK'));
-  test('FIRE vs FIRE = NEUTRAL', () => expect(relationship(0, 0)).toBe('NEUTRAL'));
-  test('FIRE attacker vs WOOD defender = WEAK (defender WOOD loses to attacker FIRE)', () => expect(relationship(0, 4)).toBe('WEAK'));
-  test('WOOD defender vs FIRE attacker = STRONG? No: FIRE beats WOOD, defender is WEAK', () => {
-    // attacker=FIRE(0), defender=WOOD(4). FIRE beats WOOD → WEAK for defender
-    expect(relationship(0, 4)).toBe('WEAK');
+describe('resolve — triangle cycle (Fire→Wood→Water→Fire)', () => {
+  // Defense role: defender beats attacker → STRONG.
+  test('WATER defends FIRE → STRONG (Water beats Fire)', () =>
+    expect(resolve(FIRE, WATER, 'defense')).toBe('STRONG'));
+  test('FIRE defends WOOD → STRONG (Fire beats Wood)', () =>
+    expect(resolve(WOOD, FIRE, 'defense')).toBe('STRONG'));
+  test('WOOD defends WATER → STRONG (Wood beats Water)', () =>
+    expect(resolve(WATER, WOOD, 'defense')).toBe('STRONG'));
+  // Inverse → WEAK.
+  test('FIRE defends WATER → WEAK', () => expect(resolve(WATER, FIRE, 'defense')).toBe('WEAK'));
+  test('WOOD defends FIRE → WEAK', () => expect(resolve(FIRE, WOOD, 'defense')).toBe('WEAK'));
+  test('WATER defends WOOD → WEAK', () => expect(resolve(WOOD, WATER, 'defense')).toBe('WEAK'));
+  // Same element → NEUTRAL.
+  test('FIRE vs FIRE → NEUTRAL', () => expect(resolve(FIRE, FIRE, 'defense')).toBe('NEUTRAL'));
+});
+
+describe('resolve — Wind/Earth asymmetry', () => {
+  test('Wind attack is always NEUTRAL (vs every defender)', () => {
+    for (const def of BASE) expect(resolve(WIND, def, 'attack')).toBe('NEUTRAL');
   });
+  test('Wind defense is always WEAK (vs every attacker)', () => {
+    for (const att of BASE) expect(resolve(att, WIND, 'defense')).toBe('WEAK');
+  });
+  test('Earth attack is always WEAK (vs every defender)', () => {
+    for (const def of BASE) expect(resolve(EARTH, def, 'attack')).toBe('WEAK');
+  });
+  test('Earth defense is always NEUTRAL (vs every attacker)', () => {
+    for (const att of BASE) expect(resolve(att, EARTH, 'defense')).toBe('NEUTRAL');
+  });
+  test('Wind/Earth attacker carries no triangle threat for a triangle defender', () => {
+    expect(resolve(WIND, FIRE, 'defense')).toBe('NEUTRAL');
+    expect(resolve(EARTH, WATER, 'defense')).toBe('NEUTRAL');
+    expect(resolve(WIND, WOOD, 'defense')).toBe('NEUTRAL');
+  });
+});
+
+describe('counterOf — triangle counters only', () => {
+  test('WATER counters FIRE', () => expect(counterOf(FIRE)).toBe(WATER));
+  test('FIRE counters WOOD', () => expect(counterOf(WOOD)).toBe(FIRE));
+  test('WOOD counters WATER', () => expect(counterOf(WATER)).toBe(WOOD));
+  test('WIND has no single counter → -1', () => expect(counterOf(WIND)).toBe(-1));
+  test('EARTH has no single counter → -1', () => expect(counterOf(EARTH)).toBe(-1));
+  test('fusions have no single counter → -1', () => {
+    expect(counterOf(STEAM)).toBe(-1);
+    expect(counterOf(DUST)).toBe(-1);
+  });
+});
+
+describe('fusion helpers', () => {
+  test('isFusion: base elements are not fusions', () => {
+    for (const e of BASE) expect(isFusion(e)).toBe(false);
+  });
+  test('isFusion: all 10 fusions are fusions', () => {
+    for (const e of [STEAM, WILDFIRE, INFERNO, MAGMA, TIDAL, STORM, MUD, THORNADO, BLOOM, DUST]) {
+      expect(isFusion(e)).toBe(true);
+    }
+  });
+
+  test('fusionParents: base → null', () => expect(fusionParents(FIRE)).toBeNull());
+  test('fusionParents: STEAM → [FIRE, WATER] (first is tiebreak winner)', () =>
+    expect(fusionParents(STEAM)).toEqual([FIRE, WATER]));
+  test('fusionParents: DUST → [WIND, EARTH]', () =>
+    expect(fusionParents(DUST)).toEqual([WIND, EARTH]));
+  test('fusionParents: BLOOM (Nature) → [WOOD, EARTH]', () =>
+    expect(fusionParents(BLOOM)).toEqual([WOOD, EARTH]));
+
+  test('componentsOf: base → [self]', () => expect(componentsOf(FIRE)).toEqual([FIRE]));
+  test('componentsOf: fusion → its 2 parents', () =>
+    expect(componentsOf(TIDAL)).toEqual([WATER, WOOD]));
+
+  test('triangleComponentsOf: dual-triangle fusion → both parents', () =>
+    expect(triangleComponentsOf(TIDAL)).toEqual([WATER, WOOD]));
+  test('triangleComponentsOf: mixed fusion → only the triangle component', () =>
+    expect(triangleComponentsOf(STORM)).toEqual([WATER]));
+  test('triangleComponentsOf: pure-neutral fusion → []', () =>
+    expect(triangleComponentsOf(DUST)).toEqual([]));
+  test('triangleComponentsOf: base triangle → [self]', () =>
+    expect(triangleComponentsOf(WOOD)).toEqual([WOOD]));
+  test('triangleComponentsOf: base neutral → []', () =>
+    expect(triangleComponentsOf(WIND)).toEqual([]));
 });
