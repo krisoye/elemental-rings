@@ -115,23 +115,7 @@ Also available: animations, audio-and-sound, cameras, particles, physics-arcade,
 
 ## Key Game Constants
 
-| Constant | Value | Meaning |
-|---|---|---|
-| `TELEGRAPH_MS` | 900 | Orb travel time (ms) = impact offset from attack commit |
-| `BLOCK_WINDOW_MS` | 200 | Valid block window around impact (±200ms) |
-| `PARRY_WINDOW_MS` | 175 | Tight inner window for PARRY (±175ms) |
-| `STARTING_HEARTS` | 3 | Hearts per player per duel |
-
-**Defend window = TELEGRAPH_MS + BLOCK_WINDOW_MS = 1100ms** (extends past impact to allow post-arrival presses).
-
-## Element Pentagon
-
-```
-FIRE(0) > WOOD(4) > EARTH(2) > WIND(3) > WATER(1) > FIRE
-BEATS = [4, 0, 3, 1, 2]   // BEATS[x] = element x defeats
-```
-
-Each player uses keys 1–5 → slots 0–4 in their own browser window.
+Canonical values are in `server/src/game/constants.ts`. Quick reference for elements and matchups: `docs/gdd-03-element-system.md`.
 
 ---
 
@@ -162,15 +146,3 @@ Server runs as a systemd service on game-da-god (192.168.4.140). Any LAN device 
 ## Build Phases
 
 Tracked in pinned [Issue #14](https://github.com/krisoye/elemental-rings/issues/14).
-
-| Phase | Description | Status |
-|---|---|---|
-| 1 | Colyseus BattleRoom — all battle logic, no client | ✅ #3 |
-| 2 | Phaser 4 client — orb, hand UI, HUD, keyboard+touch | ✅ #10 |
-| 3 | NPC AI — server-side bot in same BattleRoom | — |
-| 4 | Ring inventory + persistent player state | — |
-| 5 | Staking economy | — |
-| 6 | Status effects (gauge system) | — |
-| 7 | Fusion system | — |
-| 8 | Overworld | — |
-| 9 | Capacitor (mobile) + Electron (Steam) | — |
