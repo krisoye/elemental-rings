@@ -20,7 +20,7 @@ export const GAUGE_THRESHOLD = 4;
 // Used only to animate the orb so the visual impact lines up with the server's
 // authoritative window. The server, not the client, decides BLOCK vs PARRY.
 export const TELEGRAPH_MS = 900;
-export const BLOCK_WINDOW_MS = 180;
+export const BLOCK_WINDOW_MS = 200;
 
 // Layout
 export const CANVAS_W = 1024;
