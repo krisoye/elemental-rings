@@ -173,6 +173,51 @@ test('scenario 6: uncontested FIRE attacks score a KO', async ({ browser }) => {
   await closeBattle(h);
 });
 
+test('scenario 8: PARRY+STRONG triggers rally and fires return orb', async ({ browser }) => {
+  // FIRE(0) attack, WATER(1) defense in PARRY timing → STRONG → rally.
+  // Verifies: rallyContinues=true in exchangeResult, attacker is now rally-defender
+  // (sees DEFEND! banner), and the return orb fires (__orbLaunchCount === 2).
+  // Depends on fix/rally-orb-visual (DEFEND_WINDOW→DEFEND_WINDOW detection).
+  const h = await setupBattle(browser);
+  const { attacker, defender } = await attackerDefender(h.p1, h.p2);
+
+  // Reset orb count on both pages for clean measurement
+  await attacker.evaluate(() => { (window as any).__orbLaunchCount = 0; });
+  await defender.evaluate(() => { (window as any).__orbLaunchCount = 0; });
+
+  // Attacker throws FIRE (slot 0 = key '1')
+  await attacker.keyboard.press('1');
+
+  // Defender waits for DEFEND_WINDOW then presses WATER (slot 1 = key '2')
+  // at ~880ms — just before impact (900ms), inside ±175ms parry window.
+  await waitForDefendWindow(defender);
+  await defender.waitForTimeout(880);
+  await defender.keyboard.press('2'); // WATER
+
+  // Wait for exchangeResult to confirm rallyContinues
+  await waitForExchangeResult(defender);
+  const result = await defender.evaluate(() => (window as any).__lastExchangeResult);
+  expect(result.rallyContinues).toBe(true);
+  expect(result.relationship).toBe('STRONG');
+
+  // Original attacker should now be the rally-defender — phase DEFEND_WINDOW
+  await attacker.waitForFunction(
+    () => (window as any).__room?.state?.phase === 'DEFEND_WINDOW',
+    { timeout: 5000 },
+  );
+  const rallyActive = await attacker.evaluate(
+    () => (window as any).__room?.state?.rallyActive,
+  );
+  expect(rallyActive).toBe(true);
+
+  // Two orbs should have launched on the attacker's screen:
+  // 1st = their original FIRE throw, 2nd = WATER volley coming back
+  const orbCount = await attacker.evaluate(() => (window as any).__orbLaunchCount);
+  expect(orbCount).toBe(2);
+
+  await closeBattle(h);
+});
+
 test('scenario 7: opponent attack reveals their element to the defender', async ({ browser }) => {
   const h = await setupBattle(browser);
   const { attacker, defender } = await attackerDefender(h.p1, h.p2);

@@ -323,6 +323,92 @@ describe('Scenario 9: BLOCK + STRONG -> no heart, no gauge', () => {
   });
 });
 
+describe('Scenario 11: full pentagon rally chain — 5 STRONG parries then NO_BLOCK', () => {
+  /**
+   * Walks the complete element pentagon via STRONG parries:
+   *   P1 throws FIRE → P2 parries WATER → P1 parries WIND → P2 parries EARTH
+   *   → P1 parries WOOD → P2 parries FIRE → P1 NO_BLOCK (heart + gauge)
+   *
+   * Verifies:
+   *   - No hearts lost across all 5 parry steps
+   *   - Each parry costs exactly 1 use on the parrying ring
+   *   - gaugeIncreases=false on every caught exchange (gauge only moves on final NO_BLOCK)
+   *   - rallyActive and volleyedElement update correctly at each step
+   *   - After NO_BLOCK termination: P1 loses 1 heart, P1.fireGauge=1, phase=ATTACK_SELECT
+   */
+  test('FIRE→WATER→WIND→EARTH→WOOD→FIRE pentagon chain terminates on NO_BLOCK', async () => {
+    const { room, c1, c2 } = await joinBattle();
+    const p1 = attackerClient(room, c1, c2); // original attacker
+    const p2 = defenderClient(room, c1, c2);
+    const p1Id = p1.sessionId;
+    const p2Id = p2.sessionId;
+
+    // ── Step 1: P1 throws FIRE(0); P2 parries WATER(1) → STRONG ──────────
+    p1.send('selectAttack', { slot: 0 }); // FIRE, P1.FIRE: 3→2
+    await room.waitForNextPatch(); // DEFEND_WINDOW
+    await pressDefenseAt(room, p2, 1, 0); // WATER parry; P2.WATER: 3→2
+    expect(room.state.rallyActive).toBe(true);
+    expect(room.state.volleyedElement).toBe(1); // WATER volley
+    expect(room.state.currentAttackerId).toBe(p2Id);
+    expect(room.state.players.get(p1Id).hearts).toBe(3);
+    expect(room.state.players.get(p2Id).hearts).toBe(3);
+    expect(room.state.players.get(p1Id).hand[0].currentUses).toBe(2); // FIRE threw
+    expect(room.state.players.get(p2Id).hand[1].currentUses).toBe(2); // WATER parried
+    expect(room.state.players.get(p1Id).fireGauge).toBe(0); // caught, no gauge
+    expect(room.state.players.get(p2Id).fireGauge).toBe(0);
+
+    // ── Step 2: P2 volleys WATER; P1 parries WIND(3) → STRONG ────────────
+    await pressDefenseAt(room, p1, 3, 0); // WIND parry; P1.WIND: 3→2
+    expect(room.state.rallyActive).toBe(true);
+    expect(room.state.volleyedElement).toBe(3); // WIND volley
+    expect(room.state.currentAttackerId).toBe(p1Id);
+    expect(room.state.players.get(p1Id).hand[3].currentUses).toBe(2); // WIND parried
+    expect(room.state.players.get(p1Id).waterGauge).toBe(0);
+    expect(room.state.players.get(p2Id).waterGauge).toBe(0);
+    for (const p of room.state.players.values()) expect((p as any).hearts).toBe(3);
+
+    // ── Step 3: P1 volleys WIND; P2 parries EARTH(2) → STRONG ────────────
+    await pressDefenseAt(room, p2, 2, 0); // EARTH parry; P2.EARTH: 3→2
+    expect(room.state.rallyActive).toBe(true);
+    expect(room.state.volleyedElement).toBe(2); // EARTH volley
+    expect(room.state.currentAttackerId).toBe(p2Id);
+    expect(room.state.players.get(p2Id).hand[2].currentUses).toBe(2); // EARTH parried
+    expect(room.state.players.get(p1Id).windGauge).toBe(0);
+    for (const p of room.state.players.values()) expect((p as any).hearts).toBe(3);
+
+    // ── Step 4: P2 volleys EARTH; P1 parries WOOD(4) → STRONG ────────────
+    await pressDefenseAt(room, p1, 4, 0); // WOOD parry; P1.WOOD: 3→2
+    expect(room.state.rallyActive).toBe(true);
+    expect(room.state.volleyedElement).toBe(4); // WOOD volley
+    expect(room.state.currentAttackerId).toBe(p1Id);
+    expect(room.state.players.get(p1Id).hand[4].currentUses).toBe(2); // WOOD parried
+    expect(room.state.players.get(p2Id).earthGauge).toBe(0);
+    for (const p of room.state.players.values()) expect((p as any).hearts).toBe(3);
+
+    // ── Step 5: P1 volleys WOOD; P2 parries FIRE(0) → STRONG ─────────────
+    await pressDefenseAt(room, p2, 0, 0); // FIRE parry; P2.FIRE: 3→2
+    expect(room.state.rallyActive).toBe(true);
+    expect(room.state.volleyedElement).toBe(0); // FIRE volley — full pentagon cycle
+    expect(room.state.currentAttackerId).toBe(p2Id);
+    expect(room.state.players.get(p2Id).hand[0].currentUses).toBe(2); // FIRE parried
+    expect(room.state.players.get(p1Id).woodGauge).toBe(0);
+    for (const p of room.state.players.values()) expect((p as any).hearts).toBe(3);
+
+    // ── Step 6: P2 volleys FIRE; P1 NO_BLOCK → rally ends ────────────────
+    await waitForResolve(); // P1 doesn't press; window expires
+    expect(room.state.phase).toBe('ATTACK_SELECT');
+    expect(room.state.rallyActive).toBe(false);
+    // P1 (rally-defender) loses 1 heart from the uncontested FIRE hit
+    expect(room.state.players.get(p1Id).hearts).toBe(2);
+    expect(room.state.players.get(p2Id).hearts).toBe(3);
+    // P1's fireGauge fills because FIRE landed uncontested
+    expect(room.state.players.get(p1Id).fireGauge).toBe(1);
+    expect(room.state.players.get(p2Id).fireGauge).toBe(0);
+    // Role swap: P1 becomes next attacker
+    expect(room.state.currentAttackerId).toBe(p1Id);
+  });
+});
+
 describe('Scenario 10: PARRY + WEAK -> heart lost, no gauge, no rally', () => {
   test('FIRE attack, WOOD defense at PARRY timing: heart lost, use decremented, no gauge, no rally', async () => {
     const { room, c1, c2 } = await joinBattle();
