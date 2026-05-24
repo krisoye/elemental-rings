@@ -10,13 +10,14 @@ export default defineConfig({
   },
   webServer: [
     {
-      command: 'cd server && npm run dev',
-      port: 2567,
-      reuseExistingServer: true,
+      // Use port 2568 so prod server on 2567 doesn't interfere
+      command: 'cd server && PORT=2568 npm run dev',
+      port: 2568,
+      reuseExistingServer: false,
       timeout: 15000,
     },
     {
-      command: 'cd client && npm run dev',
+      command: 'VITE_SERVER_URL=ws://localhost:2568 cd client && npm run dev',
       port: 8080,
       reuseExistingServer: true,
       timeout: 20000,
