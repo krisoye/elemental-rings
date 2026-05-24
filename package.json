@@ -7,11 +7,14 @@
   ],
   "scripts": {
     "dev:server": "cd server && npm run dev",
+    "dev:client": "cd client && npm run dev",
     "test": "cd server && npx vitest run",
     "test:unit": "cd server && npx vitest run ../tests/unit",
-    "test:integration": "cd server && npx vitest run ../tests/integration"
+    "test:integration": "cd server && npx vitest run ../tests/integration",
+    "test:e2e": "npx playwright test"
   },
   "devDependencies": {
+    "@playwright/test": "^1.44.0",
     "typescript": "^5.5.0"
   }
 }

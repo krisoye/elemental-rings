@@ -1,7 +1,25 @@
 export enum ElementEnum { FIRE=0, WATER=1, EARTH=2, WIND=3, WOOD=4 }
 export type PhaseType = 'WAITING'|'ATTACK_SELECT'|'DEFEND_WINDOW'|'RESOLVE'|'ENDED';
 export interface SelectAttackPayload { slot: number }
+// pressTime is retained for future client-side lag compensation, but the server
+// IGNORES it for timing authority — it timestamps on message arrival instead.
 export interface SubmitDefensePayload { slot: number; pressTime: number }
+
+// Broadcast by the server after each exchange resolves, so the client can render
+// the result (orb impact, block flash, heart/gauge changes, rally volley).
+export interface ExchangeResultPayload {
+  attackerId: string;
+  defenderId: string;
+  attackerSlot: number;
+  defenderSlot: number;
+  attackerElements: number[];
+  timing: 'PARRY'|'BLOCK'|'MISTIME'|'NO_BLOCK';
+  relationship: 'STRONG'|'NEUTRAL'|'WEAK';
+  defenderHeartLost: boolean;
+  rallyContinues: boolean;
+  volleyedElement: number;
+  gaugeIncreases: boolean;
+}
 export interface BlockResult {
   timing: 'PARRY'|'BLOCK'|'MISTIME'|'NO_BLOCK';
   relationship: 'STRONG'|'NEUTRAL'|'WEAK';
