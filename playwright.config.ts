@@ -2,7 +2,14 @@ import { defineConfig } from '@playwright/test';
 
 export default defineConfig({
   testDir: './tests/e2e',
-  timeout: 20000,
+  // 1 worker prevents matchmaking cross-pairing across parallel test contexts:
+  // when multiple workers run PvP tests concurrently, their p1 clients pair with
+  // each other before the corresponding p2 clients connect — causing rooms with
+  // wrong partners and timeouts. Sequential execution (workers=1) guarantees
+  // each test's p1 pairs with its own p2.
+  workers: 1,
+  // 60 s accommodates vsAI duels that need up to 30 s to reach KO.
+  timeout: 60000,
   use: {
     // Port 8090 avoids colliding with the production Vite dev server (port 8080).
     baseURL: 'http://localhost:8090',
