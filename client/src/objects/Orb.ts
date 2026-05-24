@@ -22,7 +22,7 @@ export class Orb {
         x: to.x,
         y: to.y + offset,
         duration: TELEGRAPH_MS,
-        ease: 'Cubic.easeIn',
+        ease: 'Linear',
         onComplete: () => {
           orb.destroy();
           const pulse = scene.add.circle(to.x, to.y, 20, ELEMENT_COLORS[el], 0.7);
