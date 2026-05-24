@@ -2,7 +2,14 @@
 <html>
 <head><title>Elemental Rings Test Harness</title></head>
 <body>
-<script src="https://cdn.jsdelivr.net/npm/colyseus.js@0.16.22/dist/colyseus.js"></script>
+<!--
+  Colyseus 0.17 browser client. The package was renamed from `colyseus.js` to
+  `@colyseus/sdk` in the 0.17 era. The UMD bundle lives at dist/colyseus.js
+  (the package's `browser` entry) and exposes the global `Colyseus` namespace
+  with `Colyseus.Client`. NOTE: there is no dist/umd/index.js in 0.17 — that
+  path 404s on the CDN.
+-->
+<script src="https://unpkg.com/@colyseus/sdk@0.17/dist/colyseus.js"></script>
 <script>
   let room;
   window.connectRoom = async (name) => {

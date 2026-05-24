@@ -9,11 +9,12 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "colyseus": "0.17.10",
     "@colyseus/schema": "^4.0.7",
+    "colyseus": "0.17.10",
     "ws": "^8.18.0"
   },
   "devDependencies": {
+    "@colyseus/testing": "^0.17.11",
     "@types/node": "^22.0.0",
     "@types/ws": "^8.5.10",
     "ts-node-dev": "^2.0.0",

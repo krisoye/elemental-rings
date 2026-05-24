@@ -2,14 +2,16 @@
   "name": "elemental-rings",
   "version": "1.0.0",
   "private": true,
-  "workspaces": ["server"],
+  "workspaces": [
+    "server"
+  ],
   "scripts": {
     "dev:server": "cd server && npm run dev",
-    "test:e2e": "npx playwright test",
-    "test:unit": "cd server && npx vitest run"
+    "test": "cd server && npx vitest run",
+    "test:unit": "cd server && npx vitest run ../tests/unit",
+    "test:integration": "cd server && npx vitest run ../tests/integration"
   },
   "devDependencies": {
-    "@playwright/test": "^1.45.0",
     "typescript": "^5.5.0"
   }
 }
