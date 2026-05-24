@@ -20,6 +20,7 @@ export class BattleScene extends Phaser.Scene {
   private hud!: Hud;
   revealedOpponentElements: Set<number> = new Set();
   private prevPhase = '';
+  private prevRallyActive = false;
 
   constructor() {
     super({ key: 'BattleScene' });
@@ -29,6 +30,7 @@ export class BattleScene extends Phaser.Scene {
     // Reset per-start state (scene may be re-entered on a rematch).
     this.revealedOpponentElements = new Set();
     this.prevPhase = '';
+    this.prevRallyActive = false;
   }
 
   create(): void {
@@ -94,16 +96,20 @@ export class BattleScene extends Phaser.Scene {
     }
   }
 
-  /** Launch the orb telegraph exactly once when a defend window opens. */
+  /** Launch the orb telegraph when a defend window opens, including rally volleys. */
   private checkPhaseTransition(state: any, myId: string): void {
-    if (state.phase === this.prevPhase) return;
-    const prevPhase = this.prevPhase;
-    this.prevPhase = state.phase;
+    const phaseChanged = state.phase !== this.prevPhase;
+    // A rally keeps phase=DEFEND_WINDOW but flips rallyActive true — Colyseus
+    // batches RESOLVE→DEFEND_WINDOW into one patch so prevPhase stays DEFEND_WINDOW.
+    const rallyStarted = state.rallyActive && !this.prevRallyActive;
 
-    if (state.phase === 'DEFEND_WINDOW' && prevPhase !== 'DEFEND_WINDOW') {
+    this.prevPhase = state.phase;
+    this.prevRallyActive = state.rallyActive;
+
+    if (state.phase === 'DEFEND_WINDOW' && (phaseChanged || rallyStarted)) {
       const imAttacker = state.currentAttackerId === myId;
       const from = imAttacker ? { x: PLAYER_X, y: PLAYER_Y } : { x: OPPONENT_X, y: OPPONENT_Y };
-      const to = imAttacker ? { x: OPPONENT_X, y: OPPONENT_Y } : { x: PLAYER_X, y: PLAYER_Y };
+      const to   = imAttacker ? { x: OPPONENT_X, y: OPPONENT_Y } : { x: PLAYER_X, y: PLAYER_Y };
 
       const attackerState = window.__room!.state.players.get(state.currentAttackerId);
       const attackerRing = attackerState?.hand[state.attackerSelectedSlot];
