@@ -18,5 +18,8 @@ export default defineConfig({
     // ("Buffer.from ... Received an instance of Object"). The `threads` pool
     // uses MessageChannel/structured-clone and handles this correctly.
     pool: 'threads',
+    // Run test files sequentially so the integration suite's beforeAll/afterAll
+    // doesn't race against unit test worker threads sharing the same port.
+    fileParallelism: false,
   },
 });
