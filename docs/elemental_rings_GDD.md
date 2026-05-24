@@ -301,12 +301,16 @@ The attacker always pays **1 use to throw**. The defender's response — its **t
 
 | Timing ↓ / Element → | Strong | Neutral | Weak |
 |---|---|---|---|
-| **No-block** | −1 heart; defender ring spends **0** uses | same | same |
-| **Mistime** | −1 heart; attempted ring spends **1** use | same | same |
-| **Block** | safe; ring −1 use; **no reflect** | safe; ring −1 use | ring −2 uses; overflow → −1 heart if it had <2 uses |
-| **Parry** | safe; ring −1 use; **reflect** (below) | safe; ring −1 use | ring −2 uses; overflow risk |
+| **No-block** | −1 heart; defender ring spends **0** uses; **+gauge** | same | same |
+| **Mistime** | −1 heart; attempted ring spends **1** use; **+gauge** | same | same |
+| **Block** | safe; ring −1 use; no rally | safe; ring −1 use | ring −1 use; **−1 heart**; no gauge |
+| **Parry** | safe; ring −1 use; **rally** (below) | safe; ring −1 use | ring −1 use; **−1 heart**; no gauge |
 
-On the two failure rows the element axis is irrelevant — timing failed and the attack lands. **No-block** is a deliberate sacrifice (save the ring use, take a heart); **mistime** is the punished attempt (lose a heart AND burn the attempted ring's use; a ring drained to exactly 0 this way is extinguished, no extra heart).
+**A caught attack always costs exactly 1 use.** Whether you press block or parry, and whatever your element, committing a ring to a successful catch spends one use — no more. The element relationship then decides the consequence: a **strong** or **neutral** catch is fully safe, while a **weak** catch means your ring absorbed the blow but couldn't deflect it — you keep the ring (minus its one use) but still take **1 heart**. Weak is not an overflow mechanic; it is a flat heart cost for catching with the wrong element.
+
+On the two failure rows (**no-block**, **mistime**) the element axis is irrelevant — timing failed and the attack lands uncontested. **No-block** is a deliberate sacrifice (save the ring use, take a heart); **mistime** is the punished attempt (lose a heart AND burn the attempted ring's use; a ring drained to exactly 0 this way is extinguished, no extra heart).
+
+**Gauge only fills on an uncontested hit.** No-block and mistime let the attack land, so the defender's matching element gauge increases (§6). A weak catch loses a heart but the attack *was* caught — so it moves **no gauge**. Heart loss and gauge gain are independent: weak = heart but no gauge; no-block/mistime = heart and gauge.
 
 **Rally (Parry + Strong = active counter).** Instead of an automatic reflect, the exchange continues as an interactive volley chain:
 
@@ -315,9 +319,10 @@ On the two failure rows the element axis is irrelevant — timing failed and the
 3. A new 0.9 s telegraph plays for the volleyed element and the rally-defender must respond exactly as in a normal defend window (no-block / block / parry-strong).
 4. If the rally-defender **parries-strong** with the next pentagon element they become the rally-attacker and the chain continues, walking the pentagon: FIRE → WATER → WIND → EARTH → WOOD → FIRE → …
 5. Any other response ends the rally and resolves normally under the standard outcome table:
-   - **No-block** → rally-defender loses 1 heart; rally ends.
-   - **Block (neutral or weak)** → standard block costs apply; rally ends.
-   - **Mistime** → rally-defender loses 1 heart + 1 ring use; rally ends.
+   - **No-block** → rally-defender loses 1 heart (+gauge); rally ends.
+   - **Block/parry (neutral)** → safe; ring −1 use; rally ends.
+   - **Block/parry (weak)** → ring −1 use; −1 heart (no gauge); rally ends.
+   - **Mistime** → rally-defender loses 1 heart + 1 ring use (+gauge); rally ends.
 
 **Cost symmetry:** the floor cost is identical to the old auto-reflect. Attacker throws (−1 use) → defender parries strong (−1 use) → rally-defender neutral-blocks (−1 use) = attacker −2 / defender −1. The rally adds optional escalation above that floor.
 
@@ -332,7 +337,7 @@ A neutral block occurs when the defender blocks (timing = block or parry) with a
 
 - The defender's ring spends 1 use; the attacker's thrown ring already spent its 1 use
 - No heart damage
-- No status gauge change — gauges only move on unblocked hits, perfect counters, or reflect overflow (see §6)
+- No status gauge change — gauges only move on uncontested hits (no-block, mistime); a caught attack never moves a gauge (see §6)
 
 Neutrals are pure attrition exchanges. A correctly-timed neutral block is always safe; the tension is whether to spend a use blocking or to no-block and take the heart to conserve it.
 
@@ -343,15 +348,15 @@ Neutrals are pure attrition exchanges. A correctly-timed neutral block is always
 - Managing which rings sit on which hand between encounters is a meaningful micro-decision
 
 ### 5.7 Extinguished Rings
-- A ring is **extinguished** whenever its `current_uses` reaches 0 during a battle, regardless of which outcome caused it (throw, block cost, weak-block overflow, or reflect)
-- Extinguishing a ring at exactly 0 (the attack or cost was fully absorbed) does NOT cost a heart
-- A ring extinguished **by overflow** (it had fewer uses than the cost it received) costs its owner **1 heart**. This is symmetric: a defender's ring overflows on a weak block (had 1 use, received 2), and an attacker's already-thrown ring overflows when a parry reflects onto it after the throw left it at 0
+- A ring is **extinguished** whenever its `current_uses` reaches 0 during a battle, regardless of which outcome drained it (throw, block cost, or weak-catch cost)
+- Extinguishment itself never costs a heart — a ring simply becomes unusable at 0 uses
+- Any heart loss is decided by the outcome table (§5.4), not by the ring reaching 0. A weak catch costs a heart because of the element mismatch, independent of whether that catch happened to drain the ring to 0
 - Extinguished rings cannot be used for the rest of the duel
 - The opponent can see which element types are exhausted from the HUD
 
 ### 5.8 Hearts
 - Each player starts a duel with a set number of hearts (exact count TBD — suggest 3 or 5)
-- Hearts are lost when an attack reaches a player (no-block or mistime), a ring overflows, a parry reflects onto an extinguished attacking ring, or via status effect damage
+- Hearts are lost when an attack lands uncontested (no-block or mistime), on a weak catch (block or parry with an element the attack beats), or via status effect damage
 - When all hearts are gone that player loses the duel
 - Hearts reset between duels
 
@@ -387,11 +392,11 @@ Status effects are managed through persistent **element gauges** — one per bas
 Each player maintains five status gauges — one per base element: Fire, Water, Earth, Wind, Wood. All gauges start at 0 and floor at 0.
 
 **Gauge changes per battle exchange:**
-- **Heart lost** (no-block, mistime, or weak-block overflow): +1 per base element component of the attacking ring, added to the defender's matching gauges.
+- **Uncontested hit** (no-block or mistime): +1 per base element component of the attacking ring, added to the defender's matching gauges.
 
-Successful blocks and parries — including intermediate rally volleys — do not move gauges. A rally that terminates in a heart loss emits one gauge delta on the terminating volley only.
+A gauge only moves when the attack lands uncontested. A **weak catch** loses a heart but the attack *was* caught, so it moves **no gauge** — heart loss and gauge gain are independent (see §5.4). Successful blocks and parries — including intermediate rally volleys — never move gauges. A rally that terminates in an uncontested hit emits one gauge delta on the terminating volley; a rally that terminates in a weak catch emits none.
 
-**Server implementation:** Gauge deltas are computed by the Colyseus BattleRoom after each exchange and broadcast to both clients as part of the state update. No-block / mistime → +1 on the defender. Parry/rally continuation volleys emit no gauge delta.
+**Server implementation:** Gauge deltas are computed by the Colyseus BattleRoom after each exchange. The `resolveBlock` result carries a `gaugeIncreases` flag — `true` only for no-block and mistime, `false` for any caught attack (neutral, strong, or weak). Gauges are broadcast to both clients as part of the state update.
 
 **Fusion ring decomposition:**
 A fused ring contributes to gauges based on its full recursive decomposition into base elements.
