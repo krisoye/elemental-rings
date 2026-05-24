@@ -11,7 +11,11 @@ import {
   STARTING_HEARTS,
   STARTING_USES,
 } from '../game/constants';
-import { SelectAttackPayload, SubmitDefensePayload } from '../../../shared/types';
+import {
+  SelectAttackPayload,
+  SubmitDefensePayload,
+  ExchangeResultPayload,
+} from '../../../shared/types';
 
 export class BattleRoom extends Room<{ state: BattleState }> {
   private impactTime: number = 0;
@@ -59,7 +63,9 @@ export class BattleRoom extends Room<{ state: BattleState }> {
       if (!this.defenseSubmitted) {
         this.defenseSubmitted = true;
         this.defenseSlot = payload.slot;
-        this.defensePressTime = payload.pressTime;
+        // Server-authoritative timing: timestamp on message ARRIVAL, ignoring
+        // the client-supplied payload.pressTime (retained for future lag comp).
+        this.defensePressTime = Date.now();
       }
     });
   }
@@ -124,9 +130,36 @@ export class BattleRoom extends Room<{ state: BattleState }> {
       attackerPlayer.hearts = Math.max(0, attackerPlayer.hearts - 1);
     }
 
+    // CHANGE 3: attack landed uncontested -> fill the defender's gauge for the
+    // attacking ring's element, capped at 8 (2x the GDD §6.1 threshold of 4).
+    if (result.gaugeIncreases) {
+      const gaugeKeys = ['fireGauge', 'waterGauge', 'earthGauge', 'windGauge', 'woodGauge'] as const;
+      const key = gaugeKeys[attackerRing.element];
+      defenderPlayer[key] = Math.min(8, defenderPlayer[key] + 1);
+    }
+
     if (defenderRing && this.defenseSlot >= 0) {
       state.defenderSelectedSlot = this.defenseSlot;
     }
+
+    // CHANGE 4: broadcast THIS exchange's result BEFORE any KO early-return or
+    // the rally swap, so the slots/ids captured reflect this exchange (the rally
+    // branch below reassigns state.currentAttackerId / state.attackerSelectedSlot).
+    // this.defenseSlot is -1 when no defense was submitted.
+    const exchangeResult: ExchangeResultPayload = {
+      attackerId,
+      defenderId,
+      attackerSlot: state.attackerSelectedSlot,
+      defenderSlot: this.defenseSlot,
+      attackerElements: [attackerRing.element],
+      timing,
+      relationship: rel,
+      defenderHeartLost: result.defenderHeartLost,
+      rallyContinues: result.rallyContinues,
+      volleyedElement: result.volleyedElement,
+      gaugeIncreases: result.gaugeIncreases,
+    };
+    this.broadcast('exchangeResult', exchangeResult);
 
     if (defenderPlayer.hearts <= 0) {
       state.winnerId = attackerId;

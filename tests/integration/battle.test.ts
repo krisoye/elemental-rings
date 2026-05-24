@@ -73,7 +73,14 @@ function defenderClient(room: any, c1: any, c2: any) {
  * `selectAttack`) so timing classification is deterministic and immune to
  * client-clock drift, transport latency, and scheduler jitter that would
  * otherwise flake the tight ±70ms PARRY window. A positive offset is a late
- * press, negative is early; `pressTime - impactTime` lands on `offsetMs`.
+ * press, negative is early; the press lands `offsetMs` from impact.
+ *
+ * NOTE: the server now timestamps defense timing on message ARRIVAL
+ * (`Date.now()` inside the `submitDefense` handler) and IGNORES the supplied
+ * `pressTime`. Because this helper sleeps until `impactTime + offsetMs` and
+ * sends immediately, the server's arrival time ≈ `impactTime + offsetMs`, so
+ * this sleep-then-send model stays compatible. The `pressTime` field is still
+ * sent (it's part of the payload), but only as future lag-comp metadata.
  *
  * Bounding the post-press wait matters: on a successful PARRY the server
  * immediately opens a fresh DEFEND_WINDOW for the rally's next exchange. If we
