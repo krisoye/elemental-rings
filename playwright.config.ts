@@ -17,8 +17,9 @@ export default defineConfig({
       timeout: 15000,
     },
     {
-      command: 'VITE_SERVER_URL=ws://localhost:2568 cd client && npm run dev',
+      command: 'cd client && npm run dev',
       port: 8080,
+      env: { VITE_SERVER_URL: 'ws://localhost:2568' },
       reuseExistingServer: true,
       timeout: 20000,
     },
