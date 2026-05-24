@@ -37,7 +37,11 @@ elemental-rings/
   .claude/
     skills/phaser/     ← Official Phaser 4 SKILL.md files (28 skills)
   docs/
-    elemental_rings_GDD.md   ← Canonical game design document
+    elemental_rings_GDD.md        ← Navigation hub + quick reference
+    gdd-06-battle-system.md       ← Combat rules, Block Resolution Table, rally
+    gdd-03-element-system.md      ← Pentagon matchups, fused elements, Shadow
+    gdd-07-status-effects.md      ← Gauge mechanics, status effects
+    gdd-0{1,2,4,5,8,9,10,11}.md  ← All other sections
 ```
 
 ---
@@ -50,30 +54,19 @@ elemental-rings/
 
 ## GDD Reference
 
-All game mechanics — battle rules, element pentagon, timing windows, rally chain, ring tiers — are in:
+The GDD is split into per-section files under `docs/`. Read only the section you need:
 
-```
-docs/elemental_rings_GDD.md
-```
+| Task | Read |
+|------|------|
+| Any combat / timing / rally work | `docs/gdd-06-battle-system.md` |
+| Element matchups, fused elements | `docs/gdd-03-element-system.md` |
+| Gauge mechanics, status effects | `docs/gdd-07-status-effects.md` |
+| Ring tiers, uses, XP, recharge | `docs/gdd-04-ring-system.md` |
+| Staking, jewelry positions | `docs/gdd-09-staking-economy.md` |
+| Overworld, biomes, NPCs | `docs/gdd-10-overworld.md` |
+| Navigation + quick reference | `docs/elemental_rings_GDD.md` |
 
-Always read the relevant GDD section before designing or implementing any game system.
-
-## Godot Prototype Reference
-
-The combat logic being ported to TypeScript was fully implemented and debugged in the Godot prototype at `krisoye/elemental_rings`. The verified GDScript implementations of `BlockResolver`, `ElementSystem`, and `BattleManager` are the canonical source for the port:
-
-```bash
-# Read the verified Godot implementations (read-only reference)
-cat /home/deploy/prod/elemental_rings/scripts/battle/block_resolver.gd
-cat /home/deploy/prod/elemental_rings/scripts/battle/element_system.gd
-cat /home/deploy/prod/elemental_rings/scripts/battle/battle_manager.gd
-```
-
-Key lessons from the Godot prototype:
-- `last_block_result` must be reset to `null` before any early return (stale-read bug)
-- `on_attack_selected()` must return `bool` so callers don't advance state on failure
-- Defend window must extend **past** impact by `BLOCK_WINDOW_MS` — not just to impact (one-sided window bug)
-- `classifyTiming` uses `Math.abs(offset)` — both early and late presses within the window are valid
+Always read the relevant section before designing or implementing any game system.
 
 ---
 
@@ -120,26 +113,9 @@ Also available: animations, audio-and-sound, cameras, particles, physics-arcade,
 
 ---
 
-## Key Game Constants (Phase 1)
+## Key Game Constants
 
-| Constant | Value | Meaning |
-|---|---|---|
-| `TELEGRAPH_MS` | 900 | Orb travel time (ms) = impact offset from attack commit |
-| `BLOCK_WINDOW_MS` | 180 | Valid block window around impact (±180ms) |
-| `PARRY_WINDOW_MS` | 70 | Tight inner window for PARRY (±70ms) |
-| `STARTING_HEARTS` | 3 | Hearts per player per duel |
-
-**Defend window = TELEGRAPH_MS + BLOCK_WINDOW_MS = 1080ms** (extends past impact to allow post-arrival presses).
-
-## Element Pentagon
-
-```
-FIRE(0) > WOOD(4) > EARTH(2) > WIND(3) > WATER(1) > FIRE
-BEATS = [4, 0, 3, 1, 2]   // BEATS[x] = element x defeats
-```
-
-P1 keyboard: keys 1–5 → slots 0–4 (KeyCodes.ONE=49 … FIVE=53)
-P2 keyboard: keys 6–0 → slots 0–4 (KeyCodes.SIX=54 … ZERO=48)
+Canonical values are in `server/src/game/constants.ts`. Quick reference for elements and matchups: `docs/gdd-03-element-system.md`.
 
 ---
 
@@ -167,16 +143,6 @@ Server runs as a systemd service on game-da-god (192.168.4.140). Any LAN device 
 
 ---
 
-## Build Phases (GDD §12)
+## Build Phases
 
-| Phase | Description | Status |
-|---|---|---|
-| 1 | Colyseus BattleRoom — all battle logic, no client | Issue #3 |
-| 2 | Phaser 4 client — orb, hand UI, HUD, keyboard+touch | — |
-| 3 | NPC AI — server-side bot in same BattleRoom | — |
-| 4 | Ring inventory + persistent player state | — |
-| 5 | Staking economy | — |
-| 6 | Status effects (gauge system) | — |
-| 7 | Fusion system | — |
-| 8 | Overworld | — |
-| 9 | Capacitor (mobile) + Electron (Steam) | — |
+Tracked in pinned [Issue #14](https://github.com/krisoye/elemental-rings/issues/14).

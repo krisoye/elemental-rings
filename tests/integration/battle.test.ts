@@ -188,7 +188,9 @@ describe('Scenario 4: no-block -> heart lost', () => {
     await waitForResolve();
 
     expect(room.state.phase).toBe('ATTACK_SELECT');
-    expect(room.state.players.get(defenderId).hearts).toBe(2);
+    const defenderState4 = room.state.players.get(defenderId);
+    expect(defenderState4.hearts).toBe(2);
+    expect(defenderState4.fireGauge).toBe(1); // gauge fills on uncontested FIRE hit
   });
 });
 
@@ -211,6 +213,7 @@ describe('Scenario 5: MISTIME -> heart + use lost', () => {
     const defenderState = room.state.players.get(defenderId);
     expect(defenderState.hearts).toBe(2);
     expect(defenderState.hand[1].currentUses).toBe(2); // 3 -> 2 (1 use burned on MISTIME)
+    expect(defenderState.fireGauge).toBe(1); // gauge fills on MISTIME (attack not caught)
   });
 });
 
@@ -224,12 +227,13 @@ describe('Scenario 6: post-impact BLOCK (+150ms) -> no heart lost', () => {
     attacker.send('selectAttack', { slot: 0 }); // FIRE
     await room.waitForNextPatch();
 
-    // impact + 130ms: |130| > 70 (not PARRY) but <= 180 (BLOCK). FIRE vs FIRE = NEUTRAL.
+    // impact + 130ms: |130| > 125 (PARRY_WINDOW_MS) but <= 200 (BLOCK_WINDOW_MS). FIRE vs FIRE = NEUTRAL.
     await pressDefenseAt(room, defender, 0, 130);
 
     const defenderState = room.state.players.get(defenderId);
     expect(defenderState.hearts).toBe(3);
     expect(defenderState.hand[0].currentUses).toBe(2); // 3 -> 2 on a clean block
+    expect(defenderState.fireGauge).toBe(0); // attack was caught — gauge does NOT fill
   });
 });
 
@@ -249,9 +253,9 @@ describe('Scenario 7: pentagon depth-2 rally', () => {
     expect(room.state.volleyedElement).toBe(1); // WATER
     expect(room.state.phase).toBe('DEFEND_WINDOW');
     expect(room.state.currentAttackerId).toBe(p2.sessionId);
-    // P1's FIRE ring: 3 - 1 (throw). P2's WATER ring: 3 - 1 (parry) - 1 (rally throw).
+    // P1's FIRE ring: 3 - 1 (throw). P2's WATER ring: 3 - 1 (parry only; volley is free).
     expect(room.state.players.get(p1.sessionId).hand[0].currentUses).toBe(2);
-    expect(room.state.players.get(p2.sessionId).hand[1].currentUses).toBe(1);
+    expect(room.state.players.get(p2.sessionId).hand[1].currentUses).toBe(2);
 
     // Round 2: P2 now volleys WATER; P1 (defending) parries WIND(3).
     // WIND beats WATER -> STRONG PARRY from P1's view -> rally continues, volley = WIND.
@@ -262,8 +266,8 @@ describe('Scenario 7: pentagon depth-2 rally', () => {
     expect(room.state.volleyedElement).toBe(3); // WIND
     expect(room.state.phase).toBe('DEFEND_WINDOW');
     expect(room.state.currentAttackerId).toBe(p1.sessionId);
-    // P1's WIND ring: 3 - 1 (parry) - 1 (rally throw).
-    expect(room.state.players.get(p1.sessionId).hand[3].currentUses).toBe(1);
+    // P1's WIND ring: 3 - 1 (parry only; volley is free).
+    expect(room.state.players.get(p1.sessionId).hand[3].currentUses).toBe(2);
 
     for (const p of room.state.players.values()) {
       expect((p as any).hearts).toBe(3);
@@ -291,7 +295,53 @@ describe('Scenario 8: WEAK block -> heart lost, -1 use (not -2)', () => {
 
     const defenderState = room.state.players.get(defenderId);
     expect(defenderState.hand[4].currentUses).toBe(2); // 3 - 1 (not 3 - 2)
-    expect(defenderState.hearts).toBe(2);              // heart lost
+    expect(defenderState.hearts).toBe(2);              // heart lost (WEAK)
+    expect(defenderState.fireGauge).toBe(0);           // attack caught — gauge does NOT fill
+    expect(room.state.phase).toBe('ATTACK_SELECT');
+  });
+});
+
+describe('Scenario 9: BLOCK + STRONG -> no heart, no gauge', () => {
+  test('FIRE attack, WATER defense at BLOCK timing: no heart lost, use decremented, no gauge', async () => {
+    const { room, c1, c2 } = await joinBattle();
+    const attacker = attackerClient(room, c1, c2);
+    const defender = defenderClient(room, c1, c2);
+    const defenderId = defender.sessionId;
+
+    attacker.send('selectAttack', { slot: 0 }); // FIRE
+    await room.waitForNextPatch();
+
+    // WATER(1) beats FIRE(0) -> STRONG. Offset +130ms > PARRY_WINDOW_MS(125) -> BLOCK.
+    await pressDefenseAt(room, defender, 1, 130); // WATER, BLOCK timing
+
+    const defenderState = room.state.players.get(defenderId);
+    expect(defenderState.hearts).toBe(3);              // no heart lost on STRONG catch
+    expect(defenderState.hand[1].currentUses).toBe(2); // -1 use for the block
+    expect(defenderState.fireGauge).toBe(0);           // attack caught — gauge does NOT fill
+    expect(room.state.rallyActive).toBe(false);        // no rally (BLOCK, not PARRY)
+    expect(room.state.phase).toBe('ATTACK_SELECT');
+  });
+});
+
+describe('Scenario 10: PARRY + WEAK -> heart lost, no gauge, no rally', () => {
+  test('FIRE attack, WOOD defense at PARRY timing: heart lost, use decremented, no gauge, no rally', async () => {
+    const { room, c1, c2 } = await joinBattle();
+    const attacker = attackerClient(room, c1, c2);
+    const defender = defenderClient(room, c1, c2);
+    const defenderId = defender.sessionId;
+
+    attacker.send('selectAttack', { slot: 0 }); // FIRE
+    await room.waitForNextPatch();
+
+    // FIRE(0) beats WOOD(4) -> WEAK for defender. Offset 0ms -> PARRY timing.
+    // WEAK catch: heart lost regardless of timing; no gauge (attack was caught); no rally.
+    await pressDefenseAt(room, defender, 4, 0); // WOOD, PARRY timing
+
+    const defenderState = room.state.players.get(defenderId);
+    expect(defenderState.hearts).toBe(2);              // heart lost (WEAK, even on PARRY)
+    expect(defenderState.hand[4].currentUses).toBe(2); // -1 use for the catch
+    expect(defenderState.fireGauge).toBe(0);           // attack caught — gauge does NOT fill
+    expect(room.state.rallyActive).toBe(false);        // WEAK: no rally even on perfect timing
     expect(room.state.phase).toBe('ATTACK_SELECT');
   });
 });
