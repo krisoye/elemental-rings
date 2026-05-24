@@ -81,17 +81,20 @@ test('scenario 3: AI responds to a human attack (defends, not idle)', async ({ b
     return room.state.players.get('AI').hearts;
   });
 
+  // Clear any prior result so we only react to THIS exchange.
+  await page.evaluate(() => { (window as any).__lastExchangeResult = null; });
   await page.keyboard.press('1'); // FIRE
 
-  // After the window resolves, the AI either committed a ring (defenderSelectedSlot
-  // set) or took a heart — both prove the AI's defense path ran.
+  // Wait for the exchangeResult broadcast (the server's single message per
+  // exchange). defenderSlot >= 0 means the AI submitted a defense; heartLost
+  // means the AI took a hit from a no-block. Either proves the AI responded.
+  // NOTE: defenderSelectedSlot in room.state is reset to -1 within the same
+  // Colyseus tick, so the client patch always shows -1 — use the message instead.
   await page.waitForFunction(
-    (h) => {
-      const room = (window as any).__room;
-      const ai = room?.state?.players?.get('AI');
-      return room?.state?.defenderSelectedSlot >= 0 || (ai && ai.hearts < h);
+    () => {
+      const r = (window as any).__lastExchangeResult;
+      return r !== null && (r.defenderSlot >= 0 || r.defenderHeartLost);
     },
-    aiHeartsBefore,
     { timeout: 6000 },
   );
 
@@ -130,7 +133,9 @@ test('scenario 4: duel completes and returns to EncounterScene', async ({ browse
   }
 
   // BattleScene shows the banner for ~2s then returns to the hub.
-  await waitForScene(page, 'EncounterScene', 6000);
+  // EncounterScene doesn't set window.__scene; use waitForEncounter instead
+  // (it checks window.__encounterSelect which EncounterScene.create() sets).
+  await waitForEncounter(page);
 
   await ctx.close();
 });
