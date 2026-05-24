@@ -14,6 +14,7 @@ export class Orb {
     from: { x: number; y: number },
     to: { x: number; y: number },
   ): void {
+    window.__orbLaunchCount = (window.__orbLaunchCount ?? 0) + 1;
     elements.forEach((el, idx) => {
       const offset = (idx - (elements.length - 1) / 2) * 18;
       const orb = scene.add.circle(from.x, from.y + offset, 10, ELEMENT_COLORS[el]);

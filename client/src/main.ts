@@ -12,6 +12,7 @@ declare global {
     __scene: BattleScene | null;
     __lastExchangeResult: ExchangeResultPayload | null;
     __slotPositions: { x: number; y: number }[];
+    __orbLaunchCount: number;
     connectToRoom: () => Promise<void>;
   }
 }
@@ -21,6 +22,7 @@ window.__room = null;
 window.__scene = null;
 window.__lastExchangeResult = null;
 window.__slotPositions = [];
+window.__orbLaunchCount = 0;
 window.connectToRoom = async () => {
   const { joinOrCreate } = await import('./net/Connection');
   await joinOrCreate();
