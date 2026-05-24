@@ -3,6 +3,9 @@ import { Ring } from './Ring';
 
 export class PlayerState extends Schema {
   @type('string') playerId: string = '';
+  // Human duelists leave this empty; an AI opponent shows its personality name
+  // here so the client HUD can label it.
+  @type('string') displayName: string = '';
   @type('uint8') hearts: number = 3;
   @type([Ring]) hand: ArraySchema<Ring> = new ArraySchema<Ring>();
   @type('int8') selectedSlot: number = -1;

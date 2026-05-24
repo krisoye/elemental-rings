@@ -1,8 +1,9 @@
 import Phaser from 'phaser';
 import { BootScene } from './scenes/BootScene';
+import { EncounterScene } from './scenes/EncounterScene';
 import { LobbyScene } from './scenes/LobbyScene';
 import { BattleScene } from './scenes/BattleScene';
-import type { ExchangeResultPayload } from '../../shared/types';
+import type { ExchangeResultPayload, AIPersonality, BattleRoomOptions } from '../../shared/types';
 import { CANVAS_W, CANVAS_H } from './Constants';
 
 declare global {
@@ -13,7 +14,11 @@ declare global {
     __lastExchangeResult: ExchangeResultPayload | null;
     __slotPositions: { x: number; y: number }[];
     __orbLaunchCount: number;
-    connectToRoom: () => Promise<void>;
+    connectToRoom: (roomName: string, opts?: BattleRoomOptions) => Promise<void>;
+    // Deterministic E2E hook: triggers the same code path as clicking an
+    // EncounterScene marker. Set by EncounterScene.create(). 'PVP' starts the
+    // LobbyScene; a personality starts a vsAI duel.
+    __encounterSelect?: (choice: AIPersonality | 'PVP') => void;
   }
 }
 
@@ -23,9 +28,9 @@ window.__scene = null;
 window.__lastExchangeResult = null;
 window.__slotPositions = [];
 window.__orbLaunchCount = 0;
-window.connectToRoom = async () => {
-  const { joinOrCreate } = await import('./net/Connection');
-  await joinOrCreate();
+window.connectToRoom = async (roomName: string, opts?: BattleRoomOptions): Promise<void> => {
+  const { connectToRoom } = await import('./net/Connection');
+  await connectToRoom(roomName, opts);
 };
 
 const game = new Phaser.Game({
@@ -34,7 +39,7 @@ const game = new Phaser.Game({
   height: CANVAS_H,
   parent: 'game-container',
   backgroundColor: '#1a1a2e',
-  scene: [BootScene, LobbyScene, BattleScene],
+  scene: [BootScene, EncounterScene, LobbyScene, BattleScene],
 });
 
 window.__game = game;

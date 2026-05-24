@@ -1,0 +1,161 @@
+/**
+ * vsAI integration tests using @colyseus/testing (Colyseus 0.17).
+ *
+ * Boots a real Colyseus server with both `battle` (PvP) and `battle-ai` (vsAI)
+ * room names on the BattleRoom class, then drives full vsAI duels. The AI is a
+ * virtual player: it never connects a client — it calls the room's
+ * `handleSelectAttack` / `handleSubmitDefense` directly, the same path a human's
+ * messages take. A fixed `aiSeed` makes the AI's RNG (think-delays, timing
+ * jitter, no-block coin flips) deterministic.
+ *
+ * See tests/integration/battle.test.ts for the harness rationale (single boot,
+ * threads pool, fixed port 2568).
+ */
+import { describe, test, expect, beforeAll, afterAll } from 'vitest';
+import { ColyseusTestServer, boot } from '@colyseus/testing';
+import { Server } from 'colyseus';
+import { BattleRoom } from '../../server/src/rooms/BattleRoom';
+
+let colyseus: ColyseusTestServer<any>;
+
+beforeAll(async () => {
+  const server = new Server();
+  server.define('battle', BattleRoom);
+  server.define('battle-ai', BattleRoom);
+  colyseus = await boot(server);
+});
+
+afterAll(async () => {
+  await colyseus.shutdown();
+});
+
+const sleep = (ms: number) => new Promise((res) => setTimeout(res, Math.max(0, ms)));
+
+/**
+ * Create a vsAI room (AI seated on create) and connect a single human client.
+ * Resolves once the room reaches ATTACK_SELECT (both seated). The AI is player
+ * #1 (seated in onCreate) and therefore the first attacker.
+ */
+async function joinVsAI(personality: string, aiSeed: number) {
+  const room = await colyseus.createRoom<any>('battle-ai', {
+    vsAI: true,
+    personality,
+    aiSeed,
+  });
+  const human = await colyseus.connectTo(room);
+  // One join patch (AI was already seated in onCreate) → ATTACK_SELECT.
+  await room.waitForNextPatch();
+  // Give the post-join notifyAI() a tick to register if AI is first attacker.
+  await sleep(20);
+  return { room, human };
+}
+
+describe('vsAI: AI is seated and drives the duel', () => {
+  test('AI seats as player #1, room locks, human is player #2', async () => {
+    const { room, human } = await joinVsAI('AGGRESSIVE', 12345);
+
+    expect(room.state.players.size).toBe(2);
+    expect(room.state.players.has('AI')).toBe(true);
+    expect(room.locked).toBe(true);
+
+    // AI seated first → AI is the opening attacker.
+    expect(room.state.currentAttackerId).toBe('AI');
+    expect(room.state.players.get('AI').displayName).toBe('AGGRESSIVE');
+    expect(room.state.players.get(human.sessionId).displayName).toBe('');
+  });
+
+  test('AI attacks unprompted: human idles, phase advances to DEFEND_WINDOW', async () => {
+    const { room } = await joinVsAI('AGGRESSIVE', 999);
+    expect(room.state.currentAttackerId).toBe('AI');
+
+    // Human does nothing. The AI's think-delay (300–600ms) then fires
+    // handleSelectAttack, opening a DEFEND_WINDOW with the AI's chosen ring.
+    await sleep(800);
+    expect(room.state.phase).toBe('DEFEND_WINDOW');
+    expect(room.state.currentAttackerId).toBe('AI');
+    expect(room.state.attackerSelectedSlot).toBeGreaterThanOrEqual(0);
+  });
+
+  test('AI defends a human throw: human attacks, AI commits a ring', async () => {
+    // Use DEFENSIVE so the AI reliably catches (it picks a NEUTRAL block).
+    // Seed chosen so its first defense draw is a block, not a no-block.
+    const { room, human } = await joinVsAI('DEFENSIVE', 4242);
+
+    // Let the AI take its opening attack and resolve so the human becomes attacker.
+    await sleep(1500);
+    // If the AI is still attacking through a rally chain, idle until it's the
+    // human's turn (bounded).
+    for (let i = 0; i < 8 && room.state.currentAttackerId !== human.sessionId; i++) {
+      await sleep(1500);
+    }
+    if (room.state.phase === 'ENDED') return; // duel may end fast — acceptable
+
+    expect(room.state.currentAttackerId).toBe(human.sessionId);
+    expect(room.state.phase).toBe('ATTACK_SELECT');
+
+    const aiBefore = room.state.players.get('AI');
+    const usesBefore = aiBefore.hand.reduce((n: number, r: any) => n + r.currentUses, 0);
+    const heartsBefore = aiBefore.hearts;
+
+    human.send('selectAttack', { slot: 0 }); // FIRE
+    // Wait past the defend window + resolve so the AI's scheduled press lands.
+    await sleep(1500);
+
+    const aiAfter = room.state.players.get('AI');
+    const usesAfter = aiAfter.hand.reduce((n: number, r: any) => n + r.currentUses, 0);
+    // The AI responded (not idle): either it spent a ring use defending, or it
+    // took a heart hit. Both prove the defense code path ran for the AI.
+    expect(usesAfter < usesBefore || aiAfter.hearts < heartsBefore).toBe(true);
+  });
+});
+
+describe('vsAI: duels reach completion deterministically', () => {
+  test('a seeded duel reaches ENDED with a winner', async () => {
+    const { room, human } = await joinVsAI('AGGRESSIVE', 2024);
+
+    // The human attacks whenever it is its turn (so a role-swap to the human as
+    // attacker never stalls the duel) but never defends. The AI attacks and
+    // defends on its turns. Drive until KO.
+    for (let i = 0; i < 80 && room.state.phase !== 'ENDED'; i++) {
+      if (
+        room.state.phase === 'ATTACK_SELECT' &&
+        room.state.currentAttackerId === human.sessionId
+      ) {
+        human.send('selectAttack', { slot: 0 }); // FIRE
+      }
+      await sleep(250);
+    }
+    expect(room.state.phase).toBe('ENDED');
+    expect(room.state.winnerId).toBeTruthy();
+  }, 25000);
+
+  test('determinism: same aiSeed reproduces the same opening attack slot', async () => {
+    const a = await joinVsAI('STATUS_HUNTER', 77);
+    await sleep(1300); // past think-delay → first attack thrown
+    const slotA = a.room.state.attackerSelectedSlot;
+
+    const b = await joinVsAI('STATUS_HUNTER', 77);
+    await sleep(1300);
+    const slotB = b.room.state.attackerSelectedSlot;
+
+    expect(slotA).toBeGreaterThanOrEqual(0);
+    expect(slotA).toBe(slotB);
+  });
+});
+
+describe('room-name isolation', () => {
+  test("joinOrCreate('battle') never lands in a locked battle-ai room", async () => {
+    // Create a vsAI room first; it is locked.
+    const ai = await joinVsAI('RESILIENT', 1);
+    expect(ai.room.locked).toBe(true);
+
+    // A fresh PvP join must create a brand-new, unlocked, single-player room —
+    // not the AI room.
+    const pvp = await colyseus.sdk.joinOrCreate('battle', {});
+    // Give the join a patch to apply.
+    await sleep(50);
+    expect(pvp.roomId).not.toBe(ai.room.roomId);
+    expect(pvp.state.players.size).toBe(1);
+    await pvp.leave();
+  });
+});

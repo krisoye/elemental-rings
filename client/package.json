@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "private": true,
   "scripts": {
-    "dev": "vite --port 8080",
+    "dev": "vite",
     "build": "tsc && vite build",
     "typecheck": "tsc --noEmit"
   },
