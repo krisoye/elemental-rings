@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html>
+<head><title>Elemental Rings Test Harness</title></head>
+<body>
+<!--
+  Colyseus 0.17 browser client. The package was renamed from `colyseus.js` to
+  `@colyseus/sdk` in the 0.17 era. The UMD bundle lives at dist/colyseus.js
+  (the package's `browser` entry) and exposes the global `Colyseus` namespace
+  with `Colyseus.Client`. NOTE: there is no dist/umd/index.js in 0.17 — that
+  path 404s on the CDN.
+-->
+<script src="https://unpkg.com/@colyseus/sdk@0.17/dist/colyseus.js"></script>
+<script>
+  let room;
+  window.connectRoom = async (name) => {
+    const client = new Colyseus.Client('ws://localhost:2567');
+    room = await client.joinOrCreate(name);
+    return room.sessionId;
+  };
+  window.sendAttack  = (slot) => room.send('selectAttack', { slot });
+  window.sendDefense = (slot, pressTime) => room.send('submitDefense', { slot, pressTime });
+  window.roomState   = () => JSON.parse(JSON.stringify(room.state));
+  window.waitForPhase = (phase) =>
+    new Promise(res => {
+      const check = () => {
+        if (room.state.phase === phase) { res(room.state); return; }
+        room.onStateChange.once(s => { if (s.phase === phase) res(s); else check(); });
+      };
+      check();
+    });
+  window.waitForField = (field, value, timeout=10000) =>
+    new Promise((res, rej) => {
+      const start = Date.now();
+      const poll = () => {
+        const s = room.state;
+        if (s[field] === value) { res(s); return; }
+        if (Date.now() - start > timeout) { rej(new Error(`Timeout waiting for ${field}==${value}, got ${s[field]}`)); return; }
+        setTimeout(poll, 50);
+      };
+      poll();
+    });
+</script>
+</body>
+</html>
