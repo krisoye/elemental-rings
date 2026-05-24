@@ -253,9 +253,9 @@ describe('Scenario 7: pentagon depth-2 rally', () => {
     expect(room.state.volleyedElement).toBe(1); // WATER
     expect(room.state.phase).toBe('DEFEND_WINDOW');
     expect(room.state.currentAttackerId).toBe(p2.sessionId);
-    // P1's FIRE ring: 3 - 1 (throw). P2's WATER ring: 3 - 1 (parry) - 1 (rally throw).
+    // P1's FIRE ring: 3 - 1 (throw). P2's WATER ring: 3 - 1 (parry only; volley is free).
     expect(room.state.players.get(p1.sessionId).hand[0].currentUses).toBe(2);
-    expect(room.state.players.get(p2.sessionId).hand[1].currentUses).toBe(1);
+    expect(room.state.players.get(p2.sessionId).hand[1].currentUses).toBe(2);
 
     // Round 2: P2 now volleys WATER; P1 (defending) parries WIND(3).
     // WIND beats WATER -> STRONG PARRY from P1's view -> rally continues, volley = WIND.
@@ -266,8 +266,8 @@ describe('Scenario 7: pentagon depth-2 rally', () => {
     expect(room.state.volleyedElement).toBe(3); // WIND
     expect(room.state.phase).toBe('DEFEND_WINDOW');
     expect(room.state.currentAttackerId).toBe(p1.sessionId);
-    // P1's WIND ring: 3 - 1 (parry) - 1 (rally throw).
-    expect(room.state.players.get(p1.sessionId).hand[3].currentUses).toBe(1);
+    // P1's WIND ring: 3 - 1 (parry only; volley is free).
+    expect(room.state.players.get(p1.sessionId).hand[3].currentUses).toBe(2);
 
     for (const p of room.state.players.values()) {
       expect((p as any).hearts).toBe(3);
