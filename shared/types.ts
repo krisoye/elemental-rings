@@ -9,4 +9,7 @@ export interface BlockResult {
   attackerHeartLost: boolean;
   rallyContinues: boolean;
   volleyedElement: number;
+  // true when the attack landed uncontested (NO_BLOCK or MISTIME) — elemental gauge fills.
+  // false when the defender caught the attack regardless of outcome — gauge does not fill.
+  gaugeIncreases: boolean;
 }

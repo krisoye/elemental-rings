@@ -264,21 +264,14 @@ describe('Scenario 7: pentagon depth-2 rally', () => {
   });
 });
 
-describe('Scenario 8: WEAK block use-overflow -> heart lost', () => {
+describe('Scenario 8: WEAK block -> heart lost, -1 use (not -2)', () => {
   /**
-   * The "ring runs out of uses while blocking a strong attack -> heart lost"
-   * overflow path is fully and deterministically covered in the unit suite
-   * (tests/unit/BlockResolver.test.ts), because depleting a specific ring to a
-   * single use in integration would require many timed round-trips (and the
-   * role swap after every clean block makes that brittle).
-   *
-   * Here we verify the integration-relevant invariant instead: a WEAK block
-   * (defender's element loses to the attacker's element) burns TWO ring uses
-   * in a single exchange and that the depletion is reflected in broadcast
-   * state. FIRE(0) attack vs WOOD(4) defense is WEAK (FIRE beats WOOD), so a
-   * clean BLOCK should drop WOOD's uses by 2 (3 -> 1).
+   * WEAK block rule: defender catches the attack but with the wrong element.
+   * Costs 1 use (not 2) and always loses a heart — the ring absorbed the blow
+   * but the elemental mismatch still hurts. The gauge does NOT increase
+   * (attack was caught). FIRE(0) attack vs WOOD(4) defense = WEAK.
    */
-  test('WEAK block burns two ring uses; broadcast state reflects depletion', async () => {
+  test('WEAK block costs 1 use and loses a heart; gauge does not increase', async () => {
     const { room, c1, c2 } = await joinBattle();
     const attacker = attackerClient(room, c1, c2);
     const defender = defenderClient(room, c1, c2);
@@ -287,14 +280,11 @@ describe('Scenario 8: WEAK block use-overflow -> heart lost', () => {
     attacker.send('selectAttack', { slot: 0 }); // FIRE
     await room.waitForNextPatch();
 
-    // BLOCK timing (impact + 130ms), WOOD(4) defense vs FIRE attack = WEAK.
-    await pressDefenseAt(room, defender, 4, 130); // WOOD
+    await pressDefenseAt(room, defender, 4, 130); // WOOD, BLOCK timing
 
     const defenderState = room.state.players.get(defenderId);
-    // WEAK block: -1 (base) -1 (weak penalty) = WOOD 3 -> 1. Uses still > 0,
-    // so the heart survives this exchange (overflow-past-zero is the unit test).
-    expect(defenderState.hand[4].currentUses).toBe(1);
-    expect(defenderState.hearts).toBe(3);
+    expect(defenderState.hand[4].currentUses).toBe(2); // 3 - 1 (not 3 - 2)
+    expect(defenderState.hearts).toBe(2);              // heart lost
     expect(room.state.phase).toBe('ATTACK_SELECT');
   });
 });
