@@ -58,6 +58,47 @@ docs/elemental_rings_GDD.md
 
 Always read the relevant GDD section before designing or implementing any game system.
 
+## Godot Prototype Reference
+
+The combat logic being ported to TypeScript was fully implemented and debugged in the Godot prototype at `krisoye/elemental_rings`. The verified GDScript implementations of `BlockResolver`, `ElementSystem`, and `BattleManager` are the canonical source for the port:
+
+```bash
+# Read the verified Godot implementations (read-only reference)
+cat /home/deploy/prod/elemental_rings/scripts/battle/block_resolver.gd
+cat /home/deploy/prod/elemental_rings/scripts/battle/element_system.gd
+cat /home/deploy/prod/elemental_rings/scripts/battle/battle_manager.gd
+```
+
+Key lessons from the Godot prototype:
+- `last_block_result` must be reset to `null` before any early return (stale-read bug)
+- `on_attack_selected()` must return `bool` so callers don't advance state on failure
+- Defend window must extend **past** impact by `BLOCK_WINDOW_MS` — not just to impact (one-sided window bug)
+- `classifyTiming` uses `Math.abs(offset)` — both early and late presses within the window are valid
+
+---
+
+## Workspace
+
+`ws start elemental-rings <feature-slug>` is registered and works normally:
+
+```bash
+ws start elemental-rings <feature-slug>
+# → clones to ~/wip/<session-id>/elemental-rings/
+# → follow normal ws workflow: commit, push, gh pr create, ws finish
+```
+
+---
+
+## Colyseus Skill
+
+A hand-written Colyseus 0.17 skill covering `@Schema`, Room lifecycle, `ArraySchema`/`MapSchema`, message handlers, timers, client connection, and the Phase 1 Playwright test-harness pattern:
+
+```bash
+cat .claude/skills/colyseus/SKILL.md
+```
+
+Read this before implementing **any** server-side Colyseus code.
+
 ---
 
 ## Phaser 4 Skills
