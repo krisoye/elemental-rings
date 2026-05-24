@@ -1,6 +1,7 @@
 import type { Browser, Page, BrowserContext } from '@playwright/test';
 
-const URL = 'http://localhost:8080';
+// Port 8090 avoids colliding with the production Vite dev server on 8080.
+const URL = 'http://localhost:8090';
 
 export interface BattleHandles {
   p1: Page;
@@ -11,10 +12,11 @@ export interface BattleHandles {
 
 /** Wait until the EncounterScene hub is active and its selection hook is ready. */
 export async function waitForEncounter(page: import('@playwright/test').Page): Promise<void> {
+  // EncounterScene.create() sets window.__encounterSelect; the scene's shutdown
+  // handler clears it to undefined. Checking for the function is sufficient:
+  // it is truthy during Encounter and falsy everywhere else.
   await page.waitForFunction(
-    () =>
-      (window as any).__scene === null &&
-      typeof (window as any).__encounterSelect === 'function',
+    () => typeof (window as any).__encounterSelect === 'function',
     { timeout: 10000 },
   );
 }

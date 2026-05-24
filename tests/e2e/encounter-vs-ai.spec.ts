@@ -1,7 +1,8 @@
 import { test, expect, type Page } from '@playwright/test';
 import { setupBattle, waitForEncounter, closeBattle } from './helpers';
 
-const URL = 'http://localhost:8080';
+// Port 8090 avoids colliding with the production Vite dev server on 8080.
+const URL = 'http://localhost:8090';
 
 /** Load the game and trigger a vsAI duel against the given personality. */
 async function startAIDuel(page: Page, personality: string): Promise<void> {
