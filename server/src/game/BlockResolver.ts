@@ -22,15 +22,20 @@ export function resolveBlock(
     attackerHeartLost: false,
     rallyContinues: false,
     volleyedElement: 0,
+    gaugeIncreases: false,
   };
 
   switch (timing) {
     case 'NO_BLOCK':
+      // Attack lands fully: heart lost, gauge fills, ring untouched (defender never committed)
       r.defenderHeartLost = true;
+      r.gaugeIncreases = true;
       break;
 
     case 'MISTIME':
+      // Defender committed but missed the window: heart lost, gauge fills, ring pays 1 use
       r.defenderHeartLost = true;
+      r.gaugeIncreases = true;
       if (defenderRing) {
         defenderRing.currentUses = Math.max(0, defenderRing.currentUses - 1);
         defenderRing.isExtinguished = defenderRing.currentUses === 0;
@@ -39,17 +44,18 @@ export function resolveBlock(
 
     case 'BLOCK':
     case 'PARRY':
+      // Defender caught the attack — gauge never fills regardless of element
       if (!defenderRing) break;
-      defenderRing.currentUses -= 1;
+      defenderRing.currentUses = Math.max(0, defenderRing.currentUses - 1);
+      defenderRing.isExtinguished = defenderRing.currentUses === 0;
       if (rel === 'WEAK') {
-        defenderRing.currentUses -= 1;
-        if (defenderRing.currentUses < 0) r.defenderHeartLost = true;
+        // Caught it but wrong element — costs a heart, no gauge
+        r.defenderHeartLost = true;
       } else if (rel === 'STRONG' && timing === 'PARRY') {
+        // Perfect counter — rally
         r.rallyContinues = true;
         r.volleyedElement = defenderRing.element;
       }
-      defenderRing.currentUses = Math.max(0, defenderRing.currentUses);
-      defenderRing.isExtinguished = defenderRing.currentUses === 0;
       break;
   }
 

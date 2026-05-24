@@ -23,8 +23,31 @@ describe('classifyTiming', () => {
   test('pressed at +600 → MISTIME', () => expect(classifyTiming(600, true)).toBe('MISTIME'));
 });
 
+describe('resolveBlock — gauge behaviour', () => {
+  test('NO_BLOCK → gauge increases', () => {
+    const result = resolveBlock(makeRing(0, 3), null, 'NO_BLOCK', 'NEUTRAL');
+    expect(result.gaugeIncreases).toBe(true);
+  });
+  test('MISTIME → gauge increases', () => {
+    const result = resolveBlock(makeRing(0, 3), makeRing(1, 3), 'MISTIME', 'STRONG');
+    expect(result.gaugeIncreases).toBe(true);
+  });
+  test('BLOCK + NEUTRAL → gauge does not increase', () => {
+    const result = resolveBlock(makeRing(0, 3), makeRing(0, 3), 'BLOCK', 'NEUTRAL');
+    expect(result.gaugeIncreases).toBe(false);
+  });
+  test('BLOCK + WEAK → gauge does not increase (attack caught, wrong element)', () => {
+    const result = resolveBlock(makeRing(0, 3), makeRing(4, 3), 'BLOCK', 'WEAK');
+    expect(result.gaugeIncreases).toBe(false);
+  });
+  test('PARRY + STRONG → gauge does not increase', () => {
+    const result = resolveBlock(makeRing(0, 3), makeRing(1, 3), 'PARRY', 'STRONG');
+    expect(result.gaugeIncreases).toBe(false);
+  });
+});
+
 describe('resolveBlock scenarios', () => {
-  test('NO_BLOCK → defender loses heart', () => {
+  test('NO_BLOCK → heart lost, ring untouched', () => {
     const atk = makeRing(0, 3);
     const result = resolveBlock(atk, null, 'NO_BLOCK', 'NEUTRAL');
     expect(result.defenderHeartLost).toBe(true);
@@ -32,7 +55,7 @@ describe('resolveBlock scenarios', () => {
     expect(result.rallyContinues).toBe(false);
   });
 
-  test('MISTIME → defender loses heart + use', () => {
+  test('MISTIME → heart lost, -1 use on defender ring', () => {
     const atk = makeRing(0, 3);
     const def = makeRing(1, 3);
     const result = resolveBlock(atk, def, 'MISTIME', 'STRONG');
@@ -41,16 +64,25 @@ describe('resolveBlock scenarios', () => {
     expect(result.rallyContinues).toBe(false);
   });
 
-  test('BLOCK + NEUTRAL → no heart lost, -1 use defender', () => {
+  test('MISTIME with 1 use → extinguished, heart lost', () => {
     const atk = makeRing(0, 3);
-    const def = makeRing(0, 3); // same element = NEUTRAL
+    const def = makeRing(1, 1);
+    const result = resolveBlock(atk, def, 'MISTIME', 'STRONG');
+    expect(result.defenderHeartLost).toBe(true);
+    expect(def.currentUses).toBe(0);
+    expect(def.isExtinguished).toBe(true);
+  });
+
+  test('BLOCK + NEUTRAL → no heart lost, -1 use', () => {
+    const atk = makeRing(0, 3);
+    const def = makeRing(0, 3);
     const result = resolveBlock(atk, def, 'BLOCK', 'NEUTRAL');
     expect(result.defenderHeartLost).toBe(false);
     expect(def.currentUses).toBe(2);
     expect(result.rallyContinues).toBe(false);
   });
 
-  test('PARRY + NEUTRAL → no heart lost, -1 use defender, no rally', () => {
+  test('PARRY + NEUTRAL → no heart lost, -1 use, no rally', () => {
     const atk = makeRing(0, 3);
     const def = makeRing(0, 3);
     const result = resolveBlock(atk, def, 'PARRY', 'NEUTRAL');
@@ -59,65 +91,57 @@ describe('resolveBlock scenarios', () => {
     expect(result.rallyContinues).toBe(false);
   });
 
-  test('PARRY + STRONG → rally, volleyedElement = defender element', () => {
+  test('PARRY + STRONG → rally, volleyedElement = defender element, no heart lost', () => {
     const atk = makeRing(0, 3); // FIRE
-    const def = makeRing(1, 3); // WATER (strong vs FIRE)
+    const def = makeRing(1, 3); // WATER
     const result = resolveBlock(atk, def, 'PARRY', 'STRONG');
     expect(result.rallyContinues).toBe(true);
-    expect(result.volleyedElement).toBe(1); // WATER
+    expect(result.volleyedElement).toBe(1);
     expect(result.defenderHeartLost).toBe(false);
+    expect(def.currentUses).toBe(2);
   });
 
-  test('BLOCK + STRONG → no rally (only PARRY triggers rally)', () => {
+  test('BLOCK + STRONG → no heart lost, -1 use, no rally', () => {
     const atk = makeRing(0, 3);
     const def = makeRing(1, 3);
     const result = resolveBlock(atk, def, 'BLOCK', 'STRONG');
     expect(result.rallyContinues).toBe(false);
     expect(result.defenderHeartLost).toBe(false);
+    expect(def.currentUses).toBe(2);
   });
 
-  test('BLOCK + WEAK with surplus uses → -2 uses, no heart lost', () => {
+  test('BLOCK + WEAK → heart lost, -1 use (not -2)', () => {
     const atk = makeRing(0, 3); // FIRE
     const def = makeRing(4, 3); // WOOD (weak vs FIRE)
     const result = resolveBlock(atk, def, 'BLOCK', 'WEAK');
-    // BLOCK+WEAK: currentUses -= 1 (3→2), then WEAK -= 1 more (2→1).
-    // 3 - 1 - 1 = 1, which is not < 0, so no heart is lost.
-    expect(result.defenderHeartLost).toBe(false);
-    expect(def.currentUses).toBe(1);
+    expect(result.defenderHeartLost).toBe(true);
+    expect(def.currentUses).toBe(2); // only -1 use
+    expect(def.isExtinguished).toBe(false);
   });
 
   test('BLOCK + WEAK with 1 use → heart lost, ring extinguished', () => {
-    const atk = makeRing(0, 3); // FIRE
+    const atk = makeRing(0, 3);
     const def = makeRing(4, 1); // WOOD at 1 use
     const result = resolveBlock(atk, def, 'BLOCK', 'WEAK');
-    // 1 - 1 - 1 = -1 < 0 → heart lost, clamped to 0
     expect(result.defenderHeartLost).toBe(true);
     expect(def.currentUses).toBe(0);
     expect(def.isExtinguished).toBe(true);
   });
 
-  test('PARRY + WEAK → heart lost (WEAK overrides PARRY rally)', () => {
+  test('PARRY + WEAK → heart lost, -1 use, no rally', () => {
     const atk = makeRing(0, 3);
-    const def = makeRing(4, 1); // WOOD at 1 use, WEAK vs FIRE
+    const def = makeRing(4, 3); // WOOD
     const result = resolveBlock(atk, def, 'PARRY', 'WEAK');
     expect(result.defenderHeartLost).toBe(true);
     expect(result.rallyContinues).toBe(false);
+    expect(def.currentUses).toBe(2);
   });
 
   test('attacker ring extinguishes when uses hit 0', () => {
-    const atk = makeRing(0, 1); // FIRE at 1 use (already decremented by BattleRoom)
-    atk.currentUses = 0; // simulating after throw
+    const atk = makeRing(0, 0);
+    atk.isExtinguished = false; // pre-throw state, set by resolveBlock
     const def = makeRing(1, 3);
     resolveBlock(atk, def, 'BLOCK', 'STRONG');
     expect(atk.isExtinguished).toBe(true);
-  });
-
-  test('MISTIME with 1 use → extinguished but no heart (uses clamped to 0)', () => {
-    const atk = makeRing(0, 3);
-    const def = makeRing(1, 1);
-    const result = resolveBlock(atk, def, 'MISTIME', 'STRONG');
-    expect(result.defenderHeartLost).toBe(true); // MISTIME always loses heart
-    expect(def.currentUses).toBe(0);
-    expect(def.isExtinguished).toBe(true);
   });
 });
