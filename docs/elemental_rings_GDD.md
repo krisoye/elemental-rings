@@ -297,7 +297,22 @@ The attacker always pays **1 use to throw**. The defender's response — its **t
 - **Neutral** — no relationship
 - **Weak** — the attack beats the defender's element
 
-**Outcome:**
+### Block Resolution Table
+
+| Timing | Relationship | Defender ♥ | Defender Uses | Gauge (+1 for attacker's element) | Rally |
+|--------|-------------|:-----------:|:-------------:|:---------------------------------:|:-----:|
+| **No-block** | — | −1 | 0 | ✓ | — |
+| **Mistime** | — | −1 | −1 | ✓ | — |
+| **Block** | Neutral | 0 | −1 | — | — |
+| **Block** | Strong | 0 | −1 | — | — |
+| **Block** | Weak | −1 | −1 | — | — |
+| **Parry** | Neutral | 0 | −1 | — | — |
+| **Parry** | Strong | 0 | −1 | — | ✓ |
+| **Parry** | Weak | −1 | −1 | — | — |
+
+*Attacker always pays −1 use on throw. Gauge = defender's gauge for the attacking ring's element.*
+
+**Compact form (original):**
 
 | Timing ↓ / Element → | Strong | Neutral | Weak |
 |---|---|---|---|
