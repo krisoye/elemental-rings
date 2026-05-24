@@ -77,16 +77,14 @@ Key lessons from the Godot prototype:
 
 ---
 
-## Workspace Note
+## Workspace
 
-`ws start elemental-rings` is **not yet registered** with dev-tools. Use manual clone instead:
+`ws start elemental-rings <feature-slug>` is registered and works normally:
 
 ```bash
-SESSION="er-$(date +%s)"
-mkdir -p ~/wip/$SESSION
-git clone git@github.com:krisoye/elemental-rings.git ~/wip/$SESSION/elemental-rings
-cd ~/wip/$SESSION/elemental-rings
-git checkout -b feature/<slug>
+ws start elemental-rings <feature-slug>
+# → clones to ~/wip/<session-id>/elemental-rings/
+# → follow normal ws workflow: commit, push, gh pr create, ws finish
 ```
 
 ---
