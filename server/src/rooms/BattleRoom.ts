@@ -136,6 +136,10 @@ export class BattleRoom extends Room<{ state: BattleState }> {
    * A2 extinguished, they immediately forfeit and the opponent wins. Spending all
    * attack-ring uses is a loss condition even with hearts remaining. Call at the
    * top of every ATTACK_SELECT entry (whoever is the current attacker forfeits).
+   *
+   * Does NOT notify the AI itself: every call site fires this.notifyAI()
+   * unconditionally on the next line, which broadcasts the resulting phase
+   * (ENDED or ATTACK_SELECT) exactly once.
    */
   private checkAttackForfeit(): void {
     const state = this.state;
@@ -145,7 +149,6 @@ export class BattleRoom extends Room<{ state: BattleState }> {
     if (!this.hasUsableAttack(state.players.get(attackerId)!)) {
       state.winnerId = defenderId;
       state.phase = 'ENDED';
-      this.notifyAI();
     }
   }
 
@@ -282,6 +285,8 @@ export class BattleRoom extends Room<{ state: BattleState }> {
       this.impactTime = Date.now() + TELEGRAPH_MS;
       state.phase = 'DEFEND_WINDOW';
       this.windowTimer = setTimeout(() => this._resolveExchange(), DEFEND_WINDOW_MS);
+      // Rally stays in DEFEND_WINDOW — checkAttackForfeit fires at the
+      // ATTACK_SELECT entry after this rally resolves, never mid-rally.
       this.notifyAI();
     } else {
       // Normal: swap roles, go to ATTACK_SELECT.

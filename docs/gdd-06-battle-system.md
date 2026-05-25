@@ -120,6 +120,8 @@ Neutrals are pure attrition exchanges. A correctly-timed neutral block is always
 - Extinguished rings cannot be used for the rest of the duel
 - The opponent can see which element types are exhausted from the HUD
 
+**Attack-ring forfeit.** If the current attacker begins their turn with **both** attack rings (A1 and A2) extinguished, they immediately forfeit the duel (phase → `ENDED`, opponent wins). Spending all attack-ring uses is a loss condition even with hearts remaining. If a rally exchange drains both players' attack rings simultaneously, the player whose turn comes next forfeits.
+
 ### 6.7 Hearts
 - Each player starts a duel with **3 hearts**
 - Hearts are lost when an attack lands uncontested (no-block or mistime), on a weak catch (block or parry with an element the attack beats), or via status effect damage
