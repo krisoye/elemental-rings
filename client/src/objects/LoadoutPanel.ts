@@ -1,5 +1,6 @@
 import Phaser from 'phaser';
 import { ELEMENT_COLORS, ELEMENT_NAMES } from '../Constants';
+import type { RingData } from './InventoryGrid';
 
 export type LoadoutSlot = 'a1' | 'a2' | 'd1' | 'd2';
 
@@ -70,7 +71,7 @@ export class LoadoutPanel extends Phaser.GameObjects.Container {
    * @param loadout - partial loadout record (slot → ringId | null)
    * @param ringMap - ringId → RingData for element/uses lookup
    */
-  updateFromLoadout(loadout: Record<string, string | null>, ringMap: Map<string, any>): void {
+  updateFromLoadout(loadout: Record<string, string | null>, ringMap: Map<string, RingData>): void {
     for (const def of SLOT_DEFS) {
       const ringId = loadout[def.slot] ?? null;
       const ring = ringId ? ringMap.get(ringId) : null;

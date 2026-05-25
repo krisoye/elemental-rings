@@ -32,53 +32,58 @@ export class OpponentDuelist extends Phaser.GameObjects.Container {
 
   constructor(scene: Phaser.Scene) {
     super(scene, OPPONENT_X, OPPONENT_Y);
-    scene.add.rectangle(OPPONENT_X, OPPONENT_Y, 80, 120, 0x444444).setStrokeStyle(2, 0x888888);
 
-    this.heartsText = scene.add.text(OPPONENT_X - 90, OPPONENT_Y - 55, '♥♥♥', {
+    // All children use container-local coordinates relative to the container
+    // origin at (OPPONENT_X, OPPONENT_Y), so scene offsets become local offsets.
+    const panel = scene.add.rectangle(0, 0, 80, 120, 0x444444).setStrokeStyle(2, 0x888888);
+
+    this.heartsText = scene.add.text(-90, -55, '♥♥♥', {
       fontSize: '14px',
       color: '#ff4444',
     });
-    this.atkText = scene.add.text(OPPONENT_X - 90, OPPONENT_Y - 35, 'ATK: ?', {
+    this.atkText = scene.add.text(-90, -35, 'ATK: ?', {
       fontSize: '12px',
       color: '#ff8888',
     });
-    this.defText = scene.add.text(OPPONENT_X - 90, OPPONENT_Y - 20, 'DEF: ?', {
+    this.defText = scene.add.text(-90, -20, 'DEF: ?', {
       fontSize: '12px',
       color: '#88aaff',
     });
 
     // Five element dots: gray = unrevealed, colored = revealed.
     for (let i = 0; i < 5; i++) {
-      const dot = scene.add.circle(OPPONENT_X - 90 + i * 14, OPPONENT_Y - 2, 5, 0x555555);
+      const dot = scene.add.circle(-90 + i * 14, -2, 5, 0x555555);
       this.elementDots.push(dot);
     }
 
-    this.statusOverlay = scene.add.rectangle(OPPONENT_X, OPPONENT_Y, 80, 120, 0xff0000, 0.3);
+    this.statusOverlay = scene.add.rectangle(0, 0, 80, 120, 0xff0000, 0.3);
     this.statusOverlay.setVisible(false);
 
     // Thumb card — element always visible per GDD §9 (staked ring shows its
     // jewelry position). Dim overlay signals passive exhaustion.
-    this.thumbCard = scene.add.rectangle(
-      OPPONENT_X - 90,
-      OPPONENT_Y + 20,
-      40,
-      56,
-      0x555555,
-    );
+    this.thumbCard = scene.add.rectangle(-90, 20, 40, 56, 0x555555);
     this.thumbCard.setStrokeStyle(1, 0xaa8800);
-    scene.add
-      .text(OPPONENT_X - 90, OPPONENT_Y + 45, 'THUMB', { fontSize: '8px', color: '#ffcc44' })
+    const thumbLbl = scene.add
+      .text(-90, 45, 'THUMB', { fontSize: '8px', color: '#ffcc44' })
       .setOrigin(0.5);
 
-    this.thumbDimOverlay = scene.add.rectangle(
-      OPPONENT_X - 90,
-      OPPONENT_Y + 20,
-      40,
-      56,
-      0x000000,
-      0.6,
-    );
+    this.thumbDimOverlay = scene.add.rectangle(-90, 20, 40, 56, 0x000000, 0.6);
     this.thumbDimOverlay.setVisible(false);
+
+    // Parent every child to the container so the whole panel moves/depth-sorts
+    // as one unit. statusOverlay is added after the panel/labels so it tints on
+    // top, and the thumb dim overlay sits above the thumb card.
+    this.add([
+      panel,
+      this.heartsText,
+      this.atkText,
+      this.defText,
+      ...this.elementDots,
+      this.statusOverlay,
+      this.thumbCard,
+      thumbLbl,
+      this.thumbDimOverlay,
+    ]);
 
     scene.add.existing(this);
   }

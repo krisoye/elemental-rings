@@ -16,6 +16,9 @@ const CARD_H = 88;
 const COL_GAP = 72; // column 1 at x=0, column 2 at x=72
 const ROW_GAP = 92; // card height + 4px gap
 
+const DESELECTED_STROKE = 0x888888;
+const SELECTED_STROKE = 0xffff00;
+
 /**
  * A 2-column grid of ring cards rendered from plain REST API ring data.
  * Clicking a card selects it (or deselects if already selected). Escrowed
@@ -24,6 +27,9 @@ const ROW_GAP = 92; // card height + 4px gap
 export class InventoryGrid extends Phaser.GameObjects.Container {
   private selected: RingData | null = null;
   private readonly cards: Map<string, Phaser.GameObjects.Container> = new Map();
+  // Background rectangle per ring id, used to toggle selection stroke without
+  // relying on the card container's child ordering.
+  private readonly cardBgs: Map<string, Phaser.GameObjects.Rectangle> = new Map();
   private readonly onSelect: (ring: RingData | null) => void;
 
   constructor(
@@ -45,6 +51,7 @@ export class InventoryGrid extends Phaser.GameObjects.Container {
     // Destroy previous card game objects.
     this.cards.forEach((c) => c.destroy());
     this.cards.clear();
+    this.cardBgs.clear();
     this.selected = null;
 
     const sorted = [...rings].sort((a, b) =>
@@ -60,7 +67,7 @@ export class InventoryGrid extends Phaser.GameObjects.Container {
       const container = this.scene.add.container(cx, cy);
 
       const bg = this.scene.add.rectangle(0, 0, CARD_W, CARD_H, ELEMENT_COLORS[ring.element] ?? 0x444444);
-      bg.setStrokeStyle(2, 0x888888);
+      bg.setStrokeStyle(2, DESELECTED_STROKE);
 
       const nameText = this.scene.add
         .text(0, -32, ELEMENT_NAMES[ring.element] ?? '?', { fontSize: '9px', color: '#000000' })
@@ -91,23 +98,22 @@ export class InventoryGrid extends Phaser.GameObjects.Container {
 
       this.add(container);
       this.cards.set(ring.id, container);
+      this.cardBgs.set(ring.id, bg);
     });
   }
 
   private handleClick(ring: RingData, bg: Phaser.GameObjects.Rectangle): void {
     if (this.selected?.id === ring.id) {
       // Deselect.
-      bg.setStrokeStyle(2, 0x888888);
+      bg.setStrokeStyle(2, DESELECTED_STROKE);
       this.selected = null;
       this.onSelect(null);
     } else {
-      // Deselect previous.
+      // Deselect previous via its background ref (not container child ordering).
       if (this.selected) {
-        const prevCard = this.cards.get(this.selected.id);
-        const prevBg = prevCard?.list[0] as Phaser.GameObjects.Rectangle | undefined;
-        prevBg?.setStrokeStyle(2, 0x888888);
+        this.cardBgs.get(this.selected.id)?.setStrokeStyle(2, DESELECTED_STROKE);
       }
-      bg.setStrokeStyle(3, 0xffff00);
+      bg.setStrokeStyle(3, SELECTED_STROKE);
       this.selected = ring;
       this.onSelect(ring);
     }
@@ -119,9 +125,7 @@ export class InventoryGrid extends Phaser.GameObjects.Container {
 
   clearSelection(): void {
     if (this.selected) {
-      const card = this.cards.get(this.selected.id);
-      const bg = card?.list[0] as Phaser.GameObjects.Rectangle | undefined;
-      bg?.setStrokeStyle(2, 0x888888);
+      this.cardBgs.get(this.selected.id)?.setStrokeStyle(2, DESELECTED_STROKE);
       this.selected = null;
       this.onSelect(null);
     }

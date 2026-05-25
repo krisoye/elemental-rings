@@ -1,5 +1,6 @@
 import Phaser from 'phaser';
 import { ELEMENT_COLORS, ELEMENT_NAMES } from '../Constants';
+import type { RingData } from './InventoryGrid';
 
 const CARD_W = 70;
 const CARD_H = 90;
@@ -66,7 +67,7 @@ export class StakePanel extends Phaser.GameObjects.Container {
    * @param thumbRingId - the ring id assigned to thumb, or null
    * @param ringMap - ringId → RingData
    */
-  updateFromLoadout(thumbRingId: string | null, ringMap: Map<string, any>): void {
+  updateFromLoadout(thumbRingId: string | null, ringMap: Map<string, RingData>): void {
     const ring = thumbRingId ? ringMap.get(thumbRingId) : null;
 
     if (ring) {

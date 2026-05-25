@@ -82,7 +82,7 @@ export class CampScene extends Phaser.Scene {
     // ── E2E hooks ─────────────────────────────────────────────────────────
     window.__campGoEncounter = (): void => this.goToEncounter();
     window.__campSleep = (): void => void this.doSleep();
-    window.__campRecharge = (ringId: string): void => void this.doRechargeById(ringId);
+    window.__campRecharge = (ringId: string): Promise<void> => this.doRechargeById(ringId);
 
     this.events.once('shutdown', () => {
       window.__campGoEncounter = undefined;
@@ -106,7 +106,7 @@ export class CampScene extends Phaser.Scene {
       return;
     }
 
-    let data: { player: any; rings: RingData[]; loadout: any };
+    let data: { player: any; rings: RingData[]; loadout: Record<string, string | null> };
     try {
       const res = await fetch(`${API_BASE}/api/me`, {
         headers: { Authorization: `Bearer ${token}` },

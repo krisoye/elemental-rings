@@ -23,7 +23,7 @@ declare global {
     __encounterSelect?: (choice: AIPersonality | 'PVP') => void;
     __campGoEncounter?: () => void;
     __campSleep?: () => void;
-    __campRecharge?: (ringId: string) => void;
+    __campRecharge?: (ringId: string) => Promise<void>;
     __campState?: { player: any; rings: any[]; loadout: any };
   }
 }

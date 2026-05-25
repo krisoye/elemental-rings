@@ -101,7 +101,9 @@ test('camp: after vsAI duel ends, scene is CampScene', async ({ browser }) => {
   await waitForEncounter(page);
   await page.evaluate(() => (window as any).__encounterSelect('AGGRESSIVE'));
 
-  // Drive both sides until ENDED.
+  // Drive both sides until ENDED. Attack when it's our turn; submit a real
+  // defense during the defend window so the normal block path is exercised
+  // rather than letting the window time out.
   const driver = setInterval(() => {
     void page.evaluate(() => {
       const room = (window as any).__room;
@@ -110,6 +112,11 @@ test('camp: after vsAI duel ends, scene is CampScene', async ({ browser }) => {
         room?.state?.currentAttackerId === room?.sessionId
       ) {
         room.send('selectAttack', { slot: 'a1' });
+      } else if (
+        room?.state?.phase === 'DEFEND_WINDOW' &&
+        room?.state?.currentAttackerId !== room?.sessionId
+      ) {
+        room.send('submitDefense', { slot: 'd1' });
       }
     });
   }, 300);

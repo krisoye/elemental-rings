@@ -124,7 +124,7 @@ export class EncounterScene extends Phaser.Scene {
       if (state.phase === 'ATTACK_SELECT' && !transitioned) {
         transitioned = true;
         room.onStateChange.remove(onState);
-        this.scene.start('BattleScene', { returnScene: 'EncounterScene' });
+        this.scene.start('BattleScene');
       }
     };
     room.onStateChange(onState);
