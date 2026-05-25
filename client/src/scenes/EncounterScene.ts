@@ -90,6 +90,11 @@ export class EncounterScene extends Phaser.Scene {
       rect.on('pointerdown', () => this.select(m.choice));
     });
 
+    this.add
+      .text(20, 20, '◀ Camp', { fontSize: '16px', color: '#aaffaa' })
+      .setInteractive({ useHandCursor: true })
+      .on('pointerdown', () => this.scene.start('CampScene'));
+
     this.statusText = this.add
       .text(CANVAS_W / 2, CANVAS_H - 40, '', { fontSize: '16px', color: '#ffff88' })
       .setOrigin(0.5);
