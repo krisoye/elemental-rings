@@ -290,6 +290,11 @@ export class BattleRoom extends Room<{ state: BattleState }> {
           // vsAI: winner has no DB record — just delete the ring.
           PlayerRepo.forfeitRing(loserThumbRingId, loserPlayerId);
         }
+      } else if (!loserPlayerId && winnerPlayerId && loserId) {
+        // vsAI win: AI has no DB ring to transfer, so grant the winner a new
+        // ring matching the AI's thumb element (GDD §9.1).
+        const aiPs = this.state.players.get(loserId);
+        if (aiPs) PlayerRepo.grantRing(winnerPlayerId, aiPs.thumb.element);
       }
 
       // Release escrow on every human thumb ring still escrowed.

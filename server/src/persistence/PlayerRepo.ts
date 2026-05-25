@@ -244,6 +244,22 @@ export function setEscrowed(ringId: string, escrowed: boolean): void {
 }
 
 /**
+ * Grant a new ring (tier 1, full uses) to a player. Used when the human
+ * player beats the AI — the AI has no DB ring to transfer, so we create one
+ * matching the AI's thumb element (GDD §9.1: winner receives the staked ring).
+ */
+export function grantRing(ownerId: string, element: number): void {
+  insertRing.run({
+    id: uuidv4(),
+    owner_id: ownerId,
+    element,
+    tier: STARTER_TIER,
+    max_uses: STARTER_MAX_USES,
+    current_uses: STARTER_MAX_USES,
+  });
+}
+
+/**
  * Transfer ownership of a ring from one player to another. Nulls out any
  * loadout slots that referenced the ring on the losing player. The ring's XP
  * travels with it (GDD §9.1).
