@@ -1,6 +1,8 @@
 import { Router, type Request, type Response } from 'express';
 import bcrypt from 'bcrypt';
 import { signToken, requireAuth } from '../auth/auth';
+import { makeRng } from '../game/ai/AIProfiles';
+import { previewStakeElement, AI_PERSONALITIES } from '../game/ai/AILoadout';
 import {
   createPlayer,
   getPlayerByUsername,
@@ -186,4 +188,21 @@ apiRouter.post('/api/stake/unlock', requireAuth, (req: Request, res: Response): 
   const playerId = req.playerId as string;
   unlockStake(playerId);
   res.status(200).json({ ok: true });
+});
+
+/**
+ * GET /api/encounter/preview — returns a randomized stake element per AI
+ * personality so the EncounterScene can color each opponent marker before
+ * the player commits to a duel. No auth required.
+ *
+ * Response: Record<AIPersonality, number>  (personality → stake element index)
+ */
+apiRouter.get('/api/encounter/preview', (_req: Request, res: Response): void => {
+  const seed = Date.now() & 0xffffffff;
+  const rng = makeRng(seed);
+  const preview: Record<string, number> = {};
+  for (const p of AI_PERSONALITIES) {
+    preview[p] = previewStakeElement(p, rng);
+  }
+  res.status(200).json(preview);
 });
