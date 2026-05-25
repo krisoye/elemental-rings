@@ -86,14 +86,15 @@ test('scenario 3: AI responds to a human attack (defends, not idle)', async ({ b
   await page.keyboard.press('1'); // FIRE
 
   // Wait for the exchangeResult broadcast (the server's single message per
-  // exchange). defenderSlot >= 0 means the AI submitted a defense; heartLost
-  // means the AI took a hit from a no-block. Either proves the AI responded.
-  // NOTE: defenderSelectedSlot in room.state is reset to -1 within the same
-  // Colyseus tick, so the client patch always shows -1 — use the message instead.
+  // exchange). defenderSlot !== '' means the AI submitted a defense slot ('d1'
+  // or 'd2'); defenderHeartLost means the AI took a hit from a no-block. Either
+  // proves the AI responded to the incoming attack.
+  // NOTE: defenderSlot in room.state resets to '' within the same Colyseus tick
+  // — use the exchangeResult message instead, where the slot is captured at resolve time.
   await page.waitForFunction(
     () => {
       const r = (window as any).__lastExchangeResult;
-      return r !== null && (r.defenderSlot >= 0 || r.defenderHeartLost);
+      return r !== null && (r.defenderSlot !== '' || r.defenderHeartLost);
     },
     { timeout: 6000 },
   );
@@ -118,7 +119,7 @@ test('scenario 4: duel completes and returns to EncounterScene', async ({ browse
         room?.state?.phase === 'ATTACK_SELECT' &&
         room?.state?.currentAttackerId === room?.sessionId
       ) {
-        room.send('selectAttack', { slot: 0 });
+        room.send('selectAttack', { slot: 'a1' });
       }
     });
   }, 300);

@@ -73,7 +73,8 @@ describe('vsAI: AI is seated and drives the duel', () => {
     await sleep(800);
     expect(room.state.phase).toBe('DEFEND_WINDOW');
     expect(room.state.currentAttackerId).toBe('AI');
-    expect(room.state.attackerSelectedSlot).toBeGreaterThanOrEqual(0);
+    // The AI must pick a real attack slot (a1 or a2), never a defense slot.
+    expect(['a1', 'a2']).toContain(room.state.attackerSlot);
   });
 
   test('AI defends a human throw: human attacks, AI commits a ring', async () => {
@@ -93,16 +94,19 @@ describe('vsAI: AI is seated and drives the duel', () => {
     expect(room.state.currentAttackerId).toBe(human.sessionId);
     expect(room.state.phase).toBe('ATTACK_SELECT');
 
+    const combatUses = (ps: any): number =>
+      ['a1', 'a2', 'd1', 'd2'].reduce((n, k) => n + ps[k].currentUses, 0);
+
     const aiBefore = room.state.players.get('AI');
-    const usesBefore = aiBefore.hand.reduce((n: number, r: any) => n + r.currentUses, 0);
+    const usesBefore = combatUses(aiBefore);
     const heartsBefore = aiBefore.hearts;
 
-    human.send('selectAttack', { slot: 0 }); // FIRE
+    human.send('selectAttack', { slot: 'a1' }); // FIRE
     // Wait past the defend window + resolve so the AI's scheduled press lands.
     await sleep(1500);
 
     const aiAfter = room.state.players.get('AI');
-    const usesAfter = aiAfter.hand.reduce((n: number, r: any) => n + r.currentUses, 0);
+    const usesAfter = combatUses(aiAfter);
     // The AI responded (not idle): either it spent a ring use defending, or it
     // took a heart hit. Both prove the defense code path ran for the AI.
     expect(usesAfter < usesBefore || aiAfter.hearts < heartsBefore).toBe(true);
@@ -121,7 +125,7 @@ describe('vsAI: duels reach completion deterministically', () => {
         room.state.phase === 'ATTACK_SELECT' &&
         room.state.currentAttackerId === human.sessionId
       ) {
-        human.send('selectAttack', { slot: 0 }); // FIRE
+        human.send('selectAttack', { slot: 'a1' }); // FIRE
       }
       await sleep(250);
     }
@@ -132,13 +136,13 @@ describe('vsAI: duels reach completion deterministically', () => {
   test('determinism: same aiSeed reproduces the same opening attack slot', async () => {
     const a = await joinVsAI('STATUS_HUNTER', 77);
     await sleep(1300); // past think-delay → first attack thrown
-    const slotA = a.room.state.attackerSelectedSlot;
+    const slotA = a.room.state.attackerSlot;
 
     const b = await joinVsAI('STATUS_HUNTER', 77);
     await sleep(1300);
-    const slotB = b.room.state.attackerSelectedSlot;
+    const slotB = b.room.state.attackerSlot;
 
-    expect(slotA).toBeGreaterThanOrEqual(0);
+    expect(['a1', 'a2']).toContain(slotA);
     expect(slotA).toBe(slotB);
   });
 });

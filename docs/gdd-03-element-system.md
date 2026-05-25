@@ -133,6 +133,7 @@ Net: rally triggered · no heart lost · Forest ring −1 use.
 
 Forest defense is STRONG against two of the three triangle elements and NEUTRAL against the third. Compare to a plain Water ring: STRONG vs Fire, NEUTRAL vs Water, WEAK vs Wood. A dual-triangle fusion defense eliminates the weak-element exposure of any single base ring, at the cost of a harder-to-acquire ring.
 
+
 #### Open Question (narrowed)
 
 Fusion-vs-fusion component assignment when the optimal matching is ambiguous (two components each better against different opponents) is unspecified. Resolve during implementation of issue #20.

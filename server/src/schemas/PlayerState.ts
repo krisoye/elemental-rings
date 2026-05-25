@@ -1,5 +1,6 @@
-import { Schema, ArraySchema, type } from '@colyseus/schema';
+import { Schema, type } from '@colyseus/schema';
 import { Ring } from './Ring';
+import { SlotKey } from '../../../shared/types';
 
 export class PlayerState extends Schema {
   @type('string') playerId: string = '';
@@ -7,14 +8,38 @@ export class PlayerState extends Schema {
   // here so the client HUD can label it.
   @type('string') displayName: string = '';
   @type('uint8') hearts: number = 3;
-  @type([Ring]) hand: ArraySchema<Ring> = new ArraySchema<Ring>();
-  @type('int8') selectedSlot: number = -1;
 
-  // Elemental gauges — fill when an attack of that element lands uncontested.
-  // Indexed to match ElementEnum: FIRE=0, WATER=1, EARTH=2, WIND=3, WOOD=4.
+  // Named loadout slots (GDD §6.1). Each is always assigned by seatPlayer.
+  // thumb is a passive staked ring — never pressed in combat.
+  @type(Ring) thumb: Ring = new Ring();
+  @type(Ring) a1: Ring = new Ring();
+  @type(Ring) a2: Ring = new Ring();
+  @type(Ring) d1: Ring = new Ring();
+  @type(Ring) d2: Ring = new Ring();
+
+  // Elemental gauges — one per triangle element (FIRE/WATER/WOOD). Fill when an
+  // attack with that triangle component lands uncontested. Wind/Earth have no
+  // gauge (GDD §7.1).
   @type('uint8') fireGauge: number = 0;
   @type('uint8') waterGauge: number = 0;
-  @type('uint8') earthGauge: number = 0;
-  @type('uint8') windGauge: number = 0;
   @type('uint8') woodGauge: number = 0;
+
+  /**
+   * Server-only helper (NOT a @type) to read a ring by its named slot key.
+   * Lets BattleRoom / AI address slots generically (e.g. via state.attackerSlot).
+   */
+  getSlot(key: SlotKey): Ring {
+    switch (key) {
+      case 'thumb':
+        return this.thumb;
+      case 'a1':
+        return this.a1;
+      case 'a2':
+        return this.a2;
+      case 'd1':
+        return this.d1;
+      case 'd2':
+        return this.d2;
+    }
+  }
 }

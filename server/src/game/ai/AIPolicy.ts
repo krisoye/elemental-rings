@@ -1,20 +1,35 @@
-import { counterOf } from '../ElementSystem';
+import { counterOf, resolve } from '../ElementSystem';
+import { TRIANGLE } from '../Fusions';
+import { AttackSlot, DefenseSlot } from '../../../../shared/types';
 import { AIProfile, Rng, isLowHearts } from './AIProfiles';
 
-/** Read-only snapshot of one ring in the AI's hand. */
+/** Read-only snapshot of one ring in a slot. */
 export interface RingView {
   element: number;
   currentUses: number;
   isExtinguished: boolean;
 }
 
+/** A named attack slot the AI can fire. */
+export interface AttackSlotView {
+  key: AttackSlot;
+  ring: RingView;
+}
+
+/** A named defense slot the AI can fire. */
+export interface DefenseSlotView {
+  key: DefenseSlot;
+  ring: RingView;
+}
+
 /**
  * Plain, read-only board snapshot the policy reasons over. Built by
- * `readBoard(state, aiId)` (in AIController) so the policy never touches
- * Colyseus schemas directly and stays trivially unit-testable.
+ * `readBoard(state, aiId)` (in AIController) so the policy never touches Colyseus
+ * schemas directly and stays trivially unit-testable.
  */
 export interface BoardView {
-  hand: RingView[];
+  attackSlots: AttackSlotView[];
+  defenseSlots: DefenseSlotView[];
   hearts: number;
   /**
    * The element currently incoming when the AI is the defender (the attacker's
@@ -22,192 +37,187 @@ export interface BoardView {
    */
   incomingElement: number;
   /**
-   * Elements the opponent is known to still hold a usable ring for (revealed
-   * via prior attacks/defenses). Used by Aggressive to throw something the
-   * opponent can't strong-counter. Empty when nothing is revealed yet.
+   * Elements the opponent is known to still hold a usable ring for. Used by
+   * Aggressive to throw something the opponent can't strong-counter.
    */
   opponentUsableElements: number[];
   /**
-   * The element STATUS_HUNTER has committed to this duel (-1 = not yet chosen).
+   * The triangle element STATUS_HUNTER has committed to this duel (-1 = none).
    * Persisted across turns by the controller.
    */
   committedElement: number;
 }
 
 export interface AttackDecision {
-  slot: number;
+  slot: AttackSlot;
   /** The element STATUS_HUNTER committed to (so the controller can persist it). */
   committedElement: number;
 }
 
 export interface DefenseDecision {
-  slot: number;
+  /** The defense slot to commit, or null for a deliberate no-block. */
+  slot: DefenseSlot | null;
   /** Intended press offset from impact in ms, or null for a deliberate no-block. */
   pressOffsetMs: number | null;
 }
 
-/** Indices of rings that can still be thrown/used. */
-function usableSlots(hand: RingView[]): number[] {
-  const out: number[] = [];
-  for (let i = 0; i < hand.length; i++) {
-    if (!hand[i].isExtinguished && hand[i].currentUses > 0) out.push(i);
-  }
-  return out;
+/** Attack slots whose ring can still be thrown. */
+function usableAttackSlots(view: BoardView): AttackSlotView[] {
+  return view.attackSlots.filter((s) => !s.ring.isExtinguished && s.ring.currentUses > 0);
 }
 
-/** Slot holding the given element if it is still usable, else -1. */
-function usableSlotForElement(hand: RingView[], element: number): number {
-  if (element < 0) return -1;
-  const r = hand[element];
-  return r && !r.isExtinguished && r.currentUses > 0 ? element : -1;
+/** Defense slots whose ring can still be used. */
+function usableDefenseSlots(view: BoardView): DefenseSlotView[] {
+  return view.defenseSlots.filter((s) => !s.ring.isExtinguished && s.ring.currentUses > 0);
 }
 
-/** Usable slot with the most remaining uses (ties → lowest slot). */
-function mostUsesSlot(hand: RingView[], slots: number[]): number {
+/** Attack slot with the most remaining uses (ties → first in order). */
+function mostUsesAttack(slots: AttackSlotView[]): AttackSlotView {
   let best = slots[0];
-  for (const s of slots) if (hand[s].currentUses > hand[best].currentUses) best = s;
+  for (const s of slots) if (s.ring.currentUses > best.ring.currentUses) best = s;
   return best;
 }
 
-/** Usable slot with the fewest remaining uses (ties → lowest slot). */
-function fewestUsesSlot(hand: RingView[], slots: number[]): number {
+/** Attack slot with the fewest remaining uses (ties → first in order). */
+function fewestUsesAttack(slots: AttackSlotView[]): AttackSlotView {
   let best = slots[0];
-  for (const s of slots) if (hand[s].currentUses < hand[best].currentUses) best = s;
+  for (const s of slots) if (s.ring.currentUses < best.ring.currentUses) best = s;
   return best;
 }
 
 /**
- * Pure attack decision. Each personality picks a slot from its own hand; the
- * slot index equals the element (hand is element-indexed). Never returns an
- * extinguished/empty ring as long as one usable ring exists.
+ * Pure attack decision. Each personality picks from the two attack slots (a1/a2).
+ * Never returns an extinguished slot as long as one usable attack slot exists;
+ * the defensive fallback returns 'a1'.
  */
 export function decideAttack(view: BoardView, profile: AIProfile, _rng: Rng): AttackDecision {
-  const slots = usableSlots(view.hand);
-  // Defensive fallback: no usable ring (shouldn't happen mid-duel) — slot 0.
-  if (slots.length === 0) return { slot: 0, committedElement: view.committedElement };
+  const usable = usableAttackSlots(view);
+  if (usable.length === 0) return { slot: 'a1', committedElement: view.committedElement };
 
   const low = isLowHearts(profile, view.hearts);
 
   switch (profile.personality) {
     case 'AGGRESSIVE':
-      return { slot: aggressiveAttackSlot(view, slots), committedElement: view.committedElement };
+      return { slot: aggressiveAttackSlot(view, usable), committedElement: view.committedElement };
 
     case 'DEFENSIVE':
-      // Spend the fewest-use ring first; hold strong (high-use) rings in reserve.
-      return { slot: fewestUsesSlot(view.hand, slots), committedElement: view.committedElement };
+      // Spend the fewest-use ring first; hold high-use rings in reserve.
+      return { slot: fewestUsesAttack(usable).key, committedElement: view.committedElement };
 
     case 'STATUS_HUNTER': {
-      // Commit to one element for the whole duel; re-commit only if it can no
-      // longer be thrown (extinguished). Build the chosen element's gauge.
+      // Commit to one TRIANGLE element held in an attack slot, to build its gauge;
+      // re-commit only if it can no longer be thrown from a1/a2.
       let committed = view.committedElement;
-      if (usableSlotForElement(view.hand, committed) < 0) {
-        committed = mostUsesSlot(view.hand, slots); // slot index === element
+      let slot = usableSlotForElement(usable, committed);
+      if (!slot) {
+        slot = pickTriangleAttack(usable) ?? mostUsesAttack(usable);
+        committed = TRIANGLE.has(slot.ring.element) ? slot.ring.element : committed;
       }
-      return { slot: committed, committedElement: committed };
+      return { slot: slot.key, committedElement: committed };
     }
 
     case 'RESILIENT':
-      // Healthy: grind highest-use ring. Low: borrow Aggressive's unparryable pick.
+      // Healthy: grind the most-uses attack. Low: borrow Aggressive's unparryable pick.
       return {
-        slot: low ? aggressiveAttackSlot(view, slots) : mostUsesSlot(view.hand, slots),
+        slot: low ? aggressiveAttackSlot(view, usable) : mostUsesAttack(usable).key,
         committedElement: view.committedElement,
       };
 
     default:
-      return { slot: slots[0], committedElement: view.committedElement };
+      return { slot: usable[0].key, committedElement: view.committedElement };
   }
 }
 
+/** First usable attack slot holding `element` (a usable TRIANGLE element), else null. */
+function usableSlotForElement(usable: AttackSlotView[], element: number): AttackSlotView | null {
+  if (element < 0) return null;
+  return usable.find((s) => s.ring.element === element) ?? null;
+}
+
+/** First usable attack slot holding a triangle element (for STATUS_HUNTER commit). */
+function pickTriangleAttack(usable: AttackSlotView[]): AttackSlotView | null {
+  return usable.find((s) => TRIANGLE.has(s.ring.element)) ?? null;
+}
+
 /**
- * Aggressive attack rule: throw an element the opponent can't STRONG-counter
- * (their counter ring is exhausted/unrevealed-as-usable). If every usable
- * element is counterable, fall back to the AI's own most-uses ring.
+ * Aggressive attack rule: throw an element the opponent cannot STRONG-counter
+ * (their counter ring is exhausted/unrevealed-as-usable). If every usable element
+ * is counterable, fall back to the most-uses attack slot.
  */
-function aggressiveAttackSlot(view: BoardView, slots: number[]): number {
+function aggressiveAttackSlot(view: BoardView, usable: AttackSlotView[]): AttackSlot {
   if (view.opponentUsableElements.length > 0) {
-    for (const s of slots) {
-      const counter = counterOf(view.hand[s].element);
-      if (!view.opponentUsableElements.includes(counter)) return s;
+    for (const s of usable) {
+      const counter = counterOf(s.ring.element); // -1 for WIND/EARTH/fusions (uncounterable)
+      if (counter < 0 || !view.opponentUsableElements.includes(counter)) return s.key;
     }
   }
-  return mostUsesSlot(view.hand, slots);
+  return mostUsesAttack(usable).key;
 }
 
 /**
- * Pure defense decision. Returns the ring slot to commit and the intended press
- * offset (ms from impact), or pressOffsetMs=null to deliberately not block.
- * The controller adds Gaussian jitter and converts the offset to a wall-clock
- * timer; this function only states the *intent*.
+ * Pure defense decision over d1/d2. Returns the slot to commit and the intended
+ * press offset (ms from impact), or {slot:null, pressOffsetMs:null} for a
+ * deliberate no-block. The controller adds Gaussian jitter and converts the
+ * offset to a wall-clock timer; this function only states the *intent*.
+ *
+ * Element reasoning uses role-aware resolve('defense'): a STRONG slot vs the
+ * incoming element enables a parry→rally; a NEUTRAL slot is a safe catch; WEAK is
+ * avoided (loses a heart). Earth defense is always NEUTRAL (safe); Wind defense is
+ * always WEAK (avoid).
  */
 export function decideDefense(view: BoardView, profile: AIProfile, rng: Rng): DefenseDecision {
-  const slots = usableSlots(view.hand);
+  const usable = usableDefenseSlots(view);
   const low = isLowHearts(profile, view.hearts);
   const noBlockProb = low ? profile.lowHeartNoBlockProb : profile.noBlockProb;
 
-  // No usable ring → cannot block.
-  if (slots.length === 0) return { slot: -1, pressOffsetMs: null };
+  if (usable.length === 0) return { slot: null, pressOffsetMs: null };
 
   const incoming = view.incomingElement;
-  const counterEl = counterOf(incoming);
-  const counterSlot = usableSlotForElement(view.hand, counterEl);
+  const strong = strongSlot(usable, incoming);
 
   switch (profile.personality) {
     case 'AGGRESSIVE':
-      // Chase the rally: STRONG counter at PARRY timing if available.
-      if (counterSlot >= 0) return { slot: counterSlot, pressOffsetMs: 0 };
-      // No counter available — safe NEUTRAL catch at BLOCK timing.
-      return neutralCatch(view, slots, incoming);
+      // Chase the rally: STRONG slot at PARRY timing if available.
+      if (strong) return { slot: strong.key, pressOffsetMs: 0 };
+      return neutralCatch(usable, incoming);
 
     case 'DEFENSIVE':
-      // Sometimes take the hit rather than waste a ring; otherwise safe NEUTRAL
-      // catch that denies the attacker a rally.
-      if (rng.next() < noBlockProb) return { slot: -1, pressOffsetMs: null };
-      return neutralCatch(view, slots, incoming);
+      if (rng.next() < noBlockProb) return { slot: null, pressOffsetMs: null };
+      return neutralCatch(usable, incoming);
 
     case 'STATUS_HUNTER':
-      if (rng.next() < noBlockProb) return { slot: -1, pressOffsetMs: null };
-      return neutralCatch(view, slots, incoming);
+      if (rng.next() < noBlockProb) return { slot: null, pressOffsetMs: null };
+      return neutralCatch(usable, incoming);
 
     case 'RESILIENT':
       if (low) {
-        // Sharp strong-parry when cornered.
-        if (counterSlot >= 0) return { slot: counterSlot, pressOffsetMs: 0 };
-        return neutralCatch(view, slots, incoming);
+        if (strong) return { slot: strong.key, pressOffsetMs: 0 };
+        return neutralCatch(usable, incoming);
       }
-      // Loose / frequently no-block when healthy.
-      if (rng.next() < noBlockProb) return { slot: -1, pressOffsetMs: null };
-      return neutralCatch(view, slots, incoming);
+      if (rng.next() < noBlockProb) return { slot: null, pressOffsetMs: null };
+      return neutralCatch(usable, incoming);
 
     default:
-      return neutralCatch(view, slots, incoming);
+      return neutralCatch(usable, incoming);
   }
+}
+
+/** First usable defense slot that is STRONG against `incoming` (enables a rally). */
+function strongSlot(usable: DefenseSlotView[], incoming: number): DefenseSlotView | null {
+  if (incoming < 0) return null;
+  return usable.find((s) => resolve(incoming, s.ring.element, 'defense') === 'STRONG') ?? null;
 }
 
 /**
- * Pick a NEUTRAL (or worst-case non-WEAK) ring and catch at BLOCK timing so the
- * attacker gets no rally. Avoids WEAK (would cost a heart) and avoids the STRONG
- * counter at PARRY (which would feed the attacker — but a NEUTRAL catch is the
- * intent here). Falls back to fewest-use usable ring.
+ * Pick a NEUTRAL defense slot (safe catch) and press at BLOCK timing so the
+ * attacker gets no rally. Avoids WEAK (would cost a heart). Falls back to the
+ * fewest-use usable slot when no NEUTRAL slot exists.
  */
-function neutralCatch(view: BoardView, slots: number[], incoming: number): DefenseDecision {
-  // Prefer a NEUTRAL ring: not the counter (STRONG) and not one we are WEAK to.
-  const counterEl = counterOf(incoming);
-  const neutral: number[] = [];
-  for (const s of slots) {
-    const el = view.hand[s].element;
-    if (el === counterEl) continue; // STRONG — reserve it
-    // WEAK for the defender means the incoming element beats our ring: counterOf(el) === incoming.
-    if (counterOf(el) === incoming) continue;
-    neutral.push(s);
-  }
-  const pool = neutral.length > 0 ? neutral : slots;
-  // Catch just inside the BLOCK shell (post-impact) — a safe, non-parry catch.
-  // BLOCK_WINDOW=200, PARRY_WINDOW=175 → +190ms is BLOCK, not PARRY, not MISTIME.
-  return { slot: fewestUsesViewSlot(view, pool), pressOffsetMs: 190 };
-}
-
-function fewestUsesViewSlot(view: BoardView, slots: number[]): number {
-  let best = slots[0];
-  for (const s of slots) if (view.hand[s].currentUses < view.hand[best].currentUses) best = s;
-  return best;
+function neutralCatch(usable: DefenseSlotView[], incoming: number): DefenseDecision {
+  const neutral = usable.filter((s) => resolve(incoming, s.ring.element, 'defense') === 'NEUTRAL');
+  const pool = neutral.length > 0 ? neutral : usable;
+  let best = pool[0];
+  for (const s of pool) if (s.ring.currentUses < best.ring.currentUses) best = s;
+  // +190ms: |190| > PARRY_WINDOW(175) but <= BLOCK_WINDOW(200) → BLOCK, not PARRY/MISTIME.
+  return { slot: best.key, pressOffsetMs: 190 };
 }
