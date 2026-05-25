@@ -5,6 +5,8 @@ import { Ring } from '../schemas/Ring';
 import { classifyTiming, resolveBlock } from '../game/BlockResolver';
 import { componentsOf, fusionParents, isFusion } from '../game/ElementSystem';
 import { AIController } from '../game/ai/AIController';
+import { makeRng } from '../game/ai/AIProfiles';
+import { generateAILoadout, type SlotSpec } from '../game/ai/AILoadout';
 import * as StakeResolver from '../game/StakeResolver';
 import * as PlayerRepo from '../persistence/PlayerRepo';
 import { verifyToken } from '../auth/auth';
@@ -52,14 +54,7 @@ const DEFAULT_LOADOUT: Record<SlotKey, number> = {
   d2: ElementEnum.EARTH,
 };
 
-/** Per-slot spec supplied when seating a player from their persisted loadout. */
-interface SlotSpec {
-  element: number;
-  tier: number;
-  currentUses: number;
-  maxUses: number;
-  xp: number;
-}
+// SlotSpec imported from AILoadout (shared type for AI + human seating).
 
 export class BattleRoom extends Room<{ state: BattleState }> {
   private impactTime: number = 0;
@@ -96,7 +91,11 @@ export class BattleRoom extends Room<{ state: BattleState }> {
     if (options.vsAI) {
       const personality = options.personality ?? 'AGGRESSIVE';
       const seed = options.aiSeed ?? (Date.now() & 0xffffffff);
-      this.seatPlayer(AI_ID, personality);
+      // Use a separate RNG stream for loadout generation so the combat RNG
+      // (inside AIController) is unaffected by the number of template variants.
+      const loadoutRng = makeRng(seed ^ 0x1a2b3c4d);
+      const aiSpec = generateAILoadout(personality, loadoutRng);
+      this.seatPlayer(AI_ID, personality, aiSpec);
       this.ai = new AIController(this, AI_ID, personality, seed);
     }
   }
