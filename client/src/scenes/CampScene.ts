@@ -63,7 +63,7 @@ export class CampScene extends Phaser.Scene {
 
     // ── Sleep button ──────────────────────────────────────────────────────
     const sleepBtn = this.add
-      .text(10, 435, '[Sleep]', { fontSize: '16px', color: '#88ccff' })
+      .text(10, 435, '[Sleep (50g)]', { fontSize: '16px', color: '#88ccff' })
       .setInteractive({ useHandCursor: true })
       .on('pointerdown', () => void this.doSleep());
 
