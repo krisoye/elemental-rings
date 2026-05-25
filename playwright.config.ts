@@ -19,8 +19,11 @@ export default defineConfig({
   webServer: [
     {
       // Use port 2568 so prod server on 2567 doesn't interfere
-      command: 'cd server && PORT=2568 npm run dev',
+      command: 'cd server && npm run dev',
       port: 2568,
+      // DB_PATH is relative to the `cd server` cwd → server/data/e2e.db (gitignored),
+      // keeping the E2E SQLite store separate from local dev and disposable.
+      env: { PORT: '2568', DB_PATH: './data/e2e.db' },
       reuseExistingServer: false,
       timeout: 15000,
     },
