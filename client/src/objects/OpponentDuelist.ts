@@ -9,21 +9,26 @@ import {
 } from '../Constants';
 
 // Combat slots whose remaining uses count toward the opponent's aggregate (the
-// thumb is a passive staked ring and is excluded).
-const COMBAT_SLOTS = ['a1', 'a2', 'd1', 'd2'] as const;
+// thumb is a passive staked ring and is excluded from ATK/DEF totals).
+const ATTACK_SLOTS = ['a1', 'a2'] as const;
+const DEFENSE_SLOTS = ['d1', 'd2'] as const;
 
 /**
- * Partial-information panel for the opponent. Shows hearts, aggregate remaining
- * uses across non-extinguished rings, and five element dots that light up only
- * for elements the opponent has revealed (by attacking or defending with them).
- * A colored overlay appears when any of the opponent's gauges reaches the status
- * threshold. The opponent's exact hand composition stays hidden.
+ * Partial-information panel for the opponent. Shows hearts, ATK and DEF
+ * totals across non-extinguished rings, and five element dots that light up
+ * only for elements the opponent has revealed (by attacking or defending).
+ * A colored overlay appears when any of the opponent's gauges reaches the
+ * status threshold. A thumb card (always visible element per GDD §9) shows
+ * the staked ring's element and dims when passively exhausted.
  */
 export class OpponentDuelist extends Phaser.GameObjects.Container {
   private readonly heartsText: Phaser.GameObjects.Text;
-  private readonly usesText: Phaser.GameObjects.Text;
+  private readonly atkText: Phaser.GameObjects.Text;
+  private readonly defText: Phaser.GameObjects.Text;
   private readonly elementDots: Phaser.GameObjects.Arc[] = [];
   private readonly statusOverlay: Phaser.GameObjects.Rectangle;
+  private readonly thumbCard: Phaser.GameObjects.Rectangle;
+  private readonly thumbDimOverlay: Phaser.GameObjects.Rectangle;
 
   constructor(scene: Phaser.Scene) {
     super(scene, OPPONENT_X, OPPONENT_Y);
@@ -33,19 +38,47 @@ export class OpponentDuelist extends Phaser.GameObjects.Container {
       fontSize: '14px',
       color: '#ff4444',
     });
-    this.usesText = scene.add.text(OPPONENT_X - 90, OPPONENT_Y - 35, 'Uses: ?', {
+    this.atkText = scene.add.text(OPPONENT_X - 90, OPPONENT_Y - 35, 'ATK: ?', {
       fontSize: '12px',
-      color: '#ffffff',
+      color: '#ff8888',
+    });
+    this.defText = scene.add.text(OPPONENT_X - 90, OPPONENT_Y - 20, 'DEF: ?', {
+      fontSize: '12px',
+      color: '#88aaff',
     });
 
     // Five element dots: gray = unrevealed, colored = revealed.
     for (let i = 0; i < 5; i++) {
-      const dot = scene.add.circle(OPPONENT_X - 90 + i * 14, OPPONENT_Y - 10, 5, 0x555555);
+      const dot = scene.add.circle(OPPONENT_X - 90 + i * 14, OPPONENT_Y - 2, 5, 0x555555);
       this.elementDots.push(dot);
     }
 
     this.statusOverlay = scene.add.rectangle(OPPONENT_X, OPPONENT_Y, 80, 120, 0xff0000, 0.3);
     this.statusOverlay.setVisible(false);
+
+    // Thumb card — element always visible per GDD §9 (staked ring shows its
+    // jewelry position). Dim overlay signals passive exhaustion.
+    this.thumbCard = scene.add.rectangle(
+      OPPONENT_X - 90,
+      OPPONENT_Y + 20,
+      40,
+      56,
+      0x555555,
+    );
+    this.thumbCard.setStrokeStyle(1, 0xaa8800);
+    scene.add
+      .text(OPPONENT_X - 90, OPPONENT_Y + 45, 'THUMB', { fontSize: '8px', color: '#ffcc44' })
+      .setOrigin(0.5);
+
+    this.thumbDimOverlay = scene.add.rectangle(
+      OPPONENT_X - 90,
+      OPPONENT_Y + 20,
+      40,
+      56,
+      0x000000,
+      0.6,
+    );
+    this.thumbDimOverlay.setVisible(false);
 
     scene.add.existing(this);
   }
@@ -63,13 +96,21 @@ export class OpponentDuelist extends Phaser.GameObjects.Container {
     const hearts = opp.hearts ?? 0;
     this.heartsText.setText('♥'.repeat(hearts) + '♡'.repeat(Math.max(0, 3 - hearts)));
 
-    // Aggregate remaining uses across the four non-extinguished combat slots.
-    let totalUses = 0;
-    for (const key of COMBAT_SLOTS) {
+    // ATK total = sum of non-extinguished attack slot uses.
+    let atkTotal = 0;
+    for (const key of ATTACK_SLOTS) {
       const ring = opp[key];
-      if (ring && !ring.isExtinguished) totalUses += ring.currentUses;
+      if (ring && !ring.isExtinguished) atkTotal += ring.currentUses;
     }
-    this.usesText.setText(`Uses: ${totalUses}`);
+    this.atkText.setText(`ATK: ${atkTotal}`);
+
+    // DEF total = sum of non-extinguished defense slot uses.
+    let defTotal = 0;
+    for (const key of DEFENSE_SLOTS) {
+      const ring = opp[key];
+      if (ring && !ring.isExtinguished) defTotal += ring.currentUses;
+    }
+    this.defText.setText(`DEF: ${defTotal}`);
 
     // Element dots: only color base elements that have been revealed.
     for (let el = 0; el < 5; el++) {
@@ -89,6 +130,13 @@ export class OpponentDuelist extends Phaser.GameObjects.Container {
       this.statusOverlay.setVisible(true);
     } else {
       this.statusOverlay.setVisible(false);
+    }
+
+    // Thumb card: element always visible (per GDD §9). Dim when extinguished.
+    const thumb = opp.thumb;
+    if (thumb) {
+      this.thumbCard.setFillStyle(ELEMENT_COLORS[thumb.element] ?? 0x555555);
+      this.thumbDimOverlay.setVisible(!!thumb.isExtinguished);
     }
   }
 }

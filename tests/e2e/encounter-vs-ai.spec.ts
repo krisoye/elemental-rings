@@ -106,7 +106,7 @@ test('scenario 3: AI responds to a human attack (defends, not idle)', async ({ b
   await ctx.close();
 });
 
-// ── Scenario 4: duel completes and returns to the hub ───────────────────────
+// ── Scenario 4: duel completes and returns to CampScene ─────────────────────
 test('scenario 4: duel completes and returns to EncounterScene', async ({ browser }) => {
   const ctx = await browser.newContext();
 
@@ -136,10 +136,11 @@ test('scenario 4: duel completes and returns to EncounterScene', async ({ browse
     clearInterval(driver);
   }
 
-  // BattleScene shows the banner for ~2s then returns to the hub.
-  // EncounterScene doesn't set window.__scene; use waitForEncounter instead
-  // (it checks window.__encounterSelect which EncounterScene.create() sets).
-  await waitForEncounter(page);
+  // After the duel ends BattleScene transitions to CampScene.
+  await page.waitForFunction(
+    () => (window as any).__game?.scene?.isActive('CampScene'),
+    { timeout: 8000 },
+  );
 
   await ctx.close();
 });

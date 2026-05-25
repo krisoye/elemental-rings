@@ -138,7 +138,7 @@ export class BattleScene extends Phaser.Scene {
       .setOrigin(0.5)
       .setDepth(1000);
 
-    this.time.delayedCall(2000, () => this.scene.start(this.returnScene));
+    this.time.delayedCall(2000, () => this.scene.start('CampScene'));
   }
 
   /** Launch the orb telegraph when a defend window opens, including rally volleys. */
