@@ -42,11 +42,11 @@ test('scenario 1: register a new user routes to CampScene with a stored token', 
 
   const [resp] = await Promise.all([
     page.waitForResponse(
-      (r) => r.url().includes('/auth/register') && r.status() === 200,
+      (r) => r.url().includes('/auth/register') && r.status() === 201,
     ),
     page.click('#er-register-btn'),
   ]);
-  expect(resp.status()).toBe(200);
+  expect(resp.status()).toBe(201);
 
   await waitForCampScene(page);
   const token = await page.evaluate(() => localStorage.getItem('er_token'));
@@ -66,7 +66,7 @@ test('scenario 2: an existing user can log in', async ({ browser }) => {
   const username = uniqueUsername();
   await fillCredentials(page, username, PASSWORD);
   await Promise.all([
-    page.waitForResponse((r) => r.url().includes('/auth/register') && r.status() === 200),
+    page.waitForResponse((r) => r.url().includes('/auth/register') && r.status() === 201),
     page.click('#er-register-btn'),
   ]);
   await waitForCampScene(page);
@@ -98,7 +98,7 @@ test('scenario 3: a wrong password is rejected and stays on LoginScene', async (
   const username = uniqueUsername();
   await fillCredentials(page, username, PASSWORD);
   await Promise.all([
-    page.waitForResponse((r) => r.url().includes('/auth/register') && r.status() === 200),
+    page.waitForResponse((r) => r.url().includes('/auth/register') && r.status() === 201),
     page.click('#er-register-btn'),
   ]);
   await waitForCampScene(page);
@@ -147,7 +147,7 @@ test('scenario 4: a stored token persists across a page refresh', async ({ brows
   const username = uniqueUsername();
   await fillCredentials(page, username, PASSWORD);
   await Promise.all([
-    page.waitForResponse((r) => r.url().includes('/auth/register') && r.status() === 200),
+    page.waitForResponse((r) => r.url().includes('/auth/register') && r.status() === 201),
     page.click('#er-register-btn'),
   ]);
   await waitForCampScene(page);

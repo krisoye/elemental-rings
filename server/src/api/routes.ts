@@ -24,15 +24,26 @@ apiRouter.post('/auth/register', async (req: Request, res: Response): Promise<vo
     res.status(400).json({ error: 'username and password are required' });
     return;
   }
+  // Fast-path check before the async bcrypt call; the DB UNIQUE constraint is
+  // the authoritative guard (try/catch below handles the concurrent-insert race).
   if (getPlayerByUsername(username)) {
     res.status(409).json({ error: 'Username already taken' });
     return;
   }
 
-  const passwordHash = await bcrypt.hash(password, BCRYPT_ROUNDS);
-  const playerId = createPlayer(username, passwordHash);
-  const token = signToken({ playerId, username });
-  res.status(200).json({ token, playerId });
+  try {
+    const passwordHash = await bcrypt.hash(password, BCRYPT_ROUNDS);
+    const playerId = createPlayer(username, passwordHash);
+    const token = signToken({ playerId, username });
+    res.status(201).json({ token, playerId });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : '';
+    if (msg.includes('UNIQUE constraint failed')) {
+      res.status(409).json({ error: 'Username already taken' });
+    } else {
+      res.status(500).json({ error: 'Registration failed' });
+    }
+  }
 });
 
 /**
@@ -69,7 +80,7 @@ apiRouter.get('/api/me', requireAuth, (req: Request, res: Response): void => {
   const playerId = req.playerId as string;
   const player = getPlayerById(playerId);
   if (!player) {
-    res.status(401).json({ error: 'Player not found' });
+    res.status(404).json({ error: 'Player not found' });
     return;
   }
   res.status(200).json({
