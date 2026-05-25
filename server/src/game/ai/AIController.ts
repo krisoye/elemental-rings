@@ -1,13 +1,23 @@
-import { AIPersonality, SelectAttackPayload, SubmitDefensePayload } from '../../../../shared/types';
+import {
+  AIPersonality,
+  SelectAttackPayload,
+  SubmitDefensePayload,
+  SlotKey,
+} from '../../../../shared/types';
 import { BattleState } from '../../schemas/BattleState';
 import { AI_PROFILES, AIProfile, makeRng, Rng, isLowHearts } from './AIProfiles';
-import { decideAttack, decideDefense, BoardView, RingView } from './AIPolicy';
+import {
+  decideAttack,
+  decideDefense,
+  BoardView,
+  AttackSlotView,
+  DefenseSlotView,
+} from './AIPolicy';
 import { BLOCK_WINDOW_MS } from '../constants';
 
 /**
  * Structural interface for the bits of BattleRoom the AI drives. Declared here
- * (rather than importing BattleRoom) to avoid a circular import — BattleRoom
- * imports AIController.
+ * (rather than importing BattleRoom) to avoid a circular import.
  */
 export interface AIRoomHandle {
   readonly state: BattleState;
@@ -17,12 +27,11 @@ export interface AIRoomHandle {
 }
 
 /**
- * Wires the pure AIPolicy to a live BattleRoom. The AI is a virtual player: it
- * has no Colyseus client, so it calls the room's sessionId-keyed handler methods
- * directly — the exact same code path a human's `selectAttack` / `submitDefense`
- * messages take. A single pending timer models the AI's think-delay (as
- * attacker) or its scheduled press (as defender); it is cleared on every phase
- * entry and on dispose.
+ * Wires the pure AIPolicy to a live BattleRoom. The AI is a virtual player with
+ * no Colyseus client, so it calls the room's sessionId-keyed handler methods
+ * directly — the exact same code path a human's messages take. A single pending
+ * timer models the think-delay (as attacker) or the scheduled press (as
+ * defender); it is cleared on every phase entry and on dispose.
  */
 export class AIController {
   private readonly profile: AIProfile;
@@ -72,32 +81,38 @@ export class AIController {
   private readBoard(): BoardView {
     const state = this.room.state;
     const me = state.players.get(this.aiId)!;
-    const hand: RingView[] = me.hand.map((r) => ({
-      element: r.element,
-      currentUses: r.currentUses,
-      isExtinguished: r.isExtinguished,
-    }));
 
-    // Incoming element when defending: the current attacker's selected ring.
+    const attackSlots: AttackSlotView[] = (['a1', 'a2'] as const).map((key) => {
+      const r = me.getSlot(key);
+      return { key, ring: { element: r.element, currentUses: r.currentUses, isExtinguished: r.isExtinguished } };
+    });
+    const defenseSlots: DefenseSlotView[] = (['d1', 'd2'] as const).map((key) => {
+      const r = me.getSlot(key);
+      return { key, ring: { element: r.element, currentUses: r.currentUses, isExtinguished: r.isExtinguished } };
+    });
+
+    // Incoming element when defending: the current attacker's firing ring.
     let incomingElement = -1;
-    if (state.currentAttackerId !== this.aiId) {
+    if (state.currentAttackerId !== this.aiId && state.attackerSlot) {
       const attacker = state.players.get(state.currentAttackerId);
-      const ring = attacker?.hand[state.attackerSelectedSlot];
-      if (ring) incomingElement = ring.element;
+      if (attacker) incomingElement = attacker.getSlot(state.attackerSlot as SlotKey).element;
     }
 
     // Elements the opponent still holds a usable ring for (full info on the
-    // server; the AI is permitted to read the authoritative board).
+    // server; the AI is permitted to read the authoritative board). Only the
+    // four combat slots count — the thumb is passive.
     const opponentUsableElements: number[] = [];
     for (const [id, ps] of state.players) {
       if (id === this.aiId) continue;
-      for (const r of ps.hand) {
+      for (const key of ['a1', 'a2', 'd1', 'd2'] as const) {
+        const r = ps.getSlot(key);
         if (!r.isExtinguished && r.currentUses > 0) opponentUsableElements.push(r.element);
       }
     }
 
     return {
-      hand,
+      attackSlots,
+      defenseSlots,
       hearts: me.hearts,
       incomingElement,
       opponentUsableElements,
@@ -114,7 +129,6 @@ export class AIController {
 
     this.pending = setTimeout(() => {
       this.pending = null;
-      // Re-read in case state shifted while we "thought".
       const v = this.readBoard();
       const decision = decideAttack(v, this.profile, this.rng);
       this.committedElement = decision.committedElement;
@@ -125,14 +139,10 @@ export class AIController {
   private scheduleDefense(): void {
     const view = this.readBoard();
     const decision = decideDefense(view, this.profile, this.rng);
-    if (decision.pressOffsetMs === null || decision.slot < 0) return; // deliberate no-block
+    if (decision.slot === null || decision.pressOffsetMs === null) return; // deliberate no-block
 
     const jittered = decision.pressOffsetMs + this.timingJitter(view.hearts);
-    // Clamp so an intended catch lands before the resolve fires (offset < the
-    // BLOCK shell). The resolve timer fires at impact + BLOCK_WINDOW_MS; landing
-    // after it is harmless (becomes an effective no-block) but we avoid it.
     const clamped = Math.min(jittered, BLOCK_WINDOW_MS - 1);
-
     const fireInMs = this.room.currentImpactTime - Date.now() + clamped;
     const slot = decision.slot;
     this.pending = setTimeout(() => {

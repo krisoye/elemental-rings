@@ -5,7 +5,17 @@ import { PlayerDuelist } from '../objects/PlayerDuelist';
 import { OpponentDuelist } from '../objects/OpponentDuelist';
 import { Hud } from '../objects/Hud';
 import type { ExchangeResultPayload } from '../../../shared/types';
-import { PLAYER_X, PLAYER_Y, OPPONENT_X, OPPONENT_Y } from '../Constants';
+import {
+  PLAYER_X,
+  PLAYER_Y,
+  OPPONENT_X,
+  OPPONENT_Y,
+  SlotKey,
+  ringComponents,
+} from '../Constants';
+
+const ATTACK_KEYS: ReadonlySet<SlotKey> = new Set<SlotKey>(['a1', 'a2']);
+const DEFENSE_KEYS: ReadonlySet<SlotKey> = new Set<SlotKey>(['d1', 'd2']);
 
 /**
  * The duel view. Owns every game object and routes input to server messages.
@@ -81,22 +91,29 @@ export class BattleScene extends Phaser.Scene {
     if (result.attackerId !== myId) {
       // Opponent attacked — reveal the element(s) they threw.
       result.attackerElements.forEach((el) => this.revealedOpponentElements.add(el));
-    } else if (result.defenderSlot >= 0) {
+    } else if (result.defenderSlot) {
       // We attacked and the opponent blocked — reveal the ring they defended with.
       const oppState = window.__room!.state.players.get(result.defenderId);
-      const ring = oppState?.hand[result.defenderSlot];
+      const ring = oppState?.[result.defenderSlot as SlotKey];
       if (ring) this.revealedOpponentElements.add(ring.element);
     }
   }
 
-  private onSlotPressed(slot: number): void {
+  /**
+   * Phase-locked input. During ATTACK_SELECT only a1/a2 send `selectAttack`;
+   * during DEFEND_WINDOW only d1/d2 send `submitDefense`. The server remains the
+   * authoritative phase-lock; this is purely to avoid sending wrong-phase noise.
+   */
+  private onSlotPressed(slot: SlotKey): void {
     const state = window.__room?.state;
     const myId = window.__room?.sessionId;
     if (!state || !myId) return;
 
     if (state.phase === 'ATTACK_SELECT' && state.currentAttackerId === myId) {
+      if (!ATTACK_KEYS.has(slot)) return;
       window.__room!.send('selectAttack', { slot });
     } else if (state.phase === 'DEFEND_WINDOW' && state.currentAttackerId !== myId) {
+      if (!DEFENSE_KEYS.has(slot)) return;
       // pressTime is retained for future lag comp; the server timestamps on arrival.
       window.__room!.send('submitDefense', { slot, pressTime: Date.now() });
     }
@@ -140,8 +157,9 @@ export class BattleScene extends Phaser.Scene {
       const to   = imAttacker ? { x: OPPONENT_X, y: OPPONENT_Y } : { x: PLAYER_X, y: PLAYER_Y };
 
       const attackerState = window.__room!.state.players.get(state.currentAttackerId);
-      const attackerRing = attackerState?.hand[state.attackerSelectedSlot];
-      const elements = attackerRing ? [attackerRing.element] : [0];
+      const attackerRing = state.attackerSlot ? attackerState?.[state.attackerSlot as SlotKey] : null;
+      // Fusion rings show both component colors; base rings show one.
+      const elements = attackerRing ? ringComponents(attackerRing) : [0];
       Orb.launch(this, elements, from, to);
     }
   }

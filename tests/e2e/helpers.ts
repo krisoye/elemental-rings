@@ -90,10 +90,13 @@ export async function waitForMyHearts(page: Page, hearts: number, timeout = 5000
   );
 }
 
-/** Wait until a specific ring's remaining uses equal the expected value. */
+/** A named loadout slot key. */
+export type SlotKey = 'thumb' | 'a1' | 'a2' | 'd1' | 'd2';
+
+/** Wait until a specific named slot's remaining uses equal the expected value. */
 export async function waitForMyRingUses(
   page: Page,
-  slot: number,
+  slot: SlotKey,
   uses: number,
   timeout = 5000,
 ): Promise<void> {
@@ -101,17 +104,20 @@ export async function waitForMyRingUses(
     ({ s, u }) => {
       const room = (window as any).__room;
       const me = room?.state?.players?.get(room.sessionId);
-      return me?.hand?.[s]?.currentUses === u;
+      return me?.[s]?.currentUses === u;
     },
     { s: slot, u: uses },
     { timeout },
   );
 }
 
-/** Wait until a named gauge on the local player reaches the expected value. */
+/** Triangle gauge keys (FIRE/WATER/WOOD only — no earth/wind gauge). */
+export type GaugeKey = 'fireGauge' | 'waterGauge' | 'woodGauge';
+
+/** Wait until a named triangle gauge on the local player reaches the expected value. */
 export async function waitForMyGauge(
   page: Page,
-  key: string,
+  key: GaugeKey,
   value: number,
   timeout = 5000,
 ): Promise<void> {
@@ -132,18 +138,21 @@ export async function readMe(page: Page): Promise<any> {
     const room = (window as any).__room;
     const me = room?.state?.players?.get(room.sessionId);
     if (!me) return null;
+    const slot = (k: string) => ({
+      element: me[k].element,
+      currentUses: me[k].currentUses,
+      isExtinguished: me[k].isExtinguished,
+    });
     return {
       hearts: me.hearts,
       fireGauge: me.fireGauge ?? 0,
       waterGauge: me.waterGauge ?? 0,
-      earthGauge: me.earthGauge ?? 0,
-      windGauge: me.windGauge ?? 0,
       woodGauge: me.woodGauge ?? 0,
-      hand: Array.from({ length: me.hand.length }, (_, i) => ({
-        element: me.hand[i].element,
-        currentUses: me.hand[i].currentUses,
-        isExtinguished: me.hand[i].isExtinguished,
-      })),
+      thumb: slot('thumb'),
+      a1: slot('a1'),
+      a2: slot('a2'),
+      d1: slot('d1'),
+      d2: slot('d2'),
     };
   });
 }

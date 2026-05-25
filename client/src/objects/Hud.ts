@@ -1,8 +1,10 @@
 import Phaser from 'phaser';
 
 /**
- * Top-center banner showing the current phase / whose turn it is, and the
- * win/lose result when the duel ends. Driven entirely by the broadcast phase.
+ * Top-center phase banner — the most visually prominent UI moment in a battle
+ * (GDD §6.3). Shows the current phase / whose turn it is, plus the win/lose
+ * result when the duel ends. Driven entirely by the broadcast phase. (Element
+ * gauges are rendered by the PlayerDuelist / OpponentDuelist panels.)
  */
 export class Hud extends Phaser.GameObjects.Container {
   private readonly banner: Phaser.GameObjects.Text;
@@ -11,13 +13,15 @@ export class Hud extends Phaser.GameObjects.Container {
   constructor(scene: Phaser.Scene) {
     super(scene, 0, 0);
     this.banner = scene.add
-      .text(512, 30, 'WAITING...', {
-        fontSize: '24px',
+      .text(512, 40, 'WAITING...', {
+        fontSize: '40px',
+        fontStyle: 'bold',
         color: '#ffffff',
-        backgroundColor: '#00000088',
-        padding: { x: 12, y: 6 },
+        backgroundColor: '#00000099',
+        padding: { x: 20, y: 10 },
       })
-      .setOrigin(0.5);
+      .setOrigin(0.5)
+      .setDepth(500);
     // Opponent label (top-left); blank for human opponents, personality for AI.
     this.opponentName = scene.add.text(16, 16, '', {
       fontSize: '16px',
@@ -27,7 +31,6 @@ export class Hud extends Phaser.GameObjects.Container {
   }
 
   updateFromState(state: any, myId: string): void {
-    // Show the opponent's displayName (set only for AI opponents).
     const oppId = Array.from(state.players.keys()).find((id: any) => id !== myId) as
       | string
       | undefined;
@@ -53,6 +56,10 @@ export class Hud extends Phaser.GameObjects.Container {
       )[state.phase as string] ?? 'WAITING...';
 
     this.banner.setText(text);
-    this.banner.setColor('#ffffff');
+    // Highlight the actionable phases for the local player.
+    const actionable =
+      (state.phase === 'ATTACK_SELECT' && imAttacker) ||
+      (state.phase === 'DEFEND_WINDOW' && !imAttacker);
+    this.banner.setColor(actionable ? '#ffff66' : '#ffffff');
   }
 }
