@@ -5,7 +5,7 @@ When within detection range of an enemy, both parties see:
 - Opponent's **element types** in loadout (base element view; fused rings show as both component elements)
 - Opponent's **hearts**
 - Opponent's **aggregate uses per base element type**
-- Opponent's **staked ring jewelry position** (dominant hand bracelet / off hand bracelet / necklace)
+- Opponent's **Thumb ring element** — the staked ring's element reveals which passive it carries (§9.3)
 
 ### 11.2 Battle HUD
 During a duel, both players see for each opponent:
@@ -29,7 +29,7 @@ When a ring is extinguished during battle the use count for that element type dr
 ### 11.5 Status Effect Display
 Active status effects are shown in the battle HUD alongside the affected player's hearts. The status name, icon, and remaining duration (in turns) are visible to both players.
 
-### 11.6 Necklace Pulse Visual
-When the Recharge Pulse triggers (necklace stake position, player is losing), a visible elemental pulse effect plays — color matching the staked ring's element. Both players see this. It signals that a ring was just recharged, changing the opponent's calculus going forward.
+### 11.6 Passive Trigger Visual (Phase 6+)
+When a Thumb passive triggers mid-battle (Wellspring block refund, Deep Roots heart guard, Tailwind attack refund), a brief elemental pulse effect plays on the Thumb ring — color matching the element. Both players see this, signaling that the passive fired and the Thumb ring lost a use. *Visual not yet implemented; flagged for Phase 6.*
 
 ---

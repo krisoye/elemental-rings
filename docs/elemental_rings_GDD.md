@@ -1,5 +1,5 @@
 # Elemental Rings — Game Design Document
-**Version 3.1 | Stack: Phaser.js + Colyseus | Multiplayer-first**
+**Version 4.2 | Stack: Phaser.js + Colyseus | Multiplayer-first**
 
 ---
 
@@ -35,6 +35,9 @@ Each section lives in its own file. Read only what you need.
 ---
 
 ## Changelog
+
+*Document version 4.2 — Updated May 2026*
+*v4.2 changes: (a) Staking — rewrote §9.3 with 5 element-specific Thumb passives (Kindling/Wellspring/Deep Roots/Tailwind/Bulwark); updated §9.1 (Thumb IS loadout slot); added §9.5 gold rewards (50g/win, sleep 50g, recharge 10g/use). (b) Carry system — rewrote §4.1 with inventory/loadout/battle-hand/spare distinction; updated §6.1 (carry loadout context); updated §6.8 (post-battle won-ring prompt with swap/leave/discard options); added §10.7 Merchants (carry cap expansion, garments, wandering merchants, city concept). (c) NPC archetypes — expanded §10.5 with full loadout tables for 4 personalities. (d) Resolved open questions: auto-align, SQLite, auth, fusion names, NPC archetypes, post-battle ring prompt. (e) Closed §3.4 Open Question; fixed §6.4 fusion TBD; updated §11.1 and §11.6.*
 
 *Document version 4.0 — Updated May 2026*
 *v4.0 changes: Replaced 5-element pentagon with triangle (Fire/Water/Wood) + asymmetric neutrals (Wind/Earth). Redesigned loadout from free hand selection to 5 named slots (Thumb/A1/A2/D1/D2). Removed off-hand system. Phase-locked input: attack/defense buttons only active in correct phase. Fusion rings are pre-equipped (no chord input). Gauges and statuses reduced to 3 (triangle elements only).*

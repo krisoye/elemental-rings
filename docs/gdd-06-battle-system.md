@@ -2,7 +2,10 @@
 
 ### 6.1 The Loadout System
 
-The player equips **5 rings on their dominant hand** before a duel, each in a named slot:
+Before setting out from camp, the player packs a **carry loadout** — up to `carry_cap` rings (default 10) chosen from their full inventory. Only these rings are available in the overworld and during battle.
+
+Of the carried rings, the player assigns **5 to the battle hand** before each encounter — these are the only rings usable during the duel:
+
 
 | Slot  | Button | Role |
 |-------|--------|------|
@@ -50,7 +53,7 @@ The attacker always pays **1 use to throw**. The defender's response — its **t
 - **Wind defending:** always **Weak** — Wind defense costs a use and still loses the heart.
 - **Earth attacking:** always **Weak** — Earth attacks never carry elemental advantage.
 - **Earth defending:** always **Neutral** — Earth defense is never elementally punished.
-- **Fusion rings:** matchup TBD (§3.4 Open Question). Gauge contributions come from triangle components only.
+- **Fusion rings:** resolved via auto-align (§3.4). Gauge contributions come from triangle components only.
 
 ### Block Resolution Table
 
@@ -129,11 +132,20 @@ Neutrals are pure attrition exchanges. A correctly-timed neutral block is always
 - Hearts reset between duels
 
 ### 6.8 Post-Battle Loadout Management
-After winning a duel:
-1. The player receives the opponent's staked ring
-2. The player must decide: keep the won ring in the loadout (replacing something) or send it directly to inventory
-3. If keeping it: choose which loadout ring to send back to inventory — including exhausted rings
-4. The player can then reorganize their slots freely — reassigning rings to the Thumb/A1/A2/D1/D2 slots to prepare for the next encounter
+
+**After any battle:**
+- The player can freely reorganize their battle hand among their carried rings — reassigning Thumb/A1/A2/D1/D2 from the carry pool before the next encounter
+- No sleeping or recharging in the field — return to camp for that
+
+**After winning (ring received):**
+1. A prompt appears: **"You won a [element] ring!"**
+2. If carry has room (`total carried < carry_cap`): choose **Add to Carry**, **Leave at Camp** (ring goes to inventory on return), or **Discard**
+3. If carry is full: choose **Swap** (pick which carried ring to displace — displaced ring returns to camp inventory on return), **Leave at Camp**, or **Discard**
+4. Discarded rings are permanently lost
+
+**After losing:**
+- The staked Thumb ring is forfeited — removed from carry and from the player's inventory
+- No additional penalty beyond the ring loss (monsters are an exception — see §6.9)
 
 After losing a duel:
 1. The player's staked ring is forfeited to the opponent
