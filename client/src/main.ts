@@ -21,6 +21,7 @@ declare global {
     // EncounterScene marker. Set by EncounterScene.create(). 'PVP' starts the
     // LobbyScene; a personality starts a vsAI duel.
     __encounterSelect?: (choice: AIPersonality | 'PVP') => void;
+    __campGoEncounter?: () => void;
   }
 }
 

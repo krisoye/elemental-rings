@@ -1,14 +1,21 @@
-import { test, expect, type Page } from '@playwright/test';
-import { setupBattle, waitForEncounter, closeBattle } from './helpers';
+import { test, expect, type BrowserContext, type Page } from '@playwright/test';
+import { setupBattle, waitForEncounter, campToEncounter, seedAuthToken, closeBattle } from './helpers';
 
 // Port 8090 avoids colliding with the production Vite dev server on 8080.
 const URL = 'http://localhost:8090';
 
-/** Load the game and trigger a vsAI duel against the given personality. */
-async function startAIDuel(page: Page, personality: string): Promise<void> {
+/**
+ * Seed auth on the context, navigate through CampScene to EncounterScene, and
+ * select a vsAI personality. Returns the live page.
+ */
+async function startAIDuel(ctx: BrowserContext, personality: string): Promise<Page> {
+  await seedAuthToken(ctx);
+  const page = await ctx.newPage();
   await page.goto(URL);
+  await campToEncounter(page);
   await waitForEncounter(page);
   await page.evaluate((p) => (window as any).__encounterSelect(p), personality);
+  return page;
 }
 
 /** Wait until the active scene is the named scene. */
@@ -23,9 +30,8 @@ async function waitForScene(page: Page, name: string, timeout = 5000): Promise<v
 // ── Scenario 1: Encounter → duel transition ───────────────────────────────
 test('scenario 1: selecting an NPC starts a vsAI duel in BattleScene', async ({ browser }) => {
   const ctx = await browser.newContext();
-  const page = await ctx.newPage();
 
-  await startAIDuel(page, 'AGGRESSIVE');
+  const page = await startAIDuel(ctx, 'AGGRESSIVE');
 
   await page.waitForFunction(() => (window as any).__room !== null, { timeout: 8000 });
   await waitForScene(page, 'BattleScene', 5000);
@@ -39,9 +45,8 @@ test('scenario 1: selecting an NPC starts a vsAI duel in BattleScene', async ({ 
 // ── Scenario 2: AI attacks unprompted ──────────────────────────────────────
 test('scenario 2: AI attacks without any human keypress', async ({ browser }) => {
   const ctx = await browser.newContext();
-  const page = await ctx.newPage();
 
-  await startAIDuel(page, 'AGGRESSIVE');
+  const page = await startAIDuel(ctx, 'AGGRESSIVE');
   await waitForScene(page, 'BattleScene', 5000);
 
   // The AI is player #1 (seated on create) → opening attacker. With no human
@@ -58,11 +63,10 @@ test('scenario 2: AI attacks without any human keypress', async ({ browser }) =>
 // ── Scenario 3: AI defends a human throw ────────────────────────────────────
 test('scenario 3: AI responds to a human attack (defends, not idle)', async ({ browser }) => {
   const ctx = await browser.newContext();
-  const page = await ctx.newPage();
 
   // DEFENSIVE reliably commits a defending ring. Wait until it is the human's
   // turn (after the AI's opening attack resolves), then throw.
-  await startAIDuel(page, 'DEFENSIVE');
+  const page = await startAIDuel(ctx, 'DEFENSIVE');
   await waitForScene(page, 'BattleScene', 5000);
 
   await page.waitForFunction(
@@ -105,9 +109,8 @@ test('scenario 3: AI responds to a human attack (defends, not idle)', async ({ b
 // ── Scenario 4: duel completes and returns to the hub ───────────────────────
 test('scenario 4: duel completes and returns to EncounterScene', async ({ browser }) => {
   const ctx = await browser.newContext();
-  const page = await ctx.newPage();
 
-  await startAIDuel(page, 'AGGRESSIVE');
+  const page = await startAIDuel(ctx, 'AGGRESSIVE');
   await waitForScene(page, 'BattleScene', 5000);
 
   // The human attacks on its turns (so role-swaps never stall) but never
@@ -165,16 +168,17 @@ test('scenario 5: two tabs duel via PvP (battle room, two humans)', async ({ bro
 test('scenario 6: a PvP join never lands in the locked AI room', async ({ browser }) => {
   const ctx1 = await browser.newContext();
   const ctx2 = await browser.newContext();
-  const tab1 = await ctx1.newPage();
-  const tab2 = await ctx2.newPage();
 
   // Tab 1 is in a vsAI duel (room is locked).
-  await startAIDuel(tab1, 'AGGRESSIVE');
+  const tab1 = await startAIDuel(ctx1, 'AGGRESSIVE');
   await waitForScene(tab1, 'BattleScene', 5000);
   const aiRoomId = await tab1.evaluate(() => (window as any).__room?.roomId);
 
   // Tab 2 joins PvP directly — must get a fresh, empty PvP room, not the AI room.
+  await seedAuthToken(ctx2);
+  const tab2 = await ctx2.newPage();
   await tab2.goto(URL);
+  await campToEncounter(tab2);
   await waitForEncounter(tab2);
   await tab2.evaluate(() => (window as any).__encounterSelect('PVP'));
   await tab2.waitForFunction(() => (window as any).__room !== null, { timeout: 8000 });

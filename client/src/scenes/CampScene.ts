@@ -15,14 +15,33 @@ export class CampScene extends Phaser.Scene {
 
   create(): void {
     this.add
-      .text(CANVAS_W / 2, CANVAS_H / 2, 'CAMP', { fontSize: '48px', color: '#ffffff' })
+      .text(CANVAS_W / 2, CANVAS_H / 2 - 60, 'CAMP', { fontSize: '48px', color: '#ffffff' })
       .setOrigin(0.5);
 
     const goldText = this.add
-      .text(CANVAS_W / 2, CANVAS_H / 2 + 60, '', { fontSize: '20px', color: '#ffdd66' })
+      .text(CANVAS_W / 2, CANVAS_H / 2, '', { fontSize: '20px', color: '#ffdd66' })
       .setOrigin(0.5);
 
+    this.add
+      .text(CANVAS_W / 2, CANVAS_H / 2 + 80, '▶ Go to Encounter', {
+        fontSize: '24px',
+        color: '#aaffaa',
+      })
+      .setOrigin(0.5)
+      .setInteractive({ useHandCursor: true })
+      .on('pointerdown', () => this.goToEncounter());
+
+    // E2E hook — analogous to __encounterSelect in EncounterScene.
+    window.__campGoEncounter = (): void => this.goToEncounter();
+    this.events.once('shutdown', () => {
+      window.__campGoEncounter = undefined;
+    });
+
     void this.loadGold(goldText);
+  }
+
+  private goToEncounter(): void {
+    this.scene.start('EncounterScene');
   }
 
   /** Optional: fetch the player's gold from /api/me for display. Best-effort. */

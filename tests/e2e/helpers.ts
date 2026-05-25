@@ -2,12 +2,47 @@ import type { Browser, Page, BrowserContext } from '@playwright/test';
 
 // Port 8090 avoids colliding with the production Vite dev server on 8080.
 const URL = 'http://localhost:8090';
+// Phase 4+5 auth API runs on the same port as Colyseus in tests.
+const API_URL = 'http://localhost:2568';
 
 export interface BattleHandles {
   p1: Page;
   p2: Page;
   p1ctx: BrowserContext;
   p2ctx: BrowserContext;
+}
+
+/**
+ * Register a fresh user on the test server and inject the JWT into the context
+ * via an init script. Call this BEFORE creating pages so BootScene routes to
+ * CampScene instead of LoginScene. Phase 4+5 auth gate — required for any test
+ * that navigates the main app (directly or via setupBattle).
+ */
+export async function seedAuthToken(ctx: BrowserContext): Promise<void> {
+  const username = `t_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const res = await fetch(`${API_URL}/auth/register`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ username, password: 'test_pw' }),
+  });
+  if (!res.ok) throw new Error(`seedAuthToken: register failed (${res.status})`);
+  const { token } = (await res.json()) as { token: string };
+  // Init scripts run before every page load in this context, so er_token is
+  // present when BootScene.create() checks localStorage.
+  await ctx.addInitScript(`localStorage.setItem('er_token', ${JSON.stringify(token)})`);
+}
+
+/**
+ * Wait for the CampScene placeholder to expose its __campGoEncounter hook,
+ * then fire it to transition into EncounterScene. Use after page.goto() when
+ * auth is seeded, to bridge the Phase 4+5 CampScene into the Encounter hub.
+ */
+export async function campToEncounter(page: Page): Promise<void> {
+  await page.waitForFunction(
+    () => typeof (window as any).__campGoEncounter === 'function',
+    { timeout: 8000 },
+  );
+  await page.evaluate(() => (window as any).__campGoEncounter());
 }
 
 /** Wait until the EncounterScene hub is active and its selection hook is ready. */
@@ -33,16 +68,24 @@ export async function waitForEncounter(page: import('@playwright/test').Page): P
 export async function setupBattle(browser: Browser): Promise<BattleHandles> {
   const p1ctx = await browser.newContext({ hasTouch: true });
   const p2ctx = await browser.newContext({ hasTouch: true });
+
+  // Phase 4+5: BootScene now requires auth. Seed a JWT into each context so
+  // BootScene routes to CampScene instead of LoginScene.
+  await seedAuthToken(p1ctx);
+  await seedAuthToken(p2ctx);
+
   const p1 = await p1ctx.newPage();
   const p2 = await p2ctx.newPage();
 
   // p1 selects PvP first (creates the room) and connects before p2 joins it.
   await p1.goto(URL);
+  await campToEncounter(p1);
   await waitForEncounter(p1);
   await p1.evaluate(() => (window as any).__encounterSelect('PVP'));
   await p1.waitForFunction(() => (window as any).__room !== null, { timeout: 8000 });
 
   await p2.goto(URL);
+  await campToEncounter(p2);
   await waitForEncounter(p2);
   await p2.evaluate(() => (window as any).__encounterSelect('PVP'));
 
