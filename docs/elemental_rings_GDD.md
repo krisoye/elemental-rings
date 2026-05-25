@@ -1,5 +1,5 @@
 # Elemental Rings — Game Design Document
-**Version 3.1 | Stack: Phaser.js + Colyseus | Multiplayer-first**
+**Version 4.2 | Stack: Phaser.js + Colyseus | Multiplayer-first**
 
 ---
 
@@ -35,6 +35,9 @@ Each section lives in its own file. Read only what you need.
 ---
 
 ## Changelog
+
+*Document version 4.2 — Updated May 2026*
+*v4.2 changes: Rewrote §9 Staking Economy — replaced 3-position jewelry system (dominant/off-hand bracelet, necklace) with 5 element-specific Thumb passives: Kindling (Fire), Wellspring (Water), Deep Roots (Wood), Tailwind (Wind), Bulwark (Earth). Updated §9.1 to note that the staked ring IS the Thumb loadout slot. Expanded §10.5 NPC Personality Types with full archetype loadout tables for all 4 personalities (10 randomized templates). Closed §3.4 Open Question (auto-align greedy algorithm). Fixed §6.4 fusion TBD. Updated §6.8 post-battle management (won ring goes to inventory automatically; deliberate placement UI is Phase 6+). Updated §11.1 detection HUD (Thumb element visible, not jewelry position). Replaced §11.6 necklace pulse with passive trigger visual note. Closed resolved open questions: SQLite database, username/password auth, BLOOM/THORNADO fusion names, auto-align algorithm, NPC personality archetypes.*
 
 *Document version 4.0 — Updated May 2026*
 *v4.0 changes: Replaced 5-element pentagon with triangle (Fire/Water/Wood) + asymmetric neutrals (Wind/Earth). Redesigned loadout from free hand selection to 5 named slots (Thumb/A1/A2/D1/D2). Removed off-hand system. Phase-locked input: attack/defense buttons only active in correct phase. Fusion rings are pre-equipped (no chord input). Gauges and statuses reduced to 3 (triangle elements only).*

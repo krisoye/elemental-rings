@@ -6,25 +6,29 @@
 - ~~Exact heart count per duel~~ → settled: **3 hearts**
 - Exact catalyst (fusion stone) costs per tier
 - Tier 4 triple fusion full details
-- NPC personality tuning and difficulty progression curve
+- ~~NPC personality tuning and difficulty progression curve~~ → settled: **4 archetypes with 10 randomized loadout templates** (see §10.5)
 - Inventory expansion milestones and exact costs
 - Shadow ring drop rate and underground area density
 - Whether heavily depleted rings take two game days to recharge (vs always one)
 - Monster respawn cycle — real time vs in-game day cycle
 - Named/boss monster design and unique ring rewards
 - Environmental passives per biome — flagged for a later design pass
-- Nature/Bloom fusion — final name TBD
+- ~~Nature/Bloom fusion — final name TBD~~ → settled: **BLOOM** (Wood + Earth); **THORNADO** (Wood + Wind)
 - Whether monster stolen rings retain their specific position in the world (trackable) or just re-enter the monster loot pool
 - Status gauge threshold scaling formula with player XP and augmentations
 - Playtesting tune for status severity now that gauges persist indefinitely (Burning at 1 full heart/turn especially)
+- Post-battle "place won ring" UI — deliberate choice prompt vs automatic inventory drop (currently automatic; §6.8)
+- Fused Thumb ring passives — what happens when a fusion ring is staked (currently: no passive)
+- Additional jewelry body positions (off-hand bracelet, necklace) and their passive archetypes (flagged Phase 7+)
 
 **Tech / multiplayer:**
-- Database choice for persistent player state (PostgreSQL vs Redis vs file-backed JSON for Phase 4)
+- ~~Database choice for persistent player state~~ → settled: **SQLite via better-sqlite3** (synchronous, server-side)
 - Internet matchmaking provider (self-hosted VPS vs Fly.io vs Colyseus Cloud) and timing relative to LAN-first phases
-- Account system — username/password, OAuth (Google/Discord), or anonymous session with optional persistence
+- ~~Account system — username/password, OAuth, or anonymous~~ → settled: **username/password with JWT** (Phase 4+5.1)
 - Touch input layout for mobile — full slot-card tap vs dedicated P1/P2 split screen for local co-op on a tablet
 - Spectator mode — open observation or invite-only
 - Art asset sourcing strategy — itch.io top-down packs as placeholder, custom art for release
+- ~~Fusion-vs-fusion component assignment~~ → settled: **greedy auto-align** (§3.4)
 
 ---
 

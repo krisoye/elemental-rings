@@ -134,9 +134,9 @@ Net: rally triggered · no heart lost · Forest ring −1 use.
 Forest defense is STRONG against two of the three triangle elements and NEUTRAL against the third. Compare to a plain Water ring: STRONG vs Fire, NEUTRAL vs Water, WEAK vs Wood. A dual-triangle fusion defense eliminates the weak-element exposure of any single base ring, at the cost of a harder-to-acquire ring.
 
 
-#### Open Question (narrowed)
+#### Auto-Align Resolution (resolved — issue #20)
 
-Fusion-vs-fusion component assignment when the optimal matching is ambiguous (two components each better against different opponents) is unspecified. Resolve during implementation of issue #20.
+Fusion-vs-fusion component assignment uses a **greedy auto-align** algorithm: each defense component (in defender-ring order) is assigned to the unmatched attack component it is STRONGEST against (STRONG > NEUTRAL > WEAK). Ties break by the attack component's listed order (first listed wins). The result is fully deterministic — no randomness, fully reproducible.
 
 ### 3.5 Shadow (Special Case)
 Shadow is the only element that cannot be fused or crafted from base elements. It exists outside the normal system.

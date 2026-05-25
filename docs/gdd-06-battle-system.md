@@ -50,7 +50,7 @@ The attacker always pays **1 use to throw**. The defender's response — its **t
 - **Wind defending:** always **Weak** — Wind defense costs a use and still loses the heart.
 - **Earth attacking:** always **Weak** — Earth attacks never carry elemental advantage.
 - **Earth defending:** always **Neutral** — Earth defense is never elementally punished.
-- **Fusion rings:** matchup TBD (§3.4 Open Question). Gauge contributions come from triangle components only.
+- **Fusion rings:** resolved via auto-align (§3.4). Gauge contributions come from triangle components only.
 
 ### Block Resolution Table
 
@@ -130,10 +130,9 @@ Neutrals are pure attrition exchanges. A correctly-timed neutral block is always
 
 ### 6.8 Post-Battle Loadout Management
 After winning a duel:
-1. The player receives the opponent's staked ring
-2. The player must decide: keep the won ring in the loadout (replacing something) or send it directly to inventory
-3. If keeping it: choose which loadout ring to send back to inventory — including exhausted rings
-4. The player can then reorganize their slots freely — reassigning rings to the Thumb/A1/A2/D1/D2 slots to prepare for the next encounter
+1. The player receives the opponent's staked ring — it is added to their inventory automatically
+2. **Phase 6+ UI:** a deliberate "place won ring" prompt is planned — the player will choose which loadout slot (if any) to assign it to, or leave it in inventory. Currently the ring lands in inventory and is managed via the Camp screen.
+3. The player can reorganize their slots freely at Camp — reassigning rings to the Thumb/A1/A2/D1/D2 slots to prepare for the next encounter
 
 After losing a duel:
 1. The player's staked ring is forfeited to the opponent
