@@ -82,9 +82,9 @@ A single defense ring can only engage **one** attack component. It automatically
 |---|---|---|---|---|
 | **Fire** | Wood (Strong) | Parry Strong → rally · Fire volley | Water → −1 ♥ · +Water gauge | −1 ♥ · +Water gauge · rally |
 | **Water** | Water (Neutral) | Parry Neutral → safe | Wood → −1 ♥ · +Wood gauge | −1 ♥ · +Wood gauge |
-| **Wood** | Wood (Neutral) | Parry Neutral → safe | Water → −1 ♥ · +Water gauge | −1 ♥ · +Water gauge |
+| **Wood** | Water (Strong) | Parry Strong → rally · Wood volley | Wood → −1 ♥ · +Wood gauge | −1 ♥ · +Wood gauge · rally |
 
-No single base-element ring fully stops a dual-triangle fusion attack. The defender always absorbs at least one heart.
+No single base-element ring fully stops a dual-triangle fusion attack without giving something up — the defender always absorbs at least one heart or triggers a rally that continues the exchange. Fire and Wood defenses both generate a rally (via their STRONG component match); Water defense neutralises the Water component and absorbs the Wood component as NO_BLOCK.
 
 **Example — Forest (Water + Wood) attack — all timing outcomes with Fire defense:**
 
@@ -110,6 +110,30 @@ Net: safe on both components · rally triggered. Steam fully covers Forest.
 
 Fusion defense rings are the primary tool for cleanly answering fusion attacks — their component choice directly determines which attacks they can absorb without heart loss.
 
+#### Defending with a fusion ring against a single attack
+
+When a fusion defense ring faces a single base-element attack, both defense components can potentially engage — but only one attack must be handled. The auto-align rule picks the STRONGEST defense component; the other is simply unused (there is no second attack for it to defend against).
+
+**Example — Fire attack vs Forest (Water + Wood) defense (Parry timing):**
+
+| Defense component | vs Fire attack | Relationship | Result |
+|---|---|---|---|
+| Water | Water beats Fire | **Strong** | Parry Strong → rally · Water volley |
+| Wood | Fire beats Wood | Weak | *Unused — attack already handled by Water* |
+
+Net: rally triggered · no heart lost · Forest ring −1 use.
+
+**Coverage profile of Forest in a defense slot:**
+
+| Incoming attack | Component engaged | Relationship | Outcome |
+|---|---|---|---|
+| Fire | Water | Strong | Rally |
+| Water | Wood | Strong | Rally |
+| Wood | Wood | Neutral | Safe, no rally |
+
+Forest defense is STRONG against two of the three triangle elements and NEUTRAL against the third. Compare to a plain Water ring: STRONG vs Fire, NEUTRAL vs Water, WEAK vs Wood. A dual-triangle fusion defense eliminates the weak-element exposure of any single base ring, at the cost of a harder-to-acquire ring.
+
+
 #### Open Question (narrowed)
 
 Fusion-vs-fusion component assignment when the optimal matching is ambiguous (two components each better against different opponents) is unspecified. Resolve during implementation of issue #20.
@@ -125,6 +149,8 @@ Shadow is the only element that cannot be fused or crafted from base elements. I
 **Shadow relationships:**
 - Beats: Lightning, Wind
 - Loses to: Fire, Earth
+
+> **Known inconsistency:** "Lightning" does not exist in the v4 element enum (it was an earlier-draft fusion that was removed). Shadow matchups referencing Lightning will be revised when Shadow is brought into active scope.
 - **Passive ability:** Every Shadow attack has a 25% chance to inflict Cursed regardless of the element matchup (see Section 7)
 
 ---

@@ -89,7 +89,7 @@ On the two failure rows (**no-block**, **mistime**) the element axis is irreleva
 1. The original attacker becomes the new **rally-defender**; the parrying player becomes the **rally-attacker**.
 2. The **volleyed element is the parrying ring's base element** (not the original thrown element). Example: defender parries FIRE with WATER → a WATER counter flies back.
 3. A new 0.9 s telegraph plays for the volleyed element and the rally-defender must respond exactly as in a normal defend window (no-block / block / parry-strong).
-4. If the rally-defender **parries-strong** with the next pentagon element they become the rally-attacker and the chain continues, walking the pentagon: FIRE → WATER → WIND → EARTH → WOOD → FIRE → …
+4. If the rally-defender **parries-strong** they become the rally-attacker and the chain continues. The volleyed element is the rally-defender's parrying ring's element. Only triangle elements (Fire, Water, Wood) can produce a PARRY+STRONG; Wind defense is always Weak and Earth defense is always Neutral, so neither can extend a rally.
 5. Any other response ends the rally and resolves normally under the standard outcome table:
    - **No-block** → rally-defender loses 1 heart (+gauge); rally ends.
    - **Block/parry (neutral)** → safe; ring −1 use; rally ends.
@@ -98,7 +98,7 @@ On the two failure rows (**no-block**, **mistime**) the element axis is irreleva
 
 **Cost symmetry:** the floor cost is identical to the old auto-reflect. Attacker throws (−1 use) → defender parries strong (−1 use) → rally-defender neutral-blocks (−1 use) = attacker −2 / defender −1. The rally adds optional escalation above that floor.
 
-**Ring depletion naturally caps rally depth.** Each parry spends a ring use; a ring at 0 uses cannot parry. The rally walk also requires the specific next-pentagon element with uses remaining.
+**Ring depletion naturally caps rally depth.** Each parry spends a ring use; a ring at 0 uses cannot parry. Only a triangle element ring with remaining uses can continue the chain.
 
 A strong element with only **Block** timing is a safe block but forfeits the rally — the elemental advantage converts to a counter-volley only when you also win the tight parry window.
 
