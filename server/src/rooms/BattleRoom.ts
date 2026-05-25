@@ -55,8 +55,10 @@ const DEFAULT_LOADOUT: Record<SlotKey, number> = {
 /** Per-slot spec supplied when seating a player from their persisted loadout. */
 interface SlotSpec {
   element: number;
+  tier: number;
   currentUses: number;
   maxUses: number;
+  xp: number;
 }
 
 export class BattleRoom extends Room<{ state: BattleState }> {
@@ -124,8 +126,10 @@ export class BattleRoom extends Room<{ state: BattleState }> {
       const currentUses = slotSpec ? slotSpec.currentUses : STARTING_USES;
       const maxUses = slotSpec ? slotSpec.maxUses : STARTING_USES;
       ring.element = element;
+      ring.tier = slotSpec ? slotSpec.tier : 1;
       ring.currentUses = currentUses;
       ring.maxUses = maxUses;
+      ring.xp = slotSpec ? slotSpec.xp : 0;
       ring.isExtinguished = currentUses === 0;
       ring.isFusion = isFusion(element);
       const parents = fusionParents(element);
@@ -168,8 +172,10 @@ export class BattleRoom extends Room<{ state: BattleState }> {
             if (row) {
               spec[key] = {
                 element: row.element,
+                tier: row.tier,
                 currentUses: row.current_uses,
                 maxUses: row.max_uses,
+                xp: row.xp,
               };
               ringIds[key] = ringId;
             }
@@ -294,7 +300,10 @@ export class BattleRoom extends Room<{ state: BattleState }> {
         // vsAI win: AI has no DB ring to transfer, so grant the winner a new
         // ring matching the AI's thumb element (GDD §9.1).
         const aiPs = this.state.players.get(loserId);
-        if (aiPs) PlayerRepo.grantRing(winnerPlayerId, aiPs.thumb.element);
+        if (aiPs) {
+          const t = aiPs.thumb;
+          PlayerRepo.grantRing(winnerPlayerId, t.element, t.tier, t.maxUses, t.xp);
+        }
       }
 
       // Release escrow on every human thumb ring still escrowed.
