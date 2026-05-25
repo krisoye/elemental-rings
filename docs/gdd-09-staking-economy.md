@@ -71,7 +71,19 @@ Each passive fires at specific moments during battle and **costs the Thumb ring 
 - Higher XP stakes provide stronger buffs — a maxed Tier 2 staked ring provides noticeably more than a Tier 1
 - This creates a reason to stake high-value rings even at personal risk
 
-### 9.5 Natural Self-Regulation
+### 9.5 Gold Rewards
+
+Winning a duel pays **50 gold** in addition to the opponent's staked ring. Losing a duel carries no direct gold penalty — only the staked ring is forfeited.
+
+Gold is spent at camp:
+- **Sleep:** 50g — advances the game day and fully recharges all rings
+- **Recharge (single ring):** 10g × number of uses missing
+
+The economic loop: dueling earns 50g per win; sleeping costs 50g; recharging individual rings costs 10g per use. A player who loses repeatedly cannot sleep cheaply and must win to maintain their ring economy.
+
+> *Gold per win and costs are tunable constants (`GOLD_PER_WIN`, `SLEEP_COST`, `RECHARGE_COST_PER_USE` in `server/src/game/constants.ts`).*
+
+### 9.6 Natural Self-Regulation
 No artificial matchmaking is needed. The economy self-regulates:
 - Experienced players won't challenge weak players — winning a low-XP ring wastes a valuable inventory slot
 - Weak players won't challenge strong players — staking a good ring is too risky
