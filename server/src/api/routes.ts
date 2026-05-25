@@ -10,9 +10,12 @@ import {
   saveLoadout,
   sleepRecharge,
   rechargeRing,
+  addGold,
   lockStake,
   unlockStake,
 } from '../persistence/PlayerRepo';
+
+const SLEEP_COST = 50;
 
 const BCRYPT_ROUNDS = 10;
 
@@ -101,6 +104,12 @@ apiRouter.get('/api/me', requireAuth, (req: Request, res: Response): void => {
  */
 apiRouter.post('/api/camp/sleep', requireAuth, (req: Request, res: Response): void => {
   const playerId = req.playerId as string;
+  const player = getPlayerById(playerId);
+  if (!player || player.gold < SLEEP_COST) {
+    res.status(400).json({ error: `Sleep costs ${SLEEP_COST}g (not enough gold)` });
+    return;
+  }
+  addGold(playerId, -SLEEP_COST);
   sleepRecharge(playerId);
   res.status(200).json({
     player: getPlayerById(playerId),

@@ -42,13 +42,19 @@ export class LoadoutPanel extends Phaser.GameObjects.Container {
       bg.setInteractive({ useHandCursor: true });
 
       const slotLbl = scene.add
-        .text(cx, cy - 32, def.label, { fontSize: '10px', color: '#aaaaaa' })
+        .text(cx, cy - 36, def.label, { fontSize: '10px', color: '#aaaaaa' })
         .setOrigin(0.5);
       const elemLbl = scene.add
-        .text(cx, cy - 12, '—', { fontSize: '10px', color: '#888888' })
+        .text(cx, cy - 18, '—', { fontSize: '10px', color: '#888888' })
         .setOrigin(0.5);
       const usesLbl = scene.add
-        .text(cx, cy + 8, '', { fontSize: '9px', color: '#ffff88' })
+        .text(cx, cy + 0, '', { fontSize: '9px', color: '#ffff88' })
+        .setOrigin(0.5);
+      const xpLbl = scene.add
+        .text(cx, cy + 18, '', { fontSize: '9px', color: '#000000' })
+        .setOrigin(0.5);
+      const tierLbl = scene.add
+        .text(cx, cy + 32, '', { fontSize: '9px', color: '#000000' })
         .setOrigin(0.5);
 
       bg.on('pointerdown', () => {
@@ -58,9 +64,9 @@ export class LoadoutPanel extends Phaser.GameObjects.Container {
       });
 
       this.slotBgs.set(def.slot, bg);
-      this.slotLabels.set(def.slot, [slotLbl, elemLbl, usesLbl]);
+      this.slotLabels.set(def.slot, [slotLbl, elemLbl, usesLbl, xpLbl, tierLbl]);
 
-      this.add([bg, slotLbl, elemLbl, usesLbl]);
+      this.add([bg, slotLbl, elemLbl, usesLbl, xpLbl, tierLbl]);
     }
 
     scene.add.existing(this);
@@ -76,7 +82,7 @@ export class LoadoutPanel extends Phaser.GameObjects.Container {
       const ringId = loadout[def.slot] ?? null;
       const ring = ringId ? ringMap.get(ringId) : null;
       const bg = this.slotBgs.get(def.slot)!;
-      const [, elemLbl, usesLbl] = this.slotLabels.get(def.slot)!;
+      const [, elemLbl, usesLbl, xpLbl, tierLbl] = this.slotLabels.get(def.slot)!;
 
       if (ring) {
         bg.setFillStyle(ELEMENT_COLORS[ring.element] ?? 0x333333);
@@ -86,11 +92,15 @@ export class LoadoutPanel extends Phaser.GameObjects.Container {
         usesLbl
           .setText('●'.repeat(ring.current_uses) + '○'.repeat(Math.max(0, used)))
           .setColor('#000000');
+        xpLbl.setText(`XP:${ring.xp}`).setColor('#000000');
+        tierLbl.setText(`T${ring.tier}`).setColor('#000000');
       } else {
         bg.setFillStyle(0x333333);
         bg.setStrokeStyle(2, 0x666666);
         elemLbl.setText('—').setColor('#888888');
         usesLbl.setText('');
+        xpLbl.setText('');
+        tierLbl.setText('');
       }
     }
   }

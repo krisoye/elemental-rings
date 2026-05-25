@@ -2,8 +2,10 @@ import { Schema, ArraySchema, type } from '@colyseus/schema';
 
 export class Ring extends Schema {
   @type('uint8') element: number = 0;
+  @type('uint8') tier: number = 1;
   @type('uint8') currentUses: number = 3;
   @type('uint8') maxUses: number = 3;
+  @type('uint32') xp: number = 0;
   @type('boolean') isExtinguished: boolean = false;
   // Fusion metadata. Base rings: isFusion=false, fusionParents empty.
   // Fusion rings: isFusion=true, fusionParents holds its 2 component elements

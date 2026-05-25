@@ -58,7 +58,7 @@ const insertPlayer = db.prepare(
 );
 const insertRing = db.prepare(
   `INSERT INTO rings (id, owner_id, element, tier, max_uses, current_uses, xp)
-   VALUES (@id, @owner_id, @element, @tier, @max_uses, @current_uses, 0)`,
+   VALUES (@id, @owner_id, @element, @tier, @max_uses, @current_uses, @xp)`,
 );
 const insertLoadout = db.prepare(
   `INSERT INTO loadout (player_id, thumb, a1, a2, d1, d2)
@@ -98,6 +98,7 @@ export const createPlayer = db.transaction(
         tier: STARTER_TIER,
         max_uses: STARTER_MAX_USES,
         current_uses: STARTER_MAX_USES,
+        xp: 0,
       });
       (ringsByElement[element] ??= []).push(ringId);
     }
@@ -241,6 +242,29 @@ export function addGold(playerId: string, amount: number): void {
 /** Set or clear the escrowed flag on a ring (true → 1, false → 0). */
 export function setEscrowed(ringId: string, escrowed: boolean): void {
   updateRingEscrowed.run(escrowed ? 1 : 0, ringId);
+}
+
+/**
+ * Grant a new ring (tier 1, full uses) to a player. Used when the human
+ * player beats the AI — the AI has no DB ring to transfer, so we create one
+ * matching the AI's thumb element (GDD §9.1: winner receives the staked ring).
+ */
+export function grantRing(
+  ownerId: string,
+  element: number,
+  tier = STARTER_TIER,
+  maxUses = STARTER_MAX_USES,
+  xp = 0,
+): void {
+  insertRing.run({
+    id: uuidv4(),
+    owner_id: ownerId,
+    element,
+    tier,
+    max_uses: maxUses,
+    current_uses: maxUses,
+    xp,
+  });
 }
 
 /**
