@@ -103,10 +103,39 @@ All variants keep Wind in a primary attack slot as an uncounterable baseline. Th
 
 | Location | Purpose |
 |---|---|
-| Player Camp | Sleep to advance game day and fully recharge all rings; pay gold to recharge immediately; full inventory access |
-| Shrines | One per fusion recipe; discovered via shrine maps dropped by fusion-type enemies |
-| Merchant Areas | Buy/sell rings and fusion stones |
-| Dark/Underground Areas | Shadow ring drop locations; high risk, unpredictable opposition |
-| Boss Arenas | Fixed high-XP encounters; unique ring rewards; may gate world regions |
+| **Player Camp** | Sleep (advance game day + recharge all rings); paid immediate recharge; full inventory management; pack carry loadout before setting out |
+| **Cities / Settlements** | Merchants, services, social NPCs; safe zone — no duels initiated here |
+| **Shrines** | One per fusion recipe; discovered via shrine maps dropped by fusion-type enemies |
+| **Dark/Underground Areas** | Shadow ring drop locations; high risk, unpredictable opposition |
+| **Boss Arenas** | Fixed high-XP encounters; unique ring rewards; may gate world regions |
+
+**Camp vs City distinction:**
+- Camp is a temporary personal rest stop — only the player's own rings and resources are accessible
+- Cities are persistent world locations shared by all players, with access to merchants, trade, and social features
+- Ring inventory management (choosing the 10 you carry) happens at **camp only** — you pack before you leave, not mid-expedition
+
+### 10.7 Merchants
+
+Merchants are encountered in cities and occasionally wandering the overworld between biomes.
+
+**Wares:**
+
+| Category | Examples | Currency |
+|---|---|---|
+| Rings | Tier 1 base rings, rare element variants | Gold |
+| Carry capacity | +1 carry slot upgrades (up to a cap) | Gold |
+| Garments | Equipment that modifies passive staking behavior or carry cap | Gold + rare materials |
+| Fusion stones | Catalysts for ring fusion recipes | Gold + ring sacrifice |
+| Shrine maps | Reveal fusion shrine locations on the overworld map | Gold |
+
+**Carry cap expansion:**
+- Players start with `carry_cap = 10`
+- Each +1 carry capacity upgrade costs increasing amounts of gold (exact costs TBD — tuned for scarcity)
+- Maximum carry cap TBD — progression gate for late-game ring diversity
+
+**Wandering merchants:**
+- A subset of merchants patrol fixed routes between biomes
+- Encounter windows are limited — if the player doesn't trade during a patrol window they must wait for the next cycle
+- Creates strategic timing decisions: return to trade now or continue the expedition?
 
 ---

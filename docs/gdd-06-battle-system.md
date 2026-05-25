@@ -2,7 +2,10 @@
 
 ### 6.1 The Loadout System
 
-The player equips **5 rings on their dominant hand** before a duel, each in a named slot:
+Before setting out from camp, the player packs a **carry loadout** — up to `carry_cap` rings (default 10) chosen from their full inventory. Only these rings are available in the overworld and during battle.
+
+Of the carried rings, the player assigns **5 to the battle hand** before each encounter — these are the only rings usable during the duel:
+
 
 | Slot  | Button | Role |
 |-------|--------|------|
@@ -129,10 +132,20 @@ Neutrals are pure attrition exchanges. A correctly-timed neutral block is always
 - Hearts reset between duels
 
 ### 6.8 Post-Battle Loadout Management
-After winning a duel:
-1. The player receives the opponent's staked ring — it is added to their inventory automatically
-2. **Phase 6+ UI:** a deliberate "place won ring" prompt is planned — the player will choose which loadout slot (if any) to assign it to, or leave it in inventory. Currently the ring lands in inventory and is managed via the Camp screen.
-3. The player can reorganize their slots freely at Camp — reassigning rings to the Thumb/A1/A2/D1/D2 slots to prepare for the next encounter
+
+**After any battle:**
+- The player can freely reorganize their battle hand among their carried rings — reassigning Thumb/A1/A2/D1/D2 from the carry pool before the next encounter
+- No sleeping or recharging in the field — return to camp for that
+
+**After winning (ring received):**
+1. A prompt appears: **"You won a [element] ring!"**
+2. If carry has room (`total carried < carry_cap`): choose **Add to Carry**, **Leave at Camp** (ring goes to inventory on return), or **Discard**
+3. If carry is full: choose **Swap** (pick which carried ring to displace — displaced ring returns to camp inventory on return), **Leave at Camp**, or **Discard**
+4. Discarded rings are permanently lost
+
+**After losing:**
+- The staked Thumb ring is forfeited — removed from carry and from the player's inventory
+- No additional penalty beyond the ring loss (monsters are an exception — see §6.9)
 
 After losing a duel:
 1. The player's staked ring is forfeited to the opponent

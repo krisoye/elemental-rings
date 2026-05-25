@@ -1,10 +1,21 @@
 ## 4. Ring System
 
-### 4.1 Inventory
-- **Starting inventory cap:** 10 rings (one per finger — thematic starting point)
-- **Maximum inventory cap:** 99 rings
-- **Inventory expansion:** Unlocked through buying, finding, or sacrificing rings/experience over time
-- Rings sitting in inventory recharge on the game day timer even while the player is in the field
+### 4.1 Inventory and Carry
+
+**Inventory** is the player's full ring collection, managed freely at camp.
+
+**Loadout (carry)** is the subset of rings the player takes on an expedition — chosen at camp before setting out. Only carried rings are accessible in the overworld and during battle.
+
+| Concept | Description | Default cap | Expandable |
+|---|---|---|---|
+| Inventory | All owned rings; managed at camp | 99 | No hard limit |
+| Loadout (carry) | Rings taken on expedition | 10 | Yes — via merchant |
+| Battle hand | 5 named slots (Thumb/A1/A2/D1/D2) used in combat | 5 (fixed) | No |
+| Spare | Carried rings not assigned to battle slots; swappable between encounters | up to carry cap − 5 | Via carry cap |
+
+- **Inventory expansion:** buying more carry capacity from a merchant (see §10.7)
+- Rings left at camp recharge on the game day timer
+- Rings on your person do **not** recharge in the field — only at camp (sleep or paid recharge)
 
 ### 4.2 Ring Tiers and Stats
 

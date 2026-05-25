@@ -17,9 +17,11 @@
 - Whether monster stolen rings retain their specific position in the world (trackable) or just re-enter the monster loot pool
 - Status gauge threshold scaling formula with player XP and augmentations
 - Playtesting tune for status severity now that gauges persist indefinitely (Burning at 1 full heart/turn especially)
-- Post-battle "place won ring" UI — deliberate choice prompt vs automatic inventory drop (currently automatic; §6.8)
+- ~~Post-battle "place won ring" UI~~ → settled: **prompt appears when carry is full; player swaps, leaves at camp, or discards** (§6.8; tracked in issue #40)
 - Fused Thumb ring passives — what happens when a fusion ring is staked (currently: no passive)
 - Additional jewelry body positions (off-hand bracelet, necklace) and their passive archetypes (flagged Phase 7+)
+- Carry cap expansion cost curve — how much gold per +1 slot, and what is the maximum cap?
+- Wandering merchant patrol routes and trade window duration
 
 **Tech / multiplayer:**
 - ~~Database choice for persistent player state~~ → settled: **SQLite via better-sqlite3** (synchronous, server-side)
