@@ -3,6 +3,9 @@ dist/
 *.log
 .DS_Store
 
+# Local/E2E SQLite database (created at runtime by server/src/persistence/db.ts)
+server/data/
+
 # Playwright
 /test-results/
 /playwright-report/

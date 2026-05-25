@@ -1,5 +1,7 @@
 import Phaser from 'phaser';
 import { BootScene } from './scenes/BootScene';
+import { LoginScene } from './scenes/LoginScene';
+import { CampScene } from './scenes/CampScene';
 import { EncounterScene } from './scenes/EncounterScene';
 import { LobbyScene } from './scenes/LobbyScene';
 import { BattleScene } from './scenes/BattleScene';
@@ -39,7 +41,11 @@ const game = new Phaser.Game({
   height: CANVAS_H,
   parent: 'game-container',
   backgroundColor: '#1a1a2e',
-  scene: [BootScene, EncounterScene, LobbyScene, BattleScene],
+  // LoginScene renders real <input> elements through a Phaser DOM container.
+  dom: { createContainer: true },
+  // BootScene must stay first (it routes by auth state). LoginScene/CampScene
+  // are the new auth flow; Encounter/Lobby/Battle are unchanged.
+  scene: [BootScene, LoginScene, CampScene, EncounterScene, LobbyScene, BattleScene],
 });
 
 window.__game = game;
