@@ -1,6 +1,7 @@
 import { v4 as uuidv4 } from 'uuid';
 import { db } from './db';
 import { ElementEnum } from '../../../shared/types';
+import { RECHARGE_COST_PER_USE } from '../game/constants';
 
 /** A persisted player row (no password hash exposed to callers of read helpers). */
 export interface PlayerRow {
@@ -19,6 +20,7 @@ export interface RingRow {
   max_uses: number;
   current_uses: number;
   xp: number;
+  escrowed: number;
 }
 
 /** A persisted loadout row — each slot holds a ring id (or null when empty). */
@@ -138,3 +140,225 @@ export function getRingsByOwner(ownerId: string): RingRow[] {
 export function getLoadout(playerId: string): LoadoutRow | undefined {
   return selectLoadout.get(playerId) as LoadoutRow | undefined;
 }
+
+// ---------------------------------------------------------------------------
+// Prepared statements for new functions (Camp / Loadout / Staking)
+// ---------------------------------------------------------------------------
+
+const selectRingById = db.prepare(`SELECT * FROM rings WHERE id = ?`);
+const updateLoadoutSlot = db.prepare(
+  `UPDATE loadout SET thumb = @thumb, a1 = @a1, a2 = @a2, d1 = @d1, d2 = @d2 WHERE player_id = @player_id`,
+);
+const updateRingUses = db.prepare(
+  `UPDATE rings SET current_uses = MIN(?, max_uses) WHERE id = ?`,
+);
+const updateRingXP = db.prepare(`UPDATE rings SET xp = xp + ? WHERE id = ?`);
+const updatePlayerGold = db.prepare(`UPDATE players SET gold = gold + ? WHERE id = ?`);
+const updateRingEscrowed = db.prepare(`UPDATE rings SET escrowed = ? WHERE id = ?`);
+const updateRingOwner = db.prepare(
+  `UPDATE rings SET owner_id = ?, escrowed = 0 WHERE id = ? AND owner_id = ?`,
+);
+const deleteRing = db.prepare(`DELETE FROM rings WHERE id = ? AND owner_id = ?`);
+const updateGameDay = db.prepare(`UPDATE players SET game_day = game_day + 1 WHERE id = ?`);
+const rechargeAllRings = db.prepare(`UPDATE rings SET current_uses = max_uses WHERE owner_id = ?`);
+const updatePlayerGoldDeduct = db.prepare(
+  `UPDATE players SET gold = gold - ? WHERE id = ?`,
+);
+const updateRingUsesMax = db.prepare(
+  `UPDATE rings SET current_uses = max_uses WHERE id = ?`,
+);
+
+const SLOT_KEYS: ReadonlyArray<keyof LoadoutRow> = ['thumb', 'a1', 'a2', 'd1', 'd2'];
+
+/**
+ * Update a player's loadout with a partial set of slot assignments.
+ *
+ * Validates each ring id belongs to the player. Enforces the one-slot rule:
+ * if ring X is assigned to slot S, it is nulled out from any other slot
+ * currently holding X. Wraps everything in a transaction.
+ */
+export const saveLoadout = db.transaction(
+  (playerId: string, partial: Partial<Record<'thumb' | 'a1' | 'a2' | 'd1' | 'd2', string | null>>): LoadoutRow => {
+    const current = selectLoadout.get(playerId) as LoadoutRow | undefined;
+    if (!current) throw new Error(`No loadout for player ${playerId}`);
+
+    const ownerRings = new Set((selectRingsByOwner.all(playerId) as RingRow[]).map((r) => r.id));
+
+    // Build the updated slot map starting from the current state.
+    const slots: Record<string, string | null> = {
+      thumb: current.thumb,
+      a1: current.a1,
+      a2: current.a2,
+      d1: current.d1,
+      d2: current.d2,
+    };
+
+    for (const key of ['thumb', 'a1', 'a2', 'd1', 'd2'] as const) {
+      if (!(key in partial)) continue;
+      const val = partial[key] ?? null;
+      // null clears the slot; a ring id is validated against ownership.
+      if (val !== null && !ownerRings.has(val)) continue;
+      if (val !== null) {
+        // Clear the same ring from any other slot to enforce one-slot rule.
+        for (const other of ['thumb', 'a1', 'a2', 'd1', 'd2'] as const) {
+          if (other !== key && slots[other] === val) slots[other] = null;
+        }
+      }
+      slots[key] = val;
+    }
+
+    updateLoadoutSlot.run({
+      player_id: playerId,
+      thumb: slots.thumb,
+      a1: slots.a1,
+      a2: slots.a2,
+      d1: slots.d1,
+      d2: slots.d2,
+    });
+
+    return selectLoadout.get(playerId) as LoadoutRow;
+  },
+);
+
+/**
+ * Persist the current in-battle uses for a ring, clamped to the ring's own
+ * max_uses to prevent transient in-battle passives from persisting above capacity.
+ */
+export function saveRingUses(ringId: string, currentUses: number): void {
+  updateRingUses.run(currentUses, ringId);
+}
+
+/** Award XP to a ring. */
+export function awardXP(ringId: string, xpAmount: number): void {
+  updateRingXP.run(xpAmount, ringId);
+}
+
+/** Add (or subtract) gold from a player's balance. */
+export function addGold(playerId: string, amount: number): void {
+  updatePlayerGold.run(amount, playerId);
+}
+
+/** Set or clear the escrowed flag on a ring (true → 1, false → 0). */
+export function setEscrowed(ringId: string, escrowed: boolean): void {
+  updateRingEscrowed.run(escrowed ? 1 : 0, ringId);
+}
+
+/**
+ * Transfer ownership of a ring from one player to another. Nulls out any
+ * loadout slots that referenced the ring on the losing player. The ring's XP
+ * travels with it (GDD §9.1).
+ */
+export const transferRing = db.transaction(
+  (ringId: string, fromPlayerId: string, toPlayerId: string): void => {
+    const fromLoadout = selectLoadout.get(fromPlayerId) as LoadoutRow | undefined;
+    if (fromLoadout) {
+      const slots: Record<string, string | null> = {
+        thumb: fromLoadout.thumb,
+        a1: fromLoadout.a1,
+        a2: fromLoadout.a2,
+        d1: fromLoadout.d1,
+        d2: fromLoadout.d2,
+      };
+      let changed = false;
+      for (const key of SLOT_KEYS) {
+        if (slots[key as string] === ringId) {
+          slots[key as string] = null;
+          changed = true;
+        }
+      }
+      if (changed) {
+        updateLoadoutSlot.run({
+          player_id: fromPlayerId,
+          thumb: slots.thumb,
+          a1: slots.a1,
+          a2: slots.a2,
+          d1: slots.d1,
+          d2: slots.d2,
+        });
+      }
+    }
+    updateRingOwner.run(toPlayerId, ringId, fromPlayerId);
+  },
+);
+
+/**
+ * Remove a ring from the database (used when the AI wins and there is no DB
+ * recipient for the staked thumb ring). GDD §9.1: loser forfeits regardless.
+ */
+export const forfeitRing = db.transaction(
+  (ringId: string, fromPlayerId: string): void => {
+    const fromLoadout = selectLoadout.get(fromPlayerId) as LoadoutRow | undefined;
+    if (fromLoadout) {
+      const slots: Record<string, string | null> = {
+        thumb: fromLoadout.thumb,
+        a1: fromLoadout.a1,
+        a2: fromLoadout.a2,
+        d1: fromLoadout.d1,
+        d2: fromLoadout.d2,
+      };
+      let changed = false;
+      for (const key of SLOT_KEYS) {
+        if (slots[key as string] === ringId) {
+          slots[key as string] = null;
+          changed = true;
+        }
+      }
+      if (changed) {
+        updateLoadoutSlot.run({
+          player_id: fromPlayerId,
+          thumb: slots.thumb,
+          a1: slots.a1,
+          a2: slots.a2,
+          d1: slots.d1,
+          d2: slots.d2,
+        });
+      }
+    }
+    deleteRing.run(ringId, fromPlayerId);
+  },
+);
+
+/** Escrow the player's current thumb ring (mark it as staked). */
+export function lockStake(playerId: string): void {
+  const loadout = selectLoadout.get(playerId) as LoadoutRow | undefined;
+  if (loadout?.thumb) setEscrowed(loadout.thumb, true);
+}
+
+/** Release the player's current thumb ring from escrow. */
+export function unlockStake(playerId: string): void {
+  const loadout = selectLoadout.get(playerId) as LoadoutRow | undefined;
+  if (loadout?.thumb) setEscrowed(loadout.thumb, false);
+}
+
+/**
+ * Advance the game day by 1 and fully recharge all rings owned by the player
+ * (simplified full recharge for all tiers per issue #27 spec).
+ */
+export const sleepRecharge = db.transaction((playerId: string): void => {
+  updateGameDay.run(playerId);
+  rechargeAllRings.run(playerId);
+});
+
+/**
+ * Pay gold to recharge a single ring to full uses.
+ *
+ * Returns `{ ok: false, reason }` if the ring is already full, not owned by
+ * the player, or the player lacks sufficient gold. Otherwise deducts gold and
+ * sets current_uses = max_uses.
+ */
+export const rechargeRing = db.transaction(
+  (playerId: string, ringId: string): { ok: boolean; reason?: string } => {
+    const ring = selectRingById.get(ringId) as RingRow | undefined;
+    if (!ring || ring.owner_id !== playerId) {
+      return { ok: false, reason: 'ring not found' };
+    }
+    const deficit = ring.max_uses - ring.current_uses;
+    if (deficit === 0) return { ok: false, reason: 'already full' };
+    const cost = RECHARGE_COST_PER_USE * deficit;
+    const player = selectById.get(playerId) as { gold: number } | undefined;
+    if (!player || player.gold < cost) return { ok: false, reason: 'insufficient gold' };
+    updatePlayerGoldDeduct.run(cost, playerId);
+    updateRingUsesMax.run(ringId);
+    return { ok: true };
+  },
+);

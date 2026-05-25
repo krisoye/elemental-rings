@@ -37,6 +37,7 @@ export interface BattleRoomOptions {
   vsAI?: boolean;
   personality?: AIPersonality;
   aiSeed?: number;
+  token?: string;
 }
 
 export interface SelectAttackPayload {

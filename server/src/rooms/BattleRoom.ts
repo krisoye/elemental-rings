@@ -5,6 +5,9 @@ import { Ring } from '../schemas/Ring';
 import { classifyTiming, resolveBlock } from '../game/BlockResolver';
 import { componentsOf, fusionParents, isFusion } from '../game/ElementSystem';
 import { AIController } from '../game/ai/AIController';
+import * as StakeResolver from '../game/StakeResolver';
+import * as PlayerRepo from '../persistence/PlayerRepo';
+import { verifyToken } from '../auth/auth';
 import {
   TELEGRAPH_MS,
   DEFEND_WINDOW_MS,
@@ -12,6 +15,8 @@ import {
   PARRY_WINDOW_MS,
   STARTING_HEARTS,
   STARTING_USES,
+  XP_PER_USE,
+  GOLD_PER_WIN,
 } from '../game/constants';
 import {
   ElementEnum,
@@ -31,18 +36,28 @@ const ATTACK_SLOTS: ReadonlySet<string> = new Set<AttackSlot>(['a1', 'a2']);
 const DEFENSE_SLOTS: ReadonlySet<string> = new Set<DefenseSlot>(['d1', 'd2']);
 
 // Default loadout (GDD §6.1). thumb is a passive staked ring (never pressed).
-//   thumb=WOOD, a1=FIRE, a2=WATER, d1=WOOD, d2=EARTH.
+//   thumb=FIRE, a1=FIRE, a2=WATER, d1=WOOD, d2=EARTH.
 // Rationale: Fire/Water triangle attacks; Wood defense gives a STRONG parry vs
 // Water and a rally path; Earth defense is the guaranteed-neutral safety valve.
 // This exercises both the triangle cycle and Earth's asymmetry. (Wind's
 // asymmetry — always-WEAK on defense — is covered by the unit suite.)
+// thumb=FIRE chosen so that no combat passives (Deep Roots/Tailwind/Wellspring)
+// disrupt the integration test suite. Kindling (the FIRE setup passive) buffs
+// a1 from 3→4 uses, which integration tests do not assert on post-seat.
 const DEFAULT_LOADOUT: Record<SlotKey, number> = {
-  thumb: ElementEnum.WOOD,
+  thumb: ElementEnum.FIRE,
   a1: ElementEnum.FIRE,
   a2: ElementEnum.WATER,
   d1: ElementEnum.WOOD,
   d2: ElementEnum.EARTH,
 };
+
+/** Per-slot spec supplied when seating a player from their persisted loadout. */
+interface SlotSpec {
+  element: number;
+  currentUses: number;
+  maxUses: number;
+}
 
 export class BattleRoom extends Room<{ state: BattleState }> {
   private impactTime: number = 0;
@@ -52,6 +67,13 @@ export class BattleRoom extends Room<{ state: BattleState }> {
   private windowTimer: ReturnType<typeof setTimeout> | null = null;
   /** Non-null only in vsAI (`battle-ai`) rooms; a no-op via notifyAI() in PvP. */
   private ai: AIController | null = null;
+
+  /** Maps Colyseus sessionId → DB player id (only present for authenticated humans). */
+  private sessionToPlayerId = new Map<string, string>();
+  /** Maps Colyseus sessionId → ring id per slot (null when slot used default). */
+  private sessionToRingIds = new Map<string, Record<SlotKey, string | null>>();
+  /** Guard: persistBattleResult() runs exactly once per room lifetime. */
+  private ended = false;
 
   /** Server's real impact time for the current exchange (read by the AI). */
   get currentImpactTime(): number {
@@ -77,8 +99,19 @@ export class BattleRoom extends Room<{ state: BattleState }> {
     }
   }
 
-  /** Seat a player (human or AI) with the default named-slot loadout. */
-  private seatPlayer(id: string, displayName: string): void {
+  /**
+   * Seat a player (human or AI) with their loadout.
+   *
+   * If `spec` is provided, each slot with an entry uses the given element /
+   * currentUses / maxUses. Slots absent from spec fall back to DEFAULT_LOADOUT
+   * (with currentUses = maxUses = STARTING_USES). After seating, the thumb's
+   * setup passive is applied (Kindling / Bulwark) — a no-op for most elements.
+   */
+  private seatPlayer(
+    id: string,
+    displayName: string,
+    spec?: Partial<Record<SlotKey, SlotSpec>>,
+  ): void {
     const ps = new PlayerState();
     ps.playerId = id;
     ps.displayName = displayName;
@@ -86,11 +119,14 @@ export class BattleRoom extends Room<{ state: BattleState }> {
 
     for (const key of Object.keys(DEFAULT_LOADOUT) as SlotKey[]) {
       const ring = ps.getSlot(key);
-      const element = DEFAULT_LOADOUT[key];
+      const slotSpec = spec?.[key];
+      const element = slotSpec ? slotSpec.element : DEFAULT_LOADOUT[key];
+      const currentUses = slotSpec ? slotSpec.currentUses : STARTING_USES;
+      const maxUses = slotSpec ? slotSpec.maxUses : STARTING_USES;
       ring.element = element;
-      ring.currentUses = STARTING_USES;
-      ring.maxUses = STARTING_USES;
-      ring.isExtinguished = false;
+      ring.currentUses = currentUses;
+      ring.maxUses = maxUses;
+      ring.isExtinguished = currentUses === 0;
       ring.isFusion = isFusion(element);
       const parents = fusionParents(element);
       ring.fusionParents.clear();
@@ -98,10 +134,61 @@ export class BattleRoom extends Room<{ state: BattleState }> {
     }
 
     this.state.players.set(id, ps);
+
+    // Apply setup passive (Kindling / Bulwark). No-op for all other elements.
+    StakeResolver.applySetupPassive(ps);
   }
 
-  onJoin(client: Client): void {
-    this.seatPlayer(client.sessionId, '');
+  onJoin(client: Client, options: BattleRoomOptions = {}): void {
+    const sessionId = client.sessionId;
+
+    // Attempt to load a real loadout from the DB if the client supplied a token.
+    const payload = options.token ? verifyToken(options.token) : null;
+
+    if (payload) {
+      const { playerId } = payload;
+      const loadout = PlayerRepo.getLoadout(playerId);
+      const allRings = PlayerRepo.getRingsByOwner(playerId);
+      const ringMap = new Map(allRings.map((r) => [r.id, r]));
+
+      const spec: Partial<Record<SlotKey, SlotSpec>> = {};
+      const ringIds: Record<SlotKey, string | null> = {
+        thumb: null,
+        a1: null,
+        a2: null,
+        d1: null,
+        d2: null,
+      };
+
+      if (loadout) {
+        for (const key of ['thumb', 'a1', 'a2', 'd1', 'd2'] as SlotKey[]) {
+          const ringId = loadout[key];
+          if (ringId) {
+            const row = ringMap.get(ringId);
+            if (row) {
+              spec[key] = {
+                element: row.element,
+                currentUses: row.current_uses,
+                maxUses: row.max_uses,
+              };
+              ringIds[key] = ringId;
+            }
+          }
+        }
+      }
+
+      this.seatPlayer(sessionId, '', spec);
+      this.sessionToPlayerId.set(sessionId, playerId);
+      this.sessionToRingIds.set(sessionId, ringIds);
+
+      // Escrow the thumb ring for staking.
+      if (ringIds.thumb) {
+        PlayerRepo.setEscrowed(ringIds.thumb, true);
+      }
+    } else {
+      // No/invalid token: seat with default loadout (backward-compat for E2E / integration tests).
+      this.seatPlayer(sessionId, '');
+    }
 
     if (this.ai) {
       void this.lock();
@@ -149,6 +236,69 @@ export class BattleRoom extends Room<{ state: BattleState }> {
     if (!this.hasUsableAttack(state.players.get(attackerId)!)) {
       state.winnerId = defenderId;
       state.phase = 'ENDED';
+      this.finalizeEnded();
+    }
+  }
+
+  /**
+   * Persist battle result exactly once per room lifetime. Guarded by this.ended.
+   * Called synchronously after state.phase = 'ENDED' is set.
+   */
+  private finalizeEnded(): void {
+    if (this.ended) return;
+    this.ended = true;
+    this.persistBattleResult();
+  }
+
+  /** Persist XP, uses, gold awards, and stake transfer to the DB (synchronous). */
+  private persistBattleResult(): void {
+    try {
+      const state = this.state;
+      const winnerId = state.winnerId;
+      const sessions = Array.from(state.players.keys());
+      const loserId = sessions.find((s) => s !== winnerId);
+
+      for (const [sessionId, ps] of state.players) {
+        const playerId = this.sessionToPlayerId.get(sessionId);
+        if (!playerId) continue; // AI / no-token: skip
+        const ringIds = this.sessionToRingIds.get(sessionId);
+        if (!ringIds) continue;
+
+        for (const key of ['thumb', 'a1', 'a2', 'd1', 'd2'] as SlotKey[]) {
+          const ringId = ringIds[key];
+          if (!ringId) continue;
+          const ring = ps.getSlot(key);
+          PlayerRepo.saveRingUses(ringId, ring.currentUses);
+          const usesSpent = ring.maxUses - ring.currentUses;
+          if (usesSpent > 0) PlayerRepo.awardXP(ringId, usesSpent * XP_PER_USE);
+        }
+
+        if (sessionId === winnerId) PlayerRepo.addGold(playerId, GOLD_PER_WIN);
+      }
+
+      // Staking transfer (GDD §9.1 — loser ALWAYS forfeits the thumb ring).
+      const loserPlayerId = loserId ? this.sessionToPlayerId.get(loserId) : undefined;
+      const winnerPlayerId = winnerId ? this.sessionToPlayerId.get(winnerId) : undefined;
+      const loserThumbRingId = loserId
+        ? this.sessionToRingIds.get(loserId)?.thumb
+        : undefined;
+
+      if (loserPlayerId && loserThumbRingId) {
+        if (winnerPlayerId) {
+          PlayerRepo.transferRing(loserThumbRingId, loserPlayerId, winnerPlayerId);
+        } else {
+          // vsAI: winner has no DB record — just delete the ring.
+          PlayerRepo.forfeitRing(loserThumbRingId, loserPlayerId);
+        }
+      }
+
+      // Release escrow on every human thumb ring still escrowed.
+      for (const sessionId of sessions) {
+        const tid = this.sessionToRingIds.get(sessionId)?.thumb;
+        if (tid) PlayerRepo.setEscrowed(tid, false);
+      }
+    } catch (err: unknown) {
+      console.error('[BattleRoom] persistBattleResult failed:', err);
     }
   }
 
@@ -164,9 +314,12 @@ export class BattleRoom extends Room<{ state: BattleState }> {
     const ring = attacker.getSlot(payload.slot);
     if (ring.isExtinguished) return;
 
-    // Attacker pays 1 use to throw.
-    ring.currentUses = Math.max(0, ring.currentUses - 1);
-    ring.isExtinguished = ring.currentUses === 0;
+    // Tailwind passive: Wind thumb pays the use cost instead of the attack ring.
+    const usePaidByStake = StakeResolver.applyTailwind(attacker, ring);
+    if (!usePaidByStake) {
+      ring.currentUses = Math.max(0, ring.currentUses - 1);
+      ring.isExtinguished = ring.currentUses === 0;
+    }
 
     state.attackerSlot = payload.slot;
     state.phase = 'DEFEND_WINDOW';
@@ -221,11 +374,17 @@ export class BattleRoom extends Room<{ state: BattleState }> {
 
     const result = resolveBlock(attackerRing, defenderRing, timing);
 
-    if (result.defenderHeartLost) {
+    // Deep Roots passive: Wood thumb absorbs a heart loss for the defender.
+    if (result.defenderHeartLost && !StakeResolver.applyDeepRoots(defenderPlayer)) {
       defenderPlayer.hearts = Math.max(0, defenderPlayer.hearts - 1);
     }
-    if (result.attackerHeartLost) {
+    if (result.attackerHeartLost && !StakeResolver.applyDeepRoots(attackerPlayer)) {
       attackerPlayer.hearts = Math.max(0, attackerPlayer.hearts - 1);
+    }
+
+    // Wellspring passive: Water thumb refunds the defender ring use on a rally.
+    if (result.rallyContinues && defenderRing) {
+      StakeResolver.applyWellspring(defenderPlayer, defenderRing);
     }
 
     // Increment the defender's matching triangle gauges (FIRE/WATER/WOOD), capped
@@ -260,12 +419,14 @@ export class BattleRoom extends Room<{ state: BattleState }> {
     if (defenderPlayer.hearts <= 0) {
       state.winnerId = attackerId;
       state.phase = 'ENDED';
+      this.finalizeEnded();
       this.notifyAI();
       return;
     }
     if (attackerPlayer.hearts <= 0) {
       state.winnerId = defenderId;
       state.phase = 'ENDED';
+      this.finalizeEnded();
       this.notifyAI();
       return;
     }

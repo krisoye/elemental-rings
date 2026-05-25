@@ -3,6 +3,10 @@ import { connectToRoom } from '../net/Connection';
 import type { AIPersonality } from '../../../shared/types';
 import { CANVAS_W, CANVAS_H } from '../Constants';
 
+declare const __SERVER_URL__: string;
+const _WS_ENC = __SERVER_URL__ || `ws://${window.location.hostname}:2567`;
+const API_BASE = _WS_ENC.replace(/^ws/, 'http');
+
 type Choice = AIPersonality | 'PVP';
 
 interface MarkerSpec {
@@ -103,7 +107,15 @@ export class EncounterScene extends Phaser.Scene {
 
   /** Connect to a fresh vsAI room, then hand off to the BattleScene. */
   private async startAIDuel(personality: AIPersonality): Promise<void> {
-    const room = await connectToRoom('battle-ai', { vsAI: true, personality });
+    const token = localStorage.getItem('er_token') ?? '';
+    // Best-effort stake lock before connecting (non-fatal if it fails).
+    try {
+      await fetch(`${API_BASE}/api/stake/lock`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` },
+      });
+    } catch { /* non-fatal */ }
+    const room = await connectToRoom('battle-ai', { vsAI: true, personality, token });
 
     // The server seats the AI on create and the human on join, then opens
     // ATTACK_SELECT once both are present. Hand off as soon as that happens.
@@ -112,7 +124,7 @@ export class EncounterScene extends Phaser.Scene {
       if (state.phase === 'ATTACK_SELECT' && !transitioned) {
         transitioned = true;
         room.onStateChange.remove(onState);
-        this.scene.start('BattleScene', { returnScene: 'EncounterScene' });
+        this.scene.start('BattleScene');
       }
     };
     room.onStateChange(onState);

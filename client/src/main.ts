@@ -12,7 +12,7 @@ declare global {
   interface Window {
     __game: Phaser.Game;
     __room: import('@colyseus/sdk').Room<any> | null;
-    __scene: BattleScene | null;
+    __scene: Phaser.Scene | null;
     __lastExchangeResult: ExchangeResultPayload | null;
     __slotPositions: { x: number; y: number }[];
     __orbLaunchCount: number;
@@ -22,6 +22,9 @@ declare global {
     // LobbyScene; a personality starts a vsAI duel.
     __encounterSelect?: (choice: AIPersonality | 'PVP') => void;
     __campGoEncounter?: () => void;
+    __campSleep?: () => void;
+    __campRecharge?: (ringId: string) => Promise<void>;
+    __campState?: { player: any; rings: any[]; loadout: any };
   }
 }
 

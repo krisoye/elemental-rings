@@ -31,21 +31,18 @@ export class BattleScene extends Phaser.Scene {
   revealedOpponentElements: Set<number> = new Set();
   private prevPhase = '';
   private prevRallyActive = false;
-  private returnScene = 'EncounterScene';
   private returning = false;
 
   constructor() {
     super({ key: 'BattleScene' });
   }
 
-  init(data?: { returnScene?: string }): void {
+  init(): void {
     // Reset per-start state (scene may be re-entered on a rematch).
     this.revealedOpponentElements = new Set();
     this.prevPhase = '';
     this.prevRallyActive = false;
     this.returning = false;
-    // Scene to return to when the duel ends (Encounter hub for vsAI, Lobby for PvP).
-    this.returnScene = data?.returnScene ?? 'EncounterScene';
   }
 
   create(): void {
@@ -120,8 +117,8 @@ export class BattleScene extends Phaser.Scene {
   }
 
   /**
-   * On phase ENDED, show a brief winner banner then return to the originating
-   * scene (Encounter hub for vsAI, Lobby for PvP). Guarded so it fires once.
+   * On phase ENDED, show a brief winner banner then return to CampScene (the
+   * hub for both vsAI and PvP duels). Guarded so it fires once.
    */
   private checkEnded(state: any, myId: string): void {
     if (state.phase !== 'ENDED' || this.returning) return;
@@ -138,7 +135,7 @@ export class BattleScene extends Phaser.Scene {
       .setOrigin(0.5)
       .setDepth(1000);
 
-    this.time.delayedCall(2000, () => this.scene.start(this.returnScene));
+    this.time.delayedCall(2000, () => this.scene.start('CampScene'));
   }
 
   /** Launch the orb telegraph when a defend window opens, including rally volleys. */

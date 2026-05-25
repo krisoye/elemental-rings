@@ -20,3 +20,10 @@ db.pragma('foreign_keys = ON');
 // DDL is idempotent (IF NOT EXISTS), so re-running on every boot is safe.
 const schema = fs.readFileSync(path.join(__dirname, 'schema.sql'), 'utf8');
 db.exec(schema);
+
+// Guard migration: add escrowed column to existing DBs that predate the column.
+// ALTER TABLE ... ADD COLUMN throws on a second run, so check PRAGMA first.
+const ringCols = db.pragma('table_info(rings)') as Array<{ name: string }>;
+if (!ringCols.some((c) => c.name === 'escrowed')) {
+  db.exec('ALTER TABLE rings ADD COLUMN escrowed INTEGER NOT NULL DEFAULT 0');
+}
