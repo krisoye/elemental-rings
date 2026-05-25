@@ -134,7 +134,8 @@ export class CampScene extends Phaser.Scene {
 
     this.ringMap = new Map(rings.map((r) => [r.id, r]));
 
-    this.inventoryGrid.populate(rings);
+    const assignedIds = new Set(Object.values(loadout).filter(Boolean) as string[]);
+    this.inventoryGrid.populate(rings.filter((r) => !assignedIds.has(r.id)));
     this.loadoutPanel.updateFromLoadout(loadout, this.ringMap);
     this.stakePanel.updateFromLoadout(loadout.thumb ?? null, this.ringMap);
 
