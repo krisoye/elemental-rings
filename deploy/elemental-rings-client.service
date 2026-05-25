@@ -1,0 +1,35 @@
+# Elemental Rings Client — Vite dev server
+# =========================================
+#
+# Installation (handled automatically by `ws deploy elemental-rings`):
+#   1. Copy to /etc/systemd/system/elemental-rings-client.service
+#   2. sudo systemctl daemon-reload
+#   3. sudo systemctl enable --now elemental-rings-client
+#
+# Monitoring:
+#   sudo systemctl status elemental-rings-client
+#   sudo journalctl -u elemental-rings-client -f
+#
+# Notes:
+#   - Serves the Phaser client on port 8080 (all interfaces)
+#   - LAN access: http://192.168.4.140:8080
+#   - __SERVER_URL__ defaults to ws://<page-hostname>:2567 at runtime
+
+[Unit]
+Description=Elemental Rings Client
+Documentation=https://github.com/krisoye/elemental-rings
+After=network.target elemental-rings.service
+
+[Service]
+Type=simple
+User=deploy
+WorkingDirectory=/home/deploy/prod/elemental-rings/client
+ExecStart=/usr/bin/npm run dev
+Restart=on-failure
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=elemental-rings-client
+
+[Install]
+WantedBy=multi-user.target

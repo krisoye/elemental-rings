@@ -1,0 +1,44 @@
+# Elemental Rings Game Server — Colyseus (WebSocket) + Express (REST auth API)
+# ============================================================================
+#
+# Installation (handled automatically by `ws deploy elemental-rings`):
+#   1. Copy to /etc/systemd/system/elemental-rings.service
+#   2. Create env drop-in with secrets (one-time, not managed by ws deploy):
+#        /etc/systemd/system/elemental-rings.service.d/override.conf
+#          [Service]
+#          Environment=DB_PATH=/var/lib/elemental-rings/elemental.db
+#          Environment=JWT_SECRET=<secret>
+#   3. sudo systemctl daemon-reload
+#   4. sudo systemctl enable --now elemental-rings
+#
+# Monitoring:
+#   sudo systemctl status elemental-rings
+#   sudo journalctl -u elemental-rings -f
+#
+# Notes:
+#   - Colyseus WebSocket + Express REST API share port 2567
+#   - SQLite DB at $DB_PATH (default /var/lib/elemental-rings/elemental.db)
+#   - Data dir: /var/lib/elemental-rings/ (chown deploy:svcdata, chmod 2775)
+
+[Unit]
+Description=Elemental Rings Game Server
+Documentation=https://github.com/krisoye/elemental-rings
+After=network.target
+StartLimitIntervalSec=60
+StartLimitBurst=3
+
+[Service]
+Type=simple
+User=deploy
+Group=svcdata
+UMask=0002
+WorkingDirectory=/home/deploy/prod/elemental-rings/server
+ExecStart=/usr/bin/npm run dev
+Restart=on-failure
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=elemental-rings
+
+[Install]
+WantedBy=multi-user.target
