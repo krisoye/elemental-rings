@@ -11,7 +11,7 @@ Each player maintains **three status gauges: Fire, Water, Wood** — one per tri
 
 A gauge only moves when the attack lands uncontested. A **weak catch** loses a heart but the attack *was* caught, so it moves **no gauge** — heart loss and gauge gain are independent (see §6.4). Successful blocks and parries — including intermediate rally volleys — never move gauges. A rally that terminates in an uncontested hit emits one gauge delta on the terminating volley; a rally that terminates in a weak catch emits none.
 
-**Server implementation:** Gauge deltas are computed by the Colyseus BattleRoom after each exchange. The `resolveBlock` result carries a `gaugeIncreases` flag — `true` only for no-block and mistime, `false` for any caught attack (neutral, strong, or weak). Gauges are broadcast to both clients as part of the state update.
+**Server implementation:** Gauge deltas are computed by the Colyseus BattleRoom after each exchange. The `resolveBlock` result carries a `gaugeElements: number[]` array listing the specific triangle element indices whose gauges should increment. For base-element attacks the array contains the attacker's element on no-block or mistime, and is empty for any caught attack (neutral, strong, or weak). For fusion attacks each triangle component that lands uncontested — either via auto-align (the unengaged component resolves as NO_BLOCK) or on a full no-block/mistime — contributes its element index; a dual-triangle fusion on a full no-block therefore fills two gauge slots simultaneously. Gauges are broadcast to both clients as part of the state update.
 
 **Fusion ring decomposition:**
 A fusion ring contributes to gauges based only on its **triangle-element** components. Wind and Earth components contribute nothing.
