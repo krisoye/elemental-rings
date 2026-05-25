@@ -7,6 +7,11 @@ import {
   getPlayerById,
   getRingsByOwner,
   getLoadout,
+  saveLoadout,
+  sleepRecharge,
+  rechargeRing,
+  lockStake,
+  unlockStake,
 } from '../persistence/PlayerRepo';
 
 const BCRYPT_ROUNDS = 10;
@@ -88,4 +93,88 @@ apiRouter.get('/api/me', requireAuth, (req: Request, res: Response): void => {
     rings: getRingsByOwner(playerId),
     loadout: getLoadout(playerId) ?? null,
   });
+});
+
+/**
+ * POST /api/camp/sleep — advance game_day by 1 and fully recharge all rings.
+ * Requires auth.
+ */
+apiRouter.post('/api/camp/sleep', requireAuth, (req: Request, res: Response): void => {
+  const playerId = req.playerId as string;
+  sleepRecharge(playerId);
+  res.status(200).json({
+    player: getPlayerById(playerId),
+    rings: getRingsByOwner(playerId),
+  });
+});
+
+/**
+ * POST /api/camp/recharge — pay gold to recharge a specific ring to full.
+ * Body: { ringId: string }
+ * Requires auth.
+ */
+apiRouter.post('/api/camp/recharge', requireAuth, (req: Request, res: Response): void => {
+  const playerId = req.playerId as string;
+  const { ringId } = req.body ?? {};
+  if (typeof ringId !== 'string' || !ringId) {
+    res.status(400).json({ error: 'ringId is required' });
+    return;
+  }
+  const result = rechargeRing(playerId, ringId);
+  if (!result.ok) {
+    res.status(400).json({ error: result.reason });
+    return;
+  }
+  const rings = getRingsByOwner(playerId);
+  const ring = rings.find((r) => r.id === ringId);
+  const player = getPlayerById(playerId);
+  res.status(200).json({ ring, gold: player?.gold ?? 0 });
+});
+
+/**
+ * PUT /api/loadout — update one or more loadout slots.
+ * Body: partial Record<SlotKey, string | null>
+ * Requires auth.
+ */
+apiRouter.put('/api/loadout', requireAuth, (req: Request, res: Response): void => {
+  const playerId = req.playerId as string;
+  const body = req.body ?? {};
+  const VALID_SLOTS = new Set(['thumb', 'a1', 'a2', 'd1', 'd2']);
+  const partial: Record<string, string | null> = {};
+  for (const key of Object.keys(body)) {
+    if (!VALID_SLOTS.has(key)) continue;
+    const val = body[key];
+    if (val !== null && typeof val !== 'string') {
+      res.status(400).json({ error: `Invalid value for slot ${key}` });
+      return;
+    }
+    partial[key] = val;
+  }
+  try {
+    const loadout = saveLoadout(playerId, partial);
+    res.status(200).json({ loadout });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : 'Unknown error';
+    res.status(400).json({ error: msg });
+  }
+});
+
+/**
+ * POST /api/stake/lock — escrow the player's current thumb ring.
+ * Requires auth.
+ */
+apiRouter.post('/api/stake/lock', requireAuth, (req: Request, res: Response): void => {
+  const playerId = req.playerId as string;
+  lockStake(playerId);
+  res.status(200).json({ ok: true });
+});
+
+/**
+ * POST /api/stake/unlock — release the player's current thumb ring from escrow.
+ * Requires auth.
+ */
+apiRouter.post('/api/stake/unlock', requireAuth, (req: Request, res: Response): void => {
+  const playerId = req.playerId as string;
+  unlockStake(playerId);
+  res.status(200).json({ ok: true });
 });
