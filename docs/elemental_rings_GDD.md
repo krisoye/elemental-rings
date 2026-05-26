@@ -1,5 +1,5 @@
 # Elemental Rings — Game Design Document
-**Version 4.3 | Stack: Phaser.js + Colyseus | Multiplayer-first**
+**Version 4.4 | Stack: Phaser.js + Colyseus | Multiplayer-first**
 
 ---
 
@@ -36,6 +36,9 @@ Each section lives in its own file. Read only what you need.
 ---
 
 ## Changelog
+
+*Document version 4.4 — Updated May 2026*
+*v4.4 changes: The Sanctum replaces the horse/caravan as the protagonist's mobile home. Waystones (ancient permanent world objects) are touched to attune, adding teleportation destinations to the world map. A spiritual compass guides the protagonist toward nearby undiscovered waystones. Teleportation is initiated from the Sanctum's meditation circle and requires sufficient aggregate ring XP as the spiritual level threshold. Horse food removed — food is now only for sleeping (25 food = full spirit restore). §8 rewritten: protagonist has no independent XP — spirit gauge max is directly derived from aggregate ring XP (Option A). §10 overworld comprehensively rewritten with Sanctum, Waystone, Compass, Teleportation, and updated Key Locations. §12 spirit system updated: spirit gauge vs aggregate XP distinction clarified; teleportation unlocks via aggregate, not spirit gauge. Staking strategic implications documented.*
 
 *Document version 4.3 — Updated May 2026*
 *v4.3 changes: New §12 Spirit System — spirit gauge as primary progression stat; spirit capacity = carry capacity (not physical weight); recharge costs 1 spirit unit per use, anywhere in overworld; sleep (25 food) restores full spirit gauge; "Recharge All" prioritizes battle hand first. §8 updated: spirit gauge replaces inventory expansion as progression axis; no hard total inventory cap (camp holds everything). §4.3 updated: recharge costs spirit (not gold). §10 updated: caravan model (§10.5b horse/wagon, branching world map, safe area as micro-hub, camp loop); food/foraging (§10.7 — 25 food/sleep, 100 food/travel day, forage/merchant/boss drop mechanics, starvation). §13: added spirit tuning and food quantity open questions. Gold is now merchants-only — sleep no longer costs gold.*
