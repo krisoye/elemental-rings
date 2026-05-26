@@ -55,6 +55,11 @@ declare global {
       angle: number | null;
       intensity: number | null;
     };
+    // World-space center of the dynamically-placed Sanctum exterior + its
+    // sanctum_return zone (8B.4.1). Published after loadWaystones positions the
+    // Sanctum at the anchored waystone; cleared on scene shutdown. E2E reads it
+    // to find the (now anchor-derived) re-entry door rather than a fixed point.
+    __sanctumReturnCenter?: { x: number; y: number };
     __lastExchangeResult: ExchangeResultPayload | null;
     __slotPositions: { x: number; y: number }[];
     __orbLaunchCount: number;

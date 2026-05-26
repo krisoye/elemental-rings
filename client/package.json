@@ -6,6 +6,7 @@
     "dev": "vite",
     "build": "tsc && vite build",
     "typecheck": "tsc --noEmit",
+    "gen:tiles": "node scripts/gen-placeholder-tiles.mjs",
     "gen:maps": "node scripts/gen-overworld-map.mjs"
   },
   "dependencies": {

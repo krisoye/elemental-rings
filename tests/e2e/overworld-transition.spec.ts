@@ -16,8 +16,17 @@ const URL = 'http://localhost:8090';
 
 /** Sanctum door zone center (client/public/assets/maps/sanctum.json). */
 const SANCTUM_DOOR = { x: 1088, y: 608 };
-/** Overworld sanctum_return zone center (client/public/assets/maps/overworld.json). */
-const OVERWORLD_RETURN = { x: 224, y: 224 };
+
+/**
+ * The sanctum_return zone is no longer a fixed map rectangle (8B.4.1): it is
+ * built dynamically at the anchored waystone, co-located with the visible
+ * Sanctum exterior. The scene publishes its world center as
+ * window.__sanctumReturnCenter once loadWaystones has positioned it.
+ */
+async function getSanctumReturnPos(page: Page): Promise<{ x: number; y: number }> {
+  await page.waitForFunction(() => !!(window as any).__sanctumReturnCenter, { timeout: 8000 });
+  return page.evaluate(() => (window as any).__sanctumReturnCenter as { x: number; y: number });
+}
 
 async function loadSanctum(page: Page): Promise<void> {
   await page.goto(URL);
@@ -50,14 +59,16 @@ test('overworld: Sanctum door transitions into OverworldScene at spawn', async (
     timeout: 8000,
   });
   await page.waitForFunction(() => !!(window as any).__player, { timeout: 8000 });
-  // 8B.3 anchor-derived spawn: fresh users default to anchor=forest_entry (center
-  // ≈ 336, 208 in the generated map); the scene spawns the player at y+40 → ~(336, 248).
+  // 8B.4.1 anchor-derived Sanctum: the scene places the Sanctum exterior at the
+  // anchored waystone (toward map center) and spawns the player just outside its
+  // door. The spawn is within ~door-offset of the published Sanctum center.
+  const spawnRef = await getSanctumReturnPos(page);
   const pos = await page.evaluate(() => ({
     x: (window as any).__player.x,
     y: (window as any).__player.y,
   }));
-  expect(Math.abs(pos.x - 336)).toBeLessThan(100);
-  expect(Math.abs(pos.y - 248)).toBeLessThan(100);
+  expect(Math.abs(pos.x - spawnRef.x)).toBeLessThan(80);
+  expect(Math.abs(pos.y - spawnRef.y)).toBeLessThan(80);
   await ctx.close();
 });
 
@@ -128,7 +139,8 @@ test('overworld: sanctum_return transitions back to CampScene with reloaded stat
   // Wait for anchor-derived spawn to finish before repositioning.
   await page.waitForFunction(() => !!(window as any).__waystones, { timeout: 8000 });
 
-  await walkToZone(page, OVERWORLD_RETURN, 'sanctum_return');
+  const returnPos = await getSanctumReturnPos(page);
+  await walkToZone(page, returnPos, 'sanctum_return');
   await page.evaluate(() => (window as any).__sanctumInteract());
 
   await page.waitForFunction(() => (window as any).__activeScene === 'CampScene', { timeout: 8000 });

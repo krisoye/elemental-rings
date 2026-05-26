@@ -101,6 +101,19 @@ export const COMPASS_RANGE = 400; // px — sensing radius; outside this, hidden
 export const COMPASS_ARROW_COLOR = 0xffd700; // gold — distinct from waystone hues
 export const COMPASS_ARROW_SIZE = 24; // px — half-length of the arrow triangle
 
+// #71 — Phase 8B.4.1 Sanctum exterior + sanctum_return co-location. The Sanctum
+// structure (and its re-entry door) is drawn at the anchored waystone rather
+// than the map's static sanctum_return rectangle, so the player always spawns
+// beside a visible building they can walk back into. Pure presentation — the
+// anchor waystone id comes from the server (window.__waystones.anchor).
+export const SANCTUM_OFFSET = 96; // px — Sanctum body center is this far from the Anchorage, toward map center
+export const SANCTUM_DOOR_OFFSET = 44; // px — player spawns this far past the Sanctum center (outside the door)
+export const SANCTUM_ZONE_HALF = 32; // px — half-width/height of the sanctum_return interaction zone
+
+// #73 — Phase 8B.4.3 Anchorage ground treatment. A soft worn-ground ring beneath
+// each waystone stone marking the gathering area. Tunable presentation only.
+export const ANCHORAGE_GROUND_RADIUS = 80; // px — tunable gathering-area radius
+
 // Layout
 export const CANVAS_W = 1024;
 export const CANVAS_H = 576;
