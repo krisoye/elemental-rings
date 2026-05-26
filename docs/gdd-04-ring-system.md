@@ -28,13 +28,11 @@
 
 ### 4.3 Ring Uses
 - Uses are consumed during battle (attacking and defending)
-- **Uses are NOT permanently lost.** All rings fully recharge after one game day
-- A game day advances when the player sleeps at camp — the player controls the pace
-- Rings can be recharged immediately by paying gold/currency at camp (not fusion stones — keep those scarce)
-- **Tier 1 rings recharge instantly or in half a day** — common rings are never a bottleneck
-- **Tier 2 and above require a full game day** to recharge
-- Heavily depleted rings (more than half their uses spent) may require two full game days — TBD on tuning
-- If a ring is extinguished mid-battle (uses reach 0) it cannot be used for the rest of that duel
+- **Uses are NOT permanently lost** — they are restored by the player's spiritual energy
+- Recharging costs **1 spirit unit per use restored** and can be done anywhere in the overworld (see §12)
+- After sleeping at camp (costs 25 food, restores full spirit gauge), the player chooses which rings to recharge with their restored spirit
+- A ring extinguished mid-battle (uses reach 0) cannot be used for the rest of that duel
+- Rings left at camp recharge passively on the game day timer even while the player is in the field
 
 ### 4.4 Ring XP
 - Rings earn XP through use in battle — more uses in a duel = more XP for that ring
