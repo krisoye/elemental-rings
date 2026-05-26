@@ -108,6 +108,10 @@ declare global {
     // #63 teleport hooks — open the teleport modal / travel to a waystone.
     __campOpenTeleport?: () => Promise<void>;
     __campTeleport?: (waystoneId: string) => Promise<void>;
+    // #78 ① hit-test probe — scrolls the camera, then hit-tests a ring card bg at
+    // its render position to prove the (scrollFactor-fixed) hit area tracks the
+    // render, not the world. Registered while the ring-storage overlay is open.
+    __campHitTestRing?: (ringId: string) => { found: boolean; hit: boolean };
     // Teleport modal snapshot (set by CampScene.openTeleportModal before render).
     __teleportState?: {
       anchor: string;
@@ -144,6 +148,10 @@ declare global {
       food_units: number;
       // XP-derived spirit: aggregate ring XP (spirit_max = SPIRIT_BASE + this).
       aggregate_xp: number;
+      // #78 ④ — Thumb passive reminder. null when no Thumb ring is staked; a base
+      // element yields { name, effect }; a fusion yields { name: null, effect: '…
+      // no passive' }.
+      staked_passive?: { name: string | null; effect: string } | null;
     };
     // #40 encounter modal hooks.
     __encounterManageBattleHand?: () => void;

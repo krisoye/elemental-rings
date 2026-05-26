@@ -38,6 +38,9 @@ export class LoadoutPanel extends Phaser.GameObjects.Container {
       const cy = def.row * ROW_GAP + CARD_H / 2;
 
       const bg = scene.add.rectangle(cx, cy, CARD_W, CARD_H, 0x333333);
+      // Match the camera-pinned ring-storage overlay so the hit area aligns with
+      // the render position under camera scroll (#78 ①).
+      bg.setScrollFactor(0);
       bg.setStrokeStyle(2, 0x666666);
       bg.setInteractive({ useHandCursor: true });
 

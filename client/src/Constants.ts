@@ -66,6 +66,18 @@ export const FUSION_RECIPES: ReadonlyArray<FusionRecipe> = [
 // server TIER1_XP_CAP). Display-only: the server enforces the real gate.
 export const TIER1_XP_CAP = 100;
 
+// #78 ④ — Staked-ring (Thumb) passive reminder. The five base elements grant a
+// named passive when staked as the Thumb ring; fusions (element 5–14) grant no
+// passive, signalled by the absence of an entry. Display-only — the server owns
+// the real passive resolution at duel start (see staking.spec.ts coverage).
+export const THUMB_PASSIVE_INFO: Record<number, { name: string; effect: string }> = {
+  0: { name: 'Kindling', effect: 'All Fire rings in your battle hand gain +1 use at duel start' },
+  1: { name: 'Wellspring', effect: "A successful block refunds the defending ring's use (Thumb pays)" },
+  2: { name: 'Bulwark', effect: 'All Earth rings in your battle hand gain +1 use at duel start' },
+  3: { name: 'Tailwind', effect: 'Each attack thrown is refunded its use (Thumb pays)' },
+  4: { name: 'Deep Roots', effect: 'A lost heart is redirected — Thumb loses a use instead' },
+};
+
 // Triangle element indices for the 3-gauge HUD (FIRE/WATER/WOOD).
 export const GAUGE_ELEMENTS = [0, 1, 4];
 export const GAUGE_KEYS = ['fireGauge', 'waterGauge', 'woodGauge'];

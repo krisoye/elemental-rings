@@ -68,6 +68,10 @@ export class InventoryGrid extends Phaser.GameObjects.Container {
       const container = this.scene.add.container(cx, cy);
 
       const bg = this.scene.add.rectangle(0, 0, CARD_W, CARD_H, ELEMENT_COLORS[ring.element] ?? 0x444444);
+      // The ring-storage overlay is camera-pinned (scrollFactor 0). The leaf bg's
+      // own scrollFactor must match, or Phaser's hit-test offsets the hit area by
+      // the camera scroll amount (card renders right, clicks land off — #78 ①).
+      bg.setScrollFactor(0);
       bg.setStrokeStyle(2, DESELECTED_STROKE);
 
       const nameText = this.scene.add
@@ -122,6 +126,11 @@ export class InventoryGrid extends Phaser.GameObjects.Container {
 
   getSelected(): RingData | null {
     return this.selected;
+  }
+
+  /** Returns the interactive background rectangle for a card by ring id (E2E). */
+  getCardBg(ringId: string): Phaser.GameObjects.Rectangle | undefined {
+    return this.cardBgs.get(ringId);
   }
 
   clearSelection(): void {
