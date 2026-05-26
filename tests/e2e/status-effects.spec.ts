@@ -185,8 +185,9 @@ test('Entangled: woodGauge>=4 drains the highest-use battle ring at turn start',
 
   const me = await readMe(defender);
   expect(me.a2.currentUses).toBe(4); // highest-use ring drained by 1
-  expect(me.a1.currentUses).toBe(2); // others untouched
-  expect(me.d2.currentUses).toBe(3);
+  expect(me.a1.currentUses).toBe(2); // a non-highest ring is NOT drained by Entangled
+  // NOTE: d2 is intentionally NOT asserted — the turn-passing exchange has the
+  // defender catch with D2, which spends a defense use unrelated to Entangled.
 
   await closeBattle(h);
 });
@@ -233,13 +234,16 @@ test('Cleanse below threshold lifts Burning: fireGauge 4→3 ends the status', a
   // their hearts so we can prove Burning did NOT tick after the cleanse.
   await setState(defender, { fireGauge: 4, hearts: 3, elements: { d2: 1 /* WATER */ } });
 
-  // Defender catches the incoming FIRE with WATER → fireGauge 4 → 3 (below
-  // threshold). WATER beats FIRE (STRONG), so a parry would start a rally; the
-  // cleanse fires on either BLOCK or PARRY, so we only assert the gauge drop.
-  await attacker.keyboard.press('1');
+  // The cleanse depends only on the DEFENDER's element (applyGaugeCleanse reads
+  // defenderRing.element, not the attacker's), so we have the attacker throw
+  // WATER (A2='2') and the defender catch with WATER (D2). WATER-vs-WATER is a
+  // NEUTRAL catch — no heart loss and, crucially, NO rally (only a triangle
+  // STRONG parry rallies). That guarantees the turn swaps straight to
+  // ATTACK_SELECT, while the WATER defend still cleanses fireGauge 4 → 3.
+  await attacker.keyboard.press('2'); // A2 = WATER
   await waitForPhase(defender, 'DEFEND_WINDOW');
   await defender.waitForTimeout(BLOCK_SLEEP_MS);
-  await defender.keyboard.press('4'); // D2 = WATER
+  await defender.keyboard.press('4'); // D2 = WATER → NEUTRAL catch, cleanses fire
 
   await waitForExchangeResult(defender);
   await defender.waitForFunction(() => {
@@ -248,47 +252,19 @@ test('Cleanse below threshold lifts Burning: fireGauge 4→3 ends the status', a
     return me.fireGauge === 3;
   }, { timeout: 4000 });
 
-  // Drive the duel forward (handling a possible rally) until the cleansed player
-  // is the attacker at a turn start. Burning is now inactive (gauge 3 < 4), so
-  // the turn-start tick must NOT remove a heart.
-  const driver = setInterval(() => {
-    void Promise.all([
-      h.p1.evaluate(() => {
-        const room = (window as any).__room;
-        if (
-          room?.state?.phase === 'DEFEND_WINDOW' &&
-          room.state.currentAttackerId !== room.sessionId
-        ) {
-          room.send('submitDefense', { slot: 'd2' }); // EARTH/WATER — caught, ends rally on BLOCK
-        }
-      }),
-      h.p2.evaluate(() => {
-        const room = (window as any).__room;
-        if (
-          room?.state?.phase === 'DEFEND_WINDOW' &&
-          room.state.currentAttackerId !== room.sessionId
-        ) {
-          room.send('submitDefense', { slot: 'd2' });
-        }
-      }),
-    ]);
-  }, 120);
-
-  try {
-    await defender.waitForFunction(
-      () =>
-        (window as any).__room?.state?.phase === 'ATTACK_SELECT' &&
-        (window as any).__room.sessionId === (window as any).__room.state.currentAttackerId,
-      { timeout: 12000 },
-    );
-  } finally {
-    clearInterval(driver);
-  }
+  // The former defender now becomes the attacker at a turn start (no rally).
+  // Burning is inactive (gauge 3 < 4), so the turn-start tick must NOT remove a
+  // heart.
+  await defender.waitForFunction(
+    () =>
+      (window as any).__room?.state?.phase === 'ATTACK_SELECT' &&
+      (window as any).__room.sessionId === (window as any).__room.state.currentAttackerId,
+    { timeout: 10000 },
+  );
 
   const me = await readMe(defender);
   expect(me.fireGauge).toBe(3); // cleansed below threshold
   expect(me.hearts).toBe(3); // Burning did NOT fire — status was lifted
 
-  void attacker;
   await closeBattle(h);
 });
