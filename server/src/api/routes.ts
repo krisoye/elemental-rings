@@ -20,10 +20,11 @@ import {
   getSpiritAndFood,
   spendSpirit,
   computeSpiritMax,
+  getAggregateXp,
   lockStake,
   unlockStake,
 } from '../persistence/PlayerRepo';
-import { FOOD_PER_SLEEP, SPIRIT_BASE } from '../game/constants';
+import { FOOD_PER_SLEEP } from '../game/constants';
 
 const BCRYPT_ROUNDS = 10;
 
@@ -99,11 +100,11 @@ apiRouter.get('/api/me', requireAuth, (req: Request, res: Response): void => {
     res.status(404).json({ error: 'Player not found' });
     return;
   }
-  // spirit_max is XP-derived; serve it live (not the stored column) so it is
-  // always fresh, and expose the raw aggregate ring XP for the HUD.
+  // Both values derived live so they always reflect the current ring inventory.
   const spiritMax = computeSpiritMax(playerId);
+  const aggregateXp = getAggregateXp(playerId);
   res.status(200).json({
-    player: { ...player, spirit_max: spiritMax, aggregate_xp: spiritMax - SPIRIT_BASE },
+    player: { ...player, spirit_max: spiritMax, aggregate_xp: aggregateXp },
     rings: getRingsByOwner(playerId),
     loadout: getLoadout(playerId) ?? null,
   });

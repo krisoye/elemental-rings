@@ -507,6 +507,12 @@ export function spendSpirit(playerId: string, amount: number): void {
   updateSpiritDeduct.run(amount, playerId);
 }
 
+/** Return the raw sum of XP across all rings owned by the player. */
+export function getAggregateXp(playerId: string): number {
+  const row = selectAggregateRingXp.get(playerId) as { xp_sum: number } | undefined;
+  return row?.xp_sum ?? 0;
+}
+
 /**
  * Compute the player's spirit_max from their aggregate ring XP:
  *   spirit_max = SPIRIT_BASE + floor(SUM(rings.xp) / XP_SCALER)
@@ -514,8 +520,7 @@ export function spendSpirit(playerId: string, amount: number): void {
  * leveled change the total). Does not write to the DB — see refreshSpiritMax.
  */
 export function computeSpiritMax(playerId: string): number {
-  const row = selectAggregateRingXp.get(playerId) as { xp_sum: number } | undefined;
-  return SPIRIT_BASE + Math.floor((row?.xp_sum ?? 0) / XP_SCALER);
+  return SPIRIT_BASE + Math.floor(getAggregateXp(playerId) / XP_SCALER);
 }
 
 /**
