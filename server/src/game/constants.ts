@@ -15,6 +15,14 @@ export const GAUGE_SOFT_CAP = 8;
 export const GOLD_PER_WIN = 50;
 export const STARTER_GOLD = 200;
 
+// #47 — Fusion crafting (GDD §5). A parent ring must reach its tier's XP cap
+// before it can be fused; the resulting fusion ring resets to the new tier's
+// full uses and inherits the combined XP of both parents.
+export const TIER1_XP_CAP = 100;
+export const TIER2_XP_CAP = 300;
+export const TIER2_MAX_USES = 5;
+export const TIER3_MAX_USES = 7;
+
 // Outcome-based ring XP. Rings earn XP from exchange results, not per use.
 // spirit_max = SPIRIT_BASE + floor(aggregate_xp / XP_SCALER).
 export const XP_SCALER = 50;

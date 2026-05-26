@@ -3,6 +3,8 @@ import { CANVAS_W } from '../Constants';
 import { InventoryGrid, type RingData } from '../objects/InventoryGrid';
 import { LoadoutPanel, type LoadoutSlot } from '../objects/LoadoutPanel';
 import { StakePanel } from '../objects/StakePanel';
+import { FusionPanel } from '../objects/FusionPanel';
+import { ELEMENT_NAMES } from '../Constants';
 
 declare const __SERVER_URL__: string;
 
@@ -32,6 +34,7 @@ export class CampScene extends Phaser.Scene {
   private loadoutGrid!: InventoryGrid;
   private loadoutPanel!: LoadoutPanel;
   private stakePanel!: StakePanel;
+  private fusionPanel!: FusionPanel;
   private ringMap: Map<string, RingData> = new Map();
 
   // Cached snapshot of the last /api/me load, used by the carry buttons to
@@ -109,6 +112,19 @@ export class CampScene extends Phaser.Scene {
       .text(320, 435, '[Recharge All]', { fontSize: '14px', color: '#ffcc44' })
       .setInteractive({ useHandCursor: true })
       .on('pointerdown', () => void this.doRechargeAll());
+    this.add
+      .text(460, 435, '[Fuse Rings]', { fontSize: '14px', color: '#cc88ff' })
+      .setInteractive({ useHandCursor: true })
+      .on('pointerdown', () => this.openFusionPanel());
+
+    // ── Fusion panel (modal overlay, opened on demand) ──────────────────────
+    this.fusionPanel = new FusionPanel(
+      this,
+      (ringId1, ringId2) => this.doFuse(ringId1, ringId2),
+      () => {
+        /* closed — no extra cleanup needed */
+      },
+    );
 
     // ── Status text ───────────────────────────────────────────────────────
     this.statusText = this.add.text(10, 480, '', { fontSize: '13px', color: '#ff8888' });
@@ -121,6 +137,9 @@ export class CampScene extends Phaser.Scene {
     window.__campAddToLoadout = (ringId: string): Promise<void> => this.moveToCarry(ringId, true);
     window.__campLeaveAtSanctum = (ringId: string): Promise<void> =>
       this.moveToCarry(ringId, false);
+    window.__campOpenFusion = (): void => this.openFusionPanel();
+    window.__campFuse = (ringId1: string, ringId2: string): Promise<string | null> =>
+      this.doFuse(ringId1, ringId2);
 
     this.events.once('shutdown', () => {
       window.__campGoEncounter = undefined;
@@ -129,7 +148,10 @@ export class CampScene extends Phaser.Scene {
       window.__campRechargeAll = undefined;
       window.__campAddToLoadout = undefined;
       window.__campLeaveAtSanctum = undefined;
+      window.__campOpenFusion = undefined;
+      window.__campFuse = undefined;
       window.__campState = undefined;
+      window.__fusionState = undefined;
       window.__scene = null;
     });
 
@@ -424,6 +446,47 @@ export class CampScene extends Phaser.Scene {
       return;
     }
     await this.loadData();
+  }
+
+  // ── Fusion (#47) ─────────────────────────────────────────────────────────
+
+  /** Open the fusion modal with the current ring inventory snapshot. */
+  private openFusionPanel(): void {
+    this.fusionPanel.open(this.rings);
+  }
+
+  /**
+   * POST /api/fusion/combine with the chosen parent ring ids. On success,
+   * reloads /api/me and reopens the fusion panel so the new ring is reflected
+   * and the consumed parents disappear. Returns null on success or the server's
+   * error message on a 400 (surfaced inline by the panel).
+   */
+  private async doFuse(ringId1: string, ringId2: string): Promise<string | null> {
+    const token = localStorage.getItem('er_token');
+    if (!token) {
+      this.scene.start('LoginScene');
+      return 'Not authenticated';
+    }
+    try {
+      const res = await fetch(`${API_BASE}/api/fusion/combine`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ ringId1, ringId2 }),
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        return body?.error ?? `Fusion failed (${res.status})`;
+      }
+      const { ring } = (await res.json()) as { ring: RingData };
+      this.setStatus(`Fusion complete! ${ELEMENT_NAMES[ring.element] ?? 'New'} ring added`);
+      // Reload inventory, then reopen the panel (if still open) with fresh data.
+      const wasOpen = this.fusionPanel.isOpen();
+      await this.loadData();
+      if (wasOpen) this.fusionPanel.open(this.rings);
+      return null;
+    } catch {
+      return 'Network error during fusion';
+    }
   }
 
   // ── Navigation / helpers ────────────────────────────────────────────────────

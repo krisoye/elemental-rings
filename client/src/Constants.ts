@@ -41,6 +41,31 @@ export const ELEMENT_NAMES: string[] = [
   'DUST',
 ];
 
+// #47 — The 10 Tier 2 fusion recipes (GDD §5.2), one per distinct base-element
+// pair. Display-only: the server (fusionOf / POST /api/fusion/combine) is the
+// sole authority on what fuses into what. Parents/result are element indices;
+// resolve labels through ELEMENT_NAMES. Order matches ElementEnum (5-14).
+export interface FusionRecipe {
+  parents: [number, number]; // two base element indices
+  result: number; // fusion element index
+}
+export const FUSION_RECIPES: ReadonlyArray<FusionRecipe> = [
+  { parents: [0, 1], result: 5 }, // FIRE + WATER → STEAM
+  { parents: [0, 4], result: 6 }, // FIRE + WOOD  → WILDFIRE
+  { parents: [0, 3], result: 7 }, // FIRE + WIND  → INFERNO
+  { parents: [0, 2], result: 8 }, // FIRE + EARTH → MAGMA
+  { parents: [1, 4], result: 9 }, // WATER + WOOD → TIDAL
+  { parents: [1, 3], result: 10 }, // WATER + WIND → STORM
+  { parents: [1, 2], result: 11 }, // WATER + EARTH → MUD
+  { parents: [4, 3], result: 12 }, // WOOD + WIND → THORNADO
+  { parents: [4, 2], result: 13 }, // WOOD + EARTH → BLOOM
+  { parents: [3, 2], result: 14 }, // WIND + EARTH → DUST
+];
+
+// #47 — XP a Tier 1 ring must reach before it can be a fusion parent (mirrors
+// server TIER1_XP_CAP). Display-only: the server enforces the real gate.
+export const TIER1_XP_CAP = 100;
+
 // Triangle element indices for the 3-gauge HUD (FIRE/WATER/WOOD).
 export const GAUGE_ELEMENTS = [0, 1, 4];
 export const GAUGE_KEYS = ['fireGauge', 'waterGauge', 'woodGauge'];

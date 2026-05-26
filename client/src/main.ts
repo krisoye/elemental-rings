@@ -35,6 +35,19 @@ declare global {
     // #40 carry hooks — deterministic code paths for E2E.
     __campAddToLoadout?: (ringId: string) => Promise<void>;
     __campLeaveAtSanctum?: (ringId: string) => Promise<void>;
+    // #47 fusion hooks — open the fusion modal / fuse two parents directly.
+    __campOpenFusion?: () => void;
+    __campFuse?: (ringId1: string, ringId2: string) => Promise<string | null>;
+    // Fusion modal availability snapshot (set by FusionPanel.open).
+    __fusionState?: {
+      recipes: Array<{
+        parents: [number, number];
+        result: number;
+        ready: boolean;
+        parentAId: string | null;
+        parentBId: string | null;
+      }>;
+    };
     __campState?: {
       player: any;
       rings: any[];
