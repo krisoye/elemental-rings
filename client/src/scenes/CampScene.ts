@@ -1,5 +1,5 @@
 import Phaser from 'phaser';
-import { CANVAS_W, ELEMENT_NAMES } from '../Constants';
+import { CANVAS_W } from '../Constants';
 import { InventoryGrid, type RingData } from '../objects/InventoryGrid';
 import { LoadoutPanel, type LoadoutSlot } from '../objects/LoadoutPanel';
 import { StakePanel } from '../objects/StakePanel';
@@ -34,14 +34,11 @@ export class CampScene extends Phaser.Scene {
   private stakePanel!: StakePanel;
   private ringMap: Map<string, RingData> = new Map();
 
-  // Cached snapshot of the last /api/me load, used by the carry buttons and
-  // won-ring resolution to compute the new carried set without a refetch.
+  // Cached snapshot of the last /api/me load, used by the carry buttons to
+  // compute the new carried set without a refetch.
   private rings: RingData[] = [];
   private loadout: Record<string, string | null> = {};
   private carryCap = 10;
-
-  // Active modal container (won-ring prompt). Tracked so we can tear it down.
-  private modal: Phaser.GameObjects.Container | null = null;
 
   constructor() {
     super({ key: 'CampScene' });
@@ -124,8 +121,6 @@ export class CampScene extends Phaser.Scene {
     window.__campAddToLoadout = (ringId: string): Promise<void> => this.moveToCarry(ringId, true);
     window.__campLeaveAtSanctum = (ringId: string): Promise<void> =>
       this.moveToCarry(ringId, false);
-    window.__campResolveWonRing = (choice, displaceRingId): Promise<void> =>
-      this.resolveWonRing(choice, displaceRingId);
 
     this.events.once('shutdown', () => {
       window.__campGoEncounter = undefined;
@@ -134,7 +129,6 @@ export class CampScene extends Phaser.Scene {
       window.__campRechargeAll = undefined;
       window.__campAddToLoadout = undefined;
       window.__campLeaveAtSanctum = undefined;
-      window.__campResolveWonRing = undefined;
       window.__campState = undefined;
       window.__scene = null;
     });
@@ -182,10 +176,6 @@ export class CampScene extends Phaser.Scene {
     this.ringMap = new Map(rings.map((r) => [r.id, r]));
 
     this.refreshPools(player);
-
-    // Resolve any pending won ring from the just-finished battle.
-    const pending = localStorage.getItem('er_pending_ring');
-    if (pending && !this.modal) this.showWonRingModal(pending);
   }
 
   /** Split rings into the three pools and repopulate the UI from current state. */
@@ -224,7 +214,6 @@ export class CampScene extends Phaser.Scene {
       spirit_current: player.spirit_current ?? 0,
       spirit_max: player.spirit_max ?? 0,
       food_units: player.food_units ?? 0,
-      pendingWonRing: window.__campState?.pendingWonRing ?? null,
     };
   }
 
@@ -433,156 +422,6 @@ export class CampScene extends Phaser.Scene {
       return;
     }
     await this.loadData();
-  }
-
-  // ── Post-battle won-ring prompt (#40) ───────────────────────────────────────
-
-  /** Render the won-ring modal for the given ring id (from er_pending_ring). */
-  private showWonRingModal(ringId: string): void {
-    const ring = this.ringMap.get(ringId);
-    if (!ring) {
-      // Ring not in our inventory (shouldn't happen) — clear and bail.
-      localStorage.removeItem('er_pending_ring');
-      return;
-    }
-
-    const carriedCount = this.rings.filter((r) => r.in_carry === 1).length;
-    const hasRoom = carriedCount < this.carryCap;
-    const elementName = ELEMENT_NAMES[ring.element] ?? '?';
-
-    const container = this.add.container(0, 0).setDepth(2000);
-    const overlay = this.add
-      .rectangle(CANVAS_W / 2, 288, CANVAS_W, 576, 0x000000, 0.7)
-      .setInteractive();
-    const panel = this.add.rectangle(CANVAS_W / 2, 288, 460, 240, 0x222233).setStrokeStyle(2, 0xffcc44);
-    const title = this.add
-      .text(CANVAS_W / 2, 210, `You won a ${elementName} ring!`, {
-        fontSize: '18px',
-        color: '#ffffff',
-      })
-      .setOrigin(0.5);
-    container.add([overlay, panel, title]);
-
-    if (hasRoom) {
-      container.add(
-        this.modalButton(CANVAS_W / 2, 270, '[Add to Loadout]', '#aaffaa', () =>
-          void this.resolveWonRing('add'),
-        ),
-      );
-      container.add(
-        this.modalButton(CANVAS_W / 2, 305, '[Leave at Sanctum]', '#cccccc', () =>
-          void this.resolveWonRing('leave'),
-        ),
-      );
-      container.add(
-        this.modalButton(CANVAS_W / 2, 340, '[Discard]', '#ff8888', () =>
-          void this.resolveWonRing('discard'),
-        ),
-      );
-    } else {
-      // Carry full: a Swap displaces a carried ring (returns to Sanctum, not lost).
-      const carriedRings = this.rings.filter((r) => r.in_carry === 1);
-      container.add(
-        this.add
-          .text(CANVAS_W / 2, 250, 'Loadout full — Swap (click a carried ring to displace):', {
-            fontSize: '11px',
-            color: '#ffdd66',
-          })
-          .setOrigin(0.5),
-      );
-      carriedRings.forEach((cr, i) => {
-        const col = i % 5;
-        const row = Math.floor(i / 5);
-        const bx = CANVAS_W / 2 - 160 + col * 80;
-        const by = 280 + row * 24;
-        container.add(
-          this.modalButton(bx, by, `${ELEMENT_NAMES[cr.element] ?? '?'}`, '#ffaa66', () =>
-            void this.resolveWonRing('add', cr.id),
-          ),
-        );
-      });
-      container.add(
-        this.modalButton(CANVAS_W / 2 - 90, 345, '[Leave at Sanctum]', '#cccccc', () =>
-          void this.resolveWonRing('leave'),
-        ),
-      );
-      container.add(
-        this.modalButton(CANVAS_W / 2 + 90, 345, '[Discard]', '#ff8888', () =>
-          void this.resolveWonRing('discard'),
-        ),
-      );
-    }
-
-    this.modal = container;
-    if (window.__campState) window.__campState.pendingWonRing = { ringId, element: ring.element };
-  }
-
-  private modalButton(
-    x: number,
-    y: number,
-    label: string,
-    color: string,
-    onClick: () => void,
-  ): Phaser.GameObjects.Text {
-    return this.add
-      .text(x, y, label, { fontSize: '14px', color })
-      .setOrigin(0.5)
-      .setInteractive({ useHandCursor: true })
-      .on('pointerdown', onClick);
-  }
-
-  /**
-   * Resolve the won-ring prompt. Always clears er_pending_ring afterward.
-   *   - add (room):   carry the won ring.
-   *   - add (full):   carry the won ring and displace `displaceRingId` → Sanctum.
-   *   - leave:        keep the won ring in inventory, uncarried.
-   *   - discard:      permanently delete the won ring.
-   */
-  private async resolveWonRing(
-    choice: 'add' | 'leave' | 'discard',
-    displaceRingId?: string,
-  ): Promise<void> {
-    const ringId = localStorage.getItem('er_pending_ring');
-    if (!ringId) {
-      this.dismissModal();
-      return;
-    }
-
-    if (choice === 'discard') {
-      await this.discardRing(ringId);
-    } else if (choice === 'add') {
-      const carried = new Set(this.rings.filter((r) => r.in_carry === 1).map((r) => r.id));
-      if (displaceRingId) carried.delete(displaceRingId); // displaced → Sanctum
-      carried.add(ringId);
-      await this.putCarry(Array.from(carried));
-    }
-    // 'leave' is a no-op server-side: the won ring is already uncarried.
-
-    localStorage.removeItem('er_pending_ring');
-    if (window.__campState) window.__campState.pendingWonRing = null;
-    this.dismissModal();
-    await this.loadData();
-  }
-
-  /** DELETE /api/rings/:id — permanently discard a won ring. */
-  private async discardRing(ringId: string): Promise<void> {
-    const token = localStorage.getItem('er_token');
-    if (!token) return;
-    try {
-      await fetch(`${API_BASE}/api/rings/${ringId}`, {
-        method: 'DELETE',
-        headers: { Authorization: `Bearer ${token}` },
-      });
-    } catch {
-      this.setStatus('Network error during discard');
-    }
-  }
-
-  private dismissModal(): void {
-    if (this.modal) {
-      this.modal.destroy(true);
-      this.modal = null;
-    }
   }
 
   // ── Navigation / helpers ────────────────────────────────────────────────────

@@ -206,7 +206,7 @@ export async function closeBattle(handles: BattleHandles): Promise<void> {
 }
 
 /**
- * Drive a vsAI duel to a DETERMINISTIC outcome and return to CampScene.
+ * Drive a vsAI duel to a DETERMINISTIC outcome and return to EncounterScene.
  *
  * Uses the BattleRoomOptions AI-strength overrides (via the
  * __encounterSelectWithOverrides hook) so the result is a property of setup, not
@@ -216,7 +216,8 @@ export async function closeBattle(handles: BattleHandles): Promise<void> {
  *                  extinguished and forfeits (§6.6) → guaranteed protagonist LOSS
  *
  * The human just attacks a1 / defends d1 every turn. The page must already be in
- * CampScene with auth seeded. Reusable by any test that needs a forced outcome.
+ * CampScene with auth seeded. After the battle BattleScene returns to
+ * EncounterScene (not Sanctum). Reusable by any test that needs a forced outcome.
  *
  * @returns the won ring id (from er_pending_ring) on a win, else null.
  */
@@ -267,11 +268,14 @@ export async function driveAiDuel(
     clearInterval(driver);
   }
 
-  // BattleScene shows a 2s banner before starting CampScene; allow ample margin.
-  await page.waitForFunction(() => (window as any).__game?.scene?.isActive('CampScene'), {
+  // BattleScene shows a 2s banner before starting EncounterScene; allow margin.
+  await page.waitForFunction(() => (window as any).__game?.scene?.isActive('EncounterScene'), {
     timeout: 15000,
   });
-  await page.waitForFunction(() => (window as any).__campState !== undefined, { timeout: 5000 });
+  await page.waitForFunction(
+    () => typeof (window as any).__encounterSelect === 'function',
+    { timeout: 5000 },
+  );
 
   return page.evaluate(() => localStorage.getItem('er_pending_ring'));
 }

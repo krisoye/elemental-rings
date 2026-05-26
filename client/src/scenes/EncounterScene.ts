@@ -46,6 +46,12 @@ export class EncounterScene extends Phaser.Scene {
   // aiSeed per personality — received from /api/encounter/preview and passed to
   // the BattleRoom so the actual loadout matches the stake shown in the preview.
   private aiSeeds: Map<Choice, number> = new Map();
+  // Post-battle won-ring prompt (#40). Now fires here (not CampScene) because the
+  // post-battle flow returns to EncounterScene — the player must resolve the won
+  // ring before selecting another encounter.
+  private wonRingModal: Phaser.GameObjects.Container | null = null;
+  private wonRings: RingData[] = [];
+  private wonCarryCap = 10;
 
   constructor() {
     super({ key: 'EncounterScene' });
@@ -55,6 +61,7 @@ export class EncounterScene extends Phaser.Scene {
     this.busy = false;
     this.manageModal = null;
     this.manageSelectedRingId = null;
+    this.wonRingModal = null;
   }
 
   create(): void {
@@ -134,14 +141,25 @@ export class EncounterScene extends Phaser.Scene {
       this.select(choice, aiOverrides);
     };
     window.__encounterManageBattleHand = (): void => void this.openManageBattleHand();
+    window.__encounterResolveWonRing = (
+      choice: 'add' | 'leave' | 'discard',
+      displaceRingId?: string,
+    ): void => void this.resolveWonRing(choice, displaceRingId);
+    window.__encounterState = { pendingWonRing: null };
     this.events.once('shutdown', () => {
       window.__encounterSelect = undefined;
       window.__encounterSelectWithOverrides = undefined;
       window.__encounterManageBattleHand = undefined;
+      window.__encounterResolveWonRing = undefined;
+      window.__encounterState = undefined;
     });
 
     // Fetch stake preview and update marker colors + labels.
     void this.loadPreview(rects, stakeLabels);
+
+    // Post-battle won-ring prompt: if the just-finished duel granted a ring,
+    // resolve it here before the player can pick another encounter (#40).
+    if (localStorage.getItem('er_pending_ring')) void this.checkPendingWonRing();
   }
 
   /** Fetch /api/encounter/preview and recolor AI markers by stake element. */
@@ -218,6 +236,208 @@ export class EncounterScene extends Phaser.Scene {
       }
     };
     room.onStateChange(onState);
+  }
+
+  // ── Post-battle won-ring prompt (#40) ───────────────────────────────────────
+
+  /**
+   * Fetch fresh inventory and open the won-ring prompt for the id stashed in
+   * er_pending_ring (set by connectToRoom on the server's `wonRing` message).
+   * If the ring is no longer in inventory (edge case), clear the flag and bail.
+   */
+  private async checkPendingWonRing(): Promise<void> {
+    const ringId = localStorage.getItem('er_pending_ring');
+    if (!ringId || this.wonRingModal) return;
+    const token = localStorage.getItem('er_token');
+    if (!token) return;
+
+    let rings: RingData[];
+    let carryCap: number;
+    try {
+      const res = await fetch(`${API_BASE}/api/me`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!res.ok) return;
+      const data: { player: { carry_cap?: number }; rings: RingData[] } = await res.json();
+      rings = data.rings;
+      carryCap = data.player.carry_cap ?? 10;
+    } catch {
+      return;
+    }
+
+    if (!rings.some((r) => r.id === ringId)) {
+      // Ring not in our inventory (shouldn't happen) — clear and bail.
+      localStorage.removeItem('er_pending_ring');
+      return;
+    }
+    this.showWonRingModal(ringId, rings, carryCap);
+  }
+
+  /** Render the won-ring modal for the given ring id, using fresh inventory. */
+  private showWonRingModal(ringId: string, rings: RingData[], carryCap: number): void {
+    const ring = rings.find((r) => r.id === ringId);
+    if (!ring) {
+      localStorage.removeItem('er_pending_ring');
+      return;
+    }
+    this.wonRings = rings;
+    this.wonCarryCap = carryCap;
+
+    const carriedCount = rings.filter((r) => r.in_carry === 1).length;
+    const hasRoom = carriedCount < carryCap;
+    const elementName = ELEMENT_NAMES[ring.element] ?? '?';
+
+    const container = this.add.container(0, 0).setDepth(2000);
+    const overlay = this.add
+      .rectangle(CANVAS_W / 2, 288, CANVAS_W, 576, 0x000000, 0.7)
+      .setInteractive();
+    const panel = this.add
+      .rectangle(CANVAS_W / 2, 288, 460, 240, 0x222233)
+      .setStrokeStyle(2, 0xffcc44);
+    const title = this.add
+      .text(CANVAS_W / 2, 210, `You won a ${elementName} ring!`, {
+        fontSize: '18px',
+        color: '#ffffff',
+      })
+      .setOrigin(0.5);
+    container.add([overlay, panel, title]);
+
+    if (hasRoom) {
+      container.add(
+        this.wonModalButton(CANVAS_W / 2, 270, '[Add to Loadout]', '#aaffaa', () =>
+          void this.resolveWonRing('add'),
+        ),
+      );
+      container.add(
+        this.wonModalButton(CANVAS_W / 2, 305, '[Leave at Sanctum]', '#cccccc', () =>
+          void this.resolveWonRing('leave'),
+        ),
+      );
+      container.add(
+        this.wonModalButton(CANVAS_W / 2, 340, '[Discard]', '#ff8888', () =>
+          void this.resolveWonRing('discard'),
+        ),
+      );
+    } else {
+      // Carry full: a Swap displaces a carried ring (returns to Sanctum, not lost).
+      const carriedRings = rings.filter((r) => r.in_carry === 1);
+      container.add(
+        this.add
+          .text(CANVAS_W / 2, 250, 'Loadout full — Swap (click a carried ring to displace):', {
+            fontSize: '11px',
+            color: '#ffdd66',
+          })
+          .setOrigin(0.5),
+      );
+      carriedRings.forEach((cr, i) => {
+        const col = i % 5;
+        const row = Math.floor(i / 5);
+        const bx = CANVAS_W / 2 - 160 + col * 80;
+        const by = 280 + row * 24;
+        container.add(
+          this.wonModalButton(bx, by, `${ELEMENT_NAMES[cr.element] ?? '?'}`, '#ffaa66', () =>
+            void this.resolveWonRing('add', cr.id),
+          ),
+        );
+      });
+      container.add(
+        this.wonModalButton(CANVAS_W / 2 - 90, 345, '[Leave at Sanctum]', '#cccccc', () =>
+          void this.resolveWonRing('leave'),
+        ),
+      );
+      container.add(
+        this.wonModalButton(CANVAS_W / 2 + 90, 345, '[Discard]', '#ff8888', () =>
+          void this.resolveWonRing('discard'),
+        ),
+      );
+    }
+
+    this.wonRingModal = container;
+    if (window.__encounterState) {
+      window.__encounterState.pendingWonRing = { ringId, element: ring.element };
+    }
+  }
+
+  private wonModalButton(
+    x: number,
+    y: number,
+    label: string,
+    color: string,
+    onClick: () => void,
+  ): Phaser.GameObjects.Text {
+    return this.add
+      .text(x, y, label, { fontSize: '14px', color })
+      .setOrigin(0.5)
+      .setInteractive({ useHandCursor: true })
+      .on('pointerdown', onClick);
+  }
+
+  /**
+   * Resolve the won-ring prompt. Always clears er_pending_ring afterward.
+   *   - add (room):   carry the won ring.
+   *   - add (full):   carry the won ring and displace `displaceRingId` → Sanctum.
+   *   - leave:        keep the won ring in inventory, uncarried (no-op server-side).
+   *   - discard:      permanently delete the won ring.
+   */
+  private async resolveWonRing(
+    choice: 'add' | 'leave' | 'discard',
+    displaceRingId?: string,
+  ): Promise<void> {
+    const ringId = localStorage.getItem('er_pending_ring');
+    if (!ringId) {
+      this.dismissWonModal();
+      return;
+    }
+
+    if (choice === 'discard') {
+      await this.discardWonRing(ringId);
+    } else if (choice === 'add') {
+      const carried = new Set(this.wonRings.filter((r) => r.in_carry === 1).map((r) => r.id));
+      if (displaceRingId) carried.delete(displaceRingId); // displaced → Sanctum
+      carried.add(ringId);
+      await this.putCarry(Array.from(carried));
+    }
+    // 'leave' is a no-op server-side: the won ring is already uncarried.
+
+    localStorage.removeItem('er_pending_ring');
+    if (window.__encounterState) window.__encounterState.pendingWonRing = null;
+    this.dismissWonModal();
+  }
+
+  /** PUT /api/carry with the full carried set. */
+  private async putCarry(ringIds: string[]): Promise<void> {
+    const token = localStorage.getItem('er_token');
+    if (!token) return;
+    try {
+      await fetch(`${API_BASE}/api/carry`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ ringIds }),
+      });
+    } catch {
+      this.statusText.setText('Network error during carry update');
+    }
+  }
+
+  /** DELETE /api/rings/:id — permanently discard a won ring. */
+  private async discardWonRing(ringId: string): Promise<void> {
+    const token = localStorage.getItem('er_token');
+    if (!token) return;
+    try {
+      await fetch(`${API_BASE}/api/rings/${ringId}`, {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${token}` },
+      });
+    } catch {
+      this.statusText.setText('Network error during discard');
+    }
+  }
+
+  private dismissWonModal(): void {
+    if (this.wonRingModal) {
+      this.wonRingModal.destroy(true);
+      this.wonRingModal = null;
+    }
   }
 
   // ── Manage Battle Hand modal (#40) ─────────────────────────────────────────

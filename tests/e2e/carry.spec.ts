@@ -140,6 +140,8 @@ test('carry: __campAddToLoadout carries a Sanctum ring', async ({ browser }) => 
 });
 
 // ── Post-battle won-ring modal: room case (Add) ──────────────────────────────
+// The prompt now fires in EncounterScene (the post-battle destination), so we
+// seed a pending ring and navigate into EncounterScene to exercise it.
 test('carry: won-ring modal Add carries the pending ring (room case)', async ({ browser }) => {
   const { token } = await register();
   // Leave only the 5 battle-slot rings carried so there is room (5/10).
@@ -154,25 +156,29 @@ test('carry: won-ring modal Add carries the pending ring (room case)', async ({ 
   const page = await ctx.newPage();
   await page.goto(URL);
 
+  // Move from CampScene into EncounterScene, where the won-ring prompt fires.
+  await page.waitForFunction(() => typeof (window as any).__campGoEncounter === 'function', {
+    timeout: 8000,
+  });
+  await page.evaluate(() => (window as any).__campGoEncounter());
+
   // Modal opens (pendingWonRing populated) and the hook is available.
   await page.waitForFunction(
-    () => (window as any).__campState?.pendingWonRing?.ringId !== undefined,
+    () => (window as any).__encounterState?.pendingWonRing?.ringId !== undefined,
     { timeout: 8000 },
   );
-  const pend = await page.evaluate(() => (window as any).__campState.pendingWonRing);
+  const pend = await page.evaluate(() => (window as any).__encounterState.pendingWonRing);
   expect(pend.ringId).toBe(pending.id);
 
-  await page.evaluate(() => (window as any).__campResolveWonRing('add'));
+  await page.evaluate(() => (window as any).__encounterResolveWonRing('add'));
 
-  await page.waitForFunction(
-    (id) =>
-      (window as any).__campState?.rings.find((r: any) => r.id === id)?.in_carry === 1,
-    pending.id,
-    { timeout: 5000 },
-  );
   // er_pending_ring cleared after resolution.
-  const cleared = await page.evaluate(() => localStorage.getItem('er_pending_ring'));
-  expect(cleared).toBeNull();
+  await page.waitForFunction(() => localStorage.getItem('er_pending_ring') === null, {
+    timeout: 5000,
+  });
+  // The won ring is now carried (verify against real server state).
+  const after = await me(token);
+  expect(after.rings.find((r) => r.id === pending.id)?.in_carry).toBe(1);
   await ctx.close();
 });
 
@@ -194,17 +200,25 @@ test('carry: won-ring Swap displaces a carried ring back to the Sanctum', async 
 
   // Forced WIN: a 1-heart AI with extinguished rings (aiUses:0) cannot attack or
   // defend — it forfeits its first attack turn (§6.6) → guaranteed protagonist
-  // win → a real granted 11th ring stored in er_pending_ring.
+  // win → a real granted 11th ring stored in er_pending_ring. driveAiDuel lands
+  // back in EncounterScene, where the won-ring prompt now fires.
   const wonRingId = await driveAiDuel(page, { personality: 'AGGRESSIVE', aiHearts: 1, aiUses: 0 });
   expect(wonRingId).not.toBeNull();
 
-  // The win auto-opens the room-case modal (carry not yet full). Resolve 'leave'
-  // so the won ring stays in inventory but uncarried, then set up the full case.
-  await page.evaluate(() => (window as any).__campResolveWonRing?.('leave'));
+  // The win auto-opens the room-case modal in EncounterScene (carry not yet
+  // full). Resolve 'leave' so the won ring stays in inventory but uncarried.
   await page.waitForFunction(
-    () => (window as any).__campState?.pendingWonRing == null,
-    { timeout: 5000 },
+    () => typeof (window as any).__encounterResolveWonRing === 'function',
+    { timeout: 8000 },
   );
+  await page.waitForFunction(
+    () => (window as any).__encounterState?.pendingWonRing?.ringId !== undefined,
+    { timeout: 8000 },
+  );
+  await page.evaluate(() => (window as any).__encounterResolveWonRing('leave'));
+  await page.waitForFunction(() => localStorage.getItem('er_pending_ring') === null, {
+    timeout: 5000,
+  });
 
   const { rings } = await me(token);
   expect(rings.length).toBe(11); // 10 starters + 1 won
@@ -222,29 +236,30 @@ test('carry: won-ring Swap displaces a carried ring back to the Sanctum', async 
   });
   expect(fill.status).toBe(200);
 
-  // Re-arm the won ring as pending and reload so the FULL-case modal renders.
+  // Re-arm the won ring as pending, reload, and navigate into EncounterScene so
+  // the FULL-case modal renders.
   await page.evaluate((id) => localStorage.setItem('er_pending_ring', id), wonRingId!);
   await page.reload();
+  await page.waitForFunction(() => typeof (window as any).__campGoEncounter === 'function', {
+    timeout: 8000,
+  });
+  await page.evaluate(() => (window as any).__campGoEncounter());
   await page.waitForFunction(
-    () => (window as any).__campState?.pendingWonRing?.ringId !== undefined,
+    () => (window as any).__encounterState?.pendingWonRing?.ringId !== undefined,
     { timeout: 8000 },
   );
-  const carriedBefore = await page.evaluate(
-    () => (window as any).__campState.rings.filter((r: any) => r.in_carry === 1).length,
-  );
-  expect(carriedBefore).toBe(10); // confirms the FULL case
+  // Confirm the FULL case: 10 carried before the swap (real server state).
+  expect((await me(token)).rings.filter((r) => r.in_carry === 1).length).toBe(10);
 
   // Swap: displace `displaceId` → it must return to the Sanctum, not be deleted.
   await page.evaluate(
-    ({ disp }) => (window as any).__campResolveWonRing('add', disp),
+    ({ disp }) => (window as any).__encounterResolveWonRing('add', disp),
     { disp: displaceId },
   );
 
-  await page.waitForFunction(
-    (id) => (window as any).__campState?.rings.find((r: any) => r.id === id)?.in_carry === 0,
-    displaceId,
-    { timeout: 5000 },
-  );
+  await page.waitForFunction(() => localStorage.getItem('er_pending_ring') === null, {
+    timeout: 5000,
+  });
 
   const { rings: final } = await me(token);
   // Won ring now carried.
