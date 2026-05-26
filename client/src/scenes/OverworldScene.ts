@@ -55,6 +55,8 @@ export class OverworldScene extends Phaser.Scene {
   private activeZone: InteractionZone | null = null;
   /** Waystone markers keyed by waystone id (for recolor on attune). */
   private waystones: Map<string, Waystone> = new Map();
+  /** Centers of Anchorage locations (keyed by waystoneId), for compass + spawn logic. */
+  private anchorageMarkers: Map<string, { center: { x: number; y: number } }> = new Map();
   /** Latest GET /api/waystones payload (mirrored to window.__waystones). */
   private waystonePayload: WaystonesPayload | null = null;
   /** Camera-pinned compass HUD (8B.2) pulling toward unattuned waystones. */
@@ -138,6 +140,7 @@ export class OverworldScene extends Phaser.Scene {
       this.anchorageFires.clear();
       this.zones = [];
       this.waystones.clear();
+      this.anchorageMarkers.clear();
     });
 
     // Load waystone state from the authoritative server and render the markers.
@@ -168,14 +171,15 @@ export class OverworldScene extends Phaser.Scene {
     let bestX = 0;
     let bestY = 0;
     for (const info of unattuned) {
-      const marker = this.waystones.get(info.id);
-      if (!marker) continue;
-      const d = Phaser.Math.Distance.Between(px, py, marker.center.x, marker.center.y);
+      const center =
+        this.waystones.get(info.id)?.center ?? this.anchorageMarkers.get(info.id)?.center;
+      if (!center) continue;
+      const d = Phaser.Math.Distance.Between(px, py, center.x, center.y);
       if (d < bestDist) {
         bestDist = d;
         targetId = info.id;
-        bestX = marker.center.x;
-        bestY = marker.center.y;
+        bestX = center.x;
+        bestY = center.y;
       }
     }
 
@@ -220,31 +224,47 @@ export class OverworldScene extends Phaser.Scene {
 
     const byId = new Map(payload.waystones.map((w) => [w.id, w]));
     const objs = map.getObjectLayer('objects')?.objects ?? [];
+
+    // Loop A — Anchorage objects (home base / teleport destinations). These are
+    // rendered as a campfire + worn-ground ring (NO standing stone) and wrapped
+    // in an InteractionZone for attunement. Their centers feed the compass and
+    // anchor-derived spawn logic via anchorageMarkers.
     for (const o of objs) {
-      if (o.name !== 'waystone') continue;
+      if (o.name !== 'anchorage') continue;
       const id = this.waystoneIdOf(o);
       if (!id) continue;
       const info = byId.get(id);
-      const marker = new Waystone(this, o, id, info?.name ?? id, info?.attuned ?? false, () =>
-        void this.onAttune(id),
+      const cx = (o.x ?? 0) + (o.width ?? 32) / 2;
+      const cy = (o.y ?? 0) + (o.height ?? 32) / 2;
+      this.anchorageMarkers.set(id, { center: { x: cx, y: cy } });
+
+      // Interaction zone — same as Waystone: named by waystoneId so zone
+      // machinery (window.__sanctumZones, nearest-zone selection) works unchanged.
+      const zone = new InteractionZone(
+        this,
+        { ...o, name: id } as Phaser.Types.Tilemaps.TiledObject,
+        () => void this.onAttune(id),
       );
-      this.physics.add.overlap(this.player, marker.interactionZone.overlapZone);
-      this.zones.push(marker.interactionZone);
-      this.waystones.set(id, marker);
+      this.physics.add.overlap(this.player, zone.overlapZone);
+      this.zones.push(zone);
 
       // Anchorage ground treatment (8B.4.3, #73): a soft worn-ground ring beneath
-      // the stone and a flickering campfire SW of it. Both are recolored on
-      // attune via updateAnchorageVisuals (cold/blue → warm/orange).
+      // the campfire and a flickering campfire SE of the center. Both are
+      // recolored on attune via updateAnchorageVisuals (cold/blue → warm/orange).
       const ring = this.add.graphics().setDepth(1);
       ring.fillStyle(info?.attuned ? 0x3a5a2a : 0x2a3a1a, info?.attuned ? 0.45 : 0.3);
-      ring.fillCircle(marker.center.x, marker.center.y, ANCHORAGE_GROUND_RADIUS);
+      ring.fillCircle(cx, cy, ANCHORAGE_GROUND_RADIUS);
       this.anchorageRings.set(id, ring);
 
-      const fx = marker.center.x + 28;
-      const fy = marker.center.y + 36;
-      const fire = this.add.graphics().setDepth(7);
-      this.drawFlame(fire, fx, fy, info?.attuned ?? false);
-      this.anchorageFires.set(id, { gfx: fire, x: fx, y: fy });
+      const fx = cx + 28;
+      const fy = cy + 36;
+      const fire = this.add
+        .graphics()
+        .setDepth(7)
+        .setPosition(fx, fy)
+        .setName(`anchorage-fire-${id}`);
+      this.drawFlame(fire, 0, 0, info?.attuned ?? false);
+      this.anchorageFires.set(id, { gfx: fire, x: 0, y: 0 });
       this.tweens.add({
         targets: fire,
         scaleY: { from: 0.9, to: 1.1 },
@@ -255,23 +275,49 @@ export class OverworldScene extends Phaser.Scene {
       });
     }
 
+    // Loop B — pure Waystone objects (discoverable markers scattered in the
+    // world). These are standing stones (NO campfire). Visual-only waystones may
+    // have no waystoneId / server record — they still render but don't attune.
+    for (const o of objs) {
+      if (o.name !== 'waystone') continue;
+      const id = this.waystoneIdOf(o);
+      // Visual-only waystones may have no waystoneId — synthesize one for tracking only.
+      const markerId = id ?? `visual_${o.id ?? o.x}_${o.y}`;
+      const info = id ? byId.get(id) : undefined;
+      const marker = new Waystone(
+        this,
+        o,
+        markerId,
+        info?.name ?? markerId,
+        info?.attuned ?? false,
+        id ? () => void this.onAttune(id) : () => {},
+      );
+      if (id) {
+        // Only register overlap + push to zones if it has a server record
+        // (so E actually does something).
+        this.physics.add.overlap(this.player, marker.interactionZone.overlapZone);
+        this.zones.push(marker.interactionZone);
+      }
+      this.waystones.set(markerId, marker);
+    }
+
     // Anchor-derived spawn (8B.3, #63) + Sanctum exterior (8B.4.1, #71): the
     // Sanctum structure and its re-entry door are placed at the anchored waystone
     // (toward map center) rather than the map's static `spawn`/`sanctum_return`.
     // Done AFTER the markers are built so the anchor marker (and its center)
     // exists. Physics + camera-follow are already wired in create().
-    const anchorMarker = this.waystones.get(payload.anchor);
-    if (anchorMarker) {
-      // Compute Anchorage-derived position (toward map center from anchor stone).
+    const anchorCenter = this.anchorageMarkers.get(payload.anchor);
+    if (anchorCenter) {
+      // Compute Anchorage-derived position (toward map center from anchor).
       const mapCx = map.widthInPixels / 2;
       const mapCy = map.heightInPixels / 2;
-      const dx = mapCx - anchorMarker.center.x;
-      const dy = mapCy - anchorMarker.center.y;
+      const dx = mapCx - anchorCenter.center.x;
+      const dy = mapCy - anchorCenter.center.y;
       const len = Math.sqrt(dx * dx + dy * dy);
       const dirX = dx / len;
       const dirY = dy / len;
-      const sanctumX = anchorMarker.center.x + dirX * SANCTUM_OFFSET;
-      const sanctumY = anchorMarker.center.y + dirY * SANCTUM_OFFSET;
+      const sanctumX = anchorCenter.center.x + dirX * SANCTUM_OFFSET;
+      const sanctumY = anchorCenter.center.y + dirY * SANCTUM_OFFSET;
 
       // Build the sanctum_return InteractionZone at the Sanctum door position.
       // InteractionZone only reads x/y/width/height/name; id/type are required by
@@ -360,13 +406,13 @@ export class OverworldScene extends Phaser.Scene {
    */
   private updateAnchorageVisuals(waystones: WaystoneInfo[]): void {
     for (const info of waystones) {
-      const marker = this.waystones.get(info.id);
-      if (!marker) continue;
+      const anchorage = this.anchorageMarkers.get(info.id);
+      if (!anchorage) continue;
       const ring = this.anchorageRings.get(info.id);
       if (ring) {
         ring.clear();
         ring.fillStyle(info.attuned ? 0x3a5a2a : 0x2a3a1a, info.attuned ? 0.45 : 0.3);
-        ring.fillCircle(marker.center.x, marker.center.y, ANCHORAGE_GROUND_RADIUS);
+        ring.fillCircle(anchorage.center.x, anchorage.center.y, ANCHORAGE_GROUND_RADIUS);
       }
       const fire = this.anchorageFires.get(info.id);
       if (fire) this.drawFlame(fire.gfx, fire.x, fire.y, info.attuned);

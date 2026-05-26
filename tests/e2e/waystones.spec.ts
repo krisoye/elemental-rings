@@ -92,13 +92,17 @@ test('waystones: walking onto Glade and pressing E attunes it (server round-trip
     { timeout: 8000 },
   );
 
-  // The marker recolors: the attuned glow disc on the named stone becomes visible.
-  const recolored = await page.evaluate(() => {
+  // forest_glade is an Anchorage (campfire + ground ring), NOT a standing stone:
+  // its named campfire graphic exists and there is NO Waystone standing stone.
+  const visuals = await page.evaluate(() => {
     const scene = (window as any).__scene as { children: { getByName: (n: string) => any } };
-    const stone = scene.children.getByName('waystone-forest_glade');
-    return !!stone;
+    return {
+      hasFire: !!scene.children.getByName('anchorage-fire-forest_glade'),
+      hasStone: !!scene.children.getByName('waystone-forest_glade'),
+    };
   });
-  expect(recolored).toBe(true);
+  expect(visuals.hasFire).toBe(true);
+  expect(visuals.hasStone).toBe(false);
   await ctx.close();
 });
 

@@ -11,7 +11,7 @@
   "version": "1.10",
   "tiledversion": "1.10.2",
   "nextlayerid": 3,
-  "nextobjectid": 6,
+  "nextobjectid": 8,
   "tilesets": [
     {
       "firstgid": 1,
@@ -391,7 +391,7 @@
         3,
         2,
         2,
-        2,
+        4,
         2,
         2,
         2,
@@ -1016,7 +1016,7 @@
         2,
         2,
         2,
-        2,
+        4,
         2,
         2,
         2,
@@ -1287,7 +1287,7 @@
         },
         {
           "id": 3,
-          "name": "waystone",
+          "name": "anchorage",
           "x": 320,
           "y": 192,
           "width": 32,
@@ -1305,7 +1305,7 @@
         },
         {
           "id": 4,
-          "name": "waystone",
+          "name": "anchorage",
           "x": 288,
           "y": 320,
           "width": 32,
@@ -1323,7 +1323,7 @@
         },
         {
           "id": 5,
-          "name": "waystone",
+          "name": "anchorage",
           "x": 1056,
           "y": 768,
           "width": 32,
@@ -1338,6 +1338,28 @@
               "value": "forest_depths"
             }
           ]
+        },
+        {
+          "id": 6,
+          "name": "waystone",
+          "x": 640,
+          "y": 256,
+          "width": 32,
+          "height": 32,
+          "rotation": 0,
+          "visible": true,
+          "point": false
+        },
+        {
+          "id": 7,
+          "name": "waystone",
+          "x": 160,
+          "y": 768,
+          "width": 32,
+          "height": 32,
+          "rotation": 0,
+          "visible": true,
+          "point": false
         }
       ]
     }

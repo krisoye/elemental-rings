@@ -53,15 +53,18 @@ describe('canTeleport — aggregate XP vs. waystone threshold', () => {
 });
 
 // ---------------------------------------------------------------------------
-// Drift test — catalog ids must equal the map's waystone object ids
+// Drift test — catalog ids must equal the map's Anchorage object ids
 // ---------------------------------------------------------------------------
+// Catalog-backed locations (teleport destinations) are `anchorage` objects with
+// a `waystoneId` property. Pure `waystone` objects are visual-only standing-stone
+// markers — they carry NO `waystoneId` and have no catalog/server record.
 
 describe('waystone catalog ↔ map drift', () => {
-  test('every map waystone object id matches a catalog id, and vice versa', () => {
-    const mapPath = path.resolve(
-      __dirname,
-      '../../client/public/assets/maps/overworld.json',
-    );
+  function loadObjectLayer(): Array<{
+    name?: string;
+    properties?: Array<{ name: string; value: unknown }>;
+  }> {
+    const mapPath = path.resolve(__dirname, '../../client/public/assets/maps/overworld.json');
     const map = JSON.parse(fs.readFileSync(mapPath, 'utf8')) as {
       layers: Array<{
         name: string;
@@ -69,13 +72,15 @@ describe('waystone catalog ↔ map drift', () => {
         objects?: Array<{ name?: string; properties?: Array<{ name: string; value: unknown }> }>;
       }>;
     };
-
     const objectLayer = map.layers.find((l) => l.type === 'objectgroup');
     expect(objectLayer).toBeDefined();
+    return objectLayer?.objects ?? [];
+  }
 
+  test('every map Anchorage object id matches a catalog id, and vice versa', () => {
     const mapIds = new Set<string>();
-    for (const obj of objectLayer?.objects ?? []) {
-      if (obj.name !== 'waystone') continue;
+    for (const obj of loadObjectLayer()) {
+      if (obj.name !== 'anchorage') continue;
       const prop = (obj.properties ?? []).find((p) => p.name === 'waystoneId');
       expect(typeof prop?.value).toBe('string');
       mapIds.add(prop!.value as string);
@@ -83,5 +88,15 @@ describe('waystone catalog ↔ map drift', () => {
 
     const catalogIds = new Set(WAYSTONES.map((w) => w.id));
     expect([...mapIds].sort()).toEqual([...catalogIds].sort());
+  });
+
+  test('pure waystone markers are visual-only (no waystoneId, no catalog record)', () => {
+    const waystones = loadObjectLayer().filter((o) => o.name === 'waystone');
+    // The map ships at least one discoverable standing-stone marker.
+    expect(waystones.length).toBeGreaterThan(0);
+    for (const obj of waystones) {
+      const prop = (obj.properties ?? []).find((p) => p.name === 'waystoneId');
+      expect(prop).toBeUndefined();
+    }
   });
 });
