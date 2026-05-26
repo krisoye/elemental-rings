@@ -103,69 +103,101 @@ The protagonist does not travel with a caravan or horse. They travel with their 
 The Sanctum is not an inert container. It is spiritually bonded to the protagonist's ring collection — the aggregate XP of all stored rings contributes to the protagonist's spirit gauge maximum even when those rings are not carried. The protagonist and their Sanctum are one entity: the Sanctum is where their power lives when they are not channeling it.
 
 **Anchoring the Sanctum:**
-- When the protagonist teleports to a new location, the Sanctum materializes nearby
+- When the protagonist teleports to an Anchorage, the Sanctum materializes within it
 - Anchoring it establishes the camp for that area
-- When multiple players anchor their Sanctums near a waystone, a temporary community forms — the campfires create a gathering space, and a small settlement emerges naturally
-- This is what the game calls a **safe area**: not a fixed world structure, but a living cluster of sanctums
+- When multiple players anchor their Sanctums at the same Anchorage, a temporary community forms — the campfires create a gathering space, and a small mystic settlement emerges naturally
+- This is an **Anchorage community**: not a fixed city, but a living cluster of sanctums that comes and goes with its inhabitants
 
 ---
 
 ### 10.7 Waystones and the Compass
 
-**Waystones** are ancient permanent objects scattered across the overworld — statues, monuments, standing stones, carved rocks. They are not items; they cannot be moved or taken. They are the spiritual anchors of the world.
+**Waystones** are ancient permanent objects scattered across the overworld — statues, monuments, standing stones, carved rocks. They are not items; they cannot be moved or taken.
+
+Waystones are **revelation objects**, not teleportation destinations. Each waystone carries spiritual memory of its *place of origin* — the region it came from before it was moved to its present location. When the protagonist attunes to a waystone, they receive this knowledge: a revelation of a distant area or biome that becomes accessible to them. Waystones are the mechanism for **long-distance progression** — finding and attuning them opens the path forward into new regions of the world.
 
 **Attuning to a waystone:**
-- The protagonist must physically touch a waystone
-- Touching it creates an instant spiritual connection — the location is permanently added to the world map as a known teleportation destination
-- The protagonist learns nothing about the surrounding area from the attunement alone — the area around the waystone is unknown until explored on foot after teleporting there
-- Attunement is free and instant; no cost
+- The protagonist must physically touch the waystone and press E
+- Touching it creates an instant spiritual connection — the waystone's origin region is revealed
+- This may immediately unlock one or more distant Anchorages as potential teleportation destinations (see §10.7a)
+- Attunement is permanent, free, and instant; no spirit cost
+- The protagonist learns nothing about the *current* surrounding area — the waystone reveals what is *far away*, not what is nearby
 
 **The Compass:**
 - The protagonist has a preternatural spiritual sense that pulls them toward undiscovered waystones nearby
-- Short range — only felt when within a meaningful distance of an undiscovered waystone
+- Short to medium range — only felt when within a meaningful distance of an unattuned waystone
 - Strengthens as the protagonist approaches (directional pull, increasing intensity)
 - Waystones are often guarded by mini-bosses or major bosses — the compass leads toward challenge
-- This is the primary navigation mechanism for exploration: no map markers, just a pull
+- This is the primary navigation mechanism for exploration within a biome: no map markers, just a pull
 
 **Waystone density:**
 - Each biome contains multiple waystones — some accessible early, some guarded by powerful enemies
-- The boss of a biome always guards or is located near a critical waystone that unlocks the path to a major city
+- The boss of a biome always guards or is located near a critical waystone that unlocks the path to a major city or the next region
 - TBD: exact waystone count per biome (tuning)
+
+---
+
+### 10.7a Anchorages
+
+**Anchorages** are fixed areas of concentrated spiritual energy scattered across the world. They are distinct from waystones: where a waystone is a marker that reveals distant places, an Anchorage is a *destination* — a place where the Sanctum can rest.
+
+**Discovery:**
+- The protagonist discovers an Anchorage by **physically walking into it**
+- Discovery is automatic — no action required. The protagonist immediately and permanently attunes to the Anchorage the moment they enter it
+- Anchorages are visible as areas: a distinct ground treatment, a gathering-fire, or other environmental cue marks them as special. They read as *inviting*
+
+**What an Anchorage is:**
+- A spiritually concentrated location where the fabric of the world is favorable to Sanctum anchoring
+- Fixed in the world — they always exist in the same place; they are not created by players
+- Multiple Sanctums can anchor at the same Anchorage simultaneously, forming an Anchorage community (see §10.6)
+- Can be in the middle of wilderness, on the outskirts of a village, or adjacent to a city — wherever the spiritual geography places them
+- Wandering merchants may temporarily anchor their modest Sanctums at well-traveled Anchorages
+
+**Relationship with waystones:**
+- Waystones and Anchorages are neighbors in the world but conceptually separate
+- A waystone might be near an Anchorage, or it might be alone in dangerous territory
+- Attuning a waystone may *reveal* Anchorages in distant areas (as part of the region knowledge it grants), adding them to the meditation circle's destination list before the protagonist has physically walked to them — but the protagonist cannot *teleport* to an Anchorage they have not yet discovered (either by walking there or via waystone revelation; TBD: exact unlock rule)
+
+**Anchorage density:**
+- Each biome contains multiple Anchorages — some in the open, some requiring navigation past obstacles or enemies
+- TBD: exact count per biome; Forest biome MVP has a small number of Anchorages
 
 ---
 
 ### 10.8 Teleportation
 
-Movement between areas is a **spiritual act**, not physical travel. The protagonist folds space through the meditation circle in their Sanctum, bringing themselves and their entire Sanctum — including all stored rings, food, and gold — to an attuned waystone.
+Movement between Anchorages is a **spiritual act**, not physical travel. The protagonist folds space through the meditation circle in their Sanctum, bringing themselves and their entire Sanctum — including all stored rings, food, and gold — to a discovered Anchorage.
 
 **Requirements:**
 1. **Must be in the Sanctum** — specifically at the meditation circle
-2. **Must have attuned** to the destination waystone
-3. **Must have sufficient spiritual level** — aggregate ring XP must meet or exceed the threshold for that destination. If too low, the destination is visible on the map but unavailable, with the required spiritual level shown
+2. **Must have discovered** the destination Anchorage (walked there or had it revealed by a waystone)
+3. **Must have sufficient current spirit level** — `spirit_current` must meet or exceed the spirit cost for that destination. If spirit is low, the destination is visible but locked; resting (sleeping in the Sanctum) fully restores spirit and enables longer journeys
+
+**Spirit cost and distance:**
+- Spirit cost scales with the spiritual distance to the Anchorage — nearby Anchorages in the current biome cost little; distant Anchorages in far biomes cost significantly more
+- `spirit_current` is fully restored by sleeping (costs 25 food). A well-provisioned protagonist can always make any journey; a depleted one must rest first
+- `spirit_max` grows with aggregate ring XP — veteran protagonists have a larger total spirit reserve, making long trips easier to sustain without multiple rest cycles. But a high `spirit_max` does not help if `spirit_current` is depleted; preparation matters
+- Late game: a powerful protagonist with full spirit can teleport across the world in a single meditation session; early game, long journeys may require a food stop to rest midway
 
 **What teleports:**
 - The protagonist
 - The entire Sanctum (structure, contents, stored rings)
-- Carry loadout (the 10 rings on their person)
+- Carry loadout
 - All food and gold
 
 **Failure state:**
-- If spiritual level is insufficient, the teleportation cannot be initiated — there is no partial or dangerous attempt
-- The player must raise their aggregate ring XP (by using rings in battle) to unlock a higher-threshold destination
+- If `spirit_current` is insufficient, teleportation cannot be initiated — there is no partial attempt
+- The protagonist must sleep to restore spirit (requiring food), then meditate again
 
-**Distance and spiritual level:**
-- Nearby waystone (same or adjacent biome): low threshold — accessible early game
-- Distant waystone (far biome, different region): high threshold — requires veteran ring collection
-- Late game: a powerful protagonist can teleport almost anywhere in the world from a single meditation session
-
-**The biome loop:**
-1. Meditate in Sanctum → teleport to a newly attuned waystone
-2. Anchor Sanctum; other players may already be anchored here (safe area community)
-3. Follow the compass → range on foot → find treasure, fight NPCs, locate shrines
-4. Touch undiscovered waystones to add destinations to the map
-5. Boss of the biome guards a critical waystone (or the path to the city) — required for chapter progression; drops significant food cache and rare items
-6. As ring XP accumulates through combat, new higher-threshold destinations unlock
-7. When ready: return to Sanctum, meditate, choose next destination
+**The exploration loop:**
+1. Exit Sanctum → explore the current biome on foot
+2. Follow the compass → attune waystones → learn about distant regions
+3. Discover Anchorages by walking into them (auto-attune)
+4. Return to Sanctum (walk back or walk to the nearest discovered Anchorage and enter)
+5. Meditate → view discovered Anchorages and their spirit costs
+6. Sleep if needed to restore spirit to maximum
+7. Teleport to chosen Anchorage → exit Sanctum in the new location
+8. Repeat — the new Anchorage is now the base; range outward from it
 
 ---
 
@@ -174,9 +206,9 @@ Movement between areas is a **spiritual act**, not physical travel. The protagon
 | Location | Purpose |
 |---|---|
 | **Sanctum** | The protagonist's traveling home — sleep, cook, meditate, manage inventory, teleport |
-| **Safe Areas** | Naturally formed clusters of sanctums near waystones; campfire gatherings; PvP between anchored players |
+| **Anchorages** | Fixed spiritual energy concentrations; auto-attune on discovery; Sanctums anchor here; multiple Sanctums form an Anchorage community; PvP between anchored players |
 | **Cities / Settlements** | Persistent world locations with merchants, services, social NPCs; chapter task endpoints |
-| **Waystones** | Ancient permanent objects; touch to attune and add to teleportation map |
+| **Waystones** | Ancient permanent objects scattered across biomes; press E to attune; reveals the waystone's origin region and unlocks progression into distant areas |
 | **Shrines** | One per fusion recipe; discovered via shrine maps and compass |
 | **Dark/Underground Areas** | Shadow ring drop locations; high risk, unpredictable opposition |
 | **Boss Arenas** | Fixed high-XP encounters; unique rings; often guard critical waystones |
@@ -218,7 +250,7 @@ Food sustains the protagonist's ability to meditate and restore their spirit.
 
 ### 10.11 Merchants
 
-Merchants are encountered in cities and occasionally wandering the overworld between biomes. They may anchor their own modest sanctums near safe areas temporarily.
+Merchants are encountered in cities and occasionally wandering the overworld between biomes. They may anchor their own modest sanctums at well-traveled Anchorages temporarily.
 
 **Wares:**
 
@@ -237,7 +269,7 @@ Merchants are encountered in cities and occasionally wandering the overworld bet
 - Maximum carry cap TBD
 
 **Wandering merchants:**
-- A subset patrol fixed routes between biomes; they may anchor near safe areas briefly
+- A subset patrol fixed routes between biomes; they may anchor at well-traveled Anchorages briefly
 - Encounter windows are limited — if the player doesn't trade during a visit they must wait for the next cycle
 - Creates strategic decisions: return to trade now or continue the expedition?
 
@@ -281,36 +313,33 @@ Phase 8 is the largest phase in the roadmap — it introduces a full tilemap wor
 
 #### EPIC 8B — Overworld World (EPIC [#60](https://github.com/krisoye/elemental-rings/issues/60))
 
-**What ships:** The 8A overworld *stub* becomes a real **Forest biome** — a generated Tiled map with 3 waystones (touch to attune, **server-persisted**), a compass HUD that pulls toward the nearest *undiscovered* waystone, and teleportation from the Sanctum's meditation circle gated by aggregate ring XP. Unlike 8A (client-only), **8B adds server state and routes** — attunement, the Sanctum anchor, and the teleport XP gate are game rules and are server-enforced (§2).
+**What ships:** The 8A overworld *stub* becomes a real **Forest biome** — a generated Tiled map with 3 waystone markers (touch to attune, **server-persisted**), a compass HUD that pulls toward the nearest *unattuned* waystone, and teleportation from the Sanctum's meditation circle. Unlike 8A (client-only), **8B adds server state and routes** — attunement, the Sanctum anchor, and the teleport gate are game rules and are server-enforced (§2).
 
-**Sub-issues (implement in order):**
+> **Design note (v4.8 refinement):** The shipped 8B.1–8B.3 implementation was built against an earlier reading of §10.7 that conflated **Waystones** (discovery markers) with **Anchorages** (teleport destinations). The corrected design (§10.7, §10.7a, §10.8) distinguishes the two: waystones reveal distant regions; Anchorages are where the Sanctum anchors. The 8B implementation treated waystones as teleport destinations and used aggregate XP as the spirit gate — both of which deviate from the corrected design. The **8B.4 EPIC** (#70) addresses the immediate functional gaps (Sanctum exterior, visual foundation). A subsequent pass will introduce Anchorages as first-class world objects and replace the XP gate with `spirit_current` (§10.8). Until then, the 8B waystone system functions as a stand-in Anchorage system.
+
+**Sub-issues shipped (8B.1–8B.3):**
 - [#61](https://github.com/krisoye/elemental-rings/issues/61) — 8B.1: Forest biome map + waystone attunement (`shared/waystones.ts` catalog, map generator, `waystone_attunements` table, `GET /api/waystones` + `POST /api/waystones/attune`, overworld markers)
 - [#62](https://github.com/krisoye/elemental-rings/issues/62) — 8B.2: Compass HUD (directional pull to nearest unattuned waystone; client-only)
 - [#63](https://github.com/krisoye/elemental-rings/issues/63) — 8B.3: Teleportation + Sanctum anchoring (`players.anchored_waystone`, `POST /api/teleport`, meditation-circle modal list, anchor-derived overworld spawn)
 
-8B.2 and 8B.3 both depend on 8B.1 but are independent of each other.
+**8B.4 EPIC — Visual foundation + design correction (#70):**
+- [#71](https://github.com/krisoye/elemental-rings/issues/71) — 8B.4.1: Sanctum exterior + anchor co-location (hotfix — Sanctum has no visible exterior; `sanctum_return` zone doesn't move with anchor)
+- [#72](https://github.com/krisoye/elemental-rings/issues/72) — closed (waystone visual already functional; waystones render as standing stones with glow + label)
+- [#73](https://github.com/krisoye/elemental-rings/issues/73) — 8B.4.3: Safe area ground treatment around waystones (campfire, worn ground)
+- [#74](https://github.com/krisoye/elemental-rings/issues/74) — 8B.4.4: Forest map terrain overhaul (trees, paths, clearings)
 
-**Waystones (Forest biome — tunable):**
+**Waystone objects (Forest biome — these function as stand-in Anchorages until 8B.5+):**
 
-| id | Name | XP threshold | Notes |
+| id | Name | Spirit gate (as shipped) | Role in corrected design |
 |---|---|---|---|
-| `forest_entry` | Forest Waystone | 0 | Pre-attuned at player creation; the default Sanctum anchor |
-| `forest_glade` | Glade Waystone | 100 | Unlocks ~one maxed Tier-1 ring (`TIER1_XP_CAP`) |
-| `forest_depths` | Deepwood Waystone | 300 | Veteran-gated (`TIER2_XP_CAP`); "guarded" feel |
+| `forest_entry` | Forest Waystone | 0 (free) | Default Anchorage; pre-discovered at creation |
+| `forest_glade` | Glade Waystone | 100 aggregate XP (→ replace with spirit cost) | Waystone or mid-biome Anchorage TBD |
+| `forest_depths` | Deepwood Waystone | 300 aggregate XP (→ replace with spirit cost) | Waystone or deep-biome Anchorage TBD |
 
-**Confirmed implementation decisions (8B):**
-
-| Decision | Choice | Rationale |
-|---|---|---|
-| Waystone persistence | Server DB (`waystone_attunements` table + routes) | GDD §10.7: attunement is *permanent*. Survives browser-storage clears. |
-| Teleport UI | Modal list (attuned destinations + per-row XP gate) | Correct for a single-biome MVP; the stylized world-map screen is deferred. |
-| Biome map | Generated via script (`gen-overworld-map.mjs`) | Same reproducible pattern as 8A's placeholder assets; swappable with a hand-authored Tiled map later. |
-| Biome count | 1 (Forest) for 8B | Multi-biome + cross-biome teleport is an 8C concern. |
-| Multiplayer overworld | Per-player (local) — unchanged from 8A | Shared `WorldRoom` still deferred. |
-| Map filename + spawn/return coords | Keep `overworld.json`; keep `spawn`/`sanctum_return` coords | Zero churn to 8A's `overworld-transition.spec.ts`. |
-| Waystone metadata vs. position | Thresholds/names in `shared/waystones.ts` (server-enforced gate); positions in the map (rendering/compass); a Vitest drift test asserts id-set parity | No duplication; the client never imports the catalog at runtime — `GET /api/waystones` returns everything it needs. |
-
-**Known limitation (flagged):** because the overworld is per-player and client-side, the server cannot verify the player physically stood on a waystone before attuning — it trusts the attune call. Consistent with the 8A per-player MVP; a future shared `WorldRoom` (8C+) would verify proximity authoritatively.
+**Known limitations (to be corrected in 8B.5+):**
+- Waystones and Anchorages are the same objects in the current data model. Separating them requires a `anchorages` table and client objects distinct from waystone markers.
+- The teleport gate uses `aggregateXp >= threshold` instead of `spirit_current >= cost`. The spirit_current gate correctly creates a preparation loop (sleep → restore spirit → teleport); the XP gate does not.
+- The server cannot verify the player physically stood on a waystone before attuning (per-player overworld MVP). A future shared `WorldRoom` (8C+) would verify proximity authoritatively.
 
 ---
 
