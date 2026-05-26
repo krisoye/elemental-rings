@@ -1,6 +1,7 @@
 import Database from 'better-sqlite3';
 import fs from 'fs';
 import path from 'path';
+import { SPIRIT_BASE, XP_SCALER } from '../game/constants';
 
 // DB path is env-driven so production can point at a persistent volume
 // (DB_PATH=/var/lib/elemental-rings/elemental.db via the systemd unit) while
@@ -36,28 +37,30 @@ if (!hasPlayerCol('carry_cap')) {
   db.exec('ALTER TABLE players ADD COLUMN carry_cap INTEGER NOT NULL DEFAULT 10');
 }
 
-// #41 — spirit system: spirit gauge + food economy. Defaults are 50 (SPIRIT_BASE)
-// for new rows; the spirit_max is otherwise XP-derived (SPIRIT_BASE + ring XP).
+// #41 — spirit system: spirit gauge + food economy.
 if (!hasPlayerCol('spirit_max')) {
-  db.exec('ALTER TABLE players ADD COLUMN spirit_max INTEGER NOT NULL DEFAULT 50');
+  db.exec(`ALTER TABLE players ADD COLUMN spirit_max INTEGER NOT NULL DEFAULT ${SPIRIT_BASE}`);
 }
 if (!hasPlayerCol('spirit_current')) {
-  db.exec('ALTER TABLE players ADD COLUMN spirit_current INTEGER NOT NULL DEFAULT 50');
+  db.exec(`ALTER TABLE players ADD COLUMN spirit_current INTEGER NOT NULL DEFAULT ${SPIRIT_BASE}`);
 }
 if (!hasPlayerCol('food_units')) {
   db.exec('ALTER TABLE players ADD COLUMN food_units INTEGER NOT NULL DEFAULT 100');
 }
 
-// XP-derived spirit_max backfill: recompute every player's spirit_max as
-// 50 + aggregate ring XP, and lift spirit_current to at least the old floor (50)
-// so pre-existing rows (seeded at the flat 30 default) gain the larger gauge.
-// Idempotent: re-running recomputes the same value and only raises low currents.
+// Recompute spirit_max on every boot using the same formula as computeSpiritMax()
+// in PlayerRepo: SPIRIT_BASE + floor(aggregate_ring_xp / XP_SCALER). Template
+// literals embed the constants so this stays in sync when either value changes.
+// Then cap spirit_current to the new max (fixes overflow when XP was lost/zeroed),
+// and raise any player below SPIRIT_BASE up to the base floor.
 db.exec(
   `UPDATE players
-     SET spirit_max = 50 + COALESCE(
-       (SELECT SUM(xp) FROM rings WHERE owner_id = players.id), 0)`,
+     SET spirit_max = ${SPIRIT_BASE} + CAST(
+       COALESCE((SELECT SUM(xp) FROM rings WHERE owner_id = players.id), 0) / ${XP_SCALER}
+     AS INTEGER)`,
 );
-db.exec('UPDATE players SET spirit_current = spirit_max WHERE spirit_current < 50');
+db.exec('UPDATE players SET spirit_current = MIN(spirit_current, spirit_max)');
+db.exec(`UPDATE players SET spirit_current = spirit_max WHERE spirit_current < ${SPIRIT_BASE}`);
 
 // #40 — carry flag on rings. On first introduction of the column, backfill it:
 // rings already assigned to a loadout slot become carried, then remaining slots
