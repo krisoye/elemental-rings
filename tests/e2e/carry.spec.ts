@@ -246,9 +246,9 @@ test('carry: full-carry win → discard in Manage Battle Hand auto-carries the w
     () => (window as any).__encounterState?.pendingWonRing?.ringId !== undefined,
     { timeout: 8000 },
   );
-  expect(typeof (await page.evaluate(() => (window as any).__encounterDiscardRing))).toBe(
-    'function',
-  );
+  // Compute typeof IN the browser — page.evaluate cannot serialize a function
+  // back to Node (it returns undefined), so checking typeof here is mandatory.
+  expect(await page.evaluate(() => typeof (window as any).__encounterDiscardRing)).toBe('function');
   // Confirm the FULL case before the discard (real server state).
   expect((await me(token)).rings.filter((r) => r.in_carry === 1).length).toBe(10);
 

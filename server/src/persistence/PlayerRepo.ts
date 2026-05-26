@@ -413,13 +413,45 @@ export function setInCarry(ringId: string, inCarry: boolean): void {
 }
 
 /**
- * Permanently delete a ring the player owns (the Discard choice on the
- * post-battle won-ring prompt). No-op if the ring is not owned by the player.
+ * Permanently delete a ring the player owns (the Discard choice on the won-ring
+ * prompt / Manage Battle Hand). Nulls the ring out of any loadout slot first so
+ * the delete does not violate the loadout→rings FK constraint (a carried ring
+ * may be assigned to thumb/a1/a2/d1/d2). Runs in a transaction. No-op if the
+ * ring is not owned by the player.
  */
-export function discardRing(playerId: string, ringId: string): { ok: boolean } {
-  const info = deleteRing.run(ringId, playerId);
-  return { ok: info.changes > 0 };
-}
+export const discardRing = db.transaction(
+  (playerId: string, ringId: string): { ok: boolean } => {
+    const loadout = selectLoadout.get(playerId) as LoadoutRow | undefined;
+    if (loadout) {
+      const slots: Record<string, string | null> = {
+        thumb: loadout.thumb,
+        a1: loadout.a1,
+        a2: loadout.a2,
+        d1: loadout.d1,
+        d2: loadout.d2,
+      };
+      let changed = false;
+      for (const key of SLOT_KEYS) {
+        if (slots[key as string] === ringId) {
+          slots[key as string] = null;
+          changed = true;
+        }
+      }
+      if (changed) {
+        updateLoadoutSlot.run({
+          player_id: playerId,
+          thumb: slots.thumb,
+          a1: slots.a1,
+          a2: slots.a2,
+          d1: slots.d1,
+          d2: slots.d2,
+        });
+      }
+    }
+    const info = deleteRing.run(ringId, playerId);
+    return { ok: info.changes > 0 };
+  },
+);
 
 /** The player's carry cap (rings carryable on an expedition). */
 export function getCarryCap(playerId: string): number {
