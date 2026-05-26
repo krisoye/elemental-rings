@@ -96,9 +96,10 @@ test('overworld: player collides with the west perimeter wall', async ({ browser
     timeout: 8000,
   });
 
-  // 8B.3 anchor-derived spawn puts the player at forest_entry (~336, 248), too far
-  // to reach the west wall in 1.5 s. Pre-position them at x=100 so the collision
-  // assertion is independent of spawn position.
+  // 8B.3 anchor-derived spawn is async (loadWaystones runs after create). Wait for
+  // __waystones to be set (cachePayload fires at the end of loadWaystones) so the
+  // anchor reposition has already happened, then override to x=100 for the wall test.
+  await page.waitForFunction(() => !!(window as any).__waystones, { timeout: 8000 });
   await page.evaluate(() => (window as any).__player.setPosition(100, 248));
   await page.keyboard.down('ArrowLeft');
   await page.waitForTimeout(1500);
