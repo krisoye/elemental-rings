@@ -459,16 +459,16 @@ export class EncounterScene extends Phaser.Scene {
       .rectangle(CANVAS_W / 2, CANVAS_H / 2, CANVAS_W, CANVAS_H, 0x000000, 0.75)
       .setInteractive();
     const panel = this.add
-      .rectangle(CANVAS_W / 2, CANVAS_H / 2, 640, 440, 0x222233)
+      .rectangle(CANVAS_W / 2, CANVAS_H / 2, 640, 520, 0x222233)
       .setStrokeStyle(2, 0xffcc88);
     const title = this.add
-      .text(CANVAS_W / 2, CANVAS_H / 2 - 165, 'Manage Battle Hand', {
+      .text(CANVAS_W / 2, CANVAS_H / 2 - 245, 'Manage Battle Hand', {
         fontSize: '18px',
         color: '#ffffff',
       })
       .setOrigin(0.5);
     const close = this.add
-      .text(CANVAS_W / 2 + 290, CANVAS_H / 2 - 170, '✕', { fontSize: '18px', color: '#ff8888' })
+      .text(CANVAS_W / 2 + 290, CANVAS_H / 2 - 245, '✕', { fontSize: '18px', color: '#ff8888' })
       .setOrigin(0.5)
       .setInteractive({ useHandCursor: true })
       .on('pointerdown', () => this.closeManageModal());
@@ -479,7 +479,7 @@ export class EncounterScene extends Phaser.Scene {
     const statLine = this.add
       .text(
         CANVAS_W / 2,
-        CANVAS_H / 2 - 148,
+        CANVAS_H / 2 - 228,
         p
           ? `Day: ${p.game_day ?? 0} | Gold: ${p.gold ?? 0} | Food: ${p.food_units ?? 0} | Spirit: ${p.spirit_current ?? 0}/${p.spirit_max ?? 0} | XP: ${p.aggregate_xp ?? 0}`
           : '',
@@ -494,7 +494,7 @@ export class EncounterScene extends Phaser.Scene {
     const pendingId = localStorage.getItem('er_pending_ring');
     const pendingRing = pendingId ? this.allRings.find((r) => r.id === pendingId) : undefined;
     if (pendingRing) {
-      const py = CANVAS_H / 2 - 150;
+      const py = CANVAS_H / 2 - 168;
       // Pending-ring tile (left) with the same 4-line info as every other tile.
       const pRect = this.add
         .rectangle(CANVAS_W / 2 - 250, py, 72, 80, ELEMENT_COLORS[pendingRing.element] ?? 0x444444)
@@ -527,7 +527,7 @@ export class EncounterScene extends Phaser.Scene {
 
     // Battle slots row (top). Filled slots show the same 4-line info as the
     // Sanctum and get a small [×] discard button.
-    const slotY = CANVAS_H / 2 - 96;
+    const slotY = CANVAS_H / 2 - 70;
     BATTLE_SLOTS.forEach((slot, i) => {
       const sx = CANVAS_W / 2 - 240 + i * 120;
       const ringId = this.manageLoadout[slot] ?? null;
@@ -565,13 +565,14 @@ export class EncounterScene extends Phaser.Scene {
     // the player only sees spare carried rings available for assignment.
     const slottedIds = new Set(Object.values(this.manageLoadout).filter(Boolean) as string[]);
     const availableRings = this.manageRings.filter((r) => !slottedIds.has(r.id));
-    const ringY = CANVAS_H / 2 + 30;
-    this.add
-      .text(CANVAS_W / 2, CANVAS_H / 2 - 24, 'Carried rings (select one, then a slot):', {
+    const ringY = CANVAS_H / 2 + 45;
+    const carriedLbl = this.add
+      .text(CANVAS_W / 2, CANVAS_H / 2 - 5, 'Carried rings (select one, then a slot):', {
         fontSize: '12px',
         color: '#aaccff',
       })
       .setOrigin(0.5);
+    container.add(carriedLbl);
     availableRings.forEach((ring, i) => {
       const col = i % 6;
       const row = Math.floor(i / 6);
@@ -602,7 +603,7 @@ export class EncounterScene extends Phaser.Scene {
     });
 
     // ── Recharge controls (spirit-powered, mirrors Sanctum) ───────────────
-    const rechargeY = CANVAS_H / 2 + 168;
+    const rechargeY = CANVAS_H / 2 + 185;
     const rechargeBtn = this.add
       .text(CANVAS_W / 2 - 100, rechargeY, '[Recharge]', { fontSize: '13px', color: '#ffcc44' })
       .setOrigin(0.5)
