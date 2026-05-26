@@ -4,7 +4,7 @@ import { Orb } from '../objects/Orb';
 import { PlayerDuelist } from '../objects/PlayerDuelist';
 import { OpponentDuelist } from '../objects/OpponentDuelist';
 import { Hud } from '../objects/Hud';
-import type { ExchangeResultPayload } from '../../../shared/types';
+import type { ExchangeResultPayload, BattleSummaryPayload } from '../../../shared/types';
 import {
   PLAYER_X,
   PLAYER_Y,
@@ -36,6 +36,14 @@ export class BattleScene extends Phaser.Scene {
   private prevPhase = '';
   private prevRallyActive = false;
   private returning = false;
+  // #78 ② — post-battle reward summary. The server sends `battleSummary` after
+  // the ENDED state patch, so the message can arrive before, after, or around
+  // the moment checkEnded() renders the banner. We render the lines whenever both
+  // the banner exists (bannerShown) and the summary has arrived; whichever
+  // happens second triggers renderBattleSummary().
+  private pendingBattleSummary: BattleSummaryPayload | null = null;
+  private bannerShown = false;
+  private summaryRendered = false;
 
   constructor() {
     super({ key: 'BattleScene' });
@@ -47,6 +55,9 @@ export class BattleScene extends Phaser.Scene {
     this.prevPhase = '';
     this.prevRallyActive = false;
     this.returning = false;
+    this.pendingBattleSummary = null;
+    this.bannerShown = false;
+    this.summaryRendered = false;
   }
 
   create(): void {
@@ -92,9 +103,23 @@ export class BattleScene extends Phaser.Scene {
     // end before BattleScene mounts (e.g. an instant forfeit), so the listener
     // must outlive any single scene.
 
+    // #78 ② — render the reward lines once both the banner and the summary are
+    // ready. The summary may already have been captured at the connection level
+    // before this scene mounted (Connection.ts stashes it on window), so seed
+    // from there first, then keep listening for a later arrival.
+    if (window.__lastBattleSummary) {
+      this.pendingBattleSummary = window.__lastBattleSummary;
+      this.renderBattleSummary();
+    }
+    const offSummary = room.onMessage('battleSummary', (payload: BattleSummaryPayload) => {
+      this.pendingBattleSummary = payload;
+      this.renderBattleSummary();
+    });
+
     this.events.once('shutdown', () => {
       room.onStateChange.remove(onState);
       offExchange();
+      offSummary();
       window.__scene = null;
     });
   }
@@ -154,10 +179,42 @@ export class BattleScene extends Phaser.Scene {
       .setOrigin(0.5)
       .setDepth(1000);
 
+    // #78 ② — the banner exists now; if the summary already arrived, render the
+    // reward lines (else the onMessage handler will render once it does).
+    this.bannerShown = true;
+    this.renderBattleSummary();
+
     // Under E2E fast mode the 2s winner banner is pure dead time; collapse it to
     // ~0ms so vsAI duels return to EncounterScene immediately (#68).
     const bannerMs = __E2E_FAST__ ? 0 : 2000;
     this.time.delayedCall(bannerMs, () => this.scene.start('EncounterScene'));
+  }
+
+  /**
+   * Render the two reward lines (#78 ②) under the WIN/LOSE banner. Idempotent and
+   * order-independent: it no-ops until BOTH the banner has been drawn
+   * (bannerShown) and the server's `battleSummary` has arrived
+   * (pendingBattleSummary), and only renders once (summaryRendered guard).
+   */
+  private renderBattleSummary(): void {
+    if (this.summaryRendered) return;
+    if (!this.pendingBattleSummary || !this.bannerShown) return;
+    this.summaryRendered = true;
+
+    const { goldGained, xpGained, aggregateXp } = this.pendingBattleSummary;
+    // Below the y=288 banner (48px text + padding ≈ ±40px); depth 1001 keeps the
+    // lines above the banner's depth-1000 background.
+    this.add
+      .text(512, 348, `+${goldGained} gold`, { fontSize: '18px', color: '#ffd700' })
+      .setOrigin(0.5)
+      .setDepth(1001);
+    this.add
+      .text(512, 378, `+${xpGained} XP  (total ${aggregateXp})`, {
+        fontSize: '18px',
+        color: '#88ffaa',
+      })
+      .setOrigin(0.5)
+      .setDepth(1001);
   }
 
   /** Launch the orb telegraph when a defend window opens, including rally volleys. */

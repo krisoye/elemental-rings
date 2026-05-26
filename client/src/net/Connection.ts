@@ -1,5 +1,5 @@
 import { Client, Room } from '@colyseus/sdk';
-import type { BattleRoomOptions } from '../../../shared/types';
+import type { BattleRoomOptions, BattleSummaryPayload } from '../../../shared/types';
 
 declare const __SERVER_URL__: string;
 
@@ -32,6 +32,15 @@ export async function connectToRoom(
   // post-battle prompt (#40).
   room.onMessage('wonRing', (payload: { ringId?: string }) => {
     if (payload?.ringId) localStorage.setItem('er_pending_ring', payload.ringId);
+  });
+
+  // Capture the post-battle reward summary (#78 ②) at the connection level for
+  // the same reason as wonRing: the server sends it after the ENDED patch, and a
+  // duel can end before/around BattleScene's listener registration. Stashing it
+  // on the window lets the E2E harness read it regardless of timing. BattleScene
+  // registers its own handler too, to render the lines while the banner shows.
+  room.onMessage('battleSummary', (payload: BattleSummaryPayload) => {
+    window.__lastBattleSummary = payload;
   });
 
   return room;

@@ -46,6 +46,41 @@ async function walkToZone(page: Page, zone: string): Promise<void> {
   );
 }
 
+/** Walk to the ring-wall zone, open the RING STORAGE overlay, and wait for it. */
+async function openRingStorage(page: Page): Promise<void> {
+  await walkToZone(page, 'ringwall');
+  await page.evaluate(() => (window as any).__sanctumInteract());
+  await page.waitForFunction(() => (window as any).__sanctumOverlayOpen === 'ringwall', {
+    timeout: 5000,
+  });
+}
+
+/** Register a fresh player directly and return its JWT (for pre-load loadout seeding). */
+async function registerAndToken(): Promise<string> {
+  const res = await fetch(`${API_URL}/auth/register`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      username: `sz_${Date.now()}_${Math.floor(Math.random() * 1e6)}`,
+      password: 'pw',
+    }),
+  });
+  return (await res.json()).token;
+}
+
+async function getMe(token: string): Promise<any> {
+  const res = await fetch(`${API_URL}/api/me`, { headers: { Authorization: `Bearer ${token}` } });
+  return res.json();
+}
+
+async function putLoadout(token: string, partial: Record<string, string | null>): Promise<void> {
+  await fetch(`${API_URL}/api/loadout`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+    body: JSON.stringify(partial),
+  });
+}
+
 // ── Scenario 1: Zone prompt on proximity ─────────────────────────────────────
 test('zones: walking into bed registers the zone (prompt visible)', async ({ browser }) => {
   const ctx = await browser.newContext();
@@ -300,5 +335,169 @@ test('zones: __campSleep direct hook still advances game_day without walking', a
   });
   const dayAfter = await page.evaluate(() => (window as any).__campState.player.game_day);
   expect(dayAfter).toBe(dayBefore + 1);
+  await ctx.close();
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// #78 ① — Ring-storage hitbox scrollFactor fix.
+//
+// The ring-storage overlay is camera-pinned (scrollFactor 0) but the interactive
+// leaf `bg` rectangles previously defaulted to scrollFactor 1, so under camera
+// scroll Phaser's hit-test offset the hit area away from the rendered card. The
+// __campHitTestRing probe scrolls the camera 200px in each axis, then hit-tests a
+// card's bg at its (scroll-independent) render position: with the fix the hit
+// area tracks the render and still hits; an unfixed bg would miss.
+// ─────────────────────────────────────────────────────────────────────────────
+
+test('hitbox: ring card hit area aligns with render position after camera scroll', async ({ browser }) => {
+  const ctx = await browser.newContext();
+  await seedAuthToken(ctx);
+  const page = await ctx.newPage();
+  await loadSanctum(page);
+
+  await openRingStorage(page);
+  // The hook is registered only while the overlay is open.
+  await page.waitForFunction(() => typeof (window as any).__campHitTestRing === 'function', {
+    timeout: 5000,
+  });
+
+  // The At-Sanctum pool drives the sanctumGrid cards (scenario 3 confirms ≥10).
+  const ringId = await page.evaluate(() => (window as any).__campState.atSanctum[0].id);
+  const r = await page.evaluate((id) => (window as any).__campHitTestRing(id), ringId);
+  expect(r.found).toBe(true);
+  expect(r.hit).toBe(true);
+  await ctx.close();
+});
+
+test('hitbox: alignment holds after inventory grid rebuild', async ({ browser }) => {
+  const ctx = await browser.newContext();
+  await seedAuthToken(ctx);
+  const page = await ctx.newPage();
+  await loadSanctum(page);
+
+  await openRingStorage(page);
+  await page.waitForFunction(() => typeof (window as any).__campHitTestRing === 'function', {
+    timeout: 5000,
+  });
+
+  // Pick two At-Sanctum rings: move one to the loadout (forces a grid rebuild),
+  // then re-probe the OTHER, still-present card.
+  const { moved, keep } = await page.evaluate(() => {
+    const at = (window as any).__campState.atSanctum;
+    return { moved: at[0].id, keep: at[1].id };
+  });
+
+  // __campAddToLoadout PUTs /api/carry and reloads → populate() rebuilds both
+  // grids (cards destroyed + recreated with the scrollFactor(0) fix re-applied).
+  await page.evaluate((id) => (window as any).__campAddToLoadout(id), moved);
+  await page.waitForFunction(
+    (id) => (window as any).__campState.loadout_pool.some((r: any) => r.id === id),
+    moved,
+    { timeout: 8000 },
+  );
+
+  // The kept card now lives in the loadout grid OR the sanctum grid (order shifts
+  // after the rebuild); the hook checks both. It must still hit.
+  const r = await page.evaluate((id) => (window as any).__campHitTestRing(id), keep);
+  expect(r.found).toBe(true);
+  expect(r.hit).toBe(true);
+  await ctx.close();
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// #78 ④ — Staked-ring passive reminder.
+//
+// THUMB_PASSIVE_INFO maps base elements 0–4 to a named passive; fusions (5–14)
+// have no entry → "no passive". CampScene.refreshPools derives staked_passive
+// from loadout.thumb and publishes it to __campState.
+// ─────────────────────────────────────────────────────────────────────────────
+
+const FIRE_EL = 0;
+const WATER_EL = 1;
+const TIER1_XP_CAP_PASSIVE = 100;
+
+test('passive: base element stake shows passive name + effect', async ({ browser }) => {
+  // Stake a FIRE ring (element 0) as Thumb before the page loads.
+  const token = await registerAndToken();
+  const { rings } = await getMe(token);
+  const fire = rings.find((r: any) => r.element === FIRE_EL);
+  expect(fire).toBeDefined();
+  await putLoadout(token, { thumb: fire.id });
+
+  const ctx = await browser.newContext();
+  await ctx.addInitScript(`localStorage.setItem('er_token', ${JSON.stringify(token)})`);
+  const page = await ctx.newPage();
+  await loadSanctum(page);
+  await openRingStorage(page);
+
+  await page.waitForFunction(
+    () => (window as any).__campState.staked_passive?.name === 'Kindling',
+    { timeout: 5000 },
+  );
+  const p = await page.evaluate(() => (window as any).__campState.staked_passive);
+  expect(p.name).toBe('Kindling');
+  expect(p.effect).toMatch(/Fire rings/);
+  await ctx.close();
+});
+
+test('passive: fusion stake shows no passive', async ({ browser }) => {
+  // Build a fusion ring: max two Tier-1 parents (Fire + Water), fuse → Steam (5),
+  // then stake it as Thumb. Fusions have no THUMB_PASSIVE_INFO entry.
+  const token = await registerAndToken();
+  const { rings } = await getMe(token);
+  const fire = rings.find((r: any) => r.element === FIRE_EL);
+  const water = rings.find((r: any) => r.element === WATER_EL);
+  for (const id of [fire.id, water.id]) {
+    await fetch(`${API_URL}/api/test/set-ring-xp`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ ringId: id, xp: TIER1_XP_CAP_PASSIVE }),
+    });
+  }
+  const fuseRes = await fetch(`${API_URL}/api/fusion/combine`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+    body: JSON.stringify({ ringId1: fire.id, ringId2: water.id }),
+  });
+  const { ring: fusionRing } = await fuseRes.json();
+  expect(fusionRing.element).toBeGreaterThanOrEqual(5); // a fusion element
+  await putLoadout(token, { thumb: fusionRing.id });
+
+  const ctx = await browser.newContext();
+  await ctx.addInitScript(`localStorage.setItem('er_token', ${JSON.stringify(token)})`);
+  const page = await ctx.newPage();
+  await loadSanctum(page);
+  await openRingStorage(page);
+
+  await page.waitForFunction(
+    () =>
+      (window as any).__campState.staked_passive != null &&
+      (window as any).__campState.staked_passive.name === null,
+    { timeout: 5000 },
+  );
+  const p = await page.evaluate(() => (window as any).__campState.staked_passive);
+  expect(p.name).toBe(null);
+  expect(p.effect).toMatch(/no passive/);
+  await ctx.close();
+});
+
+test('passive: no thumb stake returns null', async ({ browser }) => {
+  // Explicitly clear the Thumb slot before loading the page.
+  const token = await registerAndToken();
+  await putLoadout(token, { thumb: null });
+
+  const ctx = await browser.newContext();
+  await ctx.addInitScript(`localStorage.setItem('er_token', ${JSON.stringify(token)})`);
+  const page = await ctx.newPage();
+  await loadSanctum(page);
+  await openRingStorage(page);
+
+  // __campState is published with staked_passive present; for an empty thumb it
+  // is exactly null. Wait for the camp state then assert.
+  await page.waitForFunction(() => 'staked_passive' in ((window as any).__campState ?? {}), {
+    timeout: 5000,
+  });
+  const p = await page.evaluate(() => (window as any).__campState.staked_passive);
+  expect(p).toBe(null);
   await ctx.close();
 });

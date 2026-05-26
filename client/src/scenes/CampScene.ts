@@ -3,7 +3,7 @@ import { InventoryGrid, type RingData } from '../objects/InventoryGrid';
 import { LoadoutPanel, type LoadoutSlot } from '../objects/LoadoutPanel';
 import { StakePanel } from '../objects/StakePanel';
 import { FusionPanel } from '../objects/FusionPanel';
-import { ELEMENT_NAMES, CANVAS_W, CANVAS_H } from '../Constants';
+import { ELEMENT_NAMES, CANVAS_W, CANVAS_H, THUMB_PASSIVE_INFO } from '../Constants';
 import { Player } from '../objects/world/Player';
 import { InteractionZone } from '../objects/world/InteractionZone';
 
@@ -64,6 +64,13 @@ export class CampScene extends Phaser.Scene {
   private loadoutHeaderText!: Phaser.GameObjects.Text;
   private statLineText!: Phaser.GameObjects.Text;
   private statusText!: Phaser.GameObjects.Text;
+  // #78 ④ — last-computed Thumb passive reminder (recomputed every refreshPools),
+  // mirrored into __campState and rendered as a strip in the ring-storage overlay.
+  private stakedPassive: { name: string | null; effect: string } | null = null;
+  // The overlay's passive-reminder Text strip, alive only while the ring-storage
+  // overlay is open (it lives inside the overlay container, so closeOverlay's
+  // container destroy reclaims it). Null while the overlay is closed.
+  private passiveLabel: Phaser.GameObjects.Text | null = null;
 
   // Cached snapshot of the last /api/me load.
   private rings: RingData[] = [];
@@ -164,6 +171,7 @@ export class CampScene extends Phaser.Scene {
       window.__campFuse = undefined;
       window.__campOpenTeleport = undefined;
       window.__campTeleport = undefined;
+      window.__campHitTestRing = undefined;
       window.__teleportState = undefined;
       window.__campState = undefined;
       window.__fusionState = undefined;
@@ -394,6 +402,10 @@ export class CampScene extends Phaser.Scene {
       this.releasePanel(c, this.loadoutGrid);
       this.releasePanel(c, this.stakePanel);
       this.releasePanel(c, this.loadoutPanel);
+      // The strip lives inside the overlay container — the container destroy
+      // reclaims it, so just drop the stale reference (#78 ④).
+      this.passiveLabel = null;
+      window.__campHitTestRing = undefined;
     });
 
     // Column headers.
@@ -432,6 +444,49 @@ export class CampScene extends Phaser.Scene {
     );
     // Live status echo (errors from carry / assign).
     c.add(this.add.text(40, 430, this.statusText.text, { fontSize: '12px', color: '#ff8888' }).setName('overlay-status').setScrollFactor(0));
+
+    // #78 ④ — render the Thumb passive reminder now the overlay (and its adopted
+    // stake card) exist. refreshPools may have already run while the overlay was
+    // closed, so draw from the cached snapshot here.
+    this.renderPassiveStrip();
+
+    // #78 ① — hit-test probe. Scrolls the camera past a card's half-size, then
+    // hit-tests the card's bg at its (scroll-independent) render position. With
+    // the scrollFactor(0) fix applied the hit area tracks the render, so the test
+    // still hits; an unfixed (scrollFactor 1) bg would miss. Registered only
+    // while this overlay is open; cleared in the overlay's onClose above.
+    //
+    // The follow camera lerps its scroll back toward the player inside its own
+    // preRender, so we stopFollow → setScroll → preRender (now no re-lerp; this
+    // also rebuilds matrixCombined that hitTest's getWorldPoint reads) → hitTest,
+    // then restore scroll + follow synchronously before the next render frame.
+    // useBounds is disabled during the probe so the +200 scroll is never clamped
+    // to a no-op (the ringwall sits at the map edge, where bounds would otherwise
+    // pin one axis and mask the bug).
+    window.__campHitTestRing = (ringId: string): { found: boolean; hit: boolean } => {
+      const cam = this.cameras.main;
+      const bg = this.sanctumGrid.getCardBg(ringId) ?? this.loadoutGrid.getCardBg(ringId);
+      if (!bg) return { found: false, hit: false };
+      const m = bg.getWorldTransformMatrix(); // render-space (scroll-independent)
+      const prevX = cam.scrollX;
+      const prevY = cam.scrollY;
+      const prevBounds = cam.useBounds;
+      cam.stopFollow();
+      cam.useBounds = false;
+      cam.setScroll(prevX + 200, prevY + 200);
+      cam.preRender(); // rebuild matrixCombined at the scrolled position
+      const out: Phaser.GameObjects.GameObject[] = [];
+      this.input.manager.hitTest(
+        { x: m.tx, y: m.ty } as unknown as Phaser.Input.Pointer,
+        [bg],
+        cam,
+        out,
+      );
+      cam.useBounds = prevBounds;
+      cam.setScroll(prevX, prevY);
+      cam.startFollow(this.player, true, 0.1, 0.1);
+      return { found: true, hit: out.indexOf(bg) !== -1 };
+    };
   }
 
   /**
@@ -796,6 +851,18 @@ export class CampScene extends Phaser.Scene {
     this.loadoutPanel.updateFromLoadout(this.loadout, this.ringMap);
     this.stakePanel.updateFromLoadout(this.loadout.thumb ?? null, this.ringMap);
 
+    // #78 ④ — derive the Thumb passive reminder. No staked Thumb ring → null; a
+    // base element (0–4) → its named passive; a fusion (5–14, no entry) → an
+    // explicit "no passive" note. The server owns the real passive at duel start.
+    const thumbRing = this.loadout.thumb ? this.ringMap.get(this.loadout.thumb) : undefined;
+    const passiveInfo = thumbRing ? THUMB_PASSIVE_INFO[thumbRing.element] : undefined;
+    this.stakedPassive = !thumbRing
+      ? null
+      : passiveInfo
+      ? { name: passiveInfo.name, effect: passiveInfo.effect }
+      : { name: null, effect: 'Fused rings grant no passive' };
+    this.renderPassiveStrip();
+
     this.loadoutHeaderText.setText(`Loadout (${carriedCount}/${this.carryCap})`);
 
     window.__campState = {
@@ -813,7 +880,40 @@ export class CampScene extends Phaser.Scene {
       spirit_max: player.spirit_max ?? 0,
       food_units: player.food_units ?? 0,
       aggregate_xp: player.aggregate_xp ?? 0,
+      staked_passive: this.stakedPassive,
     };
+  }
+
+  /**
+   * Render the Thumb passive reminder inside the open ring-storage overlay (#78
+   * ④). A no-op while the overlay is closed (the label lives in the overlay
+   * container). When a passive is known, shows two lines beneath the Thumb card:
+   * the passive name (or "No passive" for fusions) and its effect text. Recomputed
+   * whenever refreshPools runs so it tracks live stake/loadout changes.
+   */
+  private renderPassiveStrip(): void {
+    if (this.overlayName !== 'ringwall' || !this.overlay) return;
+    const text = !this.stakedPassive
+      ? ''
+      : this.stakedPassive.name
+      ? `${this.stakedPassive.name}\n${this.stakedPassive.effect}`
+      : `No passive\n${this.stakedPassive.effect}`;
+    if (!this.passiveLabel) {
+      // Beneath the stake card (adopted at x=580, y=120; card is ~90px tall).
+      this.passiveLabel = this.add
+        .text(580, 230, text, {
+          fontSize: '11px',
+          color: '#ffcc88',
+          wordWrap: { width: 200 },
+          lineSpacing: 2,
+        })
+        .setScrollFactor(0)
+        .setDepth(4001) // above the overlay container (depth 4000)
+        .setName('staked-passive-strip');
+      this.overlay.add(this.passiveLabel);
+    } else {
+      this.passiveLabel.setText(text);
+    }
   }
 
   // ── Carry moves (#40) ───────────────────────────────────────────────────

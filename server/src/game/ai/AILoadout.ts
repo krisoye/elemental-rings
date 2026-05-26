@@ -110,6 +110,27 @@ export function previewStakeElement(personality: AIPersonality, rng: Rng): numbe
   return templates[rng.intBetween(0, templates.length - 1)].thumb;
 }
 
+/**
+ * Full opponent preview for the encounter screen (#78 ③): the staked thumb ring
+ * element/tier/XP plus the loadout's total XP across all five slots. Generates
+ * the same loadout the BattleRoom will (identical RNG seed) so the preview
+ * matches the duel exactly. Tier 1 and per-slot XP come straight from
+ * generateAILoadout (only the thumb carries PERSONALITY_THUMB_XP; the rest are
+ * 0), so totalXp equals the thumb XP under the default tier/uses/xp.
+ */
+export function previewOpponent(
+  personality: AIPersonality,
+  rng: Rng,
+): { element: number; stakeTier: number; stakeXp: number; totalXp: number } {
+  const loadout = generateAILoadout(personality, rng);
+  const thumb = loadout.thumb;
+  const element = thumb?.element ?? 0;
+  const stakeTier = thumb?.tier ?? 1;
+  const stakeXp = thumb?.xp ?? 0;
+  const totalXp = Object.values(loadout).reduce((sum, slot) => sum + (slot?.xp ?? 0), 0);
+  return { element, stakeTier, stakeXp, totalXp };
+}
+
 /** All base personalities in display order (excludes PvP). */
 export const AI_PERSONALITIES: AIPersonality[] = [
   'AGGRESSIVE',

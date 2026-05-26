@@ -33,6 +33,9 @@ export class StakePanel extends Phaser.GameObjects.Container {
     const cy = CARD_H / 2;
 
     this.bg = scene.add.rectangle(cx, cy, CARD_W, CARD_H, 0x333333);
+    // Match the camera-pinned ring-storage overlay so the hit area aligns with
+    // the render position under camera scroll (#78 ①).
+    this.bg.setScrollFactor(0);
     this.bg.setStrokeStyle(2, 0xaa8800);
 
     this.titleLbl = scene.add

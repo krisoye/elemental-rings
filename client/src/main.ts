@@ -6,7 +6,12 @@ import { OverworldScene } from './scenes/OverworldScene';
 import { EncounterScene } from './scenes/EncounterScene';
 import { LobbyScene } from './scenes/LobbyScene';
 import { BattleScene } from './scenes/BattleScene';
-import type { ExchangeResultPayload, AIPersonality, BattleRoomOptions } from '../../shared/types';
+import type {
+  ExchangeResultPayload,
+  AIPersonality,
+  BattleRoomOptions,
+  BattleSummaryPayload,
+} from '../../shared/types';
 import { CANVAS_W, CANVAS_H } from './Constants';
 
 declare global {
@@ -61,6 +66,17 @@ declare global {
     // to find the (now anchor-derived) re-entry door rather than a fixed point.
     __sanctumReturnCenter?: { x: number; y: number };
     __lastExchangeResult: ExchangeResultPayload | null;
+    // Latest post-battle reward summary (#78 ②), captured at the connection level
+    // (Connection.ts) since the server sends it after the ENDED state patch and a
+    // duel can end before BattleScene mounts. Read by E2E to assert gold/XP.
+    __lastBattleSummary: BattleSummaryPayload | null;
+    // Latest /api/encounter/preview snapshot per AI personality (#78 ③),
+    // published by EncounterScene after the fetch resolves. AI keys only (no PVP).
+    // Cleared on EncounterScene shutdown. Read by E2E to assert opponent stats.
+    __encounterPreview?: Record<
+      string,
+      { element: number; stakeTier: number; stakeXp: number; totalXp: number }
+    >;
     __slotPositions: { x: number; y: number }[];
     __orbLaunchCount: number;
     connectToRoom: (roomName: string, opts?: BattleRoomOptions) => Promise<void>;
@@ -92,6 +108,10 @@ declare global {
     // #63 teleport hooks — open the teleport modal / travel to a waystone.
     __campOpenTeleport?: () => Promise<void>;
     __campTeleport?: (waystoneId: string) => Promise<void>;
+    // #78 ① hit-test probe — scrolls the camera, then hit-tests a ring card bg at
+    // its render position to prove the (scrollFactor-fixed) hit area tracks the
+    // render, not the world. Registered while the ring-storage overlay is open.
+    __campHitTestRing?: (ringId: string) => { found: boolean; hit: boolean };
     // Teleport modal snapshot (set by CampScene.openTeleportModal before render).
     __teleportState?: {
       anchor: string;
@@ -128,6 +148,10 @@ declare global {
       food_units: number;
       // XP-derived spirit: aggregate ring XP (spirit_max = SPIRIT_BASE + this).
       aggregate_xp: number;
+      // #78 ④ — Thumb passive reminder. null when no Thumb ring is staked; a base
+      // element yields { name, effect }; a fusion yields { name: null, effect: '…
+      // no passive' }.
+      staked_passive?: { name: string | null; effect: string } | null;
     };
     // #40 encounter modal hooks.
     __encounterManageBattleHand?: () => void;
@@ -149,6 +173,7 @@ declare global {
 window.__room = null;
 window.__scene = null;
 window.__lastExchangeResult = null;
+window.__lastBattleSummary = null;
 window.__slotPositions = [];
 window.__orbLaunchCount = 0;
 window.connectToRoom = async (roomName: string, opts?: BattleRoomOptions): Promise<void> => {

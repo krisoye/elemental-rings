@@ -10,15 +10,16 @@
 //   - Grass floor everywhere, ringed by a 1-tile perimeter wall (tree).
 //   - Tree groves (circle-fill) scattered across the map for internal structure,
 //     auto-cleared around key objects so they never block spawn/waystones.
-//   - Grass clearings carved around each Anchorage waystone and the Sanctum.
+//   - Grass clearings carved around each Anchorage and the Sanctum.
 //   - Dirt paths connecting spawn → forest_entry → forest_glade → forest_depths.
-//   - An accent (dirt) tile beneath each waystone marker.
+//   - An accent (dirt) tile beneath each Anchorage + pure Waystone marker.
 //   - An `objects` layer that PRESERVES 8A's `spawn` point (128,128) and
 //     `sanctum_return` rectangle (center 224,224) so overworld-transition.spec.ts
-//     stays green, and ADDS three waystone objects (name `waystone`, custom
-//     property `waystoneId`) spread across the map.
+//     stays green, and ADDS three Anchorage objects (name `anchorage`, custom
+//     property `waystoneId`) plus two pure Waystone markers (name `waystone`,
+//     visual-only, no `waystoneId`) spread across the map.
 //
-// Waystone ids MUST match shared/waystones.ts (a Vitest drift test enforces the
+// Anchorage ids MUST match shared/waystones.ts (a Vitest drift test enforces the
 // id-set parity). Positions are owned here, not in the catalog.
 //
 // Run from the client/ directory:  node scripts/gen-overworld-map.mjs
@@ -38,15 +39,25 @@ const GID_FLOOR = 2;
 const GID_WALL = 3;
 const GID_ACCENT = 4;
 
-// Waystone placements. `id` matches shared/waystones.ts; tile coords are chosen
-// to spread the stones across the map, clear of spawn (tile 4,4) and
+// Anchorage placements (home base / teleport destinations: campfire + ground
+// ring, NO standing stone). `id` matches shared/waystones.ts; tile coords are
+// chosen to spread them across the map, clear of spawn (tile 4,4) and
 // sanctum_return (tiles 6-7, 6-7). forest_glade sits within 8B.2's
 // COMPASS_RANGE=400px of spawn (~6 tiles away); forest_depths is intentionally
 // far (deep south-east) so the compass test for it reads as out-of-range.
-const WAYSTONES = [
+const ANCHORAGES = [
   { id: 'forest_entry', tx: 10, ty: 6 },
   { id: 'forest_glade', tx: 9, ty: 10 },
   { id: 'forest_depths', tx: 33, ty: 24 },
+];
+
+// Pure Waystone placements (discoverable standing-stone markers scattered in
+// the world, NO campfire). Visual-only — no `waystoneId`, no server record, so
+// they render the stone but do not attune. Positions are pre-verified clear of
+// the GROVES circles (see the grove-clearance check in the dev brief).
+const WAYSTONES = [
+  { tx: 20, ty: 8 },
+  { tx: 5, ty: 24 },
 ];
 
 // Tree groves (circle centre + radius in tiles) so the biome has organic
@@ -67,9 +78,9 @@ const CLEAR_R = 4;
 const KEY_TILES = [
   { tx: 4, ty: 4 }, // spawn (128/32=4, 128/32=4)
   { tx: 6, ty: 6 }, // sanctum_return center (192/32=6, 192/32=6)
-  { tx: 10, ty: 6 }, // forest_entry
-  { tx: 9, ty: 10 }, // forest_glade
-  { tx: 33, ty: 24 }, // forest_depths
+  { tx: 10, ty: 6 }, // forest_entry (Anchorage)
+  { tx: 9, ty: 10 }, // forest_glade (Anchorage)
+  { tx: 33, ty: 24 }, // forest_depths (Anchorage)
 ];
 
 function isClearZone(tx, ty) {
@@ -149,13 +160,13 @@ function buildGround() {
     }
   }
 
-  // 4. Anchorage clearings — 3-tile-radius floor circle around each waystone.
-  for (const w of WAYSTONES) {
+  // 4. Anchorage clearings — 3-tile-radius floor circle around each Anchorage.
+  for (const a of ANCHORAGES) {
     for (let dy = -3; dy <= 3; dy++) {
       for (let dx = -3; dx <= 3; dx++) {
         if (dx * dx + dy * dy > 9) continue;
-        const tx = w.tx + dx,
-          ty = w.ty + dy;
+        const tx = a.tx + dx,
+          ty = a.ty + dy;
         if (tx <= 0 || ty <= 0 || tx >= WIDTH - 1 || ty >= HEIGHT - 1) continue;
         data[at(tx, ty)] = GID_FLOOR;
       }
@@ -181,7 +192,13 @@ function buildGround() {
   bresenhamPath(data, 10, 6, 9, 10);
   bresenhamPath(data, 9, 10, 33, 24);
 
-  // 7. Accent tile beneath each waystone (walkable highlight under the marker).
+  // 7. Accent tile beneath each Anchorage (walkable highlight under the marker).
+  for (const a of ANCHORAGES) {
+    data[at(a.tx, a.ty)] = GID_ACCENT;
+  }
+
+  // 8. Accent tile beneath each pure Waystone (standing-stone marker). Separate
+  // loop since Waystones are a distinct concept from Anchorages.
   for (const w of WAYSTONES) {
     data[at(w.tx, w.ty)] = GID_ACCENT;
   }
@@ -189,7 +206,11 @@ function buildGround() {
   return data;
 }
 
-/** Build the `objects` layer: spawn + sanctum_return (8A) + 3 waystones (8B). */
+/**
+ * Build the `objects` layer: spawn + sanctum_return (8A), 3 Anchorages (campfire
+ * + ground ring destinations, name `anchorage`, with `waystoneId`), and 2 pure
+ * Waystones (visual standing-stone markers, name `waystone`, no `waystoneId`).
+ */
 function buildObjects() {
   const objects = [
     {
@@ -216,9 +237,27 @@ function buildObjects() {
     },
   ];
 
-  // Waystone objects: a small point-ish rectangle centred on the accent tile, so
-  // the InteractionZone overlap box sits where the stone is drawn.
+  // Anchorage objects: a small rectangle centred on the accent tile, so the
+  // InteractionZone overlap box sits where the campfire is drawn. Carries the
+  // `waystoneId` property linking it to the server attunement record.
   let nextId = 3;
+  for (const a of ANCHORAGES) {
+    objects.push({
+      id: nextId++,
+      name: 'anchorage',
+      x: a.tx * TILE,
+      y: a.ty * TILE,
+      width: TILE,
+      height: TILE,
+      rotation: 0,
+      visible: true,
+      point: false,
+      properties: [{ name: 'waystoneId', type: 'string', value: a.id }],
+    });
+  }
+
+  // Pure Waystone objects: visual-only standing-stone markers. No `waystoneId`
+  // property → the scene renders the stone but does not register an attune zone.
   for (const w of WAYSTONES) {
     objects.push({
       id: nextId++,
@@ -230,7 +269,6 @@ function buildObjects() {
       rotation: 0,
       visible: true,
       point: false,
-      properties: [{ name: 'waystoneId', type: 'string', value: w.id }],
     });
   }
 
@@ -250,7 +288,7 @@ const map = {
   version: '1.10',
   tiledversion: '1.10.2',
   nextlayerid: 3,
-  nextobjectid: 3 + WAYSTONES.length,
+  nextobjectid: 3 + ANCHORAGES.length + WAYSTONES.length,
   tilesets: [
     {
       firstgid: 1,
