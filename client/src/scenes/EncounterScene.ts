@@ -122,9 +122,18 @@ export class EncounterScene extends Phaser.Scene {
     window.__encounterSelect = (choice: Choice): void => {
       this.select(choice);
     };
+    // Same path, plus AI-strength overrides so a test can force the outcome
+    // (aiHearts:1 → guaranteed win; aiHearts:99 → guaranteed loss).
+    window.__encounterSelectWithOverrides = (
+      choice: Choice,
+      aiOverrides?: { aiHearts?: number; aiUses?: number },
+    ): void => {
+      this.select(choice, aiOverrides);
+    };
     window.__encounterManageBattleHand = (): void => void this.openManageBattleHand();
     this.events.once('shutdown', () => {
       window.__encounterSelect = undefined;
+      window.__encounterSelectWithOverrides = undefined;
       window.__encounterManageBattleHand = undefined;
     });
 
@@ -156,7 +165,7 @@ export class EncounterScene extends Phaser.Scene {
   }
 
   /** Single entry point for both real marker clicks and the E2E hook. */
-  private select(choice: Choice): void {
+  private select(choice: Choice, aiOverrides?: { aiHearts?: number; aiUses?: number }): void {
     if (this.busy) return;
     this.busy = true;
 
@@ -166,11 +175,18 @@ export class EncounterScene extends Phaser.Scene {
     }
 
     this.statusText.setText(`Approaching ${choice}...`);
-    void this.startAIDuel(choice);
+    void this.startAIDuel(choice, aiOverrides);
   }
 
-  /** Connect to a fresh vsAI room, then hand off to the BattleScene. */
-  private async startAIDuel(personality: AIPersonality): Promise<void> {
+  /**
+   * Connect to a fresh vsAI room, then hand off to the BattleScene. `aiOverrides`
+   * (deterministic E2E only — see BattleRoomOptions) forces the duel's outcome by
+   * weakening or hardening the AI; production marker clicks never pass them.
+   */
+  private async startAIDuel(
+    personality: AIPersonality,
+    aiOverrides?: { aiHearts?: number; aiUses?: number },
+  ): Promise<void> {
     const token = localStorage.getItem('er_token') ?? '';
     try {
       await fetch(`${API_BASE}/api/stake/lock`, {
@@ -178,11 +194,19 @@ export class EncounterScene extends Phaser.Scene {
         headers: { Authorization: `Bearer ${token}` },
       });
     } catch { /* non-fatal */ }
-    const room = await connectToRoom('battle-ai', { vsAI: true, personality, token });
+    const room = await connectToRoom('battle-ai', {
+      vsAI: true,
+      personality,
+      token,
+      ...aiOverrides,
+    });
 
     let transitioned = false;
     const onState = (state: any): void => {
-      if (state.phase === 'ATTACK_SELECT' && !transitioned) {
+      // Hand off to BattleScene once the duel is live (ATTACK_SELECT) — or if it
+      // already ENDED before we saw ATTACK_SELECT (e.g. an instant forfeit by a
+      // depleted AI), so BattleScene can still show the result and return to camp.
+      if ((state.phase === 'ATTACK_SELECT' || state.phase === 'ENDED') && !transitioned) {
         transitioned = true;
         room.onStateChange.remove(onState);
         this.scene.start('BattleScene');

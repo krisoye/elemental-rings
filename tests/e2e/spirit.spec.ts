@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test';
+import { driveAiDuel } from './helpers';
 
 // #41 — Spirit / food system E2E. Asserts on REAL server state (API responses)
 // and the CampScene __campState hook. Sleep costs food and restores spirit;
@@ -151,9 +152,14 @@ test('spirit: recharge a depleted ring spends spirit equal to uses restored', as
 }, 60000);
 
 // ── Spirit at 0 → 400 on recharge ─────────────────────────────────────────────
-// Accumulate ring-use deficits across vsAI duels until the total exceeds the
-// 30-spirit max, then recharge ring-by-ring 1 use at a time until spirit hits 0
-// and assert the next recharge of a still-depleted ring returns 400.
+//
+// DETERMINISTIC and always-run (no skip). A real forced LOSS (unkillable AI via
+// aiHearts:99) depletes the protagonist's rings, producing a genuine combat
+// deficit. We then drive spirit to exactly 0 via the test-only
+// /api/test/drain-spirit route (gated by E2E_TEST_ROUTES) — necessary because a
+// full loadout (5 rings × 3 uses = 15 spendable) can never legitimately exhaust
+// the spirit_max of 30, so the "no spirit" guard has no gameplay path. With
+// spirit at 0, recharging the still-depleted ring must return 400.
 test('spirit: recharge returns 400 when player has no spirit', async ({ browser }) => {
   const { token } = await register();
   const ctx = await browser.newContext();
@@ -161,81 +167,31 @@ test('spirit: recharge returns 400 when player has no spirit', async ({ browser 
   const page = await ctx.newPage();
   await page.goto(URL);
 
-  const runDuel = async (): Promise<void> => {
-    await page.waitForFunction(() => typeof (window as any).__campGoEncounter === 'function', {
-      timeout: 8000,
-    });
-    await page.evaluate(() => (window as any).__campGoEncounter());
-    await page.waitForFunction(() => typeof (window as any).__encounterSelect === 'function', {
-      timeout: 10000,
-    });
-    await page.evaluate(() => (window as any).__encounterSelect('AGGRESSIVE'));
-    const driver = setInterval(() => {
-      void page.evaluate(() => {
-        const room = (window as any).__room;
-        if (room?.state?.phase === 'ATTACK_SELECT' && room?.state?.currentAttackerId === room?.sessionId) {
-          room.send('selectAttack', { slot: 'a1' });
-        } else if (room?.state?.phase === 'DEFEND_WINDOW' && room?.state?.currentAttackerId !== room?.sessionId) {
-          room.send('submitDefense', { slot: 'd1' });
-        }
-      });
-    }, 250);
-    try {
-      await page.waitForFunction(() => (window as any).__room?.state?.phase === 'ENDED', {
-        timeout: 30000,
-      });
-    } finally {
-      clearInterval(driver);
-    }
-    await page.waitForFunction(() => (window as any).__game?.scene?.isActive('CampScene'), {
-      timeout: 15000,
-    });
-  };
-
-  // One duel is enough to deplete several rings; deficit is typically large
-  // enough to exhaust 30 spirit, but a single duel's deficit can be < 30. After
-  // one duel, recharge 1 use at a time until spirit is 0. If the accumulated
-  // deficit is below spirit_max we cannot reach 0 — skip rather than fail (the
-  // 0-spirit stop is also covered by the recharge-all test and the server's
-  // affordable===0 guard).
-  await runDuel();
-  // Resolve any won-ring prompt so it does not interfere with the API drain.
-  const pending = await page.evaluate(() => localStorage.getItem('er_pending_ring'));
-  if (pending) {
-    await page.evaluate(() => (window as any).__campResolveWonRing?.('leave'));
-    await page.waitForFunction(() => (window as any).__campState !== undefined, { timeout: 5000 });
-  }
+  // Forced LOSS against an unkillable AI → the protagonist's rings are depleted
+  // through real combat (a genuine, non-mocked deficit).
+  await driveAiDuel(page, { personality: 'AGGRESSIVE', aiHearts: 99 });
   const depleted = (await me(token)).rings.find((r) => r.current_uses < r.max_uses);
-  test.skip(!depleted, 'No depleted ring this duel');
+  expect(depleted).toBeDefined(); // the loss spent at least one ring use
 
-  let guard = 0;
-  while (guard++ < 200) {
-    const { player, rings } = await me(token);
-    if (player.spirit_current <= 0) break;
-    const next = rings.find((r) => r.current_uses < r.max_uses);
-    if (!next) break; // exhausted deficits before spirit hit 0
-    await fetch(`${API_URL}/api/spirit/recharge`, {
-      method: 'POST',
-      headers: authJson(token),
-      body: JSON.stringify({ ringId: next.id, uses: 1 }),
-    });
-  }
+  // Drive spirit to exactly 0 (test-only route — see routes.ts gating note).
+  const drainRes = await fetch(`${API_URL}/api/test/drain-spirit`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  expect(drainRes.status).toBe(200);
+  expect((await drainRes.json()).spirit_current).toBe(0);
+  expect((await me(token)).player.spirit_current).toBe(0);
 
-  const after = await me(token);
-  test.skip(after.player.spirit_current > 0, 'Total deficit < spirit_max; cannot reach 0 spirit this run');
-
-  // Spirit is 0. Recharging any still-depleted ring must 400.
-  const stillDepleted = after.rings.find((r) => r.current_uses < r.max_uses);
-  test.skip(!stillDepleted, 'All rings full at 0 spirit; no recharge to reject');
+  // With no spirit, recharging the still-depleted ring must be rejected (400).
   const res = await fetch(`${API_URL}/api/spirit/recharge`, {
     method: 'POST',
     headers: authJson(token),
-    body: JSON.stringify({ ringId: stillDepleted!.id }),
+    body: JSON.stringify({ ringId: depleted!.id }),
   });
   expect(res.status).toBe(400);
   expect((await res.json()).error).toMatch(/spirit/i);
   await ctx.close();
-}, 120000);
+}, 90000);
 
 // ── recharge-all fills in priority order and stops at spirit 0 ────────────────
 test('spirit: recharge-all returns remaining spirit and never goes negative', async ({ browser }) => {

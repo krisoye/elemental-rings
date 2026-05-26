@@ -95,7 +95,14 @@ export class BattleRoom extends Room<{ state: BattleState }> {
       // (inside AIController) is unaffected by the number of template variants.
       const loadoutRng = makeRng(seed ^ 0x1a2b3c4d);
       const aiSpec = generateAILoadout(personality, loadoutRng);
-      this.seatPlayer(AI_ID, personality, aiSpec);
+      // Deterministic-test AI-strength overrides (see BattleRoomOptions): a weak
+      // AI yields a guaranteed protagonist win; a tanky AI a guaranteed loss.
+      // Applied to the AI seat ONLY — the human is seated from its real loadout.
+      const aiOverrides =
+        options.aiHearts !== undefined || options.aiUses !== undefined
+          ? { hearts: options.aiHearts, uses: options.aiUses }
+          : undefined;
+      this.seatPlayer(AI_ID, personality, aiSpec, aiOverrides);
       this.ai = new AIController(this, AI_ID, personality, seed);
     }
   }
@@ -112,18 +119,24 @@ export class BattleRoom extends Room<{ state: BattleState }> {
     id: string,
     displayName: string,
     spec?: Partial<Record<SlotKey, SlotSpec>>,
+    overrides?: { hearts?: number; uses?: number },
   ): void {
     const ps = new PlayerState();
     ps.playerId = id;
     ps.displayName = displayName;
-    ps.hearts = STARTING_HEARTS;
+    // `overrides` (deterministic E2E only, AI seat only) replaces hearts and/or
+    // sets a uniform per-slot uses value so a duel outcome can be forced.
+    ps.hearts = overrides?.hearts ?? STARTING_HEARTS;
 
     for (const key of Object.keys(DEFAULT_LOADOUT) as SlotKey[]) {
       const ring = ps.getSlot(key);
       const slotSpec = spec?.[key];
       const element = slotSpec ? slotSpec.element : DEFAULT_LOADOUT[key];
-      const currentUses = slotSpec ? slotSpec.currentUses : STARTING_USES;
-      const maxUses = slotSpec ? slotSpec.maxUses : STARTING_USES;
+      const baseCurrent = slotSpec ? slotSpec.currentUses : STARTING_USES;
+      const baseMax = slotSpec ? slotSpec.maxUses : STARTING_USES;
+      const currentUses = overrides?.uses ?? baseCurrent;
+      const maxUses =
+        overrides?.uses !== undefined ? Math.max(baseMax, overrides.uses) : baseMax;
       ring.element = element;
       ring.tier = slotSpec ? slotSpec.tier : 1;
       ring.currentUses = currentUses;

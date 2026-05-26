@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test';
+import { driveAiDuel } from './helpers';
 
 // #40 — Carry system E2E. Asserts on REAL server state (API responses) and the
 // CampScene __campState hook, never mocked values. Mirrors the harness style of
@@ -177,38 +178,53 @@ test('carry: won-ring modal Add carries the pending ring (room case)', async ({ 
 
 // ── Post-battle won-ring modal: full case (Swap → displaced ring → Sanctum) ───
 //
-// The full-case modal renders when carry is at the cap. We carry all 10 starters
-// (carry full) and designate one carried ring as the pending "won" ring so the
-// modal shows the Swap UI. Resolving Swap with a different carried ring as the
-// displacement target must (a) leave the won ring carried, (b) return the
-// displaced ring to the Sanctum (in_carry = 0) WITHOUT deleting it, and (c)
-// clear er_pending_ring. This is deterministic and combat-free. The room-case
-// (Add) won-ring flow is covered by the previous test.
+// End-to-end via a REAL forced win: a 1-heart AI (aiHearts:1) dies on the first
+// hit, so the protagonist wins deterministically and the server grants a genuine
+// 11th ring, storing its id in er_pending_ring (the `wonRing` message). We then
+// fill the carry cap (10) with the originals so the prompt opens in the FULL
+// (Swap) case, and assert the swap (a) carries the won ring, (b) returns the
+// displaced ring to the Sanctum (in_carry=0) WITHOUT deleting it, and (c) clears
+// er_pending_ring. Determinism comes from the AI-strength override, not timing.
 test('carry: won-ring Swap displaces a carried ring back to the Sanctum', async ({ browser }) => {
   const { token } = await register();
-  const { rings } = await me(token);
-
-  // Carry all 10 starter rings so the modal opens in the full (Swap) case.
-  const allIds = rings.map((r) => r.id);
-  const fill = await fetch(`${API_URL}/api/carry`, {
-    method: 'PUT',
-    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-    body: JSON.stringify({ ringIds: allIds }),
-  });
-  expect(fill.status).toBe(200);
-
-  const pendingId = allIds[0]; // the "won" ring (already owned & carried)
-  const displaceId = allIds[1]; // a different carried ring to displace
-
   const ctx = await browser.newContext();
-  await ctx.addInitScript(
-    `localStorage.setItem('er_token', ${JSON.stringify(token)});` +
-      `localStorage.setItem('er_pending_ring', ${JSON.stringify(pendingId)});`,
-  );
+  await ctx.addInitScript(`localStorage.setItem('er_token', ${JSON.stringify(token)})`);
   const page = await ctx.newPage();
   await page.goto(URL);
 
-  // The full-case modal opens (carry is full): pendingWonRing is populated.
+  // Forced WIN: a 1-heart AI with extinguished rings (aiUses:0) cannot attack or
+  // defend — it forfeits its first attack turn (§6.6) → guaranteed protagonist
+  // win → a real granted 11th ring stored in er_pending_ring.
+  const wonRingId = await driveAiDuel(page, { personality: 'AGGRESSIVE', aiHearts: 1, aiUses: 0 });
+  expect(wonRingId).not.toBeNull();
+
+  // The win auto-opens the room-case modal (carry not yet full). Resolve 'leave'
+  // so the won ring stays in inventory but uncarried, then set up the full case.
+  await page.evaluate(() => (window as any).__campResolveWonRing?.('leave'));
+  await page.waitForFunction(
+    () => (window as any).__campState?.pendingWonRing == null,
+    { timeout: 5000 },
+  );
+
+  const { rings } = await me(token);
+  expect(rings.length).toBe(11); // 10 starters + 1 won
+  const wonRing = rings.find((r) => r.id === wonRingId)!;
+  expect(wonRing.in_carry).toBe(0); // left uncarried by the 'leave' choice
+
+  // Fill the carry cap (10) with the original rings → carry full, won uncarried.
+  const originals = rings.filter((r) => r.id !== wonRingId).map((r) => r.id);
+  expect(originals.length).toBe(10);
+  const displaceId = originals[0];
+  const fill = await fetch(`${API_URL}/api/carry`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+    body: JSON.stringify({ ringIds: originals }),
+  });
+  expect(fill.status).toBe(200);
+
+  // Re-arm the won ring as pending and reload so the FULL-case modal renders.
+  await page.evaluate((id) => localStorage.setItem('er_pending_ring', id), wonRingId!);
+  await page.reload();
   await page.waitForFunction(
     () => (window as any).__campState?.pendingWonRing?.ringId !== undefined,
     { timeout: 8000 },
@@ -231,16 +247,17 @@ test('carry: won-ring Swap displaces a carried ring back to the Sanctum', async 
   );
 
   const { rings: final } = await me(token);
-  // Won ring still carried.
-  expect(final.find((r) => r.id === pendingId)?.in_carry).toBe(1);
+  // Won ring now carried.
+  expect(final.find((r) => r.id === wonRingId)?.in_carry).toBe(1);
   // Displaced ring returned to the Sanctum (uncarried) and still exists — NOT lost.
   const displaced = final.find((r) => r.id === displaceId);
   expect(displaced).toBeDefined();
   expect(displaced?.in_carry).toBe(0);
-  // No rings were deleted by the swap.
-  expect(final.length).toBe(rings.length);
+  // Carry holds at the cap; no rings were deleted by the swap.
+  expect(final.filter((r) => r.in_carry === 1).length).toBe(10);
+  expect(final.length).toBe(11);
   // er_pending_ring cleared after resolution.
   const cleared = await page.evaluate(() => localStorage.getItem('er_pending_ring'));
   expect(cleared).toBeNull();
   await ctx.close();
-});
+}, 90000);

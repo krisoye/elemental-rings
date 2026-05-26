@@ -18,6 +18,7 @@ import {
   rechargeRingWithSpirit,
   rechargeAllWithSpirit,
   getSpiritAndFood,
+  spendSpirit,
   lockStake,
   unlockStake,
 } from '../persistence/PlayerRepo';
@@ -274,3 +275,25 @@ apiRouter.get('/api/encounter/preview', (_req: Request, res: Response): void => 
   }
   res.status(200).json(preview);
 });
+
+// ───────────────────────────────────────────────────────────────────────────
+// Test-only routes. Mounted ONLY when E2E_TEST_ROUTES=1 (set by the Playwright
+// webServer env). Never available in production. These exist because some
+// server guards are unreachable through normal play and would otherwise be
+// untestable end-to-end — e.g. the spirit gauge can hold at most ~15 spent uses
+// across a full loadout (5 rings × 3 uses), so it can never legitimately reach
+// 0 against the spirit_max of 30, leaving the "no spirit" recharge guard with no
+// gameplay path to exercise it.
+// ───────────────────────────────────────────────────────────────────────────
+if (process.env.E2E_TEST_ROUTES === '1') {
+  /**
+   * POST /api/test/drain-spirit — set the authenticated player's spirit to 0 so
+   * the no-spirit recharge guard can be asserted deterministically. Test-only.
+   */
+  apiRouter.post('/api/test/drain-spirit', requireAuth, (req: Request, res: Response): void => {
+    const playerId = req.playerId as string;
+    const { spirit_current } = getSpiritAndFood(playerId);
+    if (spirit_current > 0) spendSpirit(playerId, spirit_current);
+    res.status(200).json({ spirit_current: getSpiritAndFood(playerId).spirit_current });
+  });
+}

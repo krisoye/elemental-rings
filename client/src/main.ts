@@ -21,6 +21,13 @@ declare global {
     // EncounterScene marker. Set by EncounterScene.create(). 'PVP' starts the
     // LobbyScene; a personality starts a vsAI duel.
     __encounterSelect?: (choice: AIPersonality | 'PVP') => void;
+    // Deterministic E2E: start a vsAI duel with AI-strength overrides so the
+    // outcome is forced (aiHearts:1 → win, aiHearts:99 → loss, aiUses:0 → AI
+    // forfeits). Same code path as __encounterSelect otherwise.
+    __encounterSelectWithOverrides?: (
+      choice: AIPersonality | 'PVP',
+      aiOverrides?: { aiHearts?: number; aiUses?: number },
+    ) => void;
     __campGoEncounter?: () => void;
     __campSleep?: () => void;
     __campRecharge?: (ringId: string) => Promise<void>;

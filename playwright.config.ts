@@ -23,7 +23,9 @@ export default defineConfig({
       port: 2568,
       // DB_PATH is relative to the `cd server` cwd → server/data/e2e.db (gitignored),
       // keeping the E2E SQLite store separate from local dev and disposable.
-      env: { PORT: '2568', DB_PATH: './data/e2e.db' },
+      // E2E_TEST_ROUTES mounts test-only routes (e.g. /api/test/drain-spirit) to
+      // exercise server guards that have no normal-gameplay path. Never set in prod.
+      env: { PORT: '2568', DB_PATH: './data/e2e.db', E2E_TEST_ROUTES: '1' },
       reuseExistingServer: false,
       timeout: 15000,
     },
