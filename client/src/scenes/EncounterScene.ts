@@ -145,6 +145,11 @@ export class EncounterScene extends Phaser.Scene {
     ): void => {
       this.select(choice, aiOverrides);
     };
+    // Deterministic E2E PvP hook (#67): start the PvP path with an explicit
+    // keyed room id so two parallel contexts pair into their own isolated room.
+    window.__encounterSelectPvP = (e2eRoomId: string): void => {
+      this.select('PVP', undefined, e2eRoomId);
+    };
     window.__encounterManageBattleHand = (): void => void this.openManageBattleHand();
     window.__encounterResolveWonRing = (choice: 'carry' | 'discard'): void =>
       void this.resolveWonRing(choice);
@@ -156,6 +161,7 @@ export class EncounterScene extends Phaser.Scene {
     this.events.once('shutdown', () => {
       window.__encounterSelect = undefined;
       window.__encounterSelectWithOverrides = undefined;
+      window.__encounterSelectPvP = undefined;
       window.__encounterManageBattleHand = undefined;
       window.__encounterResolveWonRing = undefined;
       window.__encounterDiscardRing = undefined;
@@ -194,13 +200,22 @@ export class EncounterScene extends Phaser.Scene {
     }
   }
 
-  /** Single entry point for both real marker clicks and the E2E hook. */
-  private select(choice: Choice, aiOverrides?: { aiHearts?: number; aiUses?: number }): void {
+  /**
+   * Single entry point for both real marker clicks and the E2E hooks.
+   * `e2eRoomId` (PvP path only, set by the E2E harness via __encounterSelectPvP)
+   * is forwarded to LobbyScene so the keyed-room matchmaking isolates the duel;
+   * it is undefined for real PvP clicks, leaving the global-pool behavior intact.
+   */
+  private select(
+    choice: Choice,
+    aiOverrides?: { aiHearts?: number; aiUses?: number },
+    e2eRoomId?: string,
+  ): void {
     if (this.busy) return;
     this.busy = true;
 
     if (choice === 'PVP') {
-      this.scene.start('LobbyScene');
+      this.scene.start('LobbyScene', { e2eRoomId });
       return;
     }
 

@@ -8,18 +8,19 @@ import {
   waitForMyGauge,
   readMe,
   closeBattle,
+  DEFEND_BLOCK_WAIT_MS,
+  DEFEND_PARRY_WAIT_MS,
+  DEFEND_LAPSE_WAIT_MS,
 } from './helpers';
 
-// Calibrated against the server's DEFEND_WINDOW (impact at attack+900ms, BLOCK
-// band ±180ms) through the real browser + Phaser keyboard path, which adds
-// ~60ms of latency over a raw socket. Sleeping ~700ms after the defend window
-// opens lands the defense arrival inside the catch window (browser path:
-// <=640ms => MISTIME, 680–720ms => BLOCK, >=740ms => PARRY). Because parallel
-// browser load adds jitter near the PARRY boundary, the "successful catch"
-// assertions below accept either BLOCK or PARRY — both are valid catches with
-// identical relationship handling. The MISTIME boundary is the one we stay
-// clear of, so we keep the sleep at the high-MISTIME-margin end of the band.
-const BLOCK_SLEEP_MS = 700;
+// Defense-press calibration against the server's DEFEND_WINDOW through the real
+// browser + Phaser keyboard path (~60ms latency over a raw socket). The exact
+// waits are centralized in helpers (DEFEND_BLOCK_WAIT_MS / DEFEND_PARRY_WAIT_MS /
+// DEFEND_LAPSE_WAIT_MS) and scale with E2E_FAST: normal mode keeps the proven
+// 700/880/1500ms (impact at +900ms), fast mode shrinks them (impact at +150ms).
+// The "successful catch" assertions accept BLOCK or PARRY — both are valid
+// catches with identical relationship handling — to tolerate parallel-load
+// jitter near the PARRY boundary.
 const CAUGHT = ['BLOCK', 'PARRY'];
 
 /** Wait for the live DEFEND_WINDOW phase on the given page. */
@@ -59,7 +60,7 @@ test('scenario 3: BLOCK + NEUTRAL costs a use, no heart', async ({ browser }) =>
 
   await attacker.keyboard.press('1'); // A1 = FIRE
   await waitForDefendWindow(defender);
-  await defender.waitForTimeout(BLOCK_SLEEP_MS);
+  await defender.waitForTimeout(DEFEND_BLOCK_WAIT_MS);
   await defender.keyboard.press('4'); // D2 = EARTH — always NEUTRAL
 
   await waitForExchangeResult(defender);
@@ -83,7 +84,7 @@ test('scenario 4: BLOCK + WEAK loses a heart', async ({ browser }) => {
 
   await attacker.keyboard.press('1'); // A1 = FIRE
   await waitForDefendWindow(defender);
-  await defender.waitForTimeout(BLOCK_SLEEP_MS);
+  await defender.waitForTimeout(DEFEND_BLOCK_WAIT_MS);
   await defender.keyboard.press('3'); // D1 = WOOD — FIRE beats WOOD => WEAK
 
   await waitForExchangeResult(defender);
@@ -108,8 +109,8 @@ test('scenario 5: NO_BLOCK lands the attack and fills the gauge', async ({ brows
 
   await attacker.keyboard.press('1'); // FIRE
   await waitForDefendWindow(defender);
-  // Never press — let the DEFEND_WINDOW timer (1080ms) elapse.
-  await defender.waitForTimeout(1500);
+  // Never press — let the DEFEND_WINDOW timer fully elapse → NO_BLOCK.
+  await defender.waitForTimeout(DEFEND_LAPSE_WAIT_MS);
 
   await waitForExchangeResult(defender);
   const result = await lastResult(defender);
@@ -187,10 +188,10 @@ test('scenario 8: PARRY+STRONG triggers rally and fires return orb', async ({ br
   // Attacker throws WATER (A2 = key '2')
   await attacker.keyboard.press('2');
 
-  // Defender waits for DEFEND_WINDOW then presses WOOD (D1 = key '3') at ~880ms —
-  // just before impact (900ms), inside the parry window. WOOD beats WATER → STRONG.
+  // Defender waits for DEFEND_WINDOW then presses WOOD (D1 = key '3') just before
+  // impact, inside the parry window. WOOD beats WATER → STRONG → rally.
   await waitForDefendWindow(defender);
-  await defender.waitForTimeout(880);
+  await defender.waitForTimeout(DEFEND_PARRY_WAIT_MS);
   await defender.keyboard.press('3'); // WOOD
 
   // Wait for exchangeResult to confirm rallyContinues
@@ -224,7 +225,7 @@ test('scenario 7: opponent attack reveals their element to the defender', async 
   // Attacker throws FIRE (slot 0). Defender does not block.
   await attacker.keyboard.press('1');
   await waitForDefendWindow(defender);
-  await defender.waitForTimeout(1500);
+  await defender.waitForTimeout(DEFEND_LAPSE_WAIT_MS);
   await waitForExchangeResult(defender);
 
   // The defender's scene should have recorded FIRE (element 0) as revealed.

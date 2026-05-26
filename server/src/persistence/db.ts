@@ -14,6 +14,13 @@ fs.mkdirSync(path.dirname(DB_PATH), { recursive: true });
 /** Process-wide singleton connection. better-sqlite3 is synchronous. */
 export const db: Database.Database = new Database(DB_PATH);
 db.pragma('journal_mode = WAL');
+// synchronous=NORMAL is the recommended companion to WAL: it relaxes the fsync
+// discipline (no fsync per transaction, only at checkpoint) for a large write
+// throughput gain while remaining crash-safe under WAL. The E2E suite registers
+// many players concurrently (parallel Playwright workers), so this materially
+// reduces write contention. Safe for prod too — WAL + NORMAL cannot corrupt the
+// DB, only risks losing the very last transactions on an OS-level crash.
+db.pragma('synchronous = NORMAL');
 db.pragma('foreign_keys = ON');
 
 // Apply the schema on startup. The file lives next to this module (under

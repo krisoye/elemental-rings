@@ -46,6 +46,11 @@ export interface BattleRoomOptions {
   //   aiUses: 0    → AI attacks/defends with extinguished rings → AI forfeits
   aiHearts?: number;
   aiUses?: number;
+  // E2E-only: a unique key used by Colyseus `filterBy(['e2eRoomId'])` matchmaking
+  // (gated by E2E_TEST_ROUTES on the server) so two contexts that joinOrCreate
+  // 'battle' with the SAME id pair into one isolated room. Absent in production,
+  // where 'battle' stays a pure global pool. See server/index.ts and #67.
+  e2eRoomId?: string;
 }
 
 export interface SelectAttackPayload {

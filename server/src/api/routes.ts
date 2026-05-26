@@ -414,6 +414,38 @@ apiRouter.post('/api/teleport', requireAuth, (req: Request, res: Response): void
 // ───────────────────────────────────────────────────────────────────────────
 if (process.env.E2E_TEST_ROUTES === '1') {
   /**
+   * POST /api/test/mint-token — provision a fresh player exactly like
+   * /auth/register (starter inventory + default loadout + forest_entry
+   * attunement via createPlayer) but WITHOUT bcrypt, then return a signed token.
+   * This skips the deliberately-slow bcrypt hash on the hot path that every E2E
+   * test hits to seed auth, which dominates per-test setup once the suite runs
+   * in parallel. The resulting player is indistinguishable from a registered one
+   * for all downstream reads (rings/loadout/attunement all seeded). No body.
+   * Test-only.
+   */
+  apiRouter.post('/api/test/mint-token', (_req: Request, res: Response): void => {
+    // Unique handle so concurrent workers never collide on the username UNIQUE.
+    const username = `e2e_${Date.now()}_${Math.random().toString(36).slice(2)}`;
+    // Constant placeholder hash — login is never exercised against E2E players,
+    // so a real bcrypt hash is pure waste here.
+    const playerId = createPlayer(username, 'e2e-no-hash');
+    const token = signToken({ playerId, username });
+    res.json({ token, playerId });
+  });
+
+  /**
+   * POST /api/test/create-battle-room — mint a unique room key for the keyed
+   * PvP matchmaking flow (#67). With `gameServer.define('battle').filterBy(
+   * ['e2eRoomId'])`, two contexts that joinOrCreate('battle', { e2eRoomId }) with
+   * the SAME id pair into one isolated room — so parallel Playwright workers
+   * never cross-pair. No reservation is needed (filterBy handles matching); this
+   * route just centralizes id generation. No body. Test-only.
+   */
+  apiRouter.post('/api/test/create-battle-room', (_req: Request, res: Response): void => {
+    res.json({ roomId: `e2e_${Date.now()}_${Math.random().toString(36).slice(2)}` });
+  });
+
+  /**
    * POST /api/test/drain-spirit — set the authenticated player's spirit to 0 so
    * the no-spirit recharge guard can be asserted deterministically. Test-only.
    */

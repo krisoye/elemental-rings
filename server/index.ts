@@ -26,7 +26,18 @@ const gameServer = new Server({
 // Two room names on one class. Colyseus matchmaking is scoped per room name:
 // `battle` is PvP (two real clients); `battle-ai` seats a virtual AI on create
 // and locks immediately, so a `joinOrCreate('battle')` never lands in an AI room.
-gameServer.define('battle', BattleRoom);
+//
+// E2E ONLY: filterBy(['e2eRoomId']) makes joinOrCreate('battle', { e2eRoomId })
+// match only rooms created with the same id, so parallel Playwright workers each
+// pair into their own isolated room instead of cross-pairing in the global pool
+// (#67). Gated on E2E_TEST_ROUTES so production keeps the pure global pool with
+// zero behavior change (the field is absent in prod, so filterBy would be moot —
+// but we gate it anyway to eliminate any risk).
+if (process.env.E2E_TEST_ROUTES === '1') {
+  gameServer.define('battle', BattleRoom).filterBy(['e2eRoomId']);
+} else {
+  gameServer.define('battle', BattleRoom);
+}
 gameServer.define('battle-ai', BattleRoom);
 
 gameServer.listen(port).then(() => {

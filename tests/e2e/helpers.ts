@@ -5,6 +5,40 @@ const URL = 'http://localhost:8090';
 // Phase 4+5 auth API runs on the same port as Colyseus in tests.
 const API_URL = 'http://localhost:2568';
 
+// E2E fast mode (#68). The Playwright test PROCESS reads E2E_FAST from its env
+// (the npm `test:e2e` script sets it, matching the SERVER/CLIENT webServer env).
+// When set, the server's TELEGRAPH_MS drops 900 → 150 (impact lands ~150ms after
+// the defend window opens instead of 900ms), so all wall-clock-relative defense
+// timings here are scaled to keep presses inside the catch band.
+export const E2E_FAST = process.env.E2E_FAST === '1';
+
+// Server timing (mirrors server/src/game/constants.ts): the defend window opens,
+// impact lands TELEGRAPH_MS later (900ms normal / 150ms fast), and a defense
+// press is classified by |arrival − impact| (≤175 PARRY, ≤200 BLOCK). The waits
+// below are derived so presses arrive just before impact in either mode.
+
+/**
+ * How long to wait after the DEFEND_WINDOW opens before pressing a defense so the
+ * press ARRIVES just before impact → a comfortable PARRY/BLOCK with margin
+ * against the ~60ms browser+Phaser keyboard latency. We target arrival a little
+ * BEFORE impact (impact − ~80ms of headroom, minus the ~60ms transport latency),
+ * which lands well inside the ±175ms PARRY band in both normal and fast mode.
+ * Normal mode ≈ 760ms (the historic 700ms calibration, unchanged); fast mode ≈
+ * 30ms (impact at 150ms, latency carries arrival to ~90ms → offset ~−60ms).
+ */
+export const DEFEND_BLOCK_WAIT_MS = E2E_FAST ? 30 : 700;
+
+/**
+ * Wait for a PARRY-timed press: arrive as close to impact as the band allows so a
+ * STRONG catch rallies (PARRY requires |offset| ≤ 175). Slightly later than the
+ * BLOCK wait. Normal mode = 880ms (the historic just-before-900ms-impact value);
+ * fast mode = 60ms (arrival ~120ms vs 150ms impact → offset ~−30ms → PARRY).
+ */
+export const DEFEND_PARRY_WAIT_MS = E2E_FAST ? 60 : 880;
+
+/** A waitForTimeout long enough for the DEFEND_WINDOW to fully elapse → NO_BLOCK. */
+export const DEFEND_LAPSE_WAIT_MS = E2E_FAST ? 600 : 1500;
+
 export interface BattleHandles {
   p1: Page;
   p2: Page;
@@ -13,19 +47,20 @@ export interface BattleHandles {
 }
 
 /**
- * Register a fresh user on the test server and inject the JWT into the context
+ * Provision a fresh player on the test server and inject the JWT into the context
  * via an init script. Call this BEFORE creating pages so BootScene routes to
  * CampScene instead of LoginScene. Phase 4+5 auth gate — required for any test
  * that navigates the main app (directly or via setupBattle).
+ *
+ * Uses the test-only /api/test/mint-token route (#66) instead of /auth/register:
+ * it seeds the identical player (starter inventory + default loadout +
+ * forest_entry attunement via createPlayer) but skips the deliberately-slow
+ * bcrypt hash, which otherwise dominates per-test setup once the suite runs in
+ * parallel.
  */
 export async function seedAuthToken(ctx: BrowserContext): Promise<void> {
-  const username = `t_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
-  const res = await fetch(`${API_URL}/auth/register`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ username, password: 'test_pw' }),
-  });
-  if (!res.ok) throw new Error(`seedAuthToken: register failed (${res.status})`);
+  const res = await fetch(`${API_URL}/api/test/mint-token`, { method: 'POST' });
+  if (!res.ok) throw new Error(`seedAuthToken: mint-token failed (${res.status})`);
   const { token } = (await res.json()) as { token: string };
   // Init scripts run before every page load in this context, so er_token is
   // present when BootScene.create() checks localStorage.
@@ -60,10 +95,15 @@ export async function waitForEncounter(page: import('@playwright/test').Page): P
  * Open two independent browser contexts (two distinct Colyseus sessions) and
  * drive them into a live PvP battle. After the Phase-3 routing change the page
  * lands in the EncounterScene and connects to nothing until a selection fires,
- * so each page triggers the PvP path via the deterministic `__encounterSelect`
+ * so each page triggers the PvP path via the deterministic `__encounterSelectPvP`
  * hook (identical code path to clicking the PvP marker → LobbyScene →
- * connectToRoom('battle')). p1 selects first so it creates the `battle` room;
- * p2 then joins the same room. Resolves once both pages observe ATTACK_SELECT.
+ * connectToRoom('battle', { e2eRoomId })).
+ *
+ * #67 — each call mints a UNIQUE room id and both contexts join 'battle' keyed
+ * by it. With the server's `filterBy(['e2eRoomId'])` matchmaking, only these two
+ * contexts ever pair, so parallel Playwright workers never cross-pair. p1 selects
+ * first and waits until its keyed room exists before p2 joins it. Resolves once
+ * both pages observe ATTACK_SELECT.
  */
 export async function setupBattle(browser: Browser): Promise<BattleHandles> {
   const p1ctx = await browser.newContext({ hasTouch: true });
@@ -77,17 +117,20 @@ export async function setupBattle(browser: Browser): Promise<BattleHandles> {
   const p1 = await p1ctx.newPage();
   const p2 = await p2ctx.newPage();
 
-  // p1 selects PvP first (creates the room) and connects before p2 joins it.
+  // Mint a unique room key so this duel is isolated from every other worker.
+  const roomId = await createBattleRoomId();
+
+  // p1 selects PvP first (creates the keyed room) and connects before p2 joins.
   await p1.goto(URL);
   await campToEncounter(p1);
   await waitForEncounter(p1);
-  await p1.evaluate(() => (window as any).__encounterSelect('PVP'));
+  await p1.evaluate((id) => (window as any).__encounterSelectPvP(id), roomId);
   await p1.waitForFunction(() => (window as any).__room !== null, { timeout: 8000 });
 
   await p2.goto(URL);
   await campToEncounter(p2);
   await waitForEncounter(p2);
-  await p2.evaluate(() => (window as any).__encounterSelect('PVP'));
+  await p2.evaluate((id) => (window as any).__encounterSelectPvP(id), roomId);
 
   await p1.waitForFunction(() => (window as any).__room?.state?.phase === 'ATTACK_SELECT', {
     timeout: 10000,
@@ -97,6 +140,14 @@ export async function setupBattle(browser: Browser): Promise<BattleHandles> {
   });
 
   return { p1, p2, p1ctx, p2ctx };
+}
+
+/** Mint a unique keyed-room id via the test-only route (#67). */
+async function createBattleRoomId(): Promise<string> {
+  const res = await fetch(`${API_URL}/api/test/create-battle-room`, { method: 'POST' });
+  if (!res.ok) throw new Error(`createBattleRoomId: failed (${res.status})`);
+  const { roomId } = (await res.json()) as { roomId: string };
+  return roomId;
 }
 
 /** Determine which page is the current attacker / defender from server state. */
@@ -241,6 +292,11 @@ export async function driveAiDuel(
     { p: personality, ah: opts.aiHearts, au: opts.aiUses },
   );
 
+  // Poll interval: the driver fires selectAttack/submitDefense whenever it sees
+  // the right phase. Under fast mode TELEGRAPH drops to 150ms (DEFEND_WINDOW =
+  // 350ms), so we poll at 80ms to guarantee a defense lands inside the (shorter)
+  // window with margin; normal mode keeps the proven 250ms cadence.
+  const pollMs = E2E_FAST ? 80 : 250;
   const driver = setInterval(() => {
     void page.evaluate(() => {
       const room = (window as any).__room;
@@ -256,21 +312,24 @@ export async function driveAiDuel(
         room.send('submitDefense', { slot: 'd1' });
       }
     });
-  }, 250);
+  }, pollMs);
   try {
+    // Fast mode collapses per-exchange wind-up + the banner, so the whole duel
+    // resolves much sooner; keep the timeout generous enough to avoid flakes.
     await page.waitForFunction(
       () =>
         (window as any).__room?.state?.phase === 'ENDED' &&
         !!(window as any).__room?.state?.winnerId,
-      { timeout: 30000 },
+      { timeout: E2E_FAST ? 10000 : 30000 },
     );
   } finally {
     clearInterval(driver);
   }
 
-  // BattleScene shows a 2s banner before starting EncounterScene; allow margin.
+  // BattleScene shows a winner banner (2s normal / ~0ms fast) before starting
+  // EncounterScene; allow margin.
   await page.waitForFunction(() => (window as any).__game?.scene?.isActive('EncounterScene'), {
-    timeout: 15000,
+    timeout: E2E_FAST ? 5000 : 15000,
   });
   await page.waitForFunction(
     () => typeof (window as any).__encounterSelect === 'function',
