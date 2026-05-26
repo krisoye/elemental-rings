@@ -22,6 +22,8 @@ import {
   getSpiritStats,
   lockStake,
   unlockStake,
+  fuseRings,
+  setRingXP,
 } from '../persistence/PlayerRepo';
 import { FOOD_PER_SLEEP } from '../game/constants';
 
@@ -285,6 +287,29 @@ apiRouter.get('/api/encounter/preview', (_req: Request, res: Response): void => 
   res.status(200).json(preview);
 });
 
+/**
+ * POST /api/fusion/combine — fuse two maxed parent rings into a Tier 2 fusion
+ * ring (#47, GDD §5). Body: { ringId1, ringId2 }. On success returns the new
+ * fusion ring. 400 with a descriptive message on any validation failure
+ * (not owned, not at XP cap, invalid pair). Requires auth.
+ */
+apiRouter.post('/api/fusion/combine', requireAuth, (req: Request, res: Response): void => {
+  const playerId = req.playerId as string;
+  const { ringId1, ringId2 } = req.body ?? {};
+  if (typeof ringId1 !== 'string' || !ringId1 || typeof ringId2 !== 'string' || !ringId2) {
+    res.status(400).json({ error: 'ringId1 and ringId2 are required' });
+    return;
+  }
+  try {
+    const newRingId = fuseRings(playerId, ringId1, ringId2);
+    const ring = getRingsByOwner(playerId).find((r) => r.id === newRingId);
+    res.status(200).json({ ring });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : 'Fusion failed';
+    res.status(400).json({ error: msg });
+  }
+});
+
 // ───────────────────────────────────────────────────────────────────────────
 // Test-only routes. Mounted ONLY when E2E_TEST_ROUTES=1 (set by the Playwright
 // webServer env). Never available in production. These exist because some
@@ -304,5 +329,26 @@ if (process.env.E2E_TEST_ROUTES === '1') {
     const { spirit_current } = getSpiritAndFood(playerId);
     if (spirit_current > 0) spendSpirit(playerId, spirit_current);
     res.status(200).json({ spirit_current: getSpiritAndFood(playerId).spirit_current });
+  });
+
+  /**
+   * POST /api/test/set-ring-xp — set a ring's XP to an absolute value so a
+   * parent ring can be deterministically maxed for fusion. Rings start at xp=0
+   * with no normal-play path to a precise XP cap, so the fusion E2E suite needs
+   * this hook. Body: { ringId, xp }. Test-only.
+   */
+  apiRouter.post('/api/test/set-ring-xp', requireAuth, (req: Request, res: Response): void => {
+    const playerId = req.playerId as string;
+    const { ringId, xp } = req.body ?? {};
+    if (typeof ringId !== 'string' || !ringId || typeof xp !== 'number' || xp < 0) {
+      res.status(400).json({ error: 'ringId (string) and xp (non-negative number) are required' });
+      return;
+    }
+    const ok = setRingXP(playerId, ringId, xp);
+    if (!ok) {
+      res.status(404).json({ error: 'ring not found' });
+      return;
+    }
+    res.status(200).json({ rings: getRingsByOwner(playerId) });
   });
 }

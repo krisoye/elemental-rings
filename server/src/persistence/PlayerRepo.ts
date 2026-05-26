@@ -1,7 +1,15 @@
 import { v4 as uuidv4 } from 'uuid';
 import { db } from './db';
 import { ElementEnum } from '../../../shared/types';
-import { SPIRIT_PER_RING_USE, SPIRIT_BASE, XP_SCALER } from '../game/constants';
+import { fusionOf } from '../game/Fusions';
+import {
+  SPIRIT_PER_RING_USE,
+  SPIRIT_BASE,
+  XP_SCALER,
+  TIER1_XP_CAP,
+  TIER2_XP_CAP,
+  TIER2_MAX_USES,
+} from '../game/constants';
 
 /** A persisted player row (no password hash exposed to callers of read helpers). */
 export interface PlayerRow {
@@ -165,6 +173,7 @@ const updateRingUses = db.prepare(
   `UPDATE rings SET current_uses = MIN(?, max_uses) WHERE id = ?`,
 );
 const updateRingXP = db.prepare(`UPDATE rings SET xp = xp + ? WHERE id = ?`);
+const setRingXPAbsolute = db.prepare(`UPDATE rings SET xp = ? WHERE id = ? AND owner_id = ?`);
 const updatePlayerGold = db.prepare(`UPDATE players SET gold = gold + ? WHERE id = ?`);
 const updateRingEscrowed = db.prepare(`UPDATE rings SET escrowed = ? WHERE id = ?`);
 const updateRingOwner = db.prepare(
@@ -264,6 +273,15 @@ export function saveRingUses(ringId: string, currentUses: number): void {
 /** Award XP to a ring. */
 export function awardXP(ringId: string, xpAmount: number): void {
   updateRingXP.run(xpAmount, ringId);
+}
+
+/**
+ * Set a ring's XP to an absolute value (only when owned by the player). Used by
+ * the E2E test-only route to deterministically max a parent ring for fusion;
+ * never wired into normal gameplay.
+ */
+export function setRingXP(playerId: string, ringId: string, xp: number): boolean {
+  return setRingXPAbsolute.run(xp, ringId, playerId).changes > 0;
 }
 
 /** Add (or subtract) gold from a player's balance. */
@@ -450,6 +468,114 @@ export const discardRing = db.transaction(
     }
     const info = deleteRing.run(ringId, playerId);
     return { ok: info.changes > 0 };
+  },
+);
+
+/**
+ * The XP cap a ring of the given tier must reach before it can be fused
+ * (GDD §5.1). Tier 1 → 100, Tier 2 → 300. Tiers without a defined cap (Tier 3,
+ * the current ceiling) cannot be a fusion parent.
+ */
+function xpCapForTier(tier: number): number | null {
+  if (tier === 1) return TIER1_XP_CAP;
+  if (tier === 2) return TIER2_XP_CAP;
+  return null;
+}
+
+/**
+ * Null the given ring out of every loadout slot that references it for the
+ * player, so a subsequent delete cannot violate the loadout→rings FK. No-op
+ * when no loadout exists or no slot holds the ring. Must run inside a
+ * transaction (callers are db.transaction wrappers).
+ */
+function clearRingFromLoadout(playerId: string, ringId: string): void {
+  const loadout = selectLoadout.get(playerId) as LoadoutRow | undefined;
+  if (!loadout) return;
+  const slots: Record<string, string | null> = {
+    thumb: loadout.thumb,
+    a1: loadout.a1,
+    a2: loadout.a2,
+    d1: loadout.d1,
+    d2: loadout.d2,
+  };
+  let changed = false;
+  for (const key of SLOT_KEYS) {
+    if (slots[key as string] === ringId) {
+      slots[key as string] = null;
+      changed = true;
+    }
+  }
+  if (changed) {
+    updateLoadoutSlot.run({
+      player_id: playerId,
+      thumb: slots.thumb,
+      a1: slots.a1,
+      a2: slots.a2,
+      d1: slots.d1,
+      d2: slots.d2,
+    });
+  }
+}
+
+/**
+ * Fuse two maxed parent rings into a single higher-tier fusion ring (GDD §5).
+ *
+ * Validates (in order) ownership of both rings, that each parent has reached its
+ * tier's XP cap, and that the two base elements form a valid v4 fusion pair. On
+ * success it inserts the new fusion ring (element from fusionOf, combined parent
+ * XP, tier 2, full Tier 2 uses), then permanently deletes both parents — nulling
+ * each out of any loadout slot first so the FK constraint holds. Runs in a single
+ * transaction, so any thrown validation error leaves the inventory untouched.
+ *
+ * @returns the new fusion ring's id.
+ * @throws Error with a caller-displayable message on any validation failure.
+ */
+export const fuseRings = db.transaction(
+  (playerId: string, ringId1: string, ringId2: string): string => {
+    if (ringId1 === ringId2) {
+      throw new Error('Cannot fuse a ring with itself');
+    }
+    const r1 = selectRingById.get(ringId1) as RingRow | undefined;
+    const r2 = selectRingById.get(ringId2) as RingRow | undefined;
+    if (!r1 || r1.owner_id !== playerId || !r2 || r2.owner_id !== playerId) {
+      throw new Error('Ring not found or not owned');
+    }
+
+    for (const ring of [r1, r2]) {
+      const cap = xpCapForTier(ring.tier);
+      if (cap === null) {
+        throw new Error(`Ring ${ring.id} cannot be fused at its tier`);
+      }
+      if (ring.xp < cap) {
+        throw new Error(
+          `Ring ${ring.id} has not reached XP cap (needs ${cap}, has ${ring.xp})`,
+        );
+      }
+    }
+
+    const fusionElement = fusionOf(r1.element, r2.element);
+    if (fusionElement === null) {
+      throw new Error('These two elements do not form a valid fusion');
+    }
+
+    const newRingId = uuidv4();
+    insertRing.run({
+      id: newRingId,
+      owner_id: playerId,
+      element: fusionElement,
+      tier: 2,
+      max_uses: TIER2_MAX_USES,
+      current_uses: TIER2_MAX_USES,
+      xp: r1.xp + r2.xp,
+    });
+
+    // Consume both parents: null them out of any loadout slot, then delete.
+    for (const ring of [r1, r2]) {
+      clearRingFromLoadout(playerId, ring.id);
+      deleteRing.run(ring.id, playerId);
+    }
+
+    return newRingId;
   },
 );
 
