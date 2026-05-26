@@ -304,7 +304,12 @@ export async function driveAiDuel(
         room?.state?.phase === 'ATTACK_SELECT' &&
         room?.state?.currentAttackerId === room?.sessionId
       ) {
-        room.send('selectAttack', { slot: 'a1' });
+        // Fall back to a2 when a1 is extinguished so forced-loss duels (aiHearts:99)
+        // progress through both attack rings → checkAttackForfeit fires → ENDED.
+        // Without this, rejected a1 sends deadlock the duel indefinitely.
+        const me = room.state.players.get(room.sessionId);
+        const slot = me?.a1?.isExtinguished ? 'a2' : 'a1';
+        room.send('selectAttack', { slot });
       } else if (
         room?.state?.phase === 'DEFEND_WINDOW' &&
         room?.state?.currentAttackerId !== room?.sessionId

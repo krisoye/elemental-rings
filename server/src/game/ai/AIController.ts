@@ -122,9 +122,14 @@ export class AIController {
 
   private scheduleAttack(): void {
     const view = this.readBoard();
+    // E2E_FAST collapses AI think time so vsAI duels complete within the
+    // driveAiDuel timeout (10 s) despite parallel-worker CPU contention.
+    // Normal think delays (300–1500 ms) would push a 3-heart duel past 10 s
+    // under TELEGRAPH_MS=150; 20–50 ms keeps each turn ~400 ms or less.
+    const fast = process.env.E2E_FAST === '1';
     const low = isLowHearts(this.profile, view.hearts);
-    const minMs = low ? this.profile.lowHeartThinkDelayMinMs : this.profile.thinkDelayMinMs;
-    const maxMs = low ? this.profile.lowHeartThinkDelayMaxMs : this.profile.thinkDelayMaxMs;
+    const minMs = fast ? 20 : (low ? this.profile.lowHeartThinkDelayMinMs : this.profile.thinkDelayMinMs);
+    const maxMs = fast ? 50 : (low ? this.profile.lowHeartThinkDelayMaxMs : this.profile.thinkDelayMaxMs);
     const delay = this.rng.intBetween(minMs, maxMs);
 
     this.pending = setTimeout(() => {

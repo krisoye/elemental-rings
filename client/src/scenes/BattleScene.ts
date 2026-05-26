@@ -73,6 +73,13 @@ export class BattleScene extends Phaser.Scene {
       this.checkEnded(state, myId);
     };
     room.onStateChange(onState);
+    // Colyseus onStateChange only fires on new patches from the server. For
+    // instant-forfeit duels (e.g. aiUses:0, both attack rings extinguished before
+    // the first ATTACK_SELECT), the room arrives ENDED and no further patch is
+    // broadcast. Force an immediate check so checkEnded runs if state is already
+    // ENDED before this listener was registered. checkEnded is idempotent (guarded
+    // by `this.returning`) so double-firing on a later patch is harmless.
+    onState(room.state as any);
 
     // onMessage returns its own unregister function.
     const offExchange = room.onMessage('exchangeResult', (result: ExchangeResultPayload) => {
