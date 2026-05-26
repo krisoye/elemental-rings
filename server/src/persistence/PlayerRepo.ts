@@ -507,20 +507,31 @@ export function spendSpirit(playerId: string, amount: number): void {
   updateSpiritDeduct.run(amount, playerId);
 }
 
+/**
+ * Single query returning both the raw aggregate ring XP and the derived
+ * spirit_max. Use this wherever both values are needed to avoid a second
+ * DB round-trip.
+ *   aggregate_xp = SUM(rings.xp)
+ *   spirit_max   = SPIRIT_BASE + floor(aggregate_xp / XP_SCALER)
+ */
+export function getSpiritStats(playerId: string): { aggregateXp: number; spiritMax: number } {
+  const row = selectAggregateRingXp.get(playerId) as { xp_sum: number } | undefined;
+  const aggregateXp = row?.xp_sum ?? 0;
+  return { aggregateXp, spiritMax: SPIRIT_BASE + Math.floor(aggregateXp / XP_SCALER) };
+}
+
 /** Return the raw sum of XP across all rings owned by the player. */
 export function getAggregateXp(playerId: string): number {
-  const row = selectAggregateRingXp.get(playerId) as { xp_sum: number } | undefined;
-  return row?.xp_sum ?? 0;
+  return getSpiritStats(playerId).aggregateXp;
 }
 
 /**
- * Compute the player's spirit_max from their aggregate ring XP:
- *   spirit_max = SPIRIT_BASE + floor(SUM(rings.xp) / XP_SCALER)
- * Always derived live so it reflects the current inventory (rings won/lost/
- * leveled change the total). Does not write to the DB — see refreshSpiritMax.
+ * Compute the player's spirit_max from their aggregate ring XP.
+ * Always derived live so it reflects the current inventory.
+ * Does not write to the DB — see refreshSpiritMax.
  */
 export function computeSpiritMax(playerId: string): number {
-  return SPIRIT_BASE + Math.floor(getAggregateXp(playerId) / XP_SCALER);
+  return getSpiritStats(playerId).spiritMax;
 }
 
 /**

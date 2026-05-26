@@ -10,7 +10,7 @@ export const STARTER_GOLD = 200;
 
 // Outcome-based ring XP. Rings earn XP from exchange results, not per use.
 // spirit_max = SPIRIT_BASE + floor(aggregate_xp / XP_SCALER).
-export const XP_SCALER = 5;
+export const XP_SCALER = 50;
 // Attack ring XP by outcome.
 export const XP_ATK_HIT = 5; // attack lands (defender loses a heart)
 export const XP_ATK_BLOCK = 2; // attack is blocked
