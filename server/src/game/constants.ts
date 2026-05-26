@@ -5,6 +5,13 @@ export const STARTING_HEARTS = 3;
 export const STARTING_USES = 3;
 export const DEFEND_WINDOW_MS = TELEGRAPH_MS + BLOCK_WINDOW_MS; // 1100
 
+// GDD §7 — status effects. A triangle gauge (FIRE/WATER/WOOD) at or above
+// STATUS_THRESHOLD activates that element's status (Burning/Drowning/Entangled).
+// GAUGE_SOFT_CAP (2× threshold) caps the broadcast gauge value so HUD numbers
+// stay readable.
+export const STATUS_THRESHOLD = 4;
+export const GAUGE_SOFT_CAP = 8;
+
 export const GOLD_PER_WIN = 50;
 export const STARTER_GOLD = 200;
 

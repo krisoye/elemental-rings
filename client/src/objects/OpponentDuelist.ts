@@ -13,6 +13,9 @@ import {
 const ATTACK_SLOTS = ['a1', 'a2'] as const;
 const DEFENSE_SLOTS = ['d1', 'd2'] as const;
 
+// GDD §7.2 status badges — index-aligned with GAUGE_KEYS / GAUGE_ELEMENTS.
+const STATUS_BADGES = ['🔥 BURN', '💧 DROWN', '🌿 TANGLE'];
+
 /**
  * Partial-information panel for the opponent. Shows hearts, ATK and DEF
  * totals across non-extinguished rings, and five element dots that light up
@@ -27,6 +30,7 @@ export class OpponentDuelist extends Phaser.GameObjects.Container {
   private readonly defText: Phaser.GameObjects.Text;
   private readonly elementDots: Phaser.GameObjects.Arc[] = [];
   private readonly statusOverlay: Phaser.GameObjects.Rectangle;
+  private readonly statusBadge: Phaser.GameObjects.Text;
   private readonly thumbCard: Phaser.GameObjects.Rectangle;
   private readonly thumbDimOverlay: Phaser.GameObjects.Rectangle;
 
@@ -59,6 +63,13 @@ export class OpponentDuelist extends Phaser.GameObjects.Container {
     this.statusOverlay = scene.add.rectangle(0, 0, 80, 120, 0xff0000, 0.3);
     this.statusOverlay.setVisible(false);
 
+    // Active-status badge line — lists the opponent's active statuses by name.
+    this.statusBadge = scene.add.text(-90, 8, '', {
+      fontSize: '11px',
+      color: '#ffaa44',
+      fontStyle: 'bold',
+    });
+
     // Thumb card — element always visible per GDD §9 (staked ring shows its
     // jewelry position). Dim overlay signals passive exhaustion.
     this.thumbCard = scene.add.rectangle(-90, 20, 40, 56, 0x555555);
@@ -80,6 +91,7 @@ export class OpponentDuelist extends Phaser.GameObjects.Container {
       this.defText,
       ...this.elementDots,
       this.statusOverlay,
+      this.statusBadge,
       this.thumbCard,
       thumbLbl,
       this.thumbDimOverlay,
@@ -123,11 +135,13 @@ export class OpponentDuelist extends Phaser.GameObjects.Container {
     }
 
     // Status overlay: first triangle gauge at/above threshold tints the panel.
+    // The badge line names every active status (a player can stack multiple).
     let activeEl = -1;
+    const activeBadges: string[] = [];
     for (let i = 0; i < GAUGE_KEYS.length; i++) {
       if ((opp[GAUGE_KEYS[i]] ?? 0) >= GAUGE_THRESHOLD) {
-        activeEl = GAUGE_ELEMENTS[i];
-        break;
+        if (activeEl < 0) activeEl = GAUGE_ELEMENTS[i];
+        activeBadges.push(STATUS_BADGES[i]);
       }
     }
     if (activeEl >= 0) {
@@ -136,6 +150,7 @@ export class OpponentDuelist extends Phaser.GameObjects.Container {
     } else {
       this.statusOverlay.setVisible(false);
     }
+    this.statusBadge.setText(activeBadges.join('  '));
 
     // Thumb card: element always visible (per GDD §9). Dim when extinguished.
     const thumb = opp.thumb;
