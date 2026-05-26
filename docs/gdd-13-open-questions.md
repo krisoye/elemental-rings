@@ -22,6 +22,12 @@
 - Additional jewelry body positions (off-hand bracelet, necklace) and their passive archetypes (flagged Phase 7+)
 - Carry cap expansion cost curve — how much gold per +1 slot, and what is the maximum cap?
 - Wandering merchant patrol routes and trade window duration
+- Spirit gauge starting capacity (how many spirit units at game start?)
+- XP thresholds for spirit gauge increases (how many XP milestones, how large each step?)
+- Exact ratio: spirit units to ring carry slots (e.g. 10 spirit = 1 carry slot?)
+- Food quantities tuning: forage yield per node, boss drop amount, merchant buy/sell prices
+- Future food segmentation: fruits, vegetables, grains, meats — different effects? Or purely cosmetic variety?
+- Chapter city task design — what kinds of tasks complete a chapter? (deferred)
 
 **Tech / multiplayer:**
 - ~~Database choice for persistent player state~~ → settled: **SQLite via better-sqlite3** (synchronous, server-side)
