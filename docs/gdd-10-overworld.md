@@ -99,6 +99,30 @@ Triple same-element attack slots maximize gauge accumulation per exchange. The d
 
 All variants keep Wind in a primary attack slot as an uncounterable baseline. The second attack slot and the two defense slots vary with the stake element. Resilient opponents are not element-specialists — they are endurance fighters. At low health the AI stops no-blocking, tightens timing, and switches attack selection to Aggressive logic.
 
+### 10.5b The Caravan and Camp Model
+
+The player is an explorer who leaves camp with finite resources and returns when those resources are spent. The camp is a **horse-drawn caravan** that travels between safe areas in the overworld.
+
+**Within a biome, the gameplay loop is:**
+1. Arrive at a **safe area** — a known camp site that doubles as a small player hub (merchants visit, PvP between camped players is possible)
+2. Set up camp: sleep to restore spirit, recharge rings, manage loadout
+3. **Range on foot** from the safe area — explore the surrounding biome for food, treasure, shrine maps, shrines, NPCs, and paths to the next safe area
+4. The **boss** of the biome guards progression — required to advance; drops rare items and a significant food cache
+5. Once the horse has enough food and the next safe area is discovered, **move the caravan**
+6. Repeat until reaching the biome's **major city** and completing the chapter task
+
+**Moving the caravan:**
+- Costs **100 food units per travel day** (horse feed)
+- The player must have discovered the destination (explored the path on foot first)
+- The world map is **branching** — the player chooses which adjacent biome to move to
+- Returning to a previous biome is possible but costs food both ways
+
+**The safe area as a micro-hub:**
+- Multiple players can camp here simultaneously
+- Wandering merchants and traders pass through
+- PvP duels can be initiated between camped players
+- Not a city — no major services, no chapter-task NPCs
+
 ### 10.6 Key Locations
 
 | Location | Purpose |
@@ -114,7 +138,38 @@ All variants keep Wind in a primary attack slot as an uncounterable baseline. Th
 - Cities are persistent world locations shared by all players, with access to merchants, trade, and social features
 - Ring inventory management (choosing the 10 you carry) happens at **camp only** — you pack before you leave, not mid-expedition
 
-### 10.7 Merchants
+### 10.7 Food and Foraging
+
+Food is the fuel of the expedition. It sustains the protagonist (sleep → spirit restore) and the horse (caravan travel).
+
+**Food units** (one type currently; future segments: fruits, vegetables, grains, meats)
+
+| Use | Cost |
+|---|---|
+| Sleep at camp (full spirit restore) | 25 food units |
+| Horse travel | 100 food units per travel day |
+
+**Foraging:**
+- Gathered during overworld exploration (bushes, fields, hunting, mushroom patches, abandoned caches)
+- Brought back to camp and stored — no weight limit on food carried
+- The primary reason to range out from camp even when not seeking duels
+
+**Merchant food:**
+- Buy at **2× forage value** (emergency option)
+- Sell at base forage value
+- Creates a gold sink when expeditions run short
+
+**Boss food drop:**
+- Every biome boss drops a significant food cache on defeat
+- Minimum drop should cover horse travel to the next safe area
+- Removes food pressure at the chapter transition point and rewards completing the biome
+
+**Starvation:**
+- No food + no gold → cannot sleep → spirit stays depleted → rings cannot be recharged in bulk
+- Player can still duel on remaining spirit and ring uses — desperation play is possible
+- Eventually forces retreat toward a food source or merchant
+
+### 10.9 Merchants
 
 Merchants are encountered in cities and occasionally wandering the overworld between biomes.
 

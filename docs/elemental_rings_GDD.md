@@ -1,5 +1,5 @@
 # Elemental Rings — Game Design Document
-**Version 4.2 | Stack: Phaser.js + Colyseus | Multiplayer-first**
+**Version 4.3 | Stack: Phaser.js + Colyseus | Multiplayer-first**
 
 ---
 
@@ -20,7 +20,8 @@ Each section lives in its own file. Read only what you need.
 | 9 | Staking Economy | [gdd-09-staking-economy.md](gdd-09-staking-economy.md) | Stake rules, jewelry positions, self-regulation |
 | 10 | Overworld | [gdd-10-overworld.md](gdd-10-overworld.md) | Biomes, detection, NPC types, locations |
 | 11 | UI and Information Display | [gdd-11-ui.md](gdd-11-ui.md) | HUD, ring reveal, status display |
-| 12 | Open Questions | [gdd-13-open-questions.md](gdd-13-open-questions.md) | Unresolved design decisions |
+| 12 | Spirit System | [gdd-12-spirit-system.md](gdd-12-spirit-system.md) | Spirit gauge, carry capacity, ring recharge, food/sleep |
+| 13 | Open Questions | [gdd-13-open-questions.md](gdd-13-open-questions.md) | Unresolved design decisions |
 | — | Build Sequence (Phases 1–9) | [GitHub Issue #14](https://github.com/krisoye/elemental-rings/issues/14) | Project management — not game design |
 
 ---
@@ -35,6 +36,9 @@ Each section lives in its own file. Read only what you need.
 ---
 
 ## Changelog
+
+*Document version 4.3 — Updated May 2026*
+*v4.3 changes: New §12 Spirit System — spirit gauge as primary progression stat; spirit capacity = carry capacity (not physical weight); recharge costs 1 spirit unit per use, anywhere in overworld; sleep (25 food) restores full spirit gauge; "Recharge All" prioritizes battle hand first. §8 updated: spirit gauge replaces inventory expansion as progression axis; no hard total inventory cap (camp holds everything). §4.3 updated: recharge costs spirit (not gold). §10 updated: caravan model (§10.5b horse/wagon, branching world map, safe area as micro-hub, camp loop); food/foraging (§10.7 — 25 food/sleep, 100 food/travel day, forage/merchant/boss drop mechanics, starvation). §13: added spirit tuning and food quantity open questions. Gold is now merchants-only — sleep no longer costs gold.*
 
 *Document version 4.2 — Updated May 2026*
 *v4.2 changes: (a) Staking — rewrote §9.3 with 5 element-specific Thumb passives (Kindling/Wellspring/Deep Roots/Tailwind/Bulwark); updated §9.1 (Thumb IS loadout slot); added §9.5 gold rewards (50g/win, sleep 50g, recharge 10g/use). (b) Carry system — rewrote §4.1 with inventory/loadout/battle-hand/spare distinction; updated §6.1 (carry loadout context); updated §6.8 (post-battle won-ring prompt with swap/leave/discard options); added §10.7 Merchants (carry cap expansion, garments, wandering merchants, city concept). (c) NPC archetypes — expanded §10.5 with full loadout tables for 4 personalities. (d) Resolved open questions: auto-align, SQLite, auth, fusion names, NPC archetypes, post-battle ring prompt. (e) Closed §3.4 Open Question; fixed §6.4 fusion TBD; updated §11.1 and §11.6.*
