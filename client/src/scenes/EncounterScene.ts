@@ -293,7 +293,10 @@ export class EncounterScene extends Phaser.Scene {
       container.add([slotRect, slotLbl, elemLbl]);
     });
 
-    // Carried rings row (selectable).
+    // Carried rings row (selectable) — exclude rings already in a battle slot so
+    // the player only sees spare carried rings available for assignment.
+    const slottedIds = new Set(Object.values(this.manageLoadout).filter(Boolean) as string[]);
+    const availableRings = this.manageRings.filter((r) => !slottedIds.has(r.id));
     const ringY = CANVAS_H / 2 + 40;
     this.add
       .text(CANVAS_W / 2, CANVAS_H / 2 - 30, 'Carried rings (select one, then a slot):', {
@@ -301,7 +304,7 @@ export class EncounterScene extends Phaser.Scene {
         color: '#aaccff',
       })
       .setOrigin(0.5);
-    this.manageRings.forEach((ring, i) => {
+    availableRings.forEach((ring, i) => {
       const col = i % 6;
       const row = Math.floor(i / 6);
       const rx = CANVAS_W / 2 - 250 + col * 90;
