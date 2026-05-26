@@ -242,3 +242,63 @@ Merchants are encountered in cities and occasionally wandering the overworld bet
 - Creates strategic decisions: return to trade now or continue the expedition?
 
 ---
+
+### 10.12 Phase 8 Build Decomposition
+
+Phase 8 is the largest phase in the roadmap — it introduces a full tilemap world, spatial movement, and all overworld systems. It is broken into three EPICs that ship sequentially.
+
+#### EPIC 8A — Spatial Engine + Sanctum Scene (EPIC [#54](https://github.com/krisoye/elemental-rings/issues/54))
+
+**What ships:** The Phaser tilemap engine and the Sanctum as a walkable room. Client-only — no Colyseus or server route changes. Every camp action (carry, loadout, sleep, recharge, fusion) already round-trips to authoritative REST endpoints; 8A only adds the spatial presentation layer.
+
+**Sanctum room zones** (walk to zone + press E to activate):
+
+| Zone | Action |
+|---|---|
+| Ring-storage wall | Inventory, loadout, carry management, and fusion (until shrines arrive in 8C) |
+| Meditation circle | Ring recharge. Teleportation UI stub (enabled in 8B). |
+| Bed | Sleep — spend 25 food, restore full spirit gauge |
+| Campfire (exterior) | Placeholder — food display; cook/eat mechanic is a future phase |
+| Exit door | Transition to OverworldScene (stub in 8A.3; real biome in 8B) |
+
+**Sub-issues (implement in order):**
+- [#55](https://github.com/krisoye/elemental-rings/issues/55) — 8A.1: Spatial movement engine + Sanctum room shell (tilemap, Player, collision, camera)
+- [#56](https://github.com/krisoye/elemental-rings/issues/56) — 8A.2: Sanctum interaction zones (reintegrate CampScene panels as proximity overlays)
+- [#57](https://github.com/krisoye/elemental-rings/issues/57) — 8A.3: Overworld stub + scene transition (seam to 8B)
+
+**Confirmed implementation decisions (8A):**
+
+| Decision | Choice | Rationale |
+|---|---|---|
+| Tile assets | Kenney CC0 placeholder tilesheet (32px tiles, committed PNG + generator script); Tiled-format JSON maps | Swappable: replace PNG + reindex in Tiled. No Tiled GUI or MCP needed for 8A. |
+| Multiplayer overworld | Per-player (local) for 8A MVP | Per-player adds zero server complexity. Area-scoped Colyseus `WorldRoom` designed in once biome authoring begins. |
+| Scene key | Keep `'CampScene'` (transform in place) | Preserves 4 existing `scene.start('CampScene')` callers and all `window.__camp*` E2E hooks — zero test churn. |
+| EncounterScene | Survives as a dev/test shortcut ("Set Out →" button) | The overworld is its eventual spatial replacement, but it remains invaluable for isolated battle testing. |
+| Fusion entry point | Sanctum ring-wall zone until 8C | Shrines are a physical overworld object that requires biome content. The existing `/api/fusion/combine` route is unchanged. |
+| Player movement | Top-down Arcade Physics, zero gravity, WASD + arrows, 160 px/s | Standard Phaser top-down pattern; no physics complexity needed for a walking protagonist. |
+
+---
+
+#### EPIC 8B — Overworld World (planned, no EPIC issue yet)
+
+**What ships:** The real overworld map (≥1 biome using Kenney tiles, authored in Tiled), waystones, compass, and teleportation.
+
+- Biome map: Tiled-authored orthogonal map, Kenney CC0 tileset replacing the placeholder
+- 3–5 waystones in the biome: touch to attune → added to teleportation map
+- Compass HUD: directional pull toward nearest unattuned waystone
+- Teleportation: meditation circle → map screen → spiritual-level-gated destination selection
+- Sanctum anchors near the teleport arrival point
+
+---
+
+#### EPIC 8C — World Population (planned, no EPIC issue yet)
+
+**What ships:** NPCs and monsters in the biome, detection radius, duel initiation from overworld, shrines.
+
+- NPC/monster placement using the existing 4-personality AI (Aggressive/Defensive/Status-Hunter/Resilient)
+- Detection radius: proximity reveals opponent's element loadout; approach/flee before committing
+- Duel trigger: spatial proximity → agreement → BattleRoom (replaces EncounterScene for live play)
+- Shrines: one per fusion recipe; fusion UI entry point moves from Sanctum ring-wall to shrine interaction
+- Underground zone: Shadow ring drop location (Shadow combat use deferred to a later phase)
+
+---
