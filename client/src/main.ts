@@ -43,6 +43,17 @@ declare global {
         meetsThreshold: boolean;
       }>;
     };
+    // Compass HUD state (8B.2), published every OverworldScene update frame.
+    // `visible` is false when no unattuned waystone is within COMPASS_RANGE (or
+    // all are attuned); otherwise it points at `targetId` with a math-angle
+    // `angle` (rad) and `intensity` ∈ [0,1] rising as the player approaches.
+    // Cleared on scene shutdown.
+    __compass?: {
+      visible: boolean;
+      targetId: string | null;
+      angle: number | null;
+      intensity: number | null;
+    };
     __lastExchangeResult: ExchangeResultPayload | null;
     __slotPositions: { x: number; y: number }[];
     __orbLaunchCount: number;

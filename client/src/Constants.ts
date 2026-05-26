@@ -92,6 +92,15 @@ export const GAUGE_THRESHOLD = 4;
 export const TELEGRAPH_MS = 900;
 export const BLOCK_WINDOW_MS = 200;
 
+// #62 — Phase 8B.2 Compass HUD (GDD §10.7). The compass is a camera-pinned
+// arrow that pulls toward the nearest UNATTUNED waystone within COMPASS_RANGE,
+// brightening/growing as the player approaches. Pure presentation — the
+// waystone catalog/positions and attunement state come from the server
+// (window.__waystones) and the map; the compass only renders the pull.
+export const COMPASS_RANGE = 400; // px — sensing radius; outside this, hidden
+export const COMPASS_ARROW_COLOR = 0xffd700; // gold — distinct from waystone hues
+export const COMPASS_ARROW_SIZE = 24; // px — half-length of the arrow triangle
+
 // Layout
 export const CANVAS_W = 1024;
 export const CANVAS_H = 576;

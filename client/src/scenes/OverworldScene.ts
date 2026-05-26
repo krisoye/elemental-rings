@@ -2,6 +2,8 @@ import Phaser from 'phaser';
 import { Player } from '../objects/world/Player';
 import { InteractionZone } from '../objects/world/InteractionZone';
 import { Waystone } from '../objects/world/Waystone';
+import { Compass } from '../objects/world/Compass';
+import { COMPASS_RANGE } from '../Constants';
 
 declare const __SERVER_URL__: string;
 
@@ -30,9 +32,13 @@ interface WaystonesPayload {
  * Phase 8B.1 adds waystones (GDD §10.7): permanent standing stones the player
  * walks onto and attunes with E. Attunement is server-enforced (the overworld
  * itself is per-player/client-side, but the attunement RECORD is a rule). The
- * scene GETs /api/waystones on create and POSTs /api/waystones/attune on E. No
- * compass and no teleport yet — those are 8B.2 / 8B.3. The scene does not
- * auto-start; it is reached via the Sanctum door.
+ * scene GETs /api/waystones on create and POSTs /api/waystones/attune on E.
+ *
+ * Phase 8B.2 adds the Compass HUD: a camera-pinned arrow that pulls toward the
+ * nearest UNATTUNED waystone within COMPASS_RANGE, brightening as the player
+ * approaches and hiding when none is in range (or all are attuned). No teleport
+ * yet — that is 8B.3. The scene does not auto-start; it is reached via the
+ * Sanctum door.
  */
 export class OverworldScene extends Phaser.Scene {
   private player!: Player;
@@ -44,6 +50,8 @@ export class OverworldScene extends Phaser.Scene {
   private waystones: Map<string, Waystone> = new Map();
   /** Latest GET /api/waystones payload (mirrored to window.__waystones). */
   private waystonePayload: WaystonesPayload | null = null;
+  /** Camera-pinned compass HUD (8B.2) pulling toward unattuned waystones. */
+  private compass!: Compass;
 
   constructor() {
     super({ key: 'OverworldScene' });
@@ -81,6 +89,10 @@ export class OverworldScene extends Phaser.Scene {
       .setScrollFactor(0)
       .setDepth(500);
 
+    // Compass HUD (8B.2) — hidden until the first update() finds a target.
+    this.compass = new Compass(this);
+    window.__compass = { visible: false, targetId: null, angle: null, intensity: null };
+
     // Interaction zones: sanctum_return → back to the Sanctum.
     this.buildZones(map);
 
@@ -97,8 +109,10 @@ export class OverworldScene extends Phaser.Scene {
       window.__sanctumInteract = undefined;
       window.__sanctumZones = undefined;
       window.__waystones = undefined;
+      window.__compass = undefined;
       this.zones.forEach((z) => z.destroy());
       this.waystones.forEach((w) => w.destroy());
+      this.compass.destroy();
       this.zones = [];
       this.waystones.clear();
     });
@@ -110,6 +124,48 @@ export class OverworldScene extends Phaser.Scene {
   update(): void {
     this.player.update(this.cursors, this.wasd);
     this.updateActiveZone();
+    this.updateCompass();
+  }
+
+  /**
+   * Per-frame compass pull (8B.2). Finds the nearest UNATTUNED waystone (from the
+   * cached server payload joined with the instantiated markers' positions). When
+   * one is within COMPASS_RANGE the compass points at it with intensity rising as
+   * distance shrinks; otherwise it hides. Publishes window.__compass each frame.
+   */
+  private updateCompass(): void {
+    const px = this.player.x;
+    const py = this.player.y;
+
+    // Unattuned waystone ids that have a live marker (and thus a position).
+    const unattuned = (this.waystonePayload?.waystones ?? []).filter((w) => !w.attuned);
+
+    let targetId: string | null = null;
+    let bestDist = Infinity;
+    let bestX = 0;
+    let bestY = 0;
+    for (const info of unattuned) {
+      const marker = this.waystones.get(info.id);
+      if (!marker) continue;
+      const d = Phaser.Math.Distance.Between(px, py, marker.center.x, marker.center.y);
+      if (d < bestDist) {
+        bestDist = d;
+        targetId = info.id;
+        bestX = marker.center.x;
+        bestY = marker.center.y;
+      }
+    }
+
+    if (targetId === null || bestDist > COMPASS_RANGE) {
+      this.compass.hide();
+      window.__compass = { visible: false, targetId: null, angle: null, intensity: null };
+      return;
+    }
+
+    const angle = Phaser.Math.Angle.Between(px, py, bestX, bestY);
+    const intensity = 1 - bestDist / COMPASS_RANGE;
+    this.compass.point(angle, intensity);
+    window.__compass = { visible: true, targetId, angle, intensity };
   }
 
   /** Build an InteractionZone for each named rectangle (sanctum_return here). */
