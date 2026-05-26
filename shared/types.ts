@@ -84,6 +84,19 @@ export interface ExchangeResultPayload {
   gaugeElements: number[];
 }
 
+/**
+ * Sent to each human client once a duel resolves (after XP/gold have been
+ * persisted), so the BattleScene can show the post-battle reward summary under
+ * the WIN/LOSE banner. Server-authoritative — every value is computed from the
+ * DB-backed award totals, not the client.
+ */
+export interface BattleSummaryPayload {
+  won: boolean;
+  goldGained: number; // GOLD_PER_WIN if this client won, else 0
+  xpGained: number; // sum of this session's xpAccumulator deltas across all slots
+  aggregateXp: number; // post-award total from PlayerRepo.getSpiritStats(playerId).aggregateXp
+}
+
 export interface BlockResult {
   timing: 'PARRY' | 'BLOCK' | 'MISTIME' | 'NO_BLOCK';
   relationship: 'STRONG' | 'NEUTRAL' | 'WEAK';

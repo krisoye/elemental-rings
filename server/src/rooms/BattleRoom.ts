@@ -39,6 +39,7 @@ import {
   SlotKey,
   AttackSlot,
   DefenseSlot,
+  BattleSummaryPayload,
 } from '../../../shared/types';
 
 /** Fixed sessionId used for the virtual AI player (it has no Colyseus client). */
@@ -486,6 +487,34 @@ export class BattleRoom extends Room<{ state: BattleState }> {
       if (wonRingId && winnerId) {
         const winnerClient = this.clients.find((c) => c.sessionId === winnerId);
         winnerClient?.send('wonRing', { ringId: wonRingId, element: wonRingElement ?? 0 });
+      }
+
+      // Post-battle reward summary (#78 ②). Sent AFTER awardXP/refreshSpiritMax
+      // above so getSpiritStats reflects the new aggregate. One per human client;
+      // AI sessions (no DB player id) are skipped. The client only renders it.
+      for (const client of this.clients) {
+        const sessionId = client.sessionId;
+        const playerId = this.sessionToPlayerId.get(sessionId);
+        if (!playerId) continue; // skip AI / no-token sessions
+
+        const won = sessionId === winnerId;
+        const goldGained = won ? GOLD_PER_WIN : 0;
+
+        // Sum this session's outcome XP across every slot (the deltas persisted
+        // via awardXP above are the same values aggregated here).
+        const sessionXpMap = this.xpAccumulator.get(sessionId);
+        const xpGained = sessionXpMap
+          ? Array.from(sessionXpMap.values()).reduce((a, b) => a + b, 0)
+          : 0;
+
+        const { aggregateXp } = PlayerRepo.getSpiritStats(playerId);
+
+        client.send('battleSummary', {
+          won,
+          goldGained,
+          xpGained,
+          aggregateXp,
+        } satisfies BattleSummaryPayload);
       }
     } catch (err: unknown) {
       console.error('[BattleRoom] persistBattleResult failed:', err);

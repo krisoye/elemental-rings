@@ -166,6 +166,7 @@ export class EncounterScene extends Phaser.Scene {
       window.__encounterResolveWonRing = undefined;
       window.__encounterDiscardRing = undefined;
       window.__encounterState = undefined;
+      window.__encounterPreview = undefined;
     });
 
     // Fetch stake preview and update marker colors + labels.
@@ -176,7 +177,12 @@ export class EncounterScene extends Phaser.Scene {
     if (localStorage.getItem('er_pending_ring')) void this.checkPendingWonRing();
   }
 
-  /** Fetch /api/encounter/preview and recolor AI markers by stake element. */
+  /**
+   * Fetch /api/encounter/preview, recolor AI markers by stake element, and show
+   * the opponent's staked-ring tier/XP and total XP per marker (#78 ③). All
+   * values are server-authoritative; the scene only renders what it receives.
+   * Publishes window.__encounterPreview (AI keys only) for the E2E harness.
+   */
   private async loadPreview(
     rects: Map<Choice, Phaser.GameObjects.Rectangle>,
     stakeLabels: Map<Choice, Phaser.GameObjects.Text>,
@@ -184,17 +190,37 @@ export class EncounterScene extends Phaser.Scene {
     try {
       const res = await fetch(`${API_BASE}/api/encounter/preview`);
       if (!res.ok) return;
-      const preview: Record<string, { element: number; aiSeed: number }> = await res.json();
+      const preview: Record<
+        string,
+        { element: number; aiSeed: number; stakeTier: number; stakeXp: number; totalXp: number }
+      > = await res.json();
 
-      for (const [personality, { element, aiSeed }] of Object.entries(preview)) {
+      const published: Record<
+        string,
+        { element: number; stakeTier: number; stakeXp: number; totalXp: number }
+      > = {};
+
+      for (const [personality, entry] of Object.entries(preview)) {
+        const { element, aiSeed, stakeTier, stakeXp, totalXp } = entry;
         this.aiSeeds.set(personality as Choice, aiSeed);
+        published[personality] = { element, stakeTier, stakeXp, totalXp };
+
         const rect = rects.get(personality as Choice);
         const label = stakeLabels.get(personality as Choice);
         if (!rect || !label) continue;
         const color = ELEMENT_COLORS[element] ?? 0x888888;
         rect.setFillStyle(color, 0.85);
-        label.setText(`Stakes: ${ELEMENT_NAMES[element] ?? '?'}`);
+        // Three lines: stake element · tier · XP, then the loadout's total XP.
+        const elementName = ELEMENT_NAMES[element] ?? '?';
+        label.setText(
+          `Stakes: ${elementName} · T${stakeTier} · ${stakeXp}xp\nTotal XP: ${totalXp}`,
+        );
+        label.setAlign('center');
       }
+
+      // The preview response only contains AI personalities (no PVP key); publish
+      // the rendered subset so E2E can assert opponent stats deterministically.
+      window.__encounterPreview = published;
     } catch {
       // Non-fatal — markers keep their fallback colors.
     }

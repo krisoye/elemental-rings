@@ -1,8 +1,32 @@
 import { test, expect, type BrowserContext, type Page } from '@playwright/test';
-import { setupBattle, waitForEncounter, campToEncounter, seedAuthToken, closeBattle } from './helpers';
+import {
+  setupBattle,
+  waitForEncounter,
+  campToEncounter,
+  seedAuthToken,
+  closeBattle,
+  driveAiDuel,
+} from './helpers';
 
 // Port 8090 avoids colliding with the production Vite dev server on 8080.
 const URL = 'http://localhost:8090';
+// Phase 4+5 auth + encounter-preview API runs on the test Colyseus port.
+const API_URL = 'http://localhost:2568';
+
+interface BattleSummary {
+  won: boolean;
+  goldGained: number;
+  xpGained: number;
+  aggregateXp: number;
+}
+
+interface PreviewEntry {
+  element: number;
+  aiSeed: number;
+  stakeTier: number;
+  stakeXp: number;
+  totalXp: number;
+}
 
 /**
  * Seed auth on the context, navigate through CampScene to EncounterScene, and
@@ -193,4 +217,113 @@ test('scenario 6: a PvP join never lands in the locked AI room', async ({ browse
 
   await ctx1.close();
   await ctx2.close();
+});
+
+// ── #78 ② Battle summary ────────────────────────────────────────────────────
+
+// Scenario 3 — a WON duel reports gold + XP. driveAiDuel(aiHearts:1) forces a
+// guaranteed protagonist win, then returns to EncounterScene. The server sends
+// `battleSummary` after the ENDED patch; Connection.ts captures it onto
+// window.__lastBattleSummary (persisting across the scene change), so we read it
+// once the duel has resolved.
+test('scenario 3: battle summary reports gold and XP on a win', async ({ browser }) => {
+  const ctx = await browser.newContext();
+  await seedAuthToken(ctx);
+  const page = await ctx.newPage();
+  await page.goto(URL);
+
+  await driveAiDuel(page, { personality: 'AGGRESSIVE', aiHearts: 1 });
+
+  // The summary is captured at the connection level, so it is present even after
+  // the post-duel transition back to EncounterScene.
+  await page.waitForFunction(() => (window as any).__lastBattleSummary !== null, { timeout: 8000 });
+  const summary = (await page.evaluate(
+    () => (window as any).__lastBattleSummary,
+  )) as BattleSummary;
+
+  expect(summary.won).toBe(true);
+  expect(summary.goldGained).toBe(50); // GOLD_PER_WIN
+  expect(summary.xpGained).toBeGreaterThan(0);
+  expect(summary.aggregateXp).toBeGreaterThan(0);
+
+  await ctx.close();
+});
+
+// Scenario 4 — a LOST duel reports zero gold. driveAiDuel(aiHearts:99) makes the
+// AI unkillable; the protagonist exhausts both attack rings and forfeits (§6.6),
+// so winner = AI and the human summary shows won=false, goldGained=0.
+test('scenario 4: battle summary reports zero gold on a loss', async ({ browser }) => {
+  const ctx = await browser.newContext();
+  await seedAuthToken(ctx);
+  const page = await ctx.newPage();
+  await page.goto(URL);
+
+  await driveAiDuel(page, { personality: 'AGGRESSIVE', aiHearts: 99 });
+
+  await page.waitForFunction(() => (window as any).__lastBattleSummary !== null, { timeout: 8000 });
+  const summary = (await page.evaluate(
+    () => (window as any).__lastBattleSummary,
+  )) as BattleSummary;
+
+  expect(summary.won).toBe(false);
+  expect(summary.goldGained).toBe(0);
+
+  await ctx.close();
+});
+
+// ── #78 ③ Encounter preview opponent stats ──────────────────────────────────
+
+// Scenario 5 — the preview endpoint returns stakeTier/stakeXp/totalXp for every
+// AI personality. AGGRESSIVE stakes a Tier 1 ring worth PERSONALITY_THUMB_XP=10,
+// which is also its total XP (only the thumb carries XP).
+test('scenario 5: encounter preview endpoint returns stakeTier/stakeXp/totalXp', async ({
+  request,
+}) => {
+  const res = await request.get(`${API_URL}/api/encounter/preview`);
+  expect(res.ok()).toBe(true);
+  const preview = (await res.json()) as Record<string, PreviewEntry>;
+
+  const personalities = ['AGGRESSIVE', 'DEFENSIVE', 'STATUS_HUNTER', 'RESILIENT'];
+  for (const p of personalities) {
+    expect(preview[p]).toBeDefined();
+    expect(typeof preview[p].stakeTier).toBe('number');
+    expect(typeof preview[p].stakeXp).toBe('number');
+    expect(typeof preview[p].totalXp).toBe('number');
+  }
+
+  expect(preview.AGGRESSIVE.stakeXp).toBe(10);
+  expect(preview.AGGRESSIVE.stakeTier).toBe(1);
+  // Only the thumb carries XP, so total equals the thumb XP.
+  expect(preview.AGGRESSIVE.totalXp).toBe(10);
+
+  // The preview is AI-only — no PVP marker is previewed server-side.
+  expect(preview.PVP).toBeUndefined();
+});
+
+// Scenario 6 — EncounterScene publishes __encounterPreview with the AI opponent
+// stats (no PVP key). AGGRESSIVE's total XP is 10 (its Tier 1 thumb stake).
+test('scenario 6: EncounterScene populates __encounterPreview', async ({ browser }) => {
+  const ctx = await browser.newContext();
+  await seedAuthToken(ctx);
+  const page = await ctx.newPage();
+  await page.goto(URL);
+  await campToEncounter(page);
+  await waitForEncounter(page);
+
+  await page.waitForFunction(() => (window as any).__encounterPreview != null, { timeout: 8000 });
+  const preview = (await page.evaluate(
+    () => (window as any).__encounterPreview,
+  )) as Record<string, { element: number; stakeTier: number; stakeXp: number; totalXp: number }>;
+
+  const keys = Object.keys(preview);
+  expect(keys).toHaveLength(4); // exactly the 4 AI personalities
+  expect(keys).toEqual(
+    expect.arrayContaining(['AGGRESSIVE', 'DEFENSIVE', 'STATUS_HUNTER', 'RESILIENT']),
+  );
+  expect(keys).not.toContain('PVP');
+
+  expect(preview.AGGRESSIVE.totalXp).toBe(10);
+  expect(preview.AGGRESSIVE.stakeTier).toBe(1);
+
+  await ctx.close();
 });

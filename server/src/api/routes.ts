@@ -2,7 +2,7 @@ import { Router, type Request, type Response } from 'express';
 import bcrypt from 'bcrypt';
 import { signToken, requireAuth } from '../auth/auth';
 import { makeRng } from '../game/ai/AIProfiles';
-import { previewStakeElement, AI_PERSONALITIES } from '../game/ai/AILoadout';
+import { previewOpponent, AI_PERSONALITIES } from '../game/ai/AILoadout';
 import {
   createPlayer,
   getPlayerByUsername,
@@ -303,11 +303,14 @@ apiRouter.post('/api/stake/unlock', requireAuth, (req: Request, res: Response): 
 });
 
 /**
- * GET /api/encounter/preview — returns a randomized stake element per AI
- * personality so the EncounterScene can color each opponent marker before
+ * GET /api/encounter/preview — returns each AI personality's randomized staked
+ * ring (element + tier + XP) and the loadout's total XP, so the EncounterScene
+ * can color each opponent marker and show what beating them transfers, before
  * the player commits to a duel. No auth required.
  *
- * Response: Record<AIPersonality, number>  (personality → stake element index)
+ * Response: Record<AIPersonality, {
+ *   element: number; aiSeed: number; stakeTier: number; stakeXp: number; totalXp: number
+ * }>
  */
 apiRouter.get('/api/encounter/preview', (_req: Request, res: Response): void => {
   const baseSeed = Date.now() & 0xffffffff;
@@ -315,11 +318,15 @@ apiRouter.get('/api/encounter/preview', (_req: Request, res: Response): void => 
   // preview and the actual BattleRoom loadout use identical RNG state.
   // BattleRoom seeds its loadout RNG as makeRng(aiSeed ^ 0x1a2b3c4d); we do
   // the same here so intBetween(0, templates.length-1) returns the same index.
-  const preview: Record<string, { element: number; aiSeed: number }> = {};
+  const preview: Record<
+    string,
+    { element: number; aiSeed: number; stakeTier: number; stakeXp: number; totalXp: number }
+  > = {};
   AI_PERSONALITIES.forEach((p, i) => {
     const aiSeed = (baseSeed ^ (i * 0xdeadbeef)) & 0xffffffff;
     const loadoutRng = makeRng(aiSeed ^ 0x1a2b3c4d);
-    preview[p] = { element: previewStakeElement(p, loadoutRng), aiSeed };
+    const { element, stakeTier, stakeXp, totalXp } = previewOpponent(p, loadoutRng);
+    preview[p] = { element, aiSeed, stakeTier, stakeXp, totalXp };
   });
   res.status(200).json(preview);
 });
