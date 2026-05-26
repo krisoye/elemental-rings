@@ -279,15 +279,38 @@ Phase 8 is the largest phase in the roadmap — it introduces a full tilemap wor
 
 ---
 
-#### EPIC 8B — Overworld World (planned, no EPIC issue yet)
+#### EPIC 8B — Overworld World (EPIC [#60](https://github.com/krisoye/elemental-rings/issues/60))
 
-**What ships:** The real overworld map (≥1 biome using Kenney tiles, authored in Tiled), waystones, compass, and teleportation.
+**What ships:** The 8A overworld *stub* becomes a real **Forest biome** — a generated Tiled map with 3 waystones (touch to attune, **server-persisted**), a compass HUD that pulls toward the nearest *undiscovered* waystone, and teleportation from the Sanctum's meditation circle gated by aggregate ring XP. Unlike 8A (client-only), **8B adds server state and routes** — attunement, the Sanctum anchor, and the teleport XP gate are game rules and are server-enforced (§2).
 
-- Biome map: Tiled-authored orthogonal map, Kenney CC0 tileset replacing the placeholder
-- 3–5 waystones in the biome: touch to attune → added to teleportation map
-- Compass HUD: directional pull toward nearest unattuned waystone
-- Teleportation: meditation circle → map screen → spiritual-level-gated destination selection
-- Sanctum anchors near the teleport arrival point
+**Sub-issues (implement in order):**
+- [#61](https://github.com/krisoye/elemental-rings/issues/61) — 8B.1: Forest biome map + waystone attunement (`shared/waystones.ts` catalog, map generator, `waystone_attunements` table, `GET /api/waystones` + `POST /api/waystones/attune`, overworld markers)
+- [#62](https://github.com/krisoye/elemental-rings/issues/62) — 8B.2: Compass HUD (directional pull to nearest unattuned waystone; client-only)
+- [#63](https://github.com/krisoye/elemental-rings/issues/63) — 8B.3: Teleportation + Sanctum anchoring (`players.anchored_waystone`, `POST /api/teleport`, meditation-circle modal list, anchor-derived overworld spawn)
+
+8B.2 and 8B.3 both depend on 8B.1 but are independent of each other.
+
+**Waystones (Forest biome — tunable):**
+
+| id | Name | XP threshold | Notes |
+|---|---|---|---|
+| `forest_entry` | Forest Waystone | 0 | Pre-attuned at player creation; the default Sanctum anchor |
+| `forest_glade` | Glade Waystone | 100 | Unlocks ~one maxed Tier-1 ring (`TIER1_XP_CAP`) |
+| `forest_depths` | Deepwood Waystone | 300 | Veteran-gated (`TIER2_XP_CAP`); "guarded" feel |
+
+**Confirmed implementation decisions (8B):**
+
+| Decision | Choice | Rationale |
+|---|---|---|
+| Waystone persistence | Server DB (`waystone_attunements` table + routes) | GDD §10.7: attunement is *permanent*. Survives browser-storage clears. |
+| Teleport UI | Modal list (attuned destinations + per-row XP gate) | Correct for a single-biome MVP; the stylized world-map screen is deferred. |
+| Biome map | Generated via script (`gen-overworld-map.mjs`) | Same reproducible pattern as 8A's placeholder assets; swappable with a hand-authored Tiled map later. |
+| Biome count | 1 (Forest) for 8B | Multi-biome + cross-biome teleport is an 8C concern. |
+| Multiplayer overworld | Per-player (local) — unchanged from 8A | Shared `WorldRoom` still deferred. |
+| Map filename + spawn/return coords | Keep `overworld.json`; keep `spawn`/`sanctum_return` coords | Zero churn to 8A's `overworld-transition.spec.ts`. |
+| Waystone metadata vs. position | Thresholds/names in `shared/waystones.ts` (server-enforced gate); positions in the map (rendering/compass); a Vitest drift test asserts id-set parity | No duplication; the client never imports the catalog at runtime — `GET /api/waystones` returns everything it needs. |
+
+**Known limitation (flagged):** because the overworld is per-player and client-side, the server cannot verify the player physically stood on a waystone before attuning — it trusts the attune call. Consistent with the 8A per-player MVP; a future shared `WorldRoom` (8C+) would verify proximity authoritatively.
 
 ---
 

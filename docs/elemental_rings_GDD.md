@@ -1,5 +1,5 @@
 # Elemental Rings — Game Design Document
-**Version 4.6 | Stack: Phaser.js + Colyseus | Multiplayer-first**
+**Version 4.7 | Stack: Phaser.js + Colyseus | Multiplayer-first**
 
 ---
 
@@ -37,6 +37,9 @@ Each section lives in its own file. Read only what you need.
 ---
 
 ## Changelog
+
+*Document version 4.7 — Updated May 2026*
+*v4.7 changes: §10.12 EPIC 8B expanded from a planning stub into the full build decomposition (EPIC [#60](https://github.com/krisoye/elemental-rings/issues/60)). 8B splits into three sub-issues — 8B.1 Forest biome map + waystone attunement (#61), 8B.2 Compass HUD (#62), 8B.3 Teleportation + Sanctum anchoring (#63). Confirmed implementation decisions: single Forest biome for the MVP; 3 waystones (`forest_entry`/`forest_glade`/`forest_depths`, XP thresholds 0/100/300, tunable); server-DB attunement persistence (`waystone_attunements` table); modal-list teleport UI (stylized world-map screen deferred); script-generated map keeping the `overworld.json` filename + `spawn`/`sanctum_return` coords; waystone metadata in `shared/waystones.ts` with positions in the map (drift-tested for id parity). Per-player overworld unchanged from 8A; shared `WorldRoom` still deferred to 8C+. Issue #14 updated.*
 
 *Document version 4.6 — Updated May 2026*
 *v4.6 changes: §10 Phase 8 build decomposition added (§10.12). Phase 8 splits into three EPICs — 8A (spatial engine + walkable Sanctum room, EPIC #54), 8B (overworld world: waystones, compass, teleportation, biome), 8C (world population: NPCs, monsters, detection, shrines). Confirmed implementation decisions: Kenney CC0 placeholder tileset (Tiled JSON pipeline, swappable), per-player overworld for MVP (shared WorldRoom deferred), CampScene key preserved, EncounterScene retained as dev tool, fusion stays in Sanctum ring-wall until shrines land in 8C. Issue #14 updated to reflect EPIC decomposition.*
