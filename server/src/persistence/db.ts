@@ -48,15 +48,18 @@ if (!hasPlayerCol('food_units')) {
   db.exec('ALTER TABLE players ADD COLUMN food_units INTEGER NOT NULL DEFAULT 100');
 }
 
-// XP-derived spirit_max backfill: recompute every player's spirit_max as
-// 50 + aggregate ring XP, and lift spirit_current to at least the old floor (50)
-// so pre-existing rows (seeded at the flat 30 default) gain the larger gauge.
-// Idempotent: re-running recomputes the same value and only raises low currents.
+// XP-derived spirit_max recompute on every boot: mirrors computeSpiritMax() in
+// PlayerRepo (SPIRIT_BASE=50, XP_SCALER=5). Running on every start keeps the
+// column consistent after offline XP edits or ring transfers. Then:
+//   1. Cap spirit_current to spirit_max (fixes overflow when spirit_max shrank).
+//   2. Raise spirit_current to spirit_max for players below the base (new rows).
 db.exec(
   `UPDATE players
-     SET spirit_max = 50 + COALESCE(
-       (SELECT SUM(xp) FROM rings WHERE owner_id = players.id), 0)`,
+     SET spirit_max = 50 + CAST(
+       COALESCE((SELECT SUM(xp) FROM rings WHERE owner_id = players.id), 0) / 5
+     AS INTEGER)`,
 );
+db.exec('UPDATE players SET spirit_current = MIN(spirit_current, spirit_max)');
 db.exec('UPDATE players SET spirit_current = spirit_max WHERE spirit_current < 50');
 
 // #40 — carry flag on rings. On first introduction of the column, backfill it:

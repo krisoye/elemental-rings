@@ -539,7 +539,7 @@ export class EncounterScene extends Phaser.Scene {
         .setInteractive({ useHandCursor: true })
         .on('pointerdown', () => void this.assignManageSlot(slot));
       const slotLbl = this.add
-        .text(sx, slotY - 48, slot.toUpperCase(), { fontSize: '11px', color: '#cccccc' })
+        .text(sx, slotY - 34, slot.toUpperCase(), { fontSize: '11px', color: '#cccccc' })
         .setOrigin(0.5);
       container.add([slotRect, slotLbl]);
       if (ring) {
