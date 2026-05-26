@@ -17,8 +17,16 @@ import {
   PARRY_WINDOW_MS,
   STARTING_HEARTS,
   STARTING_USES,
-  XP_PER_USE,
   GOLD_PER_WIN,
+  XP_ATK_HIT,
+  XP_ATK_BLOCK,
+  XP_ATK_COUNTER,
+  XP_DEF_COUNTER,
+  XP_DEF_BLOCK,
+  XP_DEF_WEAK,
+  XP_THUMB_BUFF,
+  XP_THUMB_MID,
+  XP_THUMB_ABSORB,
 } from '../game/constants';
 import {
   ElementEnum,
@@ -69,6 +77,12 @@ export class BattleRoom extends Room<{ state: BattleState }> {
   private sessionToPlayerId = new Map<string, string>();
   /** Maps Colyseus sessionId → ring id per slot (null when slot used default). */
   private sessionToRingIds = new Map<string, Record<SlotKey, string | null>>();
+  /**
+   * Outcome-based XP accrued during the duel: sessionId → slotKey → xp delta.
+   * Only humans are tracked (a key exists per human session). Persisted in
+   * persistBattleResult once the duel ends.
+   */
+  private xpAccumulator: Map<string, Map<string, number>> = new Map();
   /** Guard: persistBattleResult() runs exactly once per room lifetime. */
   private ended = false;
 
@@ -114,13 +128,16 @@ export class BattleRoom extends Room<{ state: BattleState }> {
    * currentUses / maxUses. Slots absent from spec fall back to DEFAULT_LOADOUT
    * (with currentUses = maxUses = STARTING_USES). After seating, the thumb's
    * setup passive is applied (Kindling / Bulwark) — a no-op for most elements.
+   *
+   * Returns the number of rings buffed by the setup passive so the caller can
+   * award thumb XP (XP_THUMB_BUFF per ring).
    */
   private seatPlayer(
     id: string,
     displayName: string,
     spec?: Partial<Record<SlotKey, SlotSpec>>,
     overrides?: { hearts?: number; uses?: number },
-  ): void {
+  ): number {
     const ps = new PlayerState();
     ps.playerId = id;
     ps.displayName = displayName;
@@ -152,11 +169,16 @@ export class BattleRoom extends Room<{ state: BattleState }> {
     this.state.players.set(id, ps);
 
     // Apply setup passive (Kindling / Bulwark). No-op for all other elements.
-    StakeResolver.applySetupPassive(ps);
+    // Returns how many rings were buffed so the caller can award thumb XP.
+    return StakeResolver.applySetupPassive(ps);
   }
 
   onJoin(client: Client, options: BattleRoomOptions = {}): void {
     const sessionId = client.sessionId;
+
+    // Every onJoin seat is a human client (the AI is seated in onCreate). Track
+    // its outcome-based XP for the duration of the duel.
+    this.xpAccumulator.set(sessionId, new Map());
 
     // Attempt to load a real loadout from the DB if the client supplied a token.
     const payload = options.token ? verifyToken(options.token) : null;
@@ -195,9 +217,11 @@ export class BattleRoom extends Room<{ state: BattleState }> {
         }
       }
 
-      this.seatPlayer(sessionId, '', spec);
+      const buffed = this.seatPlayer(sessionId, '', spec);
       this.sessionToPlayerId.set(sessionId, playerId);
       this.sessionToRingIds.set(sessionId, ringIds);
+      // Kindling/Bulwark thumb XP: 1 per ring buffed at seat time.
+      if (buffed > 0) this.addXp(sessionId, 'thumb', XP_THUMB_BUFF * buffed);
 
       // Escrow the thumb ring for staking.
       if (ringIds.thumb) {
@@ -205,7 +229,8 @@ export class BattleRoom extends Room<{ state: BattleState }> {
       }
     } else {
       // No/invalid token: seat with default loadout (backward-compat for E2E / integration tests).
-      this.seatPlayer(sessionId, '');
+      const buffed = this.seatPlayer(sessionId, '');
+      if (buffed > 0) this.addXp(sessionId, 'thumb', XP_THUMB_BUFF * buffed);
     }
 
     if (this.ai) {
@@ -229,6 +254,46 @@ export class BattleRoom extends Room<{ state: BattleState }> {
   private notifyAI(): void {
     if (!this.ai) return;
     this.ai.onPhaseEnter(this.state.phase);
+  }
+
+  /**
+   * Accumulate outcome-based XP for a player's ring slot. No-op for the AI or
+   * any untracked session (no accumulator entry) — only humans accrue XP.
+   */
+  private addXp(sessionId: string, slot: string, delta: number): void {
+    const m = this.xpAccumulator.get(sessionId);
+    if (!m) return; // AI or untracked — skip
+    m.set(slot, (m.get(slot) ?? 0) + delta);
+  }
+
+  /**
+   * Award outcome-based XP for a single resolved exchange. Shared by initial
+   * exchanges and rally volleys (roles already reversed by the caller). The
+   * attack ring earns by what happened to its blow; the defense ring earns only
+   * if the defender actually pressed a key (skipped on NO_BLOCK).
+   */
+  private awardExchangeXp(
+    attackerSessionId: string,
+    attackerSlot: string,
+    defenderSessionId: string,
+    defenderSlot: string,
+    result: { timing: string; relationship: string; defenderHeartLost: boolean },
+  ): void {
+    const isCounter = result.timing === 'PARRY' && result.relationship === 'STRONG';
+    const isHit = result.defenderHeartLost;
+
+    const atkXp = isCounter ? XP_ATK_COUNTER : isHit ? XP_ATK_HIT : XP_ATK_BLOCK;
+    this.addXp(attackerSessionId, attackerSlot, atkXp);
+
+    // Defense XP only when the defender committed a ring (NO_BLOCK = no press).
+    if (result.timing !== 'NO_BLOCK' && defenderSlot) {
+      const defXp = isCounter
+        ? XP_DEF_COUNTER
+        : !result.defenderHeartLost
+          ? XP_DEF_BLOCK
+          : XP_DEF_WEAK;
+      this.addXp(defenderSessionId, defenderSlot, defXp);
+    }
   }
 
   /** A player can still attack iff at least one of their attack rings is lit. */
@@ -287,11 +352,21 @@ export class BattleRoom extends Room<{ state: BattleState }> {
           if (!ringId) continue;
           const ring = ps.getSlot(key);
           PlayerRepo.saveRingUses(ringId, ring.currentUses);
-          const usesSpent = ring.maxUses - ring.currentUses;
-          if (usesSpent > 0) PlayerRepo.awardXP(ringId, usesSpent * XP_PER_USE);
         }
 
         if (sessionId === winnerId) PlayerRepo.addGold(playerId, GOLD_PER_WIN);
+      }
+
+      // Award accumulated outcome-based XP for each human player. Each ring
+      // earns the XP it accrued from exchange outcomes and passive activations.
+      for (const [sessionId, slotDeltas] of this.xpAccumulator) {
+        const slotMap = this.sessionToRingIds.get(sessionId);
+        if (!slotMap) continue;
+        for (const [slot, delta] of slotDeltas) {
+          if (delta <= 0) continue;
+          const ringId = slotMap[slot as keyof typeof slotMap];
+          if (ringId) PlayerRepo.awardXP(ringId, delta);
+        }
       }
 
       // Staking transfer (GDD §9.1 — loser ALWAYS forfeits the thumb ring).
@@ -328,6 +403,12 @@ export class BattleRoom extends Room<{ state: BattleState }> {
         }
       }
 
+      // Recompute each human player's XP-derived spirit_max now that XP has been
+      // awarded and rings transferred/granted, so a post-battle /api/me reflects
+      // the new cap. AI players have no DB record and are skipped.
+      if (winnerPlayerId) PlayerRepo.refreshSpiritMax(winnerPlayerId);
+      if (loserPlayerId) PlayerRepo.refreshSpiritMax(loserPlayerId);
+
       // Release escrow on every human thumb ring still escrowed.
       for (const sessionId of sessions) {
         const tid = this.sessionToRingIds.get(sessionId)?.thumb;
@@ -363,6 +444,9 @@ export class BattleRoom extends Room<{ state: BattleState }> {
     if (!usePaidByStake) {
       ring.currentUses = Math.max(0, ring.currentUses - 1);
       ring.isExtinguished = ring.currentUses === 0;
+    } else {
+      // Tailwind fired: award the attacker's thumb mid-tier XP.
+      this.addXp(id, 'thumb', XP_THUMB_MID);
     }
 
     state.attackerSlot = payload.slot;
@@ -418,17 +502,37 @@ export class BattleRoom extends Room<{ state: BattleState }> {
 
     const result = resolveBlock(attackerRing, defenderRing, timing);
 
-    // Deep Roots passive: Wood thumb absorbs a heart loss for the defender.
-    if (result.defenderHeartLost && !StakeResolver.applyDeepRoots(defenderPlayer)) {
-      defenderPlayer.hearts = Math.max(0, defenderPlayer.hearts - 1);
+    // Snapshot the slots for this exchange before any rally swap mutates them,
+    // so outcome XP is attributed to the rings that actually engaged.
+    const xpAttackerSlot = state.attackerSlot as string;
+    const xpDefenderSlot = this.defenseSlotKey as string;
+
+    // Award outcome-based XP for the engaged attack/defense rings.
+    this.awardExchangeXp(attackerId, xpAttackerSlot, defenderId, xpDefenderSlot, result);
+
+    // Deep Roots passive: Wood thumb absorbs a heart loss. The absorbing player's
+    // thumb earns XP_THUMB_ABSORB per heart absorbed.
+    if (result.defenderHeartLost) {
+      if (StakeResolver.applyDeepRoots(defenderPlayer)) {
+        this.addXp(defenderId, 'thumb', XP_THUMB_ABSORB);
+      } else {
+        defenderPlayer.hearts = Math.max(0, defenderPlayer.hearts - 1);
+      }
     }
-    if (result.attackerHeartLost && !StakeResolver.applyDeepRoots(attackerPlayer)) {
-      attackerPlayer.hearts = Math.max(0, attackerPlayer.hearts - 1);
+    if (result.attackerHeartLost) {
+      if (StakeResolver.applyDeepRoots(attackerPlayer)) {
+        this.addXp(attackerId, 'thumb', XP_THUMB_ABSORB);
+      } else {
+        attackerPlayer.hearts = Math.max(0, attackerPlayer.hearts - 1);
+      }
     }
 
     // Wellspring passive: Water thumb refunds the defender ring use on a rally.
+    // Awards the defender's thumb mid-tier XP when it fires.
     if (result.rallyContinues && defenderRing) {
-      StakeResolver.applyWellspring(defenderPlayer, defenderRing);
+      if (StakeResolver.applyWellspring(defenderPlayer, defenderRing)) {
+        this.addXp(defenderId, 'thumb', XP_THUMB_MID);
+      }
     }
 
     // Increment the defender's matching triangle gauges (FIRE/WATER/WOOD), capped

@@ -43,6 +43,18 @@ export class EncounterScene extends Phaser.Scene {
   private manageSelectedRingId: string | null = null;
   private manageRings: RingData[] = [];
   private manageLoadout: Record<string, string | null> = {};
+  // aiSeed per personality — received from /api/encounter/preview and passed to
+  // the BattleRoom so the actual loadout matches the stake shown in the preview.
+  private aiSeeds: Map<Choice, number> = new Map();
+  // Post-battle won-ring prompt (#40). Now fires here (not CampScene) because the
+  // post-battle flow returns to EncounterScene — the player must resolve the won
+  // ring before selecting another encounter.
+  private wonRingModal: Phaser.GameObjects.Container | null = null;
+  private wonRings: RingData[] = [];
+  // Most recent full /api/me ring list (all owned rings, carried or not). Used by
+  // the Manage Battle Hand modal to display a pending won ring, which is not yet
+  // carried and so absent from manageRings.
+  private allRings: RingData[] = [];
 
   constructor() {
     super({ key: 'EncounterScene' });
@@ -52,6 +64,7 @@ export class EncounterScene extends Phaser.Scene {
     this.busy = false;
     this.manageModal = null;
     this.manageSelectedRingId = null;
+    this.wonRingModal = null;
   }
 
   create(): void {
@@ -131,14 +144,28 @@ export class EncounterScene extends Phaser.Scene {
       this.select(choice, aiOverrides);
     };
     window.__encounterManageBattleHand = (): void => void this.openManageBattleHand();
+    window.__encounterResolveWonRing = (choice: 'carry' | 'discard'): void =>
+      void this.resolveWonRing(choice);
+    // Discard a carried ring (Manage Battle Hand path) — frees a slot and
+    // auto-carries any pending won ring. Same code path as the per-ring [×].
+    window.__encounterDiscardRing = (ringId: string): void =>
+      void this.discardCarriedRing(ringId);
+    window.__encounterState = { pendingWonRing: null };
     this.events.once('shutdown', () => {
       window.__encounterSelect = undefined;
       window.__encounterSelectWithOverrides = undefined;
       window.__encounterManageBattleHand = undefined;
+      window.__encounterResolveWonRing = undefined;
+      window.__encounterDiscardRing = undefined;
+      window.__encounterState = undefined;
     });
 
     // Fetch stake preview and update marker colors + labels.
     void this.loadPreview(rects, stakeLabels);
+
+    // Post-battle won-ring prompt: if the just-finished duel granted a ring,
+    // resolve it here before the player can pick another encounter (#40).
+    if (localStorage.getItem('er_pending_ring')) void this.checkPendingWonRing();
   }
 
   /** Fetch /api/encounter/preview and recolor AI markers by stake element. */
@@ -149,9 +176,10 @@ export class EncounterScene extends Phaser.Scene {
     try {
       const res = await fetch(`${API_BASE}/api/encounter/preview`);
       if (!res.ok) return;
-      const preview: Record<string, number> = await res.json();
+      const preview: Record<string, { element: number; aiSeed: number }> = await res.json();
 
-      for (const [personality, element] of Object.entries(preview)) {
+      for (const [personality, { element, aiSeed }] of Object.entries(preview)) {
+        this.aiSeeds.set(personality as Choice, aiSeed);
         const rect = rects.get(personality as Choice);
         const label = stakeLabels.get(personality as Choice);
         if (!rect || !label) continue;
@@ -198,6 +226,7 @@ export class EncounterScene extends Phaser.Scene {
       vsAI: true,
       personality,
       token,
+      aiSeed: this.aiSeeds.get(personality),
       ...aiOverrides,
     });
 
@@ -213,6 +242,175 @@ export class EncounterScene extends Phaser.Scene {
       }
     };
     room.onStateChange(onState);
+  }
+
+  // ── Post-battle won-ring prompt (#40) ───────────────────────────────────────
+
+  /**
+   * Fetch fresh inventory and open the won-ring prompt for the id stashed in
+   * er_pending_ring (set by connectToRoom on the server's `wonRing` message).
+   * If the ring is no longer in inventory (edge case), clear the flag and bail.
+   */
+  private async checkPendingWonRing(): Promise<void> {
+    const ringId = localStorage.getItem('er_pending_ring');
+    if (!ringId || this.wonRingModal || this.manageModal) return;
+    const token = localStorage.getItem('er_token');
+    if (!token) return;
+
+    let rings: RingData[];
+    let carryCap: number;
+    try {
+      const res = await fetch(`${API_BASE}/api/me`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!res.ok) return;
+      const data: { player: { carry_cap?: number }; rings: RingData[] } = await res.json();
+      rings = data.rings;
+      carryCap = data.player.carry_cap ?? 10;
+    } catch {
+      return;
+    }
+
+    if (!rings.some((r) => r.id === ringId)) {
+      // Ring not in our inventory (shouldn't happen) — clear and bail.
+      localStorage.removeItem('er_pending_ring');
+      return;
+    }
+
+    const carriedCount = rings.filter((r) => r.in_carry === 1).length;
+    if (carriedCount >= carryCap) {
+      // Carry is full — skip the modal and route straight to Manage Battle Hand,
+      // which renders the pending won ring and lets the player discard a carried
+      // ring to make room (then auto-carries the pending ring).
+      void this.openManageBattleHand();
+      return;
+    }
+
+    // Carry has room — simple Carry / Discard modal.
+    this.showWonRingModal(ringId, rings);
+  }
+
+  /**
+   * Render the won-ring modal (room case only). Carry is known to have room when
+   * this is called — the full-carry path routes to Manage Battle Hand instead.
+   * Options: "Carry it" (add to loadout) or "Discard".
+   */
+  private showWonRingModal(ringId: string, rings: RingData[]): void {
+    const ring = rings.find((r) => r.id === ringId);
+    if (!ring) {
+      localStorage.removeItem('er_pending_ring');
+      return;
+    }
+    this.wonRings = rings;
+
+    const elementName = ELEMENT_NAMES[ring.element] ?? '?';
+
+    const container = this.add.container(0, 0).setDepth(2000);
+    const overlay = this.add
+      .rectangle(CANVAS_W / 2, 288, CANVAS_W, 576, 0x000000, 0.7)
+      .setInteractive();
+    const panel = this.add
+      .rectangle(CANVAS_W / 2, 288, 460, 200, 0x222233)
+      .setStrokeStyle(2, 0xffcc44);
+    const title = this.add
+      .text(CANVAS_W / 2, 230, `You won a ${elementName} ring!`, {
+        fontSize: '18px',
+        color: '#ffffff',
+      })
+      .setOrigin(0.5);
+    container.add([overlay, panel, title]);
+
+    container.add(
+      this.wonModalButton(CANVAS_W / 2, 290, '[Carry it]', '#aaffaa', () =>
+        void this.resolveWonRing('carry'),
+      ),
+    );
+    container.add(
+      this.wonModalButton(CANVAS_W / 2, 330, '[Discard]', '#ff8888', () =>
+        void this.resolveWonRing('discard'),
+      ),
+    );
+
+    this.wonRingModal = container;
+    if (window.__encounterState) {
+      window.__encounterState.pendingWonRing = { ringId, element: ring.element };
+    }
+  }
+
+  private wonModalButton(
+    x: number,
+    y: number,
+    label: string,
+    color: string,
+    onClick: () => void,
+  ): Phaser.GameObjects.Text {
+    return this.add
+      .text(x, y, label, { fontSize: '14px', color })
+      .setOrigin(0.5)
+      .setInteractive({ useHandCursor: true })
+      .on('pointerdown', onClick);
+  }
+
+  /**
+   * Resolve the won-ring prompt. Always clears er_pending_ring afterward.
+   *   - carry:   add the won ring to the carried loadout.
+   *   - discard: permanently delete the won ring.
+   */
+  private async resolveWonRing(choice: 'carry' | 'discard'): Promise<void> {
+    const ringId = localStorage.getItem('er_pending_ring');
+    if (!ringId) {
+      this.dismissWonModal();
+      return;
+    }
+
+    if (choice === 'discard') {
+      await this.discardWonRing(ringId);
+    } else {
+      // carry: add the won ring to the current carried set.
+      const carried = new Set(this.wonRings.filter((r) => r.in_carry === 1).map((r) => r.id));
+      carried.add(ringId);
+      await this.putCarry(Array.from(carried));
+    }
+
+    localStorage.removeItem('er_pending_ring');
+    if (window.__encounterState) window.__encounterState.pendingWonRing = null;
+    this.dismissWonModal();
+  }
+
+  /** PUT /api/carry with the full carried set. */
+  private async putCarry(ringIds: string[]): Promise<void> {
+    const token = localStorage.getItem('er_token');
+    if (!token) return;
+    try {
+      await fetch(`${API_BASE}/api/carry`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ ringIds }),
+      });
+    } catch {
+      this.statusText.setText('Network error during carry update');
+    }
+  }
+
+  /** DELETE /api/rings/:id — permanently discard a won ring. */
+  private async discardWonRing(ringId: string): Promise<void> {
+    const token = localStorage.getItem('er_token');
+    if (!token) return;
+    try {
+      await fetch(`${API_BASE}/api/rings/${ringId}`, {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${token}` },
+      });
+    } catch {
+      this.statusText.setText('Network error during discard');
+    }
+  }
+
+  private dismissWonModal(): void {
+    if (this.wonRingModal) {
+      this.wonRingModal.destroy(true);
+      this.wonRingModal = null;
+    }
   }
 
   // ── Manage Battle Hand modal (#40) ─────────────────────────────────────────
@@ -232,8 +430,11 @@ export class EncounterScene extends Phaser.Scene {
         headers: { Authorization: `Bearer ${token}` },
       });
       if (!res.ok) return;
-      const data: { rings: RingData[]; loadout: Record<string, string | null> } =
-        await res.json();
+      const data: {
+        rings: RingData[];
+        loadout: Record<string, string | null>;
+      } = await res.json();
+      this.allRings = data.rings;
       this.manageRings = data.rings.filter((r) => r.in_carry === 1);
       this.manageLoadout = data.loadout ?? {};
     } catch {
@@ -269,59 +470,148 @@ export class EncounterScene extends Phaser.Scene {
       .on('pointerdown', () => this.closeManageModal());
     container.add([overlay, panel, title, close]);
 
-    // Battle slots row (top).
-    const slotY = CANVAS_H / 2 - 110;
+    // Pending won ring (top section). The won ring is not yet carried, so it
+    // lives in allRings (full /api/me list), not manageRings. The player frees a
+    // carried slot (discard) to make room; tryAutoCarryPending then carries it.
+    const pendingId = localStorage.getItem('er_pending_ring');
+    const pendingRing = pendingId ? this.allRings.find((r) => r.id === pendingId) : undefined;
+    if (pendingRing) {
+      const py = CANVAS_H / 2 - 150;
+      // Pending-ring tile (left) with the same 4-line info as every other tile.
+      const pRect = this.add
+        .rectangle(CANVAS_W / 2 - 250, py, 72, 80, ELEMENT_COLORS[pendingRing.element] ?? 0x444444)
+        .setStrokeStyle(3, 0xffcc44);
+      container.add(pRect);
+      this.addRingInfo(container, CANVAS_W / 2 - 250, py, pendingRing);
+      const pLbl = this.add
+        .text(
+          CANVAS_W / 2 - 200,
+          py,
+          `WON: ${ELEMENT_NAMES[pendingRing.element] ?? '?'} ring — discard a carried ring to keep it`,
+          { fontSize: '11px', color: '#ffdd66' },
+        )
+        .setOrigin(0, 0.5);
+      const pDiscard = this.add
+        .text(CANVAS_W / 2 + 250, py, '[× Discard]', { fontSize: '11px', color: '#ff8888' })
+        .setOrigin(1, 0.5)
+        .setInteractive({ useHandCursor: true })
+        .on('pointerdown', () => {
+          void (async () => {
+            await this.resolveWonRing('discard');
+            this.renderManageModal();
+          })();
+        });
+      container.add([pLbl, pDiscard]);
+      if (window.__encounterState) {
+        window.__encounterState.pendingWonRing = { ringId: pendingRing.id, element: pendingRing.element };
+      }
+    }
+
+    // Battle slots row (top). Filled slots show the same 4-line info as the
+    // Sanctum and get a small [×] discard button.
+    const slotY = CANVAS_H / 2 - 96;
     BATTLE_SLOTS.forEach((slot, i) => {
       const sx = CANVAS_W / 2 - 240 + i * 120;
       const ringId = this.manageLoadout[slot] ?? null;
       const ring = ringId ? this.manageRings.find((r) => r.id === ringId) : null;
       const color = ring ? ELEMENT_COLORS[ring.element] ?? 0x333333 : 0x333333;
       const slotRect = this.add
-        .rectangle(sx, slotY, 90, 70, color)
+        .rectangle(sx, slotY, 92, 80, color)
         .setStrokeStyle(2, 0x888888)
         .setInteractive({ useHandCursor: true })
         .on('pointerdown', () => void this.assignManageSlot(slot));
       const slotLbl = this.add
-        .text(sx, slotY - 42, slot.toUpperCase(), { fontSize: '11px', color: '#cccccc' })
+        .text(sx, slotY - 48, slot.toUpperCase(), { fontSize: '11px', color: '#cccccc' })
         .setOrigin(0.5);
-      const elemLbl = this.add
-        .text(sx, slotY, ring ? ELEMENT_NAMES[ring.element] ?? '?' : '—', {
-          fontSize: '11px',
-          color: ring ? '#000000' : '#888888',
-        })
-        .setOrigin(0.5);
-      container.add([slotRect, slotLbl, elemLbl]);
+      container.add([slotRect, slotLbl]);
+      if (ring) {
+        this.addRingInfo(container, sx, slotY, ring);
+        const slotX = this.add
+          .text(sx + 38, slotY - 32, '×', { fontSize: '13px', color: '#ff3333' })
+          .setOrigin(0.5)
+          .setInteractive({ useHandCursor: true })
+          .on('pointerdown', (_p: unknown, _x: number, _y: number, evt: { stopPropagation?: () => void }) => {
+            evt?.stopPropagation?.();
+            void this.discardCarriedRing(ring.id);
+          });
+        container.add(slotX);
+      } else {
+        const dash = this.add
+          .text(sx, slotY, '—', { fontSize: '11px', color: '#888888' })
+          .setOrigin(0.5);
+        container.add(dash);
+      }
     });
 
-    // Carried rings row (selectable).
-    const ringY = CANVAS_H / 2 + 40;
+    // Carried rings row (selectable) — exclude rings already in a battle slot so
+    // the player only sees spare carried rings available for assignment.
+    const slottedIds = new Set(Object.values(this.manageLoadout).filter(Boolean) as string[]);
+    const availableRings = this.manageRings.filter((r) => !slottedIds.has(r.id));
+    const ringY = CANVAS_H / 2 + 30;
     this.add
-      .text(CANVAS_W / 2, CANVAS_H / 2 - 30, 'Carried rings (select one, then a slot):', {
+      .text(CANVAS_W / 2, CANVAS_H / 2 - 24, 'Carried rings (select one, then a slot):', {
         fontSize: '12px',
         color: '#aaccff',
       })
       .setOrigin(0.5);
-    this.manageRings.forEach((ring, i) => {
+    availableRings.forEach((ring, i) => {
       const col = i % 6;
       const row = Math.floor(i / 6);
       const rx = CANVAS_W / 2 - 250 + col * 90;
-      const ry = ringY + row * 70;
+      const ry = ringY + row * 90;
       const selected = this.manageSelectedRingId === ring.id;
       const rect = this.add
-        .rectangle(rx, ry, 72, 56, ELEMENT_COLORS[ring.element] ?? 0x444444)
+        .rectangle(rx, ry, 72, 80, ELEMENT_COLORS[ring.element] ?? 0x444444)
         .setStrokeStyle(selected ? 3 : 2, selected ? 0xffff00 : 0x888888)
         .setInteractive({ useHandCursor: true })
         .on('pointerdown', () => {
           this.manageSelectedRingId = selected ? null : ring.id;
           this.renderManageModal();
         });
-      const lbl = this.add
-        .text(rx, ry, ELEMENT_NAMES[ring.element] ?? '?', { fontSize: '10px', color: '#000000' })
-        .setOrigin(0.5);
-      container.add([rect, lbl]);
+      container.add(rect);
+      // 4-line ring info (matches InventoryGrid in the Sanctum).
+      this.addRingInfo(container, rx, ry, ring);
+      // Per-ring discard button (top-right corner).
+      const x = this.add
+        .text(rx + 30, ry - 32, '×', { fontSize: '13px', color: '#ff3333' })
+        .setOrigin(0.5)
+        .setInteractive({ useHandCursor: true })
+        .on('pointerdown', (_p: unknown, _x: number, _y: number, evt: { stopPropagation?: () => void }) => {
+          evt?.stopPropagation?.();
+          void this.discardCarriedRing(ring.id);
+        });
+      container.add(x);
     });
 
     this.manageModal = container;
+  }
+
+  /**
+   * Render the 4-line ring info (element name, use pips, XP, tier) centred at
+   * (cx, cy) and add the labels to `container`. Mirrors the Sanctum's
+   * InventoryGrid tile so stats read identically across screens.
+   */
+  private addRingInfo(
+    container: Phaser.GameObjects.Container,
+    cx: number,
+    cy: number,
+    ring: RingData,
+  ): void {
+    const used = ring.max_uses - ring.current_uses;
+    const pips = '●'.repeat(ring.current_uses) + '○'.repeat(Math.max(0, used));
+    const nameLbl = this.add
+      .text(cx, cy - 22, ELEMENT_NAMES[ring.element] ?? '?', { fontSize: '9px', color: '#000000' })
+      .setOrigin(0.5);
+    const pipsLbl = this.add
+      .text(cx, cy - 6, pips, { fontSize: '10px', color: '#000000' })
+      .setOrigin(0.5);
+    const xpLbl = this.add
+      .text(cx, cy + 10, `Xp: ${ring.xp}`, { fontSize: '9px', color: '#000000' })
+      .setOrigin(0.5);
+    const tierLbl = this.add
+      .text(cx, cy + 24, `T${ring.tier}`, { fontSize: '9px', color: '#000000' })
+      .setOrigin(0.5);
+    container.add([nameLbl, pipsLbl, xpLbl, tierLbl]);
   }
 
   /** Assign the selected carried ring to a battle slot via PUT /api/loadout. */
@@ -362,5 +652,74 @@ export class EncounterScene extends Phaser.Scene {
       this.manageModal = null;
     }
     this.manageSelectedRingId = null;
+  }
+
+  /**
+   * Permanently discard a carried ring (DELETE /api/rings/:id), then reload the
+   * Manage Battle Hand data. If a won ring is pending, discarding frees a carry
+   * slot, so try to auto-carry it afterward.
+   */
+  private async discardCarriedRing(ringId: string): Promise<void> {
+    const token = localStorage.getItem('er_token') ?? '';
+    try {
+      await fetch(`${API_BASE}/api/rings/${ringId}`, {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${token}` },
+      });
+    } catch {
+      this.statusText.setText('Network error during discard');
+      return;
+    }
+    // Re-open (refetch + re-render) the modal with current data, then attempt to
+    // place the pending won ring now that a slot may be free.
+    this.closeManageModal();
+    await this.openManageBattleHand();
+    await this.tryAutoCarryPending();
+  }
+
+  /**
+   * If a won ring is pending and carry now has room, carry it: PUT /api/carry
+   * with the current carried set plus the pending ring, clear er_pending_ring,
+   * and re-render the modal so the ring shows as carried.
+   */
+  private async tryAutoCarryPending(): Promise<void> {
+    const pendingId = localStorage.getItem('er_pending_ring');
+    if (!pendingId) return;
+    const token = localStorage.getItem('er_token');
+    if (!token) return;
+
+    let rings: RingData[];
+    let carryCap: number;
+    try {
+      const res = await fetch(`${API_BASE}/api/me`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!res.ok) return;
+      const data: { player: { carry_cap?: number }; rings: RingData[] } = await res.json();
+      rings = data.rings;
+      carryCap = data.player.carry_cap ?? 10;
+    } catch {
+      return;
+    }
+
+    // The pending ring may have been discarded itself; bail if it's gone.
+    if (!rings.some((r) => r.id === pendingId)) {
+      localStorage.removeItem('er_pending_ring');
+      return;
+    }
+
+    const carriedCount = rings.filter((r) => r.in_carry === 1).length;
+    if (carriedCount >= carryCap) return; // still full — wait for another discard
+
+    const carried = new Set(rings.filter((r) => r.in_carry === 1).map((r) => r.id));
+    carried.add(pendingId);
+    await this.putCarry(Array.from(carried));
+
+    localStorage.removeItem('er_pending_ring');
+    if (window.__encounterState) window.__encounterState.pendingWonRing = null;
+
+    // Re-render with the pending ring now carried (and no longer "pending").
+    this.closeManageModal();
+    await this.openManageBattleHand();
   }
 }

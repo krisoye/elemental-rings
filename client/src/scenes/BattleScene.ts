@@ -122,8 +122,11 @@ export class BattleScene extends Phaser.Scene {
   }
 
   /**
-   * On phase ENDED, show a brief winner banner then return to CampScene (the
-   * hub for both vsAI and PvP duels). Guarded so it fires once.
+   * On phase ENDED, show a brief winner banner then return to EncounterScene
+   * (the hub where the player chose their opponent). The er_pending_ring
+   * localStorage key (if set by Connection.ts on a win) is picked up the next
+   * time the player returns to CampScene via "Return to Sanctum". Guarded so
+   * it fires once.
    */
   private checkEnded(state: any, myId: string): void {
     if (state.phase !== 'ENDED' || this.returning) return;
@@ -140,7 +143,7 @@ export class BattleScene extends Phaser.Scene {
       .setOrigin(0.5)
       .setDepth(1000);
 
-    this.time.delayedCall(2000, () => this.scene.start('CampScene'));
+    this.time.delayedCall(2000, () => this.scene.start('EncounterScene'));
   }
 
   /** Launch the orb telegraph when a defend window opens, including rally volleys. */

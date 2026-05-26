@@ -35,12 +35,6 @@ declare global {
     // #40 carry hooks — deterministic code paths for E2E.
     __campAddToLoadout?: (ringId: string) => Promise<void>;
     __campLeaveAtSanctum?: (ringId: string) => Promise<void>;
-    // Resolve the post-battle won-ring prompt: 'add' | 'leave' | 'discard',
-    // with an optional ring id to displace when carry is full ('add' swap case).
-    __campResolveWonRing?: (
-      choice: 'add' | 'leave' | 'discard',
-      displaceRingId?: string,
-    ) => Promise<void>;
     __campState?: {
       player: any;
       rings: any[];
@@ -54,11 +48,22 @@ declare global {
       spirit_current: number;
       spirit_max: number;
       food_units: number;
-      // Set while the won-ring modal is open.
-      pendingWonRing?: { ringId: string; element: number } | null;
+      // XP-derived spirit: aggregate ring XP (spirit_max = SPIRIT_BASE + this).
+      aggregate_xp: number;
     };
     // #40 encounter modal hooks.
     __encounterManageBattleHand?: () => void;
+    // Post-battle won-ring prompt lives in EncounterScene. When carry has room a
+    // simple modal offers 'carry' or 'discard'; when carry is full there is no
+    // modal — the player is routed to Manage Battle Hand to free a slot.
+    __encounterResolveWonRing?: (choice: 'carry' | 'discard') => void;
+    // Discard a carried ring from Manage Battle Hand (frees a slot; auto-carries
+    // any pending won ring). Same path as the per-ring [×] button.
+    __encounterDiscardRing?: (ringId: string) => void;
+    // Set while the won-ring modal is open in EncounterScene.
+    __encounterState?: {
+      pendingWonRing: { ringId: string; element: number } | null;
+    };
   }
 }
 

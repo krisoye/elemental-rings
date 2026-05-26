@@ -132,7 +132,7 @@ test('camp: after vsAI duel ends, scene is CampScene', async ({ browser }) => {
   }
 
   await page.waitForFunction(
-    () => (window as any).__game?.scene?.isActive('CampScene'),
+    () => (window as any).__game?.scene?.isActive('EncounterScene'),
     { timeout: 8000 },
   );
   await ctx.close();
@@ -209,9 +209,9 @@ test('persistence: ring uses and gold updated after vsAI duel', async ({ browser
     clearInterval(driver);
   }
 
-  // Wait for CampScene to load after the battle.
+  // Wait for EncounterScene to load after the battle.
   await page.waitForFunction(
-    () => (window as any).__game?.scene?.isActive('CampScene'),
+    () => (window as any).__game?.scene?.isActive('EncounterScene'),
     { timeout: 8000 },
   );
 

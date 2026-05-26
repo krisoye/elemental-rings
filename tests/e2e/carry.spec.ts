@@ -140,6 +140,8 @@ test('carry: __campAddToLoadout carries a Sanctum ring', async ({ browser }) => 
 });
 
 // ── Post-battle won-ring modal: room case (Add) ──────────────────────────────
+// The prompt now fires in EncounterScene (the post-battle destination), so we
+// seed a pending ring and navigate into EncounterScene to exercise it.
 test('carry: won-ring modal Add carries the pending ring (room case)', async ({ browser }) => {
   const { token } = await register();
   // Leave only the 5 battle-slot rings carried so there is room (5/10).
@@ -154,110 +156,116 @@ test('carry: won-ring modal Add carries the pending ring (room case)', async ({ 
   const page = await ctx.newPage();
   await page.goto(URL);
 
+  // Move from CampScene into EncounterScene, where the won-ring prompt fires.
+  await page.waitForFunction(() => typeof (window as any).__campGoEncounter === 'function', {
+    timeout: 8000,
+  });
+  await page.evaluate(() => (window as any).__campGoEncounter());
+
   // Modal opens (pendingWonRing populated) and the hook is available.
   await page.waitForFunction(
-    () => (window as any).__campState?.pendingWonRing?.ringId !== undefined,
+    () => (window as any).__encounterState?.pendingWonRing?.ringId !== undefined,
     { timeout: 8000 },
   );
-  const pend = await page.evaluate(() => (window as any).__campState.pendingWonRing);
+  const pend = await page.evaluate(() => (window as any).__encounterState.pendingWonRing);
   expect(pend.ringId).toBe(pending.id);
 
-  await page.evaluate(() => (window as any).__campResolveWonRing('add'));
+  await page.evaluate(() => (window as any).__encounterResolveWonRing('carry'));
 
-  await page.waitForFunction(
-    (id) =>
-      (window as any).__campState?.rings.find((r: any) => r.id === id)?.in_carry === 1,
-    pending.id,
-    { timeout: 5000 },
-  );
   // er_pending_ring cleared after resolution.
-  const cleared = await page.evaluate(() => localStorage.getItem('er_pending_ring'));
-  expect(cleared).toBeNull();
+  await page.waitForFunction(() => localStorage.getItem('er_pending_ring') === null, {
+    timeout: 5000,
+  });
+  // The won ring is now carried (verify against real server state).
+  const after = await me(token);
+  expect(after.rings.find((r) => r.id === pending.id)?.in_carry).toBe(1);
   await ctx.close();
 });
 
-// ── Post-battle won-ring modal: full case (Swap → displaced ring → Sanctum) ───
+// ── Post-battle won ring with FULL carry → Manage Battle Hand discard flow ────
 //
-// End-to-end via a REAL forced win: a 1-heart AI (aiHearts:1) dies on the first
-// hit, so the protagonist wins deterministically and the server grants a genuine
-// 11th ring, storing its id in er_pending_ring (the `wonRing` message). We then
-// fill the carry cap (10) with the originals so the prompt opens in the FULL
-// (Swap) case, and assert the swap (a) carries the won ring, (b) returns the
-// displaced ring to the Sanctum (in_carry=0) WITHOUT deleting it, and (c) clears
-// er_pending_ring. Determinism comes from the AI-strength override, not timing.
-test('carry: won-ring Swap displaces a carried ring back to the Sanctum', async ({ browser }) => {
+// End-to-end via a REAL forced win: a 1-heart AI with extinguished rings
+// (aiHearts:1, aiUses:0) forfeits its first attack turn (§6.6) → guaranteed
+// protagonist win → a genuine granted 11th ring stored in er_pending_ring.
+//
+// The redesigned full-carry flow has no swap modal: when carry is at the cap the
+// won-ring prompt routes straight to Manage Battle Hand, which shows the pending
+// ring. Discarding a carried ring frees a slot and auto-carries the pending ring
+// (tryAutoCarryPending). Asserts: the discarded ring is gone (deleted), the won
+// ring is now carried, carry holds at the cap, and er_pending_ring is cleared.
+test('carry: full-carry win → discard in Manage Battle Hand auto-carries the won ring', async ({
+  browser,
+}) => {
   const { token } = await register();
   const ctx = await browser.newContext();
   await ctx.addInitScript(`localStorage.setItem('er_token', ${JSON.stringify(token)})`);
   const page = await ctx.newPage();
   await page.goto(URL);
 
-  // Forced WIN: a 1-heart AI with extinguished rings (aiUses:0) cannot attack or
-  // defend — it forfeits its first attack turn (§6.6) → guaranteed protagonist
-  // win → a real granted 11th ring stored in er_pending_ring.
+  // Forced WIN → a real granted 11th ring. driveAiDuel lands in EncounterScene.
   const wonRingId = await driveAiDuel(page, { personality: 'AGGRESSIVE', aiHearts: 1, aiUses: 0 });
   expect(wonRingId).not.toBeNull();
 
-  // The win auto-opens the room-case modal (carry not yet full). Resolve 'leave'
-  // so the won ring stays in inventory but uncarried, then set up the full case.
-  await page.evaluate(() => (window as any).__campResolveWonRing?.('leave'));
+  // The win auto-opens the room-case prompt (carry not yet full). Carry the won
+  // ring for now so we can deterministically rebuild a FULL-carry state below.
   await page.waitForFunction(
-    () => (window as any).__campState?.pendingWonRing == null,
-    { timeout: 5000 },
+    () => (window as any).__encounterState?.pendingWonRing?.ringId !== undefined,
+    { timeout: 8000 },
   );
+  await page.evaluate(() => (window as any).__encounterResolveWonRing('carry'));
+  await page.waitForFunction(() => localStorage.getItem('er_pending_ring') === null, {
+    timeout: 5000,
+  });
 
   const { rings } = await me(token);
   expect(rings.length).toBe(11); // 10 starters + 1 won
-  const wonRing = rings.find((r) => r.id === wonRingId)!;
-  expect(wonRing.in_carry).toBe(0); // left uncarried by the 'leave' choice
 
-  // Fill the carry cap (10) with the original rings → carry full, won uncarried.
-  const originals = rings.filter((r) => r.id !== wonRingId).map((r) => r.id);
-  expect(originals.length).toBe(10);
-  const displaceId = originals[0];
+  // Build the FULL-carry case: carry exactly 10 OTHER rings, leaving the won ring
+  // uncarried, then re-arm it as the pending ring.
+  const others = rings.filter((r) => r.id !== wonRingId).map((r) => r.id);
+  expect(others.length).toBe(10);
+  const discardId = others[0]; // the carried ring we will discard to make room
   const fill = await fetch(`${API_URL}/api/carry`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-    body: JSON.stringify({ ringIds: originals }),
+    body: JSON.stringify({ ringIds: others }),
   });
   expect(fill.status).toBe(200);
 
-  // Re-arm the won ring as pending and reload so the FULL-case modal renders.
+  // Re-arm the won ring as pending, reload, and enter EncounterScene. Because
+  // carry is full (10/10), checkPendingWonRing routes to Manage Battle Hand
+  // rather than a modal — confirmed by the manage hook + visible pending ring.
   await page.evaluate((id) => localStorage.setItem('er_pending_ring', id), wonRingId!);
   await page.reload();
+  await page.waitForFunction(() => typeof (window as any).__campGoEncounter === 'function', {
+    timeout: 8000,
+  });
+  await page.evaluate(() => (window as any).__campGoEncounter());
+  // Manage Battle Hand renders the pending won ring (no swap modal).
   await page.waitForFunction(
-    () => (window as any).__campState?.pendingWonRing?.ringId !== undefined,
+    () => (window as any).__encounterState?.pendingWonRing?.ringId !== undefined,
     { timeout: 8000 },
   );
-  const carriedBefore = await page.evaluate(
-    () => (window as any).__campState.rings.filter((r: any) => r.in_carry === 1).length,
-  );
-  expect(carriedBefore).toBe(10); // confirms the FULL case
+  // Compute typeof IN the browser — page.evaluate cannot serialize a function
+  // back to Node (it returns undefined), so checking typeof here is mandatory.
+  expect(await page.evaluate(() => typeof (window as any).__encounterDiscardRing)).toBe('function');
+  // Confirm the FULL case before the discard (real server state).
+  expect((await me(token)).rings.filter((r) => r.in_carry === 1).length).toBe(10);
 
-  // Swap: displace `displaceId` → it must return to the Sanctum, not be deleted.
-  await page.evaluate(
-    ({ disp }) => (window as any).__campResolveWonRing('add', disp),
-    { disp: displaceId },
-  );
-
-  await page.waitForFunction(
-    (id) => (window as any).__campState?.rings.find((r: any) => r.id === id)?.in_carry === 0,
-    displaceId,
-    { timeout: 5000 },
-  );
+  // Discard a carried ring → frees a slot → tryAutoCarryPending carries the won
+  // ring and clears er_pending_ring.
+  await page.evaluate((id) => (window as any).__encounterDiscardRing(id), discardId);
+  await page.waitForFunction(() => localStorage.getItem('er_pending_ring') === null, {
+    timeout: 8000,
+  });
 
   const { rings: final } = await me(token);
-  // Won ring now carried.
+  // Won ring is now carried.
   expect(final.find((r) => r.id === wonRingId)?.in_carry).toBe(1);
-  // Displaced ring returned to the Sanctum (uncarried) and still exists — NOT lost.
-  const displaced = final.find((r) => r.id === displaceId);
-  expect(displaced).toBeDefined();
-  expect(displaced?.in_carry).toBe(0);
-  // Carry holds at the cap; no rings were deleted by the swap.
+  // Discarded ring is permanently gone (deleted, not returned to the Sanctum).
+  expect(final.find((r) => r.id === discardId)).toBeUndefined();
+  // Carry holds at the cap; total drops by the one discarded ring (11 → 10).
   expect(final.filter((r) => r.in_carry === 1).length).toBe(10);
-  expect(final.length).toBe(11);
-  // er_pending_ring cleared after resolution.
-  const cleared = await page.evaluate(() => localStorage.getItem('er_pending_ring'));
-  expect(cleared).toBeNull();
+  expect(final.length).toBe(10);
   await ctx.close();
 }, 90000);

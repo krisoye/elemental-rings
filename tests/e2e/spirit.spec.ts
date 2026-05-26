@@ -37,8 +37,10 @@ function authJson(token: string): Record<string, string> {
 test('spirit: GET /api/me returns spirit_max, spirit_current, food_units', async () => {
   const { token } = await register();
   const { player } = await me(token);
-  expect(player.spirit_max).toBe(30);
-  expect(player.spirit_current).toBe(30);
+  // SPIRIT_BASE is 50; a fresh player's starter rings carry 0 XP, so
+  // spirit_max = 50 + floor(0 / XP_SCALER) = 50, and spirit_current matches.
+  expect(player.spirit_max).toBe(50);
+  expect(player.spirit_current).toBe(50);
   expect(player.food_units).toBe(100);
 });
 
@@ -128,7 +130,7 @@ test('spirit: recharge a depleted ring spends spirit equal to uses restored', as
   } finally {
     clearInterval(driver);
   }
-  await page.waitForFunction(() => (window as any).__game?.scene?.isActive('CampScene'), {
+  await page.waitForFunction(() => (window as any).__game?.scene?.isActive('EncounterScene'), {
     timeout: 15000,
   });
 
@@ -226,7 +228,7 @@ test('spirit: recharge-all returns remaining spirit and never goes negative', as
   } finally {
     clearInterval(driver);
   }
-  await page.waitForFunction(() => (window as any).__game?.scene?.isActive('CampScene'), {
+  await page.waitForFunction(() => (window as any).__game?.scene?.isActive('EncounterScene'), {
     timeout: 15000,
   });
 
@@ -248,10 +250,16 @@ test('spirit: recharge-all returns remaining spirit and never goes negative', as
   const spent = before.spirit_current - spirit_current;
   expect(spent).toBe(Math.min(totalDeficit, before.spirit_current));
 
-  // Verify against the UI hook too.
-  await page.evaluate(() => (window as any).__campRechargeAll());
-  await page.waitForFunction(() => (window as any).__campState !== undefined, { timeout: 5000 });
-  const state = await page.evaluate(() => (window as any).__campState);
-  expect(state.spirit_current).toBeGreaterThanOrEqual(0);
+  // The post-battle flow now lands in EncounterScene, where the CampScene-only
+  // __campRechargeAll hook does not exist. A second recharge-all (now all rings
+  // are full) is idempotent: spirit is unchanged and never negative.
+  const res2 = await fetch(`${API_URL}/api/spirit/recharge-all`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  expect(res2.status).toBe(200);
+  const { spirit_current: spirit2 } = await res2.json();
+  expect(spirit2).toBeGreaterThanOrEqual(0);
+  expect(spirit2).toBe(spirit_current); // nothing left to recharge → no change
   await ctx.close();
 }, 60000);

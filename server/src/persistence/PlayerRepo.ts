@@ -1,7 +1,7 @@
 import { v4 as uuidv4 } from 'uuid';
 import { db } from './db';
 import { ElementEnum } from '../../../shared/types';
-import { SPIRIT_PER_RING_USE } from '../game/constants';
+import { SPIRIT_PER_RING_USE, SPIRIT_BASE, XP_SCALER } from '../game/constants';
 
 /** A persisted player row (no password hash exposed to callers of read helpers). */
 export interface PlayerRow {
@@ -186,9 +186,15 @@ const selectSpiritFood = db.prepare(
 const updateSpiritDeduct = db.prepare(
   `UPDATE players SET spirit_current = spirit_current - ? WHERE id = ?`,
 );
-const updateSpiritRestore = db.prepare(
-  `UPDATE players SET spirit_current = spirit_max WHERE id = ?`,
+// spirit_max is XP-derived (SPIRIT_BASE + floor(SUM(ring xp) / XP_SCALER)), so
+// restoring sets spirit_current to the freshly computed max, not the column.
+const selectAggregateRingXp = db.prepare(
+  `SELECT COALESCE(SUM(xp), 0) AS xp_sum FROM rings WHERE owner_id = ?`,
 );
+const updateSpiritCurrent = db.prepare(
+  `UPDATE players SET spirit_current = ? WHERE id = ?`,
+);
+const updateSpiritMax = db.prepare(`UPDATE players SET spirit_max = ? WHERE id = ?`);
 const updateFoodAdd = db.prepare(`UPDATE players SET food_units = food_units + ? WHERE id = ?`);
 const updateFoodDeduct = db.prepare(`UPDATE players SET food_units = food_units - ? WHERE id = ?`);
 const updateRingUsesAdd = db.prepare(
@@ -407,13 +413,45 @@ export function setInCarry(ringId: string, inCarry: boolean): void {
 }
 
 /**
- * Permanently delete a ring the player owns (the Discard choice on the
- * post-battle won-ring prompt). No-op if the ring is not owned by the player.
+ * Permanently delete a ring the player owns (the Discard choice on the won-ring
+ * prompt / Manage Battle Hand). Nulls the ring out of any loadout slot first so
+ * the delete does not violate the loadout→rings FK constraint (a carried ring
+ * may be assigned to thumb/a1/a2/d1/d2). Runs in a transaction. No-op if the
+ * ring is not owned by the player.
  */
-export function discardRing(playerId: string, ringId: string): { ok: boolean } {
-  const info = deleteRing.run(ringId, playerId);
-  return { ok: info.changes > 0 };
-}
+export const discardRing = db.transaction(
+  (playerId: string, ringId: string): { ok: boolean } => {
+    const loadout = selectLoadout.get(playerId) as LoadoutRow | undefined;
+    if (loadout) {
+      const slots: Record<string, string | null> = {
+        thumb: loadout.thumb,
+        a1: loadout.a1,
+        a2: loadout.a2,
+        d1: loadout.d1,
+        d2: loadout.d2,
+      };
+      let changed = false;
+      for (const key of SLOT_KEYS) {
+        if (slots[key as string] === ringId) {
+          slots[key as string] = null;
+          changed = true;
+        }
+      }
+      if (changed) {
+        updateLoadoutSlot.run({
+          player_id: playerId,
+          thumb: slots.thumb,
+          a1: slots.a1,
+          a2: slots.a2,
+          d1: slots.d1,
+          d2: slots.d2,
+        });
+      }
+    }
+    const info = deleteRing.run(ringId, playerId);
+    return { ok: info.changes > 0 };
+  },
+);
 
 /** The player's carry cap (rings carryable on an expedition). */
 export function getCarryCap(playerId: string): number {
@@ -469,9 +507,31 @@ export function spendSpirit(playerId: string, amount: number): void {
   updateSpiritDeduct.run(amount, playerId);
 }
 
-/** Restore the spirit gauge to its maximum (resting effect). */
+/**
+ * Compute the player's spirit_max from their aggregate ring XP:
+ *   spirit_max = SPIRIT_BASE + floor(SUM(rings.xp) / XP_SCALER)
+ * Always derived live so it reflects the current inventory (rings won/lost/
+ * leveled change the total). Does not write to the DB — see refreshSpiritMax.
+ */
+export function computeSpiritMax(playerId: string): number {
+  const row = selectAggregateRingXp.get(playerId) as { xp_sum: number } | undefined;
+  return SPIRIT_BASE + Math.floor((row?.xp_sum ?? 0) / XP_SCALER);
+}
+
+/**
+ * Recompute spirit_max from aggregate ring XP and persist it to the players
+ * column. Call after XP is awarded (or rings are transferred) so a subsequent
+ * /api/me reflects the updated cap. Returns the new spirit_max.
+ */
+export function refreshSpiritMax(playerId: string): number {
+  const max = computeSpiritMax(playerId);
+  updateSpiritMax.run(max, playerId);
+  return max;
+}
+
+/** Restore the spirit gauge to its (XP-derived) maximum (resting effect). */
 export function restoreSpirit(playerId: string): void {
-  updateSpiritRestore.run(playerId);
+  updateSpiritCurrent.run(computeSpiritMax(playerId), playerId);
 }
 
 /** Add food units to the player's larder. */

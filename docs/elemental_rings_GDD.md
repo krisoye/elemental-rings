@@ -22,6 +22,7 @@ Each section lives in its own file. Read only what you need.
 | 11 | UI and Information Display | [gdd-11-ui.md](gdd-11-ui.md) | HUD, ring reveal, status display |
 | 12 | Spirit System | [gdd-12-spirit-system.md](gdd-12-spirit-system.md) | Spirit gauge, carry capacity, ring recharge, food/sleep |
 | 13 | Open Questions | [gdd-13-open-questions.md](gdd-13-open-questions.md) | Unresolved design decisions |
+| 14 | Talisman System | [gdd-14-talismans.md](gdd-14-talismans.md) | Sanctum Stone, necklace/bracelet slots, future talismans |
 | — | Build Sequence (Phases 1–9) | [GitHub Issue #14](https://github.com/krisoye/elemental-rings/issues/14) | Project management — not game design |
 
 ---

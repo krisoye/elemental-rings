@@ -19,10 +19,11 @@ import {
   rechargeAllWithSpirit,
   getSpiritAndFood,
   spendSpirit,
+  computeSpiritMax,
   lockStake,
   unlockStake,
 } from '../persistence/PlayerRepo';
-import { FOOD_PER_SLEEP } from '../game/constants';
+import { FOOD_PER_SLEEP, SPIRIT_BASE } from '../game/constants';
 
 const BCRYPT_ROUNDS = 10;
 
@@ -98,8 +99,11 @@ apiRouter.get('/api/me', requireAuth, (req: Request, res: Response): void => {
     res.status(404).json({ error: 'Player not found' });
     return;
   }
+  // spirit_max is XP-derived; serve it live (not the stored column) so it is
+  // always fresh, and expose the raw aggregate ring XP for the HUD.
+  const spiritMax = computeSpiritMax(playerId);
   res.status(200).json({
-    player,
+    player: { ...player, spirit_max: spiritMax, aggregate_xp: spiritMax - SPIRIT_BASE },
     rings: getRingsByOwner(playerId),
     loadout: getLoadout(playerId) ?? null,
   });
@@ -267,12 +271,17 @@ apiRouter.post('/api/stake/unlock', requireAuth, (req: Request, res: Response): 
  * Response: Record<AIPersonality, number>  (personality → stake element index)
  */
 apiRouter.get('/api/encounter/preview', (_req: Request, res: Response): void => {
-  const seed = Date.now() & 0xffffffff;
-  const rng = makeRng(seed);
-  const preview: Record<string, number> = {};
-  for (const p of AI_PERSONALITIES) {
-    preview[p] = previewStakeElement(p, rng);
-  }
+  const baseSeed = Date.now() & 0xffffffff;
+  // Derive a deterministic per-personality aiSeed from the base seed so the
+  // preview and the actual BattleRoom loadout use identical RNG state.
+  // BattleRoom seeds its loadout RNG as makeRng(aiSeed ^ 0x1a2b3c4d); we do
+  // the same here so intBetween(0, templates.length-1) returns the same index.
+  const preview: Record<string, { element: number; aiSeed: number }> = {};
+  AI_PERSONALITIES.forEach((p, i) => {
+    const aiSeed = (baseSeed ^ (i * 0xdeadbeef)) & 0xffffffff;
+    const loadoutRng = makeRng(aiSeed ^ 0x1a2b3c4d);
+    preview[p] = { element: previewStakeElement(p, loadoutRng), aiSeed };
+  });
   res.status(200).json(preview);
 });
 
