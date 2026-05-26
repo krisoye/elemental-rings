@@ -191,24 +191,39 @@ test('teleport: the anchored waystone drives where the overworld spawns the play
     timeout: 8000,
   });
   await page.waitForFunction(() => !!(window as any).__waystones, { timeout: 8000 });
-  // loadWaystones repositions the player AFTER building markers; wait for it.
+  // 8B.4.1: the Sanctum exterior + sanctum_return are placed at the anchored
+  // waystone (toward map center) and the player spawns just outside its door.
+  // loadWaystones repositions the player AFTER building markers; wait for the
+  // published Sanctum center, then assert the player spawned beside that door.
+  await page.waitForFunction(() => !!(window as any).__sanctumReturnCenter, { timeout: 8000 });
+  const sanctum = await page.evaluate(
+    () => (window as any).__sanctumReturnCenter as { x: number; y: number },
+  );
+
+  // The Sanctum is anchor-derived: its center sits SANCTUM_OFFSET (96px) from the
+  // anchored waystone (forest_glade) toward the map center — well within ~120px.
+  expect(Math.hypot(sanctum.x - FOREST_GLADE.x, sanctum.y - FOREST_GLADE.y)).toBeLessThanOrEqual(
+    120,
+  );
+
   await page.waitForFunction(
-    ([gx, gy]) => {
+    ([sx, sy]) => {
       const p = (window as any).__player;
       if (!p) return false;
-      return Math.hypot(p.x - gx, p.y - gy) <= 80;
+      return Math.hypot(p.x - sx, p.y - sy) <= 80;
     },
-    [FOREST_GLADE.x, FOREST_GLADE.y] as const,
+    [sanctum.x, sanctum.y] as const,
     { timeout: 8000 },
   );
 
   const dist = await page.evaluate(
-    ([gx, gy]) => {
+    ([sx, sy]) => {
       const p = (window as any).__player;
-      return Math.hypot(p.x - gx, p.y - gy);
+      return Math.hypot(p.x - sx, p.y - sy);
     },
-    [FOREST_GLADE.x, FOREST_GLADE.y] as const,
+    [sanctum.x, sanctum.y] as const,
   );
+  // Player spawns just outside the door: SANCTUM_DOOR_OFFSET (44px) past center.
   expect(dist).toBeLessThanOrEqual(80);
   await ctx.close();
 });

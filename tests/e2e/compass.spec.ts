@@ -20,6 +20,16 @@ const COMPASS_RANGE = 400; // mirrors client/src/Constants.ts
 /** Waystone marker centers (client/public/assets/maps/overworld.json). */
 const FOREST_GLADE = { x: 304, y: 336 };
 
+/**
+ * The sanctum_return zone is built dynamically at the anchored waystone (8B.4.1).
+ * The scene publishes its world center as window.__sanctumReturnCenter once
+ * loadWaystones has positioned the Sanctum.
+ */
+async function getSanctumReturnPos(page: Page): Promise<{ x: number; y: number }> {
+  await page.waitForFunction(() => !!(window as any).__sanctumReturnCenter, { timeout: 8000 });
+  return page.evaluate(() => (window as any).__sanctumReturnCenter as { x: number; y: number });
+}
+
 async function loadSanctum(page: Page): Promise<void> {
   await page.goto(URL);
   await page.waitForFunction(() => (window as any).__activeScene === 'CampScene', { timeout: 10000 });
@@ -152,7 +162,8 @@ test('compass: hides when every waystone is attuned', async ({ browser }) => {
   );
 
   // Return to the Sanctum, then re-enter so the scene reloads attunement state.
-  await walkToZone(page, { x: 224, y: 224 }, 'sanctum_return');
+  const returnPos = await getSanctumReturnPos(page);
+  await walkToZone(page, returnPos, 'sanctum_return');
   await page.evaluate(() => (window as any).__sanctumInteract());
   await page.waitForFunction(() => (window as any).__activeScene === 'CampScene', { timeout: 8000 });
   await enterOverworld(page);

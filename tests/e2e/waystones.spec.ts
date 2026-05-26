@@ -20,10 +20,18 @@ const API_URL = 'http://localhost:2568';
 
 /** Sanctum door zone center (client/public/assets/maps/sanctum.json). */
 const SANCTUM_DOOR = { x: 1088, y: 608 };
-/** Overworld sanctum_return zone center (client/public/assets/maps/overworld.json). */
-const OVERWORLD_RETURN = { x: 224, y: 224 };
 /** Waystone marker centers (client/public/assets/maps/overworld.json). */
 const FOREST_GLADE = { x: 304, y: 336 };
+
+/**
+ * The sanctum_return zone is built dynamically at the anchored waystone (8B.4.1),
+ * not a fixed map rectangle. The scene publishes its world center as
+ * window.__sanctumReturnCenter once loadWaystones has positioned the Sanctum.
+ */
+async function getSanctumReturnPos(page: Page): Promise<{ x: number; y: number }> {
+  await page.waitForFunction(() => !!(window as any).__sanctumReturnCenter, { timeout: 8000 });
+  return page.evaluate(() => (window as any).__sanctumReturnCenter as { x: number; y: number });
+}
 
 async function loadSanctum(page: Page): Promise<void> {
   await page.goto(URL);
@@ -182,7 +190,8 @@ test('waystones: sanctum_return still transitions back to CampScene with reloade
   await loadSanctum(page);
   await enterOverworld(page);
 
-  await walkToZone(page, OVERWORLD_RETURN, 'sanctum_return');
+  const returnPos = await getSanctumReturnPos(page);
+  await walkToZone(page, returnPos, 'sanctum_return');
   await page.evaluate(() => (window as any).__sanctumInteract());
 
   await page.waitForFunction(() => (window as any).__activeScene === 'CampScene', { timeout: 8000 });
