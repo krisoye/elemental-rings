@@ -20,6 +20,7 @@ interface WaystoneInfo {
 }
 interface WaystonesPayload {
   aggregateXp: number;
+  anchor: string;
   waystones: WaystoneInfo[];
 }
 
@@ -203,6 +204,15 @@ export class OverworldScene extends Phaser.Scene {
       this.physics.add.overlap(this.player, marker.interactionZone.overlapZone);
       this.zones.push(marker.interactionZone);
       this.waystones.set(id, marker);
+    }
+
+    // Anchor-derived spawn (8B.3, #63): reposition the player to the anchored
+    // waystone rather than the map's static `spawn`. Done AFTER the markers are
+    // built so the anchor marker (and its center) exists. Physics + camera-follow
+    // are already wired in create(), so a setPosition is sufficient.
+    const anchorMarker = this.waystones.get(payload.anchor);
+    if (anchorMarker) {
+      this.player.setPosition(anchorMarker.center.x, anchorMarker.center.y + 40);
     }
   }
 

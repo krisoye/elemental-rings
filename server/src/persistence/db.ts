@@ -48,6 +48,13 @@ if (!hasPlayerCol('food_units')) {
   db.exec('ALTER TABLE players ADD COLUMN food_units INTEGER NOT NULL DEFAULT 100');
 }
 
+// #63 — Phase 8B.3 teleportation: the waystone the player's Sanctum is currently
+// anchored at. Drives overworld spawn placement. Defaults to the Forest entry
+// waystone so existing players (and fresh ones) start anchored there.
+if (!hasPlayerCol('anchored_waystone')) {
+  db.exec("ALTER TABLE players ADD COLUMN anchored_waystone TEXT NOT NULL DEFAULT 'forest_entry'");
+}
+
 // Recompute spirit_max on every boot using the same formula as computeSpiritMax()
 // in PlayerRepo: SPIRIT_BASE + floor(aggregate_ring_xp / XP_SCALER). Template
 // literals embed the constants so this stays in sync when either value changes.

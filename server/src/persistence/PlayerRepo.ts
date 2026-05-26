@@ -85,6 +85,13 @@ const insertAttunement = db.prepare(
 const selectAttunements = db.prepare(
   `SELECT waystone_id FROM waystone_attunements WHERE player_id = ?`,
 );
+// #63 — Sanctum anchor (the waystone the overworld spawns the player beside).
+const selectAnchor = db.prepare(
+  `SELECT anchored_waystone FROM players WHERE id = ?`,
+);
+const updateAnchor = db.prepare(
+  `UPDATE players SET anchored_waystone = ? WHERE id = ?`,
+);
 
 const selectByUsername = db.prepare(`SELECT * FROM players WHERE username = ?`);
 const selectById = db.prepare(
@@ -681,6 +688,25 @@ export function getAttunements(playerId: string): string[] {
  */
 export function attuneWaystone(playerId: string, waystoneId: string): void {
   insertAttunement.run(playerId, waystoneId, Date.now());
+}
+
+/**
+ * The waystone the player's Sanctum is currently anchored at (#63, GDD §10.7).
+ * Drives the overworld spawn point. Falls back to `forest_entry` for a player
+ * row that predates the column default (defensive — the migration backfills it).
+ */
+export function getAnchor(playerId: string): string {
+  const row = selectAnchor.get(playerId) as { anchored_waystone: string } | undefined;
+  return row?.anchored_waystone ?? 'forest_entry';
+}
+
+/**
+ * Re-anchor the player's Sanctum to a waystone (#63). Caller is responsible for
+ * validating that the waystone is known, attuned, and meets the teleport gate;
+ * this is a bare persistence write.
+ */
+export function setAnchor(playerId: string, waystoneId: string): void {
+  updateAnchor.run(waystoneId, playerId);
 }
 
 /**

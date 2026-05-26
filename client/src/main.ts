@@ -35,6 +35,7 @@ declare global {
     // state. Cleared on scene shutdown.
     __waystones?: {
       aggregateXp: number;
+      anchor: string;
       waystones: Array<{
         id: string;
         name: string;
@@ -79,6 +80,20 @@ declare global {
     // #47 fusion hooks — open the fusion modal / fuse two parents directly.
     __campOpenFusion?: () => void;
     __campFuse?: (ringId1: string, ringId2: string) => Promise<string | null>;
+    // #63 teleport hooks — open the teleport modal / travel to a waystone.
+    __campOpenTeleport?: () => Promise<void>;
+    __campTeleport?: (waystoneId: string) => Promise<void>;
+    // Teleport modal snapshot (set by CampScene.openTeleportModal before render).
+    __teleportState?: {
+      anchor: string;
+      rows: Array<{
+        id: string;
+        name: string;
+        attuned: boolean;
+        meetsThreshold: boolean;
+        xpThreshold: number;
+      }>;
+    };
     // Fusion modal availability snapshot (set by FusionPanel.open).
     __fusionState?: {
       recipes: Array<{

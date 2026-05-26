@@ -26,9 +26,11 @@ import {
   setRingXP,
   getAttunements,
   attuneWaystone,
+  getAnchor,
+  setAnchor,
 } from '../persistence/PlayerRepo';
 import { FOOD_PER_SLEEP } from '../game/constants';
-import { WAYSTONES, getWaystone } from '../../../shared/waystones';
+import { WAYSTONES, getWaystone, canTeleport } from '../../../shared/waystones';
 
 /**
  * Build the /api/waystones payload for a player: the catalog joined with the
@@ -38,6 +40,7 @@ import { WAYSTONES, getWaystone } from '../../../shared/waystones';
  */
 function buildWaystonePayload(playerId: string): {
   aggregateXp: number;
+  anchor: string;
   waystones: Array<{
     id: string;
     name: string;
@@ -50,6 +53,7 @@ function buildWaystonePayload(playerId: string): {
   const attuned = new Set(getAttunements(playerId));
   return {
     aggregateXp,
+    anchor: getAnchor(playerId),
     waystones: WAYSTONES.map((w) => ({
       id: w.id,
       name: w.name,
@@ -369,6 +373,34 @@ apiRouter.post('/api/waystones/attune', requireAuth, (req: Request, res: Respons
   }
   attuneWaystone(playerId, waystoneId);
   res.status(200).json(buildWaystonePayload(playerId));
+});
+
+/**
+ * POST /api/teleport — re-anchor the player's Sanctum to a waystone (#63, GDD
+ * §10.7). Body: { waystoneId: string }. Three rejection cases each return 400:
+ * an unknown id, a waystone the player has not attuned, and one whose aggregate
+ * XP teleport gate is not yet met. On success persists the anchor and returns
+ * { anchor }. Requires auth.
+ */
+apiRouter.post('/api/teleport', requireAuth, (req: Request, res: Response): void => {
+  const playerId = req.playerId as string;
+  const { waystoneId } = req.body ?? {};
+  if (typeof waystoneId !== 'string' || !getWaystone(waystoneId)) {
+    res.status(400).json({ error: 'unknown waystone' });
+    return;
+  }
+  if (!getAttunements(playerId).includes(waystoneId)) {
+    res.status(400).json({ error: 'not attuned' });
+    return;
+  }
+  const { aggregateXp } = getSpiritStats(playerId);
+  if (!canTeleport(aggregateXp, waystoneId)) {
+    const def = getWaystone(waystoneId)!;
+    res.status(400).json({ error: `requires ${def.xpThreshold} aggregate XP` });
+    return;
+  }
+  setAnchor(playerId, waystoneId);
+  res.status(200).json({ anchor: waystoneId });
 });
 
 // ───────────────────────────────────────────────────────────────────────────
