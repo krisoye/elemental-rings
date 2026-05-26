@@ -125,6 +125,8 @@ test('overworld: sanctum_return transitions back to CampScene with reloaded stat
   await page.waitForFunction(() => (window as any).__activeScene === 'OverworldScene', {
     timeout: 8000,
   });
+  // Wait for anchor-derived spawn to finish before repositioning.
+  await page.waitForFunction(() => !!(window as any).__waystones, { timeout: 8000 });
 
   await walkToZone(page, OVERWORLD_RETURN, 'sanctum_return');
   await page.evaluate(() => (window as any).__sanctumInteract());
