@@ -1,5 +1,5 @@
 # Elemental Rings — Game Design Document
-**Version 4.5 | Stack: Phaser.js + Colyseus | Multiplayer-first**
+**Version 4.6 | Stack: Phaser.js + Colyseus | Multiplayer-first**
 
 ---
 
@@ -37,6 +37,9 @@ Each section lives in its own file. Read only what you need.
 ---
 
 ## Changelog
+
+*Document version 4.6 — Updated May 2026*
+*v4.6 changes: §10 Phase 8 build decomposition added (§10.12). Phase 8 splits into three EPICs — 8A (spatial engine + walkable Sanctum room, EPIC #54), 8B (overworld world: waystones, compass, teleportation, biome), 8C (world population: NPCs, monsters, detection, shrines). Confirmed implementation decisions: Kenney CC0 placeholder tileset (Tiled JSON pipeline, swappable), per-player overworld for MVP (shared WorldRoom deferred), CampScene key preserved, EncounterScene retained as dev tool, fusion stays in Sanctum ring-wall until shrines land in 8C. Issue #14 updated to reflect EPIC decomposition.*
 
 *Document version 4.5 — Updated May 2026*
 *v4.5 changes: Rewrote §5 Fusion System to match the v4 element model. Previous §5 referenced non-existent elements (Lightning, Ice, Metal, Lava, Frost, Ash, Obsidian) and same-element upgrade paths that don't exist in v4. New §5 documents the 10 cross-element Tier 2 fusions (all 5C2 pairs), Tier 3 framework (two maxed Tier 2 parents, recipes deferred), fusion cost (maxed parent rings + shrine access — no fusion stones), and cross-references §3.4 for all combat mechanics. Closed fusion-stone open question.*
