@@ -24,5 +24,15 @@ export async function connectToRoom(
   const client = new Client(SERVER_URL);
   const room = await client.joinOrCreate<any>(roomName, opts);
   window.__room = room;
+
+  // Capture a won ring at the connection level rather than in BattleScene: a
+  // duel can end (e.g. an instant forfeit) before BattleScene mounts, so the
+  // listener must live for the room's whole lifetime. The server is
+  // authoritative — it decides the ring id; we only stash it for CampScene's
+  // post-battle prompt (#40).
+  room.onMessage('wonRing', (payload: { ringId?: string }) => {
+    if (payload?.ringId) localStorage.setItem('er_pending_ring', payload.ringId);
+  });
+
   return room;
 }

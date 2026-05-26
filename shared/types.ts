@@ -38,6 +38,14 @@ export interface BattleRoomOptions {
   personality?: AIPersonality;
   aiSeed?: number;
   token?: string;
+  // Deterministic-test overrides. Only the E2E harness passes these; the
+  // production client never does. They make a vsAI duel's OUTCOME a property of
+  // setup rather than millisecond timing, and apply ONLY to the AI opponent:
+  //   aiHearts: 1  → AI dies on the first hit → guaranteed protagonist win
+  //   aiHearts: 99 → AI unkillable → protagonist forfeits once uses exhausted
+  //   aiUses: 0    → AI attacks/defends with extinguished rings → AI forfeits
+  aiHearts?: number;
+  aiUses?: number;
 }
 
 export interface SelectAttackPayload {

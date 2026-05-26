@@ -76,6 +76,11 @@ export class BattleScene extends Phaser.Scene {
       this.recordRevealedElements(result, myId);
     });
 
+    // NOTE: the server's `wonRing` message (post-battle ring grant, #40) is
+    // captured in connectToRoom() at the connection level, not here — a duel can
+    // end before BattleScene mounts (e.g. an instant forfeit), so the listener
+    // must outlive any single scene.
+
     this.events.once('shutdown', () => {
       room.onStateChange.remove(onState);
       offExchange();

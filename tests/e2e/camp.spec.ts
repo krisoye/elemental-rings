@@ -46,8 +46,9 @@ test('camp: sleep increments game_day', async ({ browser }) => {
   await ctx.close();
 });
 
-// ── Scenario 3: Paid recharge returns 400 when ring is already full ───────────
-test('camp: paid recharge returns 400 already-full when ring is full', async ({ browser }) => {
+// ── Scenario 3: Spirit recharge returns 400 when ring is already full ─────────
+// #41 replaced the gold-based /api/camp/recharge with /api/spirit/recharge.
+test('camp: spirit recharge returns 400 already-full when ring is full', async ({ browser }) => {
   const ctx = await browser.newContext();
   const username = `t_${Date.now()}`;
   const regRes = await fetch(`${API_URL}/auth/register`, {
@@ -64,7 +65,7 @@ test('camp: paid recharge returns 400 already-full when ring is full', async ({ 
   const { rings } = await meRes.json();
 
   // Attempt to recharge a full ring → should return 400 "already full".
-  const rechargeRes = await fetch(`${API_URL}/api/camp/recharge`, {
+  const rechargeRes = await fetch(`${API_URL}/api/spirit/recharge`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
     body: JSON.stringify({ ringId: rings[0].id }),
@@ -76,14 +77,14 @@ test('camp: paid recharge returns 400 already-full when ring is full', async ({ 
 });
 
 // ── Scenario 4: Missing ringId → 400 ─────────────────────────────────────────
-test('camp: recharge fails with 400 when ringId is missing', async () => {
+test('camp: spirit recharge fails with 400 when ringId is missing', async () => {
   const regRes = await fetch(`${API_URL}/auth/register`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ username: `t_${Date.now()}`, password: 'pw' }),
   });
   const { token } = await regRes.json();
-  const res = await fetch(`${API_URL}/api/camp/recharge`, {
+  const res = await fetch(`${API_URL}/api/spirit/recharge`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
     body: JSON.stringify({ ringId: '' }),

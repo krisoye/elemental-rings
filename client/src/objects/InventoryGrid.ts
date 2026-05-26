@@ -9,6 +9,7 @@ export interface RingData {
   current_uses: number;
   xp: number;
   escrowed: number; // 0 or 1
+  in_carry: number; // 0 or 1 (#40 — carried on expedition)
 }
 
 const CARD_W = 64;

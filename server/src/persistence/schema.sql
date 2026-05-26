@@ -3,7 +3,11 @@ CREATE TABLE IF NOT EXISTS players (
   username   TEXT UNIQUE NOT NULL,
   password_hash TEXT NOT NULL,
   gold       INTEGER NOT NULL DEFAULT 200,
-  game_day   INTEGER NOT NULL DEFAULT 0
+  game_day   INTEGER NOT NULL DEFAULT 0,
+  carry_cap      INTEGER NOT NULL DEFAULT 10,
+  spirit_max     INTEGER NOT NULL DEFAULT 30,
+  spirit_current INTEGER NOT NULL DEFAULT 30,
+  food_units     INTEGER NOT NULL DEFAULT 100
 );
 CREATE TABLE IF NOT EXISTS rings (
   id           TEXT PRIMARY KEY,
@@ -13,7 +17,8 @@ CREATE TABLE IF NOT EXISTS rings (
   max_uses     INTEGER NOT NULL DEFAULT 3,
   current_uses INTEGER NOT NULL DEFAULT 3,
   xp           INTEGER NOT NULL DEFAULT 0,
-  escrowed     INTEGER NOT NULL DEFAULT 0
+  escrowed     INTEGER NOT NULL DEFAULT 0,
+  in_carry     INTEGER NOT NULL DEFAULT 0
 );
 CREATE TABLE IF NOT EXISTS loadout (
   player_id TEXT PRIMARY KEY REFERENCES players(id),

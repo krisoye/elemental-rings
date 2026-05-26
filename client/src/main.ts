@@ -21,10 +21,44 @@ declare global {
     // EncounterScene marker. Set by EncounterScene.create(). 'PVP' starts the
     // LobbyScene; a personality starts a vsAI duel.
     __encounterSelect?: (choice: AIPersonality | 'PVP') => void;
+    // Deterministic E2E: start a vsAI duel with AI-strength overrides so the
+    // outcome is forced (aiHearts:1 → win, aiHearts:99 → loss, aiUses:0 → AI
+    // forfeits). Same code path as __encounterSelect otherwise.
+    __encounterSelectWithOverrides?: (
+      choice: AIPersonality | 'PVP',
+      aiOverrides?: { aiHearts?: number; aiUses?: number },
+    ) => void;
     __campGoEncounter?: () => void;
     __campSleep?: () => void;
     __campRecharge?: (ringId: string) => Promise<void>;
-    __campState?: { player: any; rings: any[]; loadout: any };
+    __campRechargeAll?: () => Promise<void>;
+    // #40 carry hooks — deterministic code paths for E2E.
+    __campAddToLoadout?: (ringId: string) => Promise<void>;
+    __campLeaveAtSanctum?: (ringId: string) => Promise<void>;
+    // Resolve the post-battle won-ring prompt: 'add' | 'leave' | 'discard',
+    // with an optional ring id to displace when carry is full ('add' swap case).
+    __campResolveWonRing?: (
+      choice: 'add' | 'leave' | 'discard',
+      displaceRingId?: string,
+    ) => Promise<void>;
+    __campState?: {
+      player: any;
+      rings: any[];
+      loadout: any;
+      // Carry pool separation for #40 assertions.
+      atSanctum: any[];
+      loadout_pool: any[];
+      battleHand: any[];
+      carry_cap: number;
+      // #41 spirit/food snapshot.
+      spirit_current: number;
+      spirit_max: number;
+      food_units: number;
+      // Set while the won-ring modal is open.
+      pendingWonRing?: { ringId: string; element: number } | null;
+    };
+    // #40 encounter modal hooks.
+    __encounterManageBattleHand?: () => void;
   }
 }
 

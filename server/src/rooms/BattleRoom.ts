@@ -95,7 +95,14 @@ export class BattleRoom extends Room<{ state: BattleState }> {
       // (inside AIController) is unaffected by the number of template variants.
       const loadoutRng = makeRng(seed ^ 0x1a2b3c4d);
       const aiSpec = generateAILoadout(personality, loadoutRng);
-      this.seatPlayer(AI_ID, personality, aiSpec);
+      // Deterministic-test AI-strength overrides (see BattleRoomOptions): a weak
+      // AI yields a guaranteed protagonist win; a tanky AI a guaranteed loss.
+      // Applied to the AI seat ONLY — the human is seated from its real loadout.
+      const aiOverrides =
+        options.aiHearts !== undefined || options.aiUses !== undefined
+          ? { hearts: options.aiHearts, uses: options.aiUses }
+          : undefined;
+      this.seatPlayer(AI_ID, personality, aiSpec, aiOverrides);
       this.ai = new AIController(this, AI_ID, personality, seed);
     }
   }
@@ -112,18 +119,24 @@ export class BattleRoom extends Room<{ state: BattleState }> {
     id: string,
     displayName: string,
     spec?: Partial<Record<SlotKey, SlotSpec>>,
+    overrides?: { hearts?: number; uses?: number },
   ): void {
     const ps = new PlayerState();
     ps.playerId = id;
     ps.displayName = displayName;
-    ps.hearts = STARTING_HEARTS;
+    // `overrides` (deterministic E2E only, AI seat only) replaces hearts and/or
+    // sets a uniform per-slot uses value so a duel outcome can be forced.
+    ps.hearts = overrides?.hearts ?? STARTING_HEARTS;
 
     for (const key of Object.keys(DEFAULT_LOADOUT) as SlotKey[]) {
       const ring = ps.getSlot(key);
       const slotSpec = spec?.[key];
       const element = slotSpec ? slotSpec.element : DEFAULT_LOADOUT[key];
-      const currentUses = slotSpec ? slotSpec.currentUses : STARTING_USES;
-      const maxUses = slotSpec ? slotSpec.maxUses : STARTING_USES;
+      const baseCurrent = slotSpec ? slotSpec.currentUses : STARTING_USES;
+      const baseMax = slotSpec ? slotSpec.maxUses : STARTING_USES;
+      const currentUses = overrides?.uses ?? baseCurrent;
+      const maxUses =
+        overrides?.uses !== undefined ? Math.max(baseMax, overrides.uses) : baseMax;
       ring.element = element;
       ring.tier = slotSpec ? slotSpec.tier : 1;
       ring.currentUses = currentUses;
@@ -288,9 +301,18 @@ export class BattleRoom extends Room<{ state: BattleState }> {
         ? this.sessionToRingIds.get(loserId)?.thumb
         : undefined;
 
+      // Track the ring the (human) winner gains so the client can prompt the
+      // player to carry/leave/discard it on returning to camp (#40).
+      let wonRingId: string | undefined;
+      let wonRingElement: number | undefined;
+
       if (loserPlayerId && loserThumbRingId) {
         if (winnerPlayerId) {
-          PlayerRepo.transferRing(loserThumbRingId, loserPlayerId, winnerPlayerId);
+          const loserThumb = this.sessionToRingIds.get(loserId!)?.thumb;
+          const loserPs = loserId ? this.state.players.get(loserId) : undefined;
+          wonRingId = PlayerRepo.transferRing(loserThumbRingId, loserPlayerId, winnerPlayerId);
+          wonRingElement = loserPs?.thumb.element;
+          void loserThumb;
         } else {
           // vsAI: winner has no DB record — just delete the ring.
           PlayerRepo.forfeitRing(loserThumbRingId, loserPlayerId);
@@ -301,7 +323,8 @@ export class BattleRoom extends Room<{ state: BattleState }> {
         const aiPs = this.state.players.get(loserId);
         if (aiPs) {
           const t = aiPs.thumb;
-          PlayerRepo.grantRing(winnerPlayerId, t.element, t.tier, t.maxUses, t.xp);
+          wonRingId = PlayerRepo.grantRing(winnerPlayerId, t.element, t.tier, t.maxUses, t.xp);
+          wonRingElement = t.element;
         }
       }
 
@@ -309,6 +332,14 @@ export class BattleRoom extends Room<{ state: BattleState }> {
       for (const sessionId of sessions) {
         const tid = this.sessionToRingIds.get(sessionId)?.thumb;
         if (tid) PlayerRepo.setEscrowed(tid, false);
+      }
+
+      // Notify the winning client of the ring they gained so CampScene can show
+      // the carry/leave/discard prompt. The grant is server-authoritative; the
+      // client only stores the id and renders the modal.
+      if (wonRingId && winnerId) {
+        const winnerClient = this.clients.find((c) => c.sessionId === winnerId);
+        winnerClient?.send('wonRing', { ringId: wonRingId, element: wonRingElement ?? 0 });
       }
     } catch (err: unknown) {
       console.error('[BattleRoom] persistBattleResult failed:', err);
