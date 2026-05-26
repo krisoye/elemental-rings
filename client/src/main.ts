@@ -13,6 +13,21 @@ declare global {
     __game: Phaser.Game;
     __room: import('@colyseus/sdk').Room<any> | null;
     __scene: Phaser.Scene | null;
+    // ── Phase 8A spatial hooks ────────────────────────────────────────────
+    // The current spatial scene key ('CampScene' for the Sanctum room,
+    // 'OverworldScene' for the overworld). Set on create, used by E2E to assert
+    // scene transitions deterministically.
+    __activeScene?: string;
+    // The active top-down player avatar (Sanctum or Overworld). Cleared on
+    // scene shutdown so tests can read live position only while a scene runs.
+    __player?: import('./objects/world/Player').Player | null;
+    // Names of the interaction zones the player currently overlaps (8A.2).
+    __sanctumZones?: string[];
+    // Fire the active (nearest overlapping) zone's interaction — same as E (8A.2).
+    __sanctumInteract?: () => void;
+    // Which Sanctum overlay is open ('ringwall'/'bed'/'meditation'/'campfire')
+    // or null when none. (8A.2)
+    __sanctumOverlayOpen?: string | null;
     __lastExchangeResult: ExchangeResultPayload | null;
     __slotPositions: { x: number; y: number }[];
     __orbLaunchCount: number;
@@ -99,6 +114,9 @@ const game = new Phaser.Game({
   backgroundColor: '#1a1a2e',
   // LoginScene renders real <input> elements through a Phaser DOM container.
   dom: { createContainer: true },
+  // Phase 8A: top-down spatial scenes (Sanctum / Overworld) use Arcade Physics
+  // with zero gravity for movement + tile-wall collision. Battle scenes ignore it.
+  physics: { default: 'arcade', arcade: { gravity: { x: 0, y: 0 }, debug: false } },
   // BootScene must stay first (it routes by auth state). LoginScene/CampScene
   // are the new auth flow; Encounter/Lobby/Battle are unchanged.
   scene: [BootScene, LoginScene, CampScene, EncounterScene, LobbyScene, BattleScene],

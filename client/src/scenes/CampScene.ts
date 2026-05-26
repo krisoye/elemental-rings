@@ -1,10 +1,10 @@
 import Phaser from 'phaser';
-import { CANVAS_W } from '../Constants';
 import { InventoryGrid, type RingData } from '../objects/InventoryGrid';
 import { LoadoutPanel, type LoadoutSlot } from '../objects/LoadoutPanel';
 import { StakePanel } from '../objects/StakePanel';
 import { FusionPanel } from '../objects/FusionPanel';
 import { ELEMENT_NAMES } from '../Constants';
+import { Player } from '../objects/world/Player';
 
 declare const __SERVER_URL__: string;
 
@@ -13,13 +13,24 @@ const API_BASE = WS.replace(/^ws/, 'http');
 
 const BATTLE_SLOTS = ['thumb', 'a1', 'a2', 'd1', 'd2'] as const;
 
+// The off-screen holding origin for the reusable panel instances. The panels are
+// created once and parked here while the spatial room is shown; 8A.2 re-parents
+// them into modal overlay containers on demand. Far off the visible canvas.
+const OFFSCREEN_X = -5000;
+const OFFSCREEN_Y = -5000;
+
 /**
- * Camp / Sanctum screen — three carry pools (At Sanctum / Loadout / Battle Hand),
- * sleep & spirit recharge, and the post-battle won-ring prompt.
+ * Sanctum — the protagonist's spatial home room (GDD §10.6). A top-down,
+ * tilemap-driven walkable scene: the player roams the room with WASD / arrows
+ * and (8A.2) interacts with zones (bed, meditation circle, ring-storage walls,
+ * campfire, exit door) to open modal panels.
  *
  * Architecture: purely presentational. Every game rule (carry cap, spirit cost,
- * ownership) is enforced by the server. The scene GETs /api/me on load and after
- * every mutation, and PUTs /api/carry / /api/loadout / POSTs spirit routes.
+ * ownership, fusion validity) is enforced by the server. The scene GETs /api/me
+ * on load and after every mutation, and PUTs /api/carry / /api/loadout / POSTs
+ * spirit & fusion routes. The data layer and every `window.__camp*` hook are
+ * preserved as direct-action paths that work WITHOUT walking, keeping the
+ * deterministic E2E flows (camp.spec.ts etc.) green.
  *
  * Pools (issue #40):
  *   - At Sanctum  = in_carry === 0
@@ -27,18 +38,24 @@ const BATTLE_SLOTS = ['thumb', 'a1', 'a2', 'd1', 'd2'] as const;
  *   - Battle Hand = the 5 named slots (thumb/a1/a2/d1/d2), a subset of carry
  */
 export class CampScene extends Phaser.Scene {
-  private statusText!: Phaser.GameObjects.Text;
-  private statLineText!: Phaser.GameObjects.Text;
-  private loadoutHeaderText!: Phaser.GameObjects.Text;
+  // ── Spatial engine state ──────────────────────────────────────────────────
+  private player!: Player;
+  private groundLayer!: Phaser.Tilemaps.TilemapLayer | Phaser.Tilemaps.TilemapGPULayer;
+  private cursors!: Phaser.Types.Input.Keyboard.CursorKeys;
+  private wasd!: { W: Phaser.Input.Keyboard.Key; A: Phaser.Input.Keyboard.Key; S: Phaser.Input.Keyboard.Key; D: Phaser.Input.Keyboard.Key };
+
+  // ── Reusable inventory panels (parked off-screen, shown in overlays) ───────
   private sanctumGrid!: InventoryGrid;
   private loadoutGrid!: InventoryGrid;
   private loadoutPanel!: LoadoutPanel;
   private stakePanel!: StakePanel;
   private fusionPanel!: FusionPanel;
   private ringMap: Map<string, RingData> = new Map();
+  private loadoutHeaderText!: Phaser.GameObjects.Text;
+  private statLineText!: Phaser.GameObjects.Text;
+  private statusText!: Phaser.GameObjects.Text;
 
-  // Cached snapshot of the last /api/me load, used by the carry buttons to
-  // compute the new carried set without a refetch.
+  // Cached snapshot of the last /api/me load.
   private rings: RingData[] = [];
   private loadout: Record<string, string | null> = {};
   private carryCap = 10;
@@ -47,96 +64,49 @@ export class CampScene extends Phaser.Scene {
     super({ key: 'CampScene' });
   }
 
+  preload(): void {
+    this.load.image('tiles', 'assets/tiles/placeholder.png');
+    this.load.tilemapTiledJSON('sanctum', 'assets/maps/sanctum.json');
+  }
+
   create(): void {
     window.__scene = this;
+    window.__activeScene = 'CampScene';
 
-    // ── Title & navigation ────────────────────────────────────────────────
-    this.add.text(10, 18, 'SANCTUM', { fontSize: '22px', color: '#ffffff' });
+    // ── Build the Sanctum room from the Tiled map ─────────────────────────
+    const map = this.make.tilemap({ key: 'sanctum' });
+    const tileset = map.addTilesetImage('placeholder', 'tiles')!;
+    this.groundLayer = map.createLayer('ground', tileset, 0, 0)!;
+    this.groundLayer.setCollisionByProperty({ collides: true });
 
-    this.add
-      .text(CANVAS_W - 120, 18, 'Set Out →', { fontSize: '16px', color: '#aaffaa' })
-      .setInteractive({ useHandCursor: true })
-      .on('pointerdown', () => this.goToEncounter());
+    // ── Spawn the player at the `spawn` object ────────────────────────────
+    const spawn = this.findObject(map, 'spawn');
+    this.player = new Player(this, spawn?.x ?? map.widthInPixels / 2, spawn?.y ?? map.heightInPixels / 2);
+    this.physics.add.collider(this.player, this.groundLayer);
 
-    this.statLineText = this.add.text(10, 44, 'Day: — | Gold: — | Food: — | Spirit: —/—', {
-      fontSize: '14px',
-      color: '#ffdd66',
-    });
+    // ── Camera follows the player, clamped to map bounds ──────────────────
+    this.physics.world.setBounds(0, 0, map.widthInPixels, map.heightInPixels);
+    this.cameras.main.setBounds(0, 0, map.widthInPixels, map.heightInPixels);
+    this.cameras.main.startFollow(this.player, true, 0.1, 0.1);
 
-    // ── Column headers ────────────────────────────────────────────────────
-    this.add.rectangle(CANVAS_W / 2, 66, CANVAS_W, 2, 0x444444);
-    this.add.text(10, 74, 'At Sanctum', { fontSize: '14px', color: '#cccccc' });
-    this.loadoutHeaderText = this.add.text(360, 74, 'Loadout (0/10)', {
-      fontSize: '14px',
-      color: '#cccccc',
-    });
-    this.add.text(710, 74, 'Battle Hand', { fontSize: '14px', color: '#cccccc' });
+    // ── Zone markers + labels (interactivity arrives in 8A.2) ─────────────
+    this.renderZoneMarkers(map);
 
-    // ── Left: At Sanctum (in_carry = 0) ──────────────────────────────────
-    this.sanctumGrid = new InventoryGrid(this, 10, 100, () => {
-      // Selecting here clears the loadout-grid selection (single active source).
-      this.loadoutGrid.clearSelection();
-    });
+    // ── Input ─────────────────────────────────────────────────────────────
+    this.cursors = this.input.keyboard!.createCursorKeys();
+    this.wasd = this.input.keyboard!.addKeys('W,A,S,D') as typeof this.wasd;
 
-    // ── Center: Loadout (carried, not in a battle slot) ──────────────────
-    this.loadoutGrid = new InventoryGrid(this, 360, 100, () => {
-      this.sanctumGrid.clearSelection();
-    });
-
-    // ── Right: Battle Hand (thumb + A/D slots) ───────────────────────────
-    this.stakePanel = new StakePanel(this, 710, 100, () => this.assignSlot('thumb'));
-    this.loadoutPanel = new LoadoutPanel(this, 800, 100, (slot: LoadoutSlot) =>
-      this.assignSlot(slot),
-    );
-
-    // ── Carry move buttons ────────────────────────────────────────────────
-    this.add
-      .text(10, 380, '[Add to Loadout]', { fontSize: '14px', color: '#aaffaa' })
-      .setInteractive({ useHandCursor: true })
-      .on('pointerdown', () => void this.addSelectedToLoadout());
-    this.add
-      .text(360, 380, '[Leave at Sanctum]', { fontSize: '14px', color: '#ffaaaa' })
-      .setInteractive({ useHandCursor: true })
-      .on('pointerdown', () => void this.leaveSelectedAtSanctum());
-
-    // ── Sleep / recharge buttons ──────────────────────────────────────────
-    this.add
-      .text(10, 435, '[Sleep (25 food)]', { fontSize: '16px', color: '#88ccff' })
-      .setInteractive({ useHandCursor: true })
-      .on('pointerdown', () => void this.doSleep());
-    this.add
-      .text(200, 435, '[Recharge]', { fontSize: '14px', color: '#ffcc44' })
-      .setInteractive({ useHandCursor: true })
-      .on('pointerdown', () => void this.doRechargeSelected());
-    this.add
-      .text(320, 435, '[Recharge All]', { fontSize: '14px', color: '#ffcc44' })
-      .setInteractive({ useHandCursor: true })
-      .on('pointerdown', () => void this.doRechargeAll());
-    this.add
-      .text(460, 435, '[Fuse Rings]', { fontSize: '14px', color: '#cc88ff' })
-      .setInteractive({ useHandCursor: true })
-      .on('pointerdown', () => this.openFusionPanel());
-
-    // ── Fusion panel (modal overlay, opened on demand) ──────────────────────
-    this.fusionPanel = new FusionPanel(
-      this,
-      (ringId1, ringId2) => this.doFuse(ringId1, ringId2),
-      () => {
-        /* closed — no extra cleanup needed */
-      },
-    );
-
-    // ── Status text ───────────────────────────────────────────────────────
-    this.statusText = this.add.text(10, 480, '', { fontSize: '13px', color: '#ff8888' });
+    // ── Reusable inventory panels (parked off-screen) ─────────────────────
+    this.buildPanels();
 
     // ── E2E hooks ─────────────────────────────────────────────────────────
+    window.__player = this.player;
     window.__campGoEncounter = (): void => this.goToEncounter();
     window.__campSleep = (): void => void this.doSleep();
     window.__campRecharge = (ringId: string): Promise<void> => this.doRechargeById(ringId);
     window.__campRechargeAll = (): Promise<void> => this.doRechargeAll();
     window.__campAddToLoadout = (ringId: string): Promise<void> => this.moveToCarry(ringId, true);
-    window.__campLeaveAtSanctum = (ringId: string): Promise<void> =>
-      this.moveToCarry(ringId, false);
+    window.__campLeaveAtSanctum = (ringId: string): Promise<void> => this.moveToCarry(ringId, false);
     window.__campOpenFusion = (): void => this.openFusionPanel();
     window.__campFuse = (ringId1: string, ringId2: string): Promise<string | null> =>
       this.doFuse(ringId1, ringId2);
@@ -152,11 +122,107 @@ export class CampScene extends Phaser.Scene {
       window.__campFuse = undefined;
       window.__campState = undefined;
       window.__fusionState = undefined;
+      window.__player = null;
       window.__scene = null;
     });
 
     // ── Initial data load ─────────────────────────────────────────────────
     void this.loadData();
+  }
+
+  update(): void {
+    this.player.update(this.cursors, this.wasd);
+  }
+
+  // ── Tiled object helpers ────────────────────────────────────────────────
+
+  /** Find a named object on the `objects` object layer (point or rectangle). */
+  private findObject(
+    map: Phaser.Tilemaps.Tilemap,
+    name: string,
+  ): Phaser.Types.Tilemaps.TiledObject | undefined {
+    return map.getObjectLayer('objects')?.objects.find((o) => o.name === name);
+  }
+
+  /**
+   * Draw a labelled accent marker over each zone rectangle so the room's points
+   * of interest are visible. In 8A.1 these are non-interactive (8A.2 attaches
+   * InteractionZones at the same coordinates).
+   */
+  private renderZoneMarkers(map: Phaser.Tilemaps.Tilemap): void {
+    const labels: Record<string, string> = {
+      bed: 'Bed',
+      meditation: 'Meditation',
+      campfire: 'Campfire',
+      ringwall: 'Ring Storage',
+      door: 'Exit',
+    };
+    const objs = map.getObjectLayer('objects')?.objects ?? [];
+    for (const o of objs) {
+      if (o.name === 'spawn' || !labels[o.name]) continue;
+      const cx = (o.x ?? 0) + (o.width ?? 0) / 2;
+      const cy = (o.y ?? 0) + (o.height ?? 0) / 2;
+      this.add
+        .rectangle(cx, cy, o.width ?? 32, o.height ?? 32, 0x3c4e60, 0.35)
+        .setStrokeStyle(1, 0x6082aa)
+        .setName(`zone-marker-${o.name}`);
+      this.add
+        .text(cx, cy - (o.height ?? 32) / 2 - 12, labels[o.name], {
+          fontSize: '11px',
+          color: '#cfe3ff',
+        })
+        .setOrigin(0.5)
+        .setName(`zone-label-${o.name}`);
+    }
+  }
+
+  // ── Reusable panels (parked off-screen; overlays use them in 8A.2) ────────
+
+  /**
+   * Create the inventory/loadout/fusion panel instances once. They are parked
+   * off the visible canvas so `loadData()` can still populate them (and
+   * `__campState`) while the spatial room is shown. 8A.2 re-parents them into
+   * modal overlay containers when a zone is interacted with.
+   */
+  private buildPanels(): void {
+    this.sanctumGrid = new InventoryGrid(this, OFFSCREEN_X, OFFSCREEN_Y, () =>
+      this.loadoutGrid.clearSelection(),
+    );
+    this.loadoutGrid = new InventoryGrid(this, OFFSCREEN_X + 350, OFFSCREEN_Y, () =>
+      this.sanctumGrid.clearSelection(),
+    );
+    this.stakePanel = new StakePanel(this, OFFSCREEN_X + 700, OFFSCREEN_Y, () =>
+      this.assignSlot('thumb'),
+    );
+    this.loadoutPanel = new LoadoutPanel(this, OFFSCREEN_X + 790, OFFSCREEN_Y, (slot: LoadoutSlot) =>
+      this.assignSlot(slot),
+    );
+    this.fusionPanel = new FusionPanel(
+      this,
+      (ringId1, ringId2) => this.doFuse(ringId1, ringId2),
+      () => {
+        /* closed — no extra cleanup needed */
+      },
+    );
+
+    // Off-screen header/stat/status texts the panels & overlays update. These
+    // mirror the old flat layout's labels but are not visible until an overlay
+    // adopts them (8A.2 reads their text into overlay-local labels).
+    this.statLineText = this.add
+      .text(OFFSCREEN_X, OFFSCREEN_Y - 60, 'Day: — | Gold: — | Food: — | Spirit: —/—', {
+        fontSize: '14px',
+        color: '#ffdd66',
+      })
+      .setName('stat-line');
+    this.loadoutHeaderText = this.add
+      .text(OFFSCREEN_X + 350, OFFSCREEN_Y - 30, 'Loadout (0/10)', {
+        fontSize: '14px',
+        color: '#cccccc',
+      })
+      .setName('loadout-header');
+    this.statusText = this.add
+      .text(OFFSCREEN_X, OFFSCREEN_Y - 100, '', { fontSize: '13px', color: '#ff8888' })
+      .setName('camp-status');
   }
 
   // ── Data loading ──────────────────────────────────────────────────────────
@@ -479,7 +545,6 @@ export class CampScene extends Phaser.Scene {
       }
       const { ring } = (await res.json()) as { ring: RingData };
       this.setStatus(`Fusion complete! ${ELEMENT_NAMES[ring.element] ?? 'New'} ring added`);
-      // Reload inventory, then reopen the panel (if still open) with fresh data.
       const wasOpen = this.fusionPanel.isOpen();
       await this.loadData();
       if (wasOpen) this.fusionPanel.open(this.rings);
