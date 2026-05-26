@@ -1,54 +1,63 @@
 ## 5. Fusion System
 
 ### 5.1 Core Rules
-- Fusion can only happen **in the overworld at a specific shrine** — never during a duel
-- Both parent rings must be **maxed out** at their tier's XP cap before fusion is possible
-- The fused ring **inherits XP** from both parent rings (XP is additive)
-- The fused ring's uses **reset to the full max uses of the new tier** regardless of parent rings' remaining uses
-- Fusing is a long-term gain (higher tier, more uses, more power) but a short-term cost (uses reset, must recharge)
+- Fusion combines two parent rings into a single higher-tier ring
+- Both parent rings must have reached the **XP cap for their tier** before they can be fused
+- The fused ring **inherits combined XP** from both parents (additive)
+- The fused ring's uses **reset to the full max uses of the new tier** (Tier 2 → 5 uses, Tier 3 → 7 uses)
+- The two parent rings are **consumed** by the fusion — they no longer exist as separate rings
+- Fusing is a long-term gain (higher tier, more uses, more power) but a short-term cost (both parents lost, new ring must earn XP)
 
-### 5.2 Same-Element Upgrade Paths
+> **Design note (v4.5):** Earlier drafts included same-element upgrades (Fire+Fire→Lightning, etc.) and elements that no longer exist in v4 (Lightning, Ice, Metal, Lava, Frost, Ash, Obsidian). The v4 element system uses only 5 base elements (Fire/Water/Earth/Wind/Wood). All fusions are cross-element pairs — there are no same-element upgrade paths.
 
-| Input | Output | Thematic Logic |
-|---|---|---|
-| Fire + Fire | Lightning | Heat becomes electrical energy |
-| Water + Water | Ice | Concentrated, stilled water |
-| Earth + Earth | Metal | Compressed, refined earth |
-| Wind + Wind | Storm | Air pressure concentrated into force |
-| Wood + Wood | Nature/Bloom | Life energy distilled |
+### 5.2 Fusion Table (All Tier 2 Recipes)
 
-### 5.3 Cross-Element Fusion Paths
+There are **10 Tier 2 fusions** — one for every distinct pair of the 5 base elements. All are valid. Each appears in the code as a named fusion element (see `ElementEnum` in `shared/types.ts`).
 
-| Input | Output |
-|---|---|
-| Water + Earth | Mud |
-| Fire + Earth | Lava |
-| Fire + Metal | Magma |
-| Ice + Wind | Frost |
-| Wind + Lightning | Storm (alternate path) |
-| Fire + Wood | Ash |
-| Water + Fire | Steam |
-| Fire + Earth + Water | Obsidian (Tier 3) |
+| Fusion | Parents | Name | Gauge contribution (uncontested hit) |
+|---|---|---|---|
+| Fire + Water | Fire, Water | **Steam** | Fire +1, Water +1 |
+| Fire + Wood | Fire, Wood | **Wildfire** | Fire +1, Wood +1 |
+| Fire + Wind | Fire, Wind | **Inferno** | Fire +1 (Wind: none) |
+| Fire + Earth | Fire, Earth | **Magma** | Fire +1 (Earth: none) |
+| Water + Wood | Water, Wood | **Tidal** | Water +1, Wood +1 |
+| Water + Wind | Water, Wind | **Storm** | Water +1 (Wind: none) |
+| Water + Earth | Water, Earth | **Mud** | Water +1 (Earth: none) |
+| Wood + Wind | Wood, Wind | **Thornado** | Wood +1 (Wind: none) |
+| Wood + Earth | Wood, Earth | **Bloom** | Wood +1 (Earth: none) |
+| Wind + Earth | Wind, Earth | **Dust** | None (neither parent is a triangle element) |
 
-### 5.4 Fusion Unlock Mechanism (Discovery + Cost Hybrid)
+Only triangle components (Fire, Water, Wood) contribute to gauges. Wind and Earth carry no gauge weight in any fusion.
 
-Fusions are **discovered through gameplay**, then **executed with a resource cost** at a shrine.
+### 5.3 Tier 3 Fusions
 
-**Step 1 — Discovery:**
-The player encounters an NPC or monster using a fusion-type ring for the first time (e.g. a Mud-ring monster in the swamp). Defeating them reveals a map to the relevant shrine (e.g. the Mud Shrine).
+A Tier 3 ring is created by fusing two **maxed Tier 2** parent rings. Both parents must have XP ≥ 300 (the Tier 2 cap). The Tier 3 ring has `max_uses = 7`.
 
-**Step 2 — Shrine Access:**
-The shrine is located in the overworld, often in an experience-gated region. The player must have sufficient player XP to reach the area.
+Tier 3 recipes are not yet fully defined — they will emerge from the overworld design (which shrine unlocks which Tier 3, and what new element names apply). Flagged as an **open question** (§13).
 
-**Step 3 — Fusion Execution:**
-At the shrine the player combines two maxed parent rings. A catalyst cost (fusion stones found through exploration) is required for standard Tier 2 fusions. Ring sacrifice is reserved only for the rarest Tier 4 fusions.
+### 5.4 Fusion Crafting
+
+**Where:** Fusion shrines in the overworld. Each shrine is associated with one or more recipes. The player must physically reach the shrine to craft there. *(Phase 8 — for now, fusion is accessible from the Sanctum camp screen for development and testing.)*
+
+**How:**
+1. The player visits a shrine (or the Sanctum in early phases)
+2. They select two rings they own that form a valid pair and are both at their tier's XP cap
+3. The game previews the result (element, tier, XP, uses)
+4. The player confirms — parent rings are consumed, fusion ring is created and added to inventory
+
+**Discovery:** The complete list of Tier 2 recipes is always visible at any shrine (all 10 pairs). The shrine's location and access threshold (aggregate ring XP needed to reach it) is the gate, not recipe knowledge. Future shrine-specific Tier 3 recipes may be hidden until the shrine is reached.
 
 ### 5.5 Fusion Cost Summary
 
-| Tier | Cost |
+| Tier | Requirements |
 |---|---|
-| Tier 2 (standard fusion) | Two maxed Tier 1 rings + fusion stones |
-| Tier 3 (advanced fusion) | Two maxed Tier 2 rings + fusion stones (more) |
-| Tier 4 (triple fusion) | Three maxed Tier 2 rings OR one Tier 3 + components + ring sacrifice |
+| Tier 2 (any cross-element pair) | Two maxed Tier 1 rings (XP ≥ 100 each) + shrine access |
+| Tier 3 (two Tier 2 parents) | Two maxed Tier 2 rings (XP ≥ 300 each) + shrine access |
+
+No fusion stones. No gold. The cost is the **rings themselves** (consumed) and the **time to max them** (XP grind). Shrine access is gated by the aggregate ring XP required to reach that area of the overworld.
+
+### 5.6 Fusion Combat Mechanics
+
+Fusion ring combat behavior (how they attack, how they defend, auto-align) is documented in **§3.4**. All combat logic for fusion rings is already implemented in `BlockResolver.ts`.
 
 ---
