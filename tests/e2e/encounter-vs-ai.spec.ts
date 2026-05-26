@@ -136,9 +136,9 @@ test('scenario 4: duel completes and returns to EncounterScene', async ({ browse
     clearInterval(driver);
   }
 
-  // After the duel ends BattleScene transitions to CampScene.
+  // After the duel ends BattleScene transitions to EncounterScene.
   await page.waitForFunction(
-    () => (window as any).__game?.scene?.isActive('CampScene'),
+    () => (window as any).__game?.scene?.isActive('EncounterScene'),
     { timeout: 8000 },
   );
 

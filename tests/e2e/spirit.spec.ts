@@ -128,7 +128,7 @@ test('spirit: recharge a depleted ring spends spirit equal to uses restored', as
   } finally {
     clearInterval(driver);
   }
-  await page.waitForFunction(() => (window as any).__game?.scene?.isActive('CampScene'), {
+  await page.waitForFunction(() => (window as any).__game?.scene?.isActive('EncounterScene'), {
     timeout: 15000,
   });
 
@@ -226,7 +226,7 @@ test('spirit: recharge-all returns remaining spirit and never goes negative', as
   } finally {
     clearInterval(driver);
   }
-  await page.waitForFunction(() => (window as any).__game?.scene?.isActive('CampScene'), {
+  await page.waitForFunction(() => (window as any).__game?.scene?.isActive('EncounterScene'), {
     timeout: 15000,
   });
 
