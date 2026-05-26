@@ -8,6 +8,7 @@ import {
   SANCTUM_OFFSET,
   SANCTUM_DOOR_OFFSET,
   SANCTUM_ZONE_HALF,
+  ANCHORAGE_GROUND_RADIUS,
 } from '../Constants';
 
 declare const __SERVER_URL__: string;
@@ -61,6 +62,10 @@ export class OverworldScene extends Phaser.Scene {
   /** Sanctum exterior placeholder (8B.4.1), drawn at the anchored waystone. */
   private sanctumGfx: Phaser.GameObjects.Graphics | null = null;
   private sanctumLabel: Phaser.GameObjects.Text | null = null;
+  /** Anchorage ground treatment (8B.4.3), keyed by waystone id. */
+  private anchorageRings: Map<string, Phaser.GameObjects.Graphics> = new Map();
+  private anchorageFires: Map<string, { gfx: Phaser.GameObjects.Graphics; x: number; y: number }> =
+    new Map();
 
   constructor() {
     super({ key: 'OverworldScene' });
@@ -127,6 +132,10 @@ export class OverworldScene extends Phaser.Scene {
       this.sanctumLabel?.destroy();
       this.sanctumGfx = null;
       this.sanctumLabel = null;
+      this.anchorageRings.forEach((g) => g.destroy());
+      this.anchorageFires.forEach((f) => f.gfx.destroy());
+      this.anchorageRings.clear();
+      this.anchorageFires.clear();
       this.zones = [];
       this.waystones.clear();
     });
@@ -222,6 +231,28 @@ export class OverworldScene extends Phaser.Scene {
       this.physics.add.overlap(this.player, marker.interactionZone.overlapZone);
       this.zones.push(marker.interactionZone);
       this.waystones.set(id, marker);
+
+      // Anchorage ground treatment (8B.4.3, #73): a soft worn-ground ring beneath
+      // the stone and a flickering campfire SW of it. Both are recolored on
+      // attune via updateAnchorageVisuals (cold/blue → warm/orange).
+      const ring = this.add.graphics().setDepth(1);
+      ring.fillStyle(info?.attuned ? 0x3a5a2a : 0x2a3a1a, info?.attuned ? 0.45 : 0.3);
+      ring.fillCircle(marker.center.x, marker.center.y, ANCHORAGE_GROUND_RADIUS);
+      this.anchorageRings.set(id, ring);
+
+      const fx = marker.center.x + 28;
+      const fy = marker.center.y + 36;
+      const fire = this.add.graphics().setDepth(7);
+      this.drawFlame(fire, fx, fy, info?.attuned ?? false);
+      this.anchorageFires.set(id, { gfx: fire, x: fx, y: fy });
+      this.tweens.add({
+        targets: fire,
+        scaleY: { from: 0.9, to: 1.1 },
+        duration: 600,
+        yoyo: true,
+        repeat: -1,
+        ease: 'Sine.easeInOut',
+      });
     }
 
     // Anchor-derived spawn (8B.3, #63) + Sanctum exterior (8B.4.1, #71): the
@@ -296,6 +327,52 @@ export class OverworldScene extends Phaser.Scene {
     this.sanctumLabel = label;
   }
 
+  /**
+   * Draw an Anchorage campfire (8B.4.3) into the given graphics object at world
+   * (cx, cy): a rock base plus a warm orange flame when `attuned`, or a cold
+   * blue flame when not. Clears first so it can be redrawn on attune. Note: the
+   * flicker tween animates `scaleY` on the graphics — clear() does not reset that
+   * transform, which is intended (the flicker continues across redraws).
+   */
+  private drawFlame(g: Phaser.GameObjects.Graphics, cx: number, cy: number, attuned: boolean): void {
+    g.clear();
+    g.fillStyle(0x333333);
+    g.fillEllipse(cx, cy + 4, 14, 6); // rock base
+    if (attuned) {
+      g.fillStyle(0xff6600);
+      g.fillEllipse(cx, cy, 10, 14);
+      g.fillStyle(0xff9900);
+      g.fillEllipse(cx, cy - 4, 7, 9);
+      g.fillStyle(0xffdd44);
+      g.fillEllipse(cx, cy - 8, 4, 5);
+    } else {
+      g.fillStyle(0x4466aa);
+      g.fillEllipse(cx, cy, 8, 10);
+      g.fillStyle(0x7799cc);
+      g.fillEllipse(cx, cy - 4, 5, 6);
+    }
+  }
+
+  /**
+   * Re-render the Anchorage ground rings + campfires (8B.4.3) for the given
+   * waystone state. Called after each payload cache so attuning a waystone warms
+   * its campfire and brightens its ground ring. Skips ids without a live marker.
+   */
+  private updateAnchorageVisuals(waystones: WaystoneInfo[]): void {
+    for (const info of waystones) {
+      const marker = this.waystones.get(info.id);
+      if (!marker) continue;
+      const ring = this.anchorageRings.get(info.id);
+      if (ring) {
+        ring.clear();
+        ring.fillStyle(info.attuned ? 0x3a5a2a : 0x2a3a1a, info.attuned ? 0.45 : 0.3);
+        ring.fillCircle(marker.center.x, marker.center.y, ANCHORAGE_GROUND_RADIUS);
+      }
+      const fire = this.anchorageFires.get(info.id);
+      if (fire) this.drawFlame(fire.gfx, fire.x, fire.y, info.attuned);
+    }
+  }
+
   /** Read the `waystoneId` custom property off a Tiled object, if present. */
   private waystoneIdOf(obj: Phaser.Types.Tilemaps.TiledObject): string | null {
     const props = (obj.properties ?? []) as Array<{ name: string; value: unknown }>;
@@ -358,6 +435,11 @@ export class OverworldScene extends Phaser.Scene {
   private cachePayload(payload: WaystonesPayload): void {
     this.waystonePayload = payload;
     window.__waystones = payload;
+    // Refresh Anchorage ground treatment (8B.4.3) from the latest state. On the
+    // first call (during loadWaystones, before markers are built) the guard in
+    // updateAnchorageVisuals no-ops; on subsequent calls (onAttune) it warms the
+    // attuned Anchorage's campfire + brightens its ring.
+    this.updateAnchorageVisuals(payload.waystones);
   }
 
   /** Per-frame: show the prompt for the nearest overlapping zone. */
