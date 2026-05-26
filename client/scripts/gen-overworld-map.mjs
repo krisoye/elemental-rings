@@ -3,13 +3,16 @@
 // Writes client/public/assets/maps/overworld.json (Tiled 1.10 JSON format),
 // mirroring the placeholder-asset generator pattern (gen-placeholder-tiles.mjs):
 // pure, reproducible output so re-running produces no spurious diff. Reuses the
-// shared placeholder tileset (floor=2 GID, wall=3 GID, accent=4 GID) — the same
+// shared placeholder tileset (grass=2 GID, tree=3 GID, dirt=4 GID) — the same
 // tileset embedded in the 8A map and produced by gen-placeholder-tiles.mjs.
 //
-// Layout (40×30 tiles, 1280×960 px):
-//   - Floor everywhere, ringed by a 1-tile perimeter wall.
-//   - A few scattered obstacle clusters so the biome reads as a place, not a box.
-//   - An accent tile beneath each waystone marker.
+// Layout (40×30 tiles, 1280×960 px) — organic Forest terrain:
+//   - Grass floor everywhere, ringed by a 1-tile perimeter wall (tree).
+//   - Tree groves (circle-fill) scattered across the map for internal structure,
+//     auto-cleared around key objects so they never block spawn/waystones.
+//   - Grass clearings carved around each Anchorage waystone and the Sanctum.
+//   - Dirt paths connecting spawn → forest_entry → forest_glade → forest_depths.
+//   - An accent (dirt) tile beneath each waystone marker.
 //   - An `objects` layer that PRESERVES 8A's `spawn` point (128,128) and
 //     `sanctum_return` rectangle (center 224,224) so overworld-transition.spec.ts
 //     stays green, and ADDS three waystone objects (name `waystone`, custom
@@ -46,23 +49,83 @@ const WAYSTONES = [
   { id: 'forest_depths', tx: 33, ty: 24 },
 ];
 
-// Scattered obstacle clusters (top-left tile coords + size) so the biome has
-// internal structure. Kept clear of spawn, sanctum_return, and the waystones.
-const CLUSTERS = [
-  { tx: 16, ty: 4, w: 3, h: 2 },
-  { tx: 24, ty: 8, w: 2, h: 4 },
-  { tx: 6, ty: 18, w: 4, h: 2 },
-  { tx: 20, ty: 20, w: 3, h: 3 },
-  { tx: 30, ty: 14, w: 2, h: 2 },
-  { tx: 14, ty: 24, w: 3, h: 2 },
+// Tree groves (circle centre + radius in tiles) so the biome has organic
+// internal structure rather than rectangular boxes. Pre-verified clear of the
+// #71 spawn-on-enter positions; auto-cleared near key objects via isClearZone().
+const GROVES = [
+  { cx: 17, cy: 5, r: 3 },
+  { cx: 25, cy: 9, r: 2 },
+  { cx: 7, cy: 19, r: 3 },
+  { cx: 22, cy: 21, r: 3 },
+  { cx: 31, cy: 15, r: 2 },
+  { cx: 15, cy: 25, r: 2 },
+  { cx: 28, cy: 4, r: 2 },
 ];
+
+// Key-object tile positions to keep clear of trees (within CLEAR_R tiles).
+const CLEAR_R = 4;
+const KEY_TILES = [
+  { tx: 4, ty: 4 }, // spawn (128/32=4, 128/32=4)
+  { tx: 6, ty: 6 }, // sanctum_return center (192/32=6, 192/32=6)
+  { tx: 10, ty: 6 }, // forest_entry
+  { tx: 9, ty: 10 }, // forest_glade
+  { tx: 33, ty: 24 }, // forest_depths
+];
+
+function isClearZone(tx, ty) {
+  for (const k of KEY_TILES) {
+    const d2 = (tx - k.tx) ** 2 + (ty - k.ty) ** 2;
+    if (d2 <= CLEAR_R * CLEAR_R) return true;
+  }
+  return false;
+}
+
+/**
+ * Draw a Bresenham line from (x0,y0) to (x1,y1), painting GID_ACCENT (dirt) with
+ * a 1-tile cross brush (centre + 4 cardinals) so the path reads ~3 tiles wide.
+ */
+function bresenhamPath(data, x0, y0, x1, y1) {
+  const at = (tx, ty) => ty * WIDTH + tx;
+  const dx = Math.abs(x1 - x0),
+    dy = Math.abs(y1 - y0);
+  const sx = x0 < x1 ? 1 : -1,
+    sy = y0 < y1 ? 1 : -1;
+  let err = dx - dy;
+  let x = x0,
+    y = y0;
+  while (true) {
+    for (const [ox, oy] of [
+      [0, 0],
+      [1, 0],
+      [-1, 0],
+      [0, 1],
+      [0, -1],
+    ]) {
+      const px = x + ox,
+        py = y + oy;
+      if (px > 0 && py > 0 && px < WIDTH - 1 && py < HEIGHT - 1) {
+        data[at(px, py)] = GID_ACCENT;
+      }
+    }
+    if (x === x1 && y === y1) break;
+    const e2 = 2 * err;
+    if (e2 > -dy) {
+      err -= dy;
+      x += sx;
+    }
+    if (e2 < dx) {
+      err += dx;
+      y += sy;
+    }
+  }
+}
 
 /** Build the flat ground-layer GID array (row-major, top-down). */
 function buildGround() {
   const data = new Array(WIDTH * HEIGHT).fill(GID_FLOOR);
   const at = (tx, ty) => ty * WIDTH + tx;
 
-  // Perimeter walls.
+  // 1. Floor everywhere (above) — 2. Perimeter walls.
   for (let x = 0; x < WIDTH; x++) {
     data[at(x, 0)] = GID_WALL;
     data[at(x, HEIGHT - 1)] = GID_WALL;
@@ -72,16 +135,53 @@ function buildGround() {
     data[at(WIDTH - 1, y)] = GID_WALL;
   }
 
-  // Obstacle clusters.
-  for (const c of CLUSTERS) {
-    for (let dy = 0; dy < c.h; dy++) {
-      for (let dx = 0; dx < c.w; dx++) {
-        data[at(c.tx + dx, c.ty + dy)] = GID_WALL;
+  // 3. Tree groves (circle-fill), skipping clear zones around key objects.
+  for (const g of GROVES) {
+    for (let dy = -g.r; dy <= g.r; dy++) {
+      for (let dx = -g.r; dx <= g.r; dx++) {
+        if (dx * dx + dy * dy > g.r * g.r) continue;
+        const tx = g.cx + dx,
+          ty = g.cy + dy;
+        if (tx <= 0 || ty <= 0 || tx >= WIDTH - 1 || ty >= HEIGHT - 1) continue;
+        if (isClearZone(tx, ty)) continue;
+        data[at(tx, ty)] = GID_WALL;
       }
     }
   }
 
-  // Accent tile beneath each waystone (walkable highlight under the marker).
+  // 4. Anchorage clearings — 3-tile-radius floor circle around each waystone.
+  for (const w of WAYSTONES) {
+    for (let dy = -3; dy <= 3; dy++) {
+      for (let dx = -3; dx <= 3; dx++) {
+        if (dx * dx + dy * dy > 9) continue;
+        const tx = w.tx + dx,
+          ty = w.ty + dy;
+        if (tx <= 0 || ty <= 0 || tx >= WIDTH - 1 || ty >= HEIGHT - 1) continue;
+        data[at(tx, ty)] = GID_FLOOR;
+      }
+    }
+  }
+
+  // 5. Sanctum clearing — 4-tile-radius floor circle near spawn/sanctum_return.
+  const SC_TX = 6,
+    SC_TY = 6,
+    SC_R = 4;
+  for (let dy = -SC_R; dy <= SC_R; dy++) {
+    for (let dx = -SC_R; dx <= SC_R; dx++) {
+      if (dx * dx + dy * dy > SC_R * SC_R) continue;
+      const tx = SC_TX + dx,
+        ty = SC_TY + dy;
+      if (tx <= 0 || ty <= 0 || tx >= WIDTH - 1 || ty >= HEIGHT - 1) continue;
+      data[at(tx, ty)] = GID_FLOOR;
+    }
+  }
+
+  // 6. Dirt paths connecting key objects.
+  bresenhamPath(data, 4, 4, 10, 6);
+  bresenhamPath(data, 10, 6, 9, 10);
+  bresenhamPath(data, 9, 10, 33, 24);
+
+  // 7. Accent tile beneath each waystone (walkable highlight under the marker).
   for (const w of WAYSTONES) {
     data[at(w.tx, w.ty)] = GID_ACCENT;
   }
