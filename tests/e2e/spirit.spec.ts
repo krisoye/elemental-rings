@@ -117,22 +117,30 @@ test('spirit: recharge a depleted ring spends spirit equal to uses restored', as
     void page.evaluate(() => {
       const room = (window as any).__room;
       if (room?.state?.phase === 'ATTACK_SELECT' && room?.state?.currentAttackerId === room?.sessionId) {
-        room.send('selectAttack', { slot: 'a1' });
+        // Fall back to a2 when a1 is extinguished; once both are extinguished
+        // the server fires checkAttackForfeit and ends the duel.
+        const me = room.state.players.get(room.sessionId);
+        const slot = me?.a1?.isExtinguished ? 'a2' : 'a1';
+        room.send('selectAttack', { slot });
       } else if (room?.state?.phase === 'DEFEND_WINDOW' && room?.state?.currentAttackerId !== room?.sessionId) {
         room.send('submitDefense', { slot: 'd1' });
       }
     });
   }, 300);
   try {
-    await page.waitForFunction(() => (window as any).__room?.state?.phase === 'ENDED', {
-      timeout: 30000,
-    });
+    await page.waitForFunction(
+      () => (window as any).__room?.state?.phase === 'ENDED',
+      undefined,
+      { timeout: 30000 },
+    );
   } finally {
     clearInterval(driver);
   }
-  await page.waitForFunction(() => (window as any).__game?.scene?.isActive('EncounterScene'), {
-    timeout: 15000,
-  });
+  await page.waitForFunction(
+    () => (window as any).__game?.scene?.isActive('EncounterScene'),
+    undefined,
+    { timeout: 15000 },
+  );
 
   // Find a ring with spent uses (current_uses < max_uses).
   const { player: pBefore, rings } = await me(token);
@@ -215,22 +223,28 @@ test('spirit: recharge-all returns remaining spirit and never goes negative', as
     void page.evaluate(() => {
       const room = (window as any).__room;
       if (room?.state?.phase === 'ATTACK_SELECT' && room?.state?.currentAttackerId === room?.sessionId) {
-        room.send('selectAttack', { slot: 'a1' });
+        const me = room.state.players.get(room.sessionId);
+        const slot = me?.a1?.isExtinguished ? 'a2' : 'a1';
+        room.send('selectAttack', { slot });
       } else if (room?.state?.phase === 'DEFEND_WINDOW' && room?.state?.currentAttackerId !== room?.sessionId) {
         room.send('submitDefense', { slot: 'd1' });
       }
     });
   }, 300);
   try {
-    await page.waitForFunction(() => (window as any).__room?.state?.phase === 'ENDED', {
-      timeout: 30000,
-    });
+    await page.waitForFunction(
+      () => (window as any).__room?.state?.phase === 'ENDED',
+      undefined,
+      { timeout: 30000 },
+    );
   } finally {
     clearInterval(driver);
   }
-  await page.waitForFunction(() => (window as any).__game?.scene?.isActive('EncounterScene'), {
-    timeout: 15000,
-  });
+  await page.waitForFunction(
+    () => (window as any).__game?.scene?.isActive('EncounterScene'),
+    undefined,
+    { timeout: 15000 },
+  );
 
   const { player: before, rings } = await me(token);
   const totalDeficit = rings

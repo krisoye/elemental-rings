@@ -11,7 +11,7 @@
     "test": "cd server && npx vitest run",
     "test:unit": "cd server && npx vitest run ../tests/unit",
     "test:integration": "cd server && npx vitest run ../tests/integration",
-    "test:e2e": "npx playwright test"
+    "test:e2e": "E2E_FAST=1 npx playwright test"
   },
   "devDependencies": {
     "@playwright/test": "^1.44.0",

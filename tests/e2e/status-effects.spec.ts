@@ -5,6 +5,7 @@ import {
   waitForExchangeResult,
   readMe,
   closeBattle,
+  DEFEND_BLOCK_WAIT_MS,
   type SlotKey,
 } from './helpers';
 
@@ -21,9 +22,9 @@ import {
 // passes the turn safely without losing a heart and cleanses no gauge, so it is
 // used to hand the turn over cleanly.
 
-// Browser-path defend-window calibration (see client-battle-flow.spec.ts): a
-// ~700ms wait after the window opens lands inside the BLOCK band.
-const BLOCK_SLEEP_MS = 700;
+// Browser-path defend-window calibration (see client-battle-flow.spec.ts and
+// helpers DEFEND_BLOCK_WAIT_MS): waiting this long after the window opens lands
+// the press inside the catch band. Scales with E2E_FAST.
 const CAUGHT = ['BLOCK', 'PARRY'];
 
 /** Seed exact state on a player via the test-only server hook. */
@@ -72,7 +73,7 @@ async function readMyField(page: Page, key: string): Promise<number> {
 async function passTurnViaSafeCatch(attacker: Page, defender: Page): Promise<void> {
   await attacker.keyboard.press('1'); // A1 = FIRE
   await waitForPhase(defender, 'DEFEND_WINDOW');
-  await defender.waitForTimeout(BLOCK_SLEEP_MS);
+  await defender.waitForTimeout(DEFEND_BLOCK_WAIT_MS);
   await defender.keyboard.press('4'); // D2 = EARTH → NEUTRAL catch
   await waitForExchangeResult(defender);
   await attacker.waitForFunction(
@@ -204,7 +205,7 @@ test('Cleanse: catching FIRE with a WATER ring decrements fireGauge', async ({ b
   // STRONG/PARRY-or-BLOCK against FIRE and cleanses one fireGauge counter.
   await attacker.keyboard.press('1');
   await waitForPhase(defender, 'DEFEND_WINDOW');
-  await defender.waitForTimeout(BLOCK_SLEEP_MS);
+  await defender.waitForTimeout(DEFEND_BLOCK_WAIT_MS);
   await defender.keyboard.press('4'); // D2 = WATER (overridden)
 
   await waitForExchangeResult(defender);
@@ -242,7 +243,7 @@ test('Cleanse below threshold lifts Burning: fireGauge 4→3 ends the status', a
   // ATTACK_SELECT, while the WATER defend still cleanses fireGauge 4 → 3.
   await attacker.keyboard.press('2'); // A2 = WATER
   await waitForPhase(defender, 'DEFEND_WINDOW');
-  await defender.waitForTimeout(BLOCK_SLEEP_MS);
+  await defender.waitForTimeout(DEFEND_BLOCK_WAIT_MS);
   await defender.keyboard.press('4'); // D2 = WATER → NEUTRAL catch, cleanses fire
 
   await waitForExchangeResult(defender);

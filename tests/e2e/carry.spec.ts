@@ -117,9 +117,20 @@ test('carry: __campAddToLoadout carries a Sanctum ring', async ({ browser }) => 
   await ctx.addInitScript(`localStorage.setItem('er_token', ${JSON.stringify(token)})`);
   const page = await ctx.newPage();
   await page.goto(URL);
-  await page.waitForFunction(() => (window as any).__campAddToLoadout !== undefined, {
-    timeout: 8000,
-  });
+  // Wait for both the hook AND the async /api/me data: __campAddToLoadout is set
+  // synchronously in CampScene.create() but __campState is populated only after
+  // the fetch resolves. Mint-token is now instant (no bcrypt), so __campAddToLoadout
+  // can be defined before the fetch completes. Waiting for atSanctum to be a
+  // non-empty array guarantees both are ready.
+  await page.waitForFunction(
+    () => {
+      const cs = (window as any).__campState;
+      return typeof (window as any).__campAddToLoadout === 'function' &&
+             Array.isArray(cs?.atSanctum) && cs.atSanctum.length > 0;
+    },
+    undefined,
+    { timeout: 12000 },
+  );
 
   // Pick a Sanctum (uncarried) ring and carry it.
   const sanctumId = await page.evaluate(

@@ -17,6 +17,10 @@ import {
 const ATTACK_KEYS: ReadonlySet<SlotKey> = new Set<SlotKey>(['a1', 'a2']);
 const DEFENSE_KEYS: ReadonlySet<SlotKey> = new Set<SlotKey>(['d1', 'd2']);
 
+// Compile-time flag injected by Vite (see client/vite.config.ts). True only in
+// the E2E fast build; production bundles inline `false`.
+declare const __E2E_FAST__: boolean;
+
 /**
  * The duel view. Owns every game object and routes input to server messages.
  * It never resolves combat locally: on `selectAttack` / `submitDefense` it sends
@@ -69,6 +73,13 @@ export class BattleScene extends Phaser.Scene {
       this.checkEnded(state, myId);
     };
     room.onStateChange(onState);
+    // Colyseus onStateChange only fires on new patches from the server. For
+    // instant-forfeit duels (e.g. aiUses:0, both attack rings extinguished before
+    // the first ATTACK_SELECT), the room arrives ENDED and no further patch is
+    // broadcast. Force an immediate check so checkEnded runs if state is already
+    // ENDED before this listener was registered. checkEnded is idempotent (guarded
+    // by `this.returning`) so double-firing on a later patch is harmless.
+    onState(room.state as any);
 
     // onMessage returns its own unregister function.
     const offExchange = room.onMessage('exchangeResult', (result: ExchangeResultPayload) => {
@@ -143,7 +154,10 @@ export class BattleScene extends Phaser.Scene {
       .setOrigin(0.5)
       .setDepth(1000);
 
-    this.time.delayedCall(2000, () => this.scene.start('EncounterScene'));
+    // Under E2E fast mode the 2s winner banner is pure dead time; collapse it to
+    // ~0ms so vsAI duels return to EncounterScene immediately (#68).
+    const bannerMs = __E2E_FAST__ ? 0 : 2000;
+    this.time.delayedCall(bannerMs, () => this.scene.start('EncounterScene'));
   }
 
   /** Launch the orb telegraph when a defend window opens, including rally volleys. */

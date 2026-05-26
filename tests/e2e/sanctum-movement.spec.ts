@@ -60,11 +60,17 @@ test('sanctum: wall collision clamps rightward movement', async ({ browser }) =>
   const page = await ctx.newPage();
   await loadSanctum(page);
 
-  // Hold right long enough to reach and press against the east perimeter wall.
-  // Spawn is at x=640; the east wall fills tile column 39 (1248..1280), so 4s of
-  // travel at 160px/s reaches and clamps against it.
+  // Hold right until the player reaches and presses against the east perimeter wall.
+  // Spawn is at x=640; the east wall fills tile column 39 (1248..1280), so ~3.8s of
+  // travel at 160px/s is needed. Under parallel-worker CPU load the Phaser game loop
+  // may run at fewer FPS, so we wait for the wall condition (up to 8 s) rather than
+  // a fixed 4 s timeout — the assertion itself is unchanged.
   await page.keyboard.down('ArrowRight');
-  await page.waitForTimeout(4000);
+  await page.waitForFunction(
+    () => !!(window as any).__player?.body?.blocked?.right,
+    undefined,
+    { timeout: 8000 },
+  ).catch(() => {}); // if we never block, the expect below will catch it
 
   const blocked = await page.evaluate(() => (window as any).__player.body.blocked.right);
   const x = await page.evaluate(() => (window as any).__player.x);

@@ -112,7 +112,9 @@ test('camp: after vsAI duel ends, scene is CampScene', async ({ browser }) => {
         room?.state?.phase === 'ATTACK_SELECT' &&
         room?.state?.currentAttackerId === room?.sessionId
       ) {
-        room.send('selectAttack', { slot: 'a1' });
+        const me = room.state.players.get(room.sessionId);
+        const slot = me?.a1?.isExtinguished ? 'a2' : 'a1';
+        room.send('selectAttack', { slot });
       } else if (
         room?.state?.phase === 'DEFEND_WINDOW' &&
         room?.state?.currentAttackerId !== room?.sessionId
@@ -125,6 +127,7 @@ test('camp: after vsAI duel ends, scene is CampScene', async ({ browser }) => {
   try {
     await page.waitForFunction(
       () => (window as any).__room?.state?.phase === 'ENDED',
+      undefined,
       { timeout: 30000 },
     );
   } finally {
@@ -133,6 +136,7 @@ test('camp: after vsAI duel ends, scene is CampScene', async ({ browser }) => {
 
   await page.waitForFunction(
     () => (window as any).__game?.scene?.isActive('EncounterScene'),
+    undefined,
     { timeout: 8000 },
   );
   await ctx.close();

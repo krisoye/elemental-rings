@@ -70,6 +70,10 @@ declare global {
       choice: AIPersonality | 'PVP',
       aiOverrides?: { aiHearts?: number; aiUses?: number },
     ) => void;
+    // Deterministic E2E PvP hook (#67): start the PvP path bound to a unique
+    // keyed room id so two parallel browser contexts pair into one isolated
+    // room (never cross-pairing under parallel workers). Set by EncounterScene.
+    __encounterSelectPvP?: (e2eRoomId: string) => void;
     __campGoEncounter?: () => void;
     __campSleep?: () => void;
     __campRecharge?: (ringId: string) => Promise<void>;

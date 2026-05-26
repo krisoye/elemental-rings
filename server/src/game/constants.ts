@@ -1,9 +1,20 @@
-export const TELEGRAPH_MS = 900;
+// E2E_FAST (set by the Playwright webServer SERVER env) shortens the pure
+// "wind-up" dead time before impact so the suite runs far faster. ONLY
+// TELEGRAPH_MS is shortened: it is dead time between the attack and the moment
+// the defend window's impact lands — no classification depends on its absolute
+// length, only on the press offset RELATIVE to impact. The catch bands
+// (BLOCK_WINDOW_MS / PARRY_WINDOW_MS) are LEFT UNCHANGED so PARRY/BLOCK/WEAK
+// classification is identical to production (the unit + integration suites pin
+// those bands and run WITHOUT E2E_FAST, so they are unaffected). With FAST,
+// DEFEND_WINDOW_MS = 150 + 200 = 350ms, still > the 250ms (now 80ms) E2E
+// auto-driver poll interval, so AI-driver defenses reliably arrive in-window.
+const E2E_FAST = process.env.E2E_FAST === '1';
+export const TELEGRAPH_MS = E2E_FAST ? 150 : 900;
 export const BLOCK_WINDOW_MS = 200;
 export const PARRY_WINDOW_MS = 175;
 export const STARTING_HEARTS = 3;
 export const STARTING_USES = 3;
-export const DEFEND_WINDOW_MS = TELEGRAPH_MS + BLOCK_WINDOW_MS; // 1100
+export const DEFEND_WINDOW_MS = TELEGRAPH_MS + BLOCK_WINDOW_MS; // 1100 (350 under E2E_FAST)
 
 // GDD §7 — status effects. A triangle gauge (FIRE/WATER/WOOD) at or above
 // STATUS_THRESHOLD activates that element's status (Burning/Drowning/Entangled).

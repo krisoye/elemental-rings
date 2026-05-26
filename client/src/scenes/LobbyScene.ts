@@ -34,6 +34,9 @@ export class LobbyScene extends Phaser.Scene {
 
   private async connect(): Promise<void> {
     const token = localStorage.getItem('er_token') ?? '';
+    // E2E-only keyed-room id (#67), forwarded from EncounterScene via scene data.
+    // Undefined for real PvP, so production matchmaking stays a pure global pool.
+    const { e2eRoomId } = (this.scene.settings.data as { e2eRoomId?: string }) ?? {};
     // Best-effort stake lock before connecting (non-fatal if it fails).
     try {
       await fetch(`${API_BASE}/api/stake/lock`, {
@@ -41,7 +44,7 @@ export class LobbyScene extends Phaser.Scene {
         headers: { Authorization: `Bearer ${token}` },
       });
     } catch { /* non-fatal */ }
-    const room = await connectToRoom('battle', { token });
+    const room = await connectToRoom('battle', { token, e2eRoomId });
     this.statusText.setText('Waiting for opponent...');
 
     const onState = (state: any): void => {
