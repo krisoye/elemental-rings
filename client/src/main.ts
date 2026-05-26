@@ -53,13 +53,10 @@ declare global {
     };
     // #40 encounter modal hooks.
     __encounterManageBattleHand?: () => void;
-    // Post-battle won-ring prompt now lives in EncounterScene (the post-battle
-    // destination). Resolve via 'add' | 'leave' | 'discard', with an optional
-    // ring id to displace when carry is full ('add' swap case).
-    __encounterResolveWonRing?: (
-      choice: 'add' | 'leave' | 'discard',
-      displaceRingId?: string,
-    ) => void;
+    // Post-battle won-ring prompt lives in EncounterScene. When carry has room a
+    // simple modal offers 'carry' or 'discard'; when carry is full there is no
+    // modal — the player is routed to Manage Battle Hand to free a slot.
+    __encounterResolveWonRing?: (choice: 'carry' | 'discard') => void;
     // Set while the won-ring modal is open in EncounterScene.
     __encounterState?: {
       pendingWonRing: { ringId: string; element: number } | null;
