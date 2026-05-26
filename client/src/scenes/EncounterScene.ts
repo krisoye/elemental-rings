@@ -55,6 +55,8 @@ export class EncounterScene extends Phaser.Scene {
   // the Manage Battle Hand modal to display a pending won ring, which is not yet
   // carried and so absent from manageRings.
   private allRings: RingData[] = [];
+  private managePlayer: any = null;
+  private manageStatusText: Phaser.GameObjects.Text | null = null;
 
   constructor() {
     super({ key: 'EncounterScene' });
@@ -116,7 +118,7 @@ export class EncounterScene extends Phaser.Scene {
     });
 
     this.add
-      .text(20, 20, '◀ Camp', { fontSize: '16px', color: '#aaffaa' })
+      .text(20, 20, '◀ Sanctum', { fontSize: '16px', color: '#aaffaa' })
       .setInteractive({ useHandCursor: true })
       .on('pointerdown', () => this.scene.start('CampScene'));
 
@@ -431,9 +433,11 @@ export class EncounterScene extends Phaser.Scene {
       });
       if (!res.ok) return;
       const data: {
+        player: any;
         rings: RingData[];
         loadout: Record<string, string | null>;
       } = await res.json();
+      this.managePlayer = data.player;
       this.allRings = data.rings;
       this.manageRings = data.rings.filter((r) => r.in_carry === 1);
       this.manageLoadout = data.loadout ?? {};
@@ -455,7 +459,7 @@ export class EncounterScene extends Phaser.Scene {
       .rectangle(CANVAS_W / 2, CANVAS_H / 2, CANVAS_W, CANVAS_H, 0x000000, 0.75)
       .setInteractive();
     const panel = this.add
-      .rectangle(CANVAS_W / 2, CANVAS_H / 2, 640, 380, 0x222233)
+      .rectangle(CANVAS_W / 2, CANVAS_H / 2, 640, 440, 0x222233)
       .setStrokeStyle(2, 0xffcc88);
     const title = this.add
       .text(CANVAS_W / 2, CANVAS_H / 2 - 165, 'Manage Battle Hand', {
@@ -469,6 +473,20 @@ export class EncounterScene extends Phaser.Scene {
       .setInteractive({ useHandCursor: true })
       .on('pointerdown', () => this.closeManageModal());
     container.add([overlay, panel, title, close]);
+
+    // Player status line — mirrors the Sanctum screen stat bar.
+    const p = this.managePlayer;
+    const statLine = this.add
+      .text(
+        CANVAS_W / 2,
+        CANVAS_H / 2 - 148,
+        p
+          ? `Day: ${p.game_day ?? 0} | Gold: ${p.gold ?? 0} | Food: ${p.food_units ?? 0} | Spirit: ${p.spirit_current ?? 0}/${p.spirit_max ?? 0} | XP: ${p.aggregate_xp ?? 0}`
+          : '',
+        { fontSize: '12px', color: '#ffdd66' },
+      )
+      .setOrigin(0.5);
+    container.add(statLine);
 
     // Pending won ring (top section). The won ring is not yet carried, so it
     // lives in allRings (full /api/me list), not manageRings. The player frees a
@@ -583,6 +601,23 @@ export class EncounterScene extends Phaser.Scene {
       container.add(x);
     });
 
+    // ── Recharge controls (spirit-powered, mirrors Sanctum) ───────────────
+    const rechargeY = CANVAS_H / 2 + 168;
+    const rechargeBtn = this.add
+      .text(CANVAS_W / 2 - 100, rechargeY, '[Recharge]', { fontSize: '13px', color: '#ffcc44' })
+      .setOrigin(0.5)
+      .setInteractive({ useHandCursor: true })
+      .on('pointerdown', () => void this.doManageRechargeSelected());
+    const rechargeAllBtn = this.add
+      .text(CANVAS_W / 2 + 60, rechargeY, '[Recharge All]', { fontSize: '13px', color: '#ffcc44' })
+      .setOrigin(0.5)
+      .setInteractive({ useHandCursor: true })
+      .on('pointerdown', () => void this.doManageRechargeAll());
+    this.manageStatusText = this.add
+      .text(CANVAS_W / 2, rechargeY + 22, '', { fontSize: '11px', color: '#ff8888' })
+      .setOrigin(0.5);
+    container.add([rechargeBtn, rechargeAllBtn, this.manageStatusText]);
+
     this.manageModal = container;
   }
 
@@ -634,8 +669,9 @@ export class EncounterScene extends Phaser.Scene {
         headers: { Authorization: `Bearer ${token}` },
       });
       if (meRes.ok) {
-        const data: { rings: RingData[]; loadout: Record<string, string | null> } =
+        const data: { player: any; rings: RingData[]; loadout: Record<string, string | null> } =
           await meRes.json();
+        this.managePlayer = data.player;
         this.manageRings = data.rings.filter((r) => r.in_carry === 1);
         this.manageLoadout = data.loadout ?? {};
       }
@@ -652,6 +688,90 @@ export class EncounterScene extends Phaser.Scene {
       this.manageModal = null;
     }
     this.manageSelectedRingId = null;
+    this.manageStatusText = null;
+  }
+
+  /** Recharge the currently selected ring using spirit. */
+  private async doManageRechargeSelected(): Promise<void> {
+    if (!this.manageSelectedRingId) {
+      this.setManageStatus('Select a ring to recharge');
+      return;
+    }
+    await this.doManageRechargeById(this.manageSelectedRingId);
+  }
+
+  /** POST /api/spirit/recharge for a specific ring id. */
+  private async doManageRechargeById(ringId: string): Promise<void> {
+    const token = localStorage.getItem('er_token');
+    if (!token) return;
+    try {
+      const res = await fetch(`${API_BASE}/api/spirit/recharge`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ ringId }),
+      });
+      if (res.status === 400) {
+        const body = await res.json().catch(() => ({}));
+        this.setManageStatus(body?.error ?? 'Recharge not available');
+        return;
+      }
+      if (!res.ok) {
+        this.setManageStatus(`Recharge failed (${res.status})`);
+        return;
+      }
+    } catch {
+      this.setManageStatus('Network error during recharge');
+      return;
+    }
+    await this.refreshManageData();
+  }
+
+  /** POST /api/spirit/recharge-all — fill carried rings in priority order. */
+  private async doManageRechargeAll(): Promise<void> {
+    const token = localStorage.getItem('er_token');
+    if (!token) return;
+    try {
+      const res = await fetch(`${API_BASE}/api/spirit/recharge-all`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!res.ok) {
+        this.setManageStatus(`Recharge-all failed (${res.status})`);
+        return;
+      }
+    } catch {
+      this.setManageStatus('Network error during recharge-all');
+      return;
+    }
+    await this.refreshManageData();
+  }
+
+  /** Re-fetch /api/me and re-render the manage modal with fresh data. */
+  private async refreshManageData(): Promise<void> {
+    const token = localStorage.getItem('er_token');
+    if (!token) return;
+    try {
+      const res = await fetch(`${API_BASE}/api/me`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!res.ok) return;
+      const data: {
+        player: any;
+        rings: RingData[];
+        loadout: Record<string, string | null>;
+      } = await res.json();
+      this.managePlayer = data.player;
+      this.allRings = data.rings;
+      this.manageRings = data.rings.filter((r) => r.in_carry === 1);
+      this.manageLoadout = data.loadout ?? {};
+    } catch {
+      return;
+    }
+    this.renderManageModal();
+  }
+
+  private setManageStatus(msg: string): void {
+    if (this.manageStatusText) this.manageStatusText.setText(msg);
   }
 
   /**
