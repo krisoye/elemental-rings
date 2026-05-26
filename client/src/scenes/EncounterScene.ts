@@ -43,6 +43,9 @@ export class EncounterScene extends Phaser.Scene {
   private manageSelectedRingId: string | null = null;
   private manageRings: RingData[] = [];
   private manageLoadout: Record<string, string | null> = {};
+  // aiSeed per personality — received from /api/encounter/preview and passed to
+  // the BattleRoom so the actual loadout matches the stake shown in the preview.
+  private aiSeeds: Map<Choice, number> = new Map();
 
   constructor() {
     super({ key: 'EncounterScene' });
@@ -149,9 +152,10 @@ export class EncounterScene extends Phaser.Scene {
     try {
       const res = await fetch(`${API_BASE}/api/encounter/preview`);
       if (!res.ok) return;
-      const preview: Record<string, number> = await res.json();
+      const preview: Record<string, { element: number; aiSeed: number }> = await res.json();
 
-      for (const [personality, element] of Object.entries(preview)) {
+      for (const [personality, { element, aiSeed }] of Object.entries(preview)) {
+        this.aiSeeds.set(personality as Choice, aiSeed);
         const rect = rects.get(personality as Choice);
         const label = stakeLabels.get(personality as Choice);
         if (!rect || !label) continue;
@@ -198,6 +202,7 @@ export class EncounterScene extends Phaser.Scene {
       vsAI: true,
       personality,
       token,
+      aiSeed: this.aiSeeds.get(personality),
       ...aiOverrides,
     });
 
