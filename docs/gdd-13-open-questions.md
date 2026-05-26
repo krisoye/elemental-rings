@@ -22,11 +22,15 @@
 - Additional jewelry body positions (off-hand bracelet, necklace) and their passive archetypes (flagged Phase 7+)
 - Carry cap expansion cost curve — how much gold per +1 slot, and what is the maximum cap?
 - Wandering merchant patrol routes and trade window duration
-- Spirit gauge starting capacity (how many spirit units at game start?)
-- XP thresholds for spirit gauge increases (how many XP milestones, how large each step?)
-- Exact ratio: spirit units to ring carry slots (e.g. 10 spirit = 1 carry slot?)
+- Spirit gauge formula: exact mapping of aggregate ring XP → spirit max (linear? logarithmic? stepped?)
+- Starting aggregate XP / spirit max at game start (before any battles)
+- Exact ratio: spirit max to carry capacity (e.g. every N spirit units = 1 carry slot)
 - Food quantities tuning: forage yield per node, boss drop amount, merchant buy/sell prices
 - Future food segmentation: fruits, vegetables, grains, meats — different effects? Or purely cosmetic variety?
+- Waystone density per biome (how many waystones? which are boss-guarded?)
+- Compass range in world units and how strength/intensity is communicated to the player
+- Teleportation spiritual level thresholds per biome/waystone (tuning)
+- Sanctum visual style and customization — does the sanctum change appearance as the protagonist grows?
 - Chapter city task design — what kinds of tasks complete a chapter? (deferred)
 
 **Tech / multiplayer:**

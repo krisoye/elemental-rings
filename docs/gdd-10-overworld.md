@@ -21,10 +21,10 @@ Environmental passives (e.g. Fire rings losing uses faster in snow) are flagged 
 
 ### 10.3 Detection and Approach
 - When the player gets within a certain distance of an enemy both parties begin to see each other's information
-- **Visible from detection range:** element types in loadout, hearts, aggregate uses per element type, staked ring jewelry position
+- **Visible from detection range:** element types in loadout, hearts, aggregate uses per element type, Thumb ring element (reveals passive)
 - As both parties continue to approach they can **formally agree to duel**
 - The player can always turn back and flee before formally agreeing — no penalty
-- Once formally agreed the duel begins and the 5 battle ring selection screen appears
+- Once formally agreed the duel begins and the battle hand management screen appears
 
 ### 10.4 NPC Categories
 
@@ -60,20 +60,12 @@ Each personality draws from a set of archetype templates. The variant is chosen 
 | Fire-Aggressor | 🔴 Fire | Fire | Wind | Earth | Water | Kindling: A1 starts at +1 use |
 | Wind-Aggressor | 🟢 Wind | Wind | Fire | Earth | Wood | Tailwind: attack rings self-refund |
 
-Both variants include an uncounterable attack slot (Wind). Fire-Aggressor uses Kindling to start the first Fire ring at 4 uses, creating immediate pressure. Wind-Aggressor chains uncounterable hits sustained by Tailwind.
-
----
-
 **Defensive** (2 variants)
 
 | Variant | Thumb (Stake) | A1 | A2 | D1 | D2 | Passive |
 |---|---|---|---|---|---|---|
 | Earth-Defender | 🟤 Earth | Water | Wind | Earth | Earth | Bulwark: both Earth defense rings start at +1 use |
 | Wood-Defender | 💚 Wood | Water | Wind | Wood | Earth | Deep Roots: heart-loss redirected to Thumb |
-
-Earth-Defender front-loads defense via Bulwark — both D1 and D2 start at 4 uses, making it expensive to land a hit. Wood-Defender is harder to finish; every heart the attacker thinks they landed may have been absorbed by Deep Roots.
-
----
 
 **Status-Hunter** (3 variants)
 
@@ -82,10 +74,6 @@ Earth-Defender front-loads defense via Bulwark — both D1 and D2 start at 4 use
 | Fire-Hunter | 🔴 Fire | Fire | Fire | Wood | Earth | Kindling: A1 starts at +1 use | Fire → Burning |
 | Water-Hunter | 🔵 Water | Water | Water | Fire | Earth | Wellspring: defense uses refund | Water → Drowning |
 | Wood-Hunter | 💚 Wood | Wood | Wood | Water | Earth | Deep Roots: heart guard | Wood → Entangled |
-
-Triple same-element attack slots maximize gauge accumulation per exchange. The defense ring is the counter to the opponent's likely response — e.g., Water-Hunter uses Fire defense (STRONG vs Wood, which counters Water).
-
----
 
 **Resilient** (5 variants — one per base element as the stake)
 
@@ -97,100 +85,160 @@ Triple same-element attack slots maximize gauge accumulation per exchange. The d
 | Wind-Resilient | 🟢 Wind | Fire | Water | Earth | Wood | Tailwind |
 | Wood-Resilient | 💚 Wood | Wind | Fire | Earth | Water | Deep Roots |
 
-All variants keep Wind in a primary attack slot as an uncounterable baseline. The second attack slot and the two defense slots vary with the stake element. Resilient opponents are not element-specialists — they are endurance fighters. At low health the AI stops no-blocking, tightens timing, and switches attack selection to Aggressive logic.
+---
 
-### 10.5b The Caravan and Camp Model
+### 10.6 The Sanctum
 
-The player is an explorer who leaves camp with finite resources and returns when those resources are spent. The camp is a **horse-drawn caravan** that travels between safe areas in the overworld.
+The protagonist does not travel with a caravan or horse. They travel with their **Sanctum** — a magical dwelling spiritually bonded to them. The Sanctum is not physically carried; it is transported by folding space through the protagonist's spiritual energy. It is the foundation of all camp activity and the focal point for teleportation.
 
-**Within a biome, the gameplay loop is:**
-1. Arrive at a **safe area** — a known camp site that doubles as a small player hub (merchants visit, PvP between camped players is possible)
-2. Set up camp: sleep to restore spirit, recharge rings, manage loadout
-3. **Range on foot** from the safe area — explore the surrounding biome for food, treasure, shrine maps, shrines, NPCs, and paths to the next safe area
-4. The **boss** of the biome guards progression — required to advance; drops rare items and a significant food cache
-5. Once the horse has enough food and the next safe area is discovered, **move the caravan**
-6. Repeat until reaching the biome's **major city** and completing the chapter task
+**Physical description:**
+- A small structure — the size of a modest dwelling — that appears wherever the protagonist anchors it
+- **Exterior:** a fire pit at the front for cooking and social gathering; the visible face of the sanctum to the world
+- **Entry vestibule:** food storage, equipment, day-to-day supplies
+- **Central chamber:** the meditation circle — a permanent inlaid pattern on the floor that focuses spiritual energy; this is where all teleportation is initiated and where rings are recharged through focused meditation
+- **Sleeping area:** rest and restoration
+- **Ring storage:** inventory displayed along the walls — rings that are not in the carry loadout are stored here, their XP still accumulating passively through the sanctum's ambient energy
 
-**Moving the caravan:**
-- Costs **100 food units per travel day** (horse feed)
-- The player must have discovered the destination (explored the path on foot first)
-- The world map is **branching** — the player chooses which adjacent biome to move to
-- Returning to a previous biome is possible but costs food both ways
+**The Sanctum as spiritual extension:**
+The Sanctum is not an inert container. It is spiritually bonded to the protagonist's ring collection — the aggregate XP of all stored rings contributes to the protagonist's spirit gauge maximum even when those rings are not carried. The protagonist and their Sanctum are one entity: the Sanctum is where their power lives when they are not channeling it.
 
-**The safe area as a micro-hub:**
-- Multiple players can camp here simultaneously
-- Wandering merchants and traders pass through
-- PvP duels can be initiated between camped players
-- Not a city — no major services, no chapter-task NPCs
+**Anchoring the Sanctum:**
+- When the protagonist teleports to a new location, the Sanctum materializes nearby
+- Anchoring it establishes the camp for that area
+- When multiple players anchor their Sanctums near a waystone, a temporary community forms — the campfires create a gathering space, and a small settlement emerges naturally
+- This is what the game calls a **safe area**: not a fixed world structure, but a living cluster of sanctums
 
-### 10.6 Key Locations
+---
+
+### 10.7 Waystones and the Compass
+
+**Waystones** are ancient permanent objects scattered across the overworld — statues, monuments, standing stones, carved rocks. They are not items; they cannot be moved or taken. They are the spiritual anchors of the world.
+
+**Attuning to a waystone:**
+- The protagonist must physically touch a waystone
+- Touching it creates an instant spiritual connection — the location is permanently added to the world map as a known teleportation destination
+- The protagonist learns nothing about the surrounding area from the attunement alone — the area around the waystone is unknown until explored on foot after teleporting there
+- Attunement is free and instant; no cost
+
+**The Compass:**
+- The protagonist has a preternatural spiritual sense that pulls them toward undiscovered waystones nearby
+- Short range — only felt when within a meaningful distance of an undiscovered waystone
+- Strengthens as the protagonist approaches (directional pull, increasing intensity)
+- Waystones are often guarded by mini-bosses or major bosses — the compass leads toward challenge
+- This is the primary navigation mechanism for exploration: no map markers, just a pull
+
+**Waystone density:**
+- Each biome contains multiple waystones — some accessible early, some guarded by powerful enemies
+- The boss of a biome always guards or is located near a critical waystone that unlocks the path to a major city
+- TBD: exact waystone count per biome (tuning)
+
+---
+
+### 10.8 Teleportation
+
+Movement between areas is a **spiritual act**, not physical travel. The protagonist folds space through the meditation circle in their Sanctum, bringing themselves and their entire Sanctum — including all stored rings, food, and gold — to an attuned waystone.
+
+**Requirements:**
+1. **Must be in the Sanctum** — specifically at the meditation circle
+2. **Must have attuned** to the destination waystone
+3. **Must have sufficient spiritual level** — aggregate ring XP must meet or exceed the threshold for that destination. If too low, the destination is visible on the map but unavailable, with the required spiritual level shown
+
+**What teleports:**
+- The protagonist
+- The entire Sanctum (structure, contents, stored rings)
+- Carry loadout (the 10 rings on their person)
+- All food and gold
+
+**Failure state:**
+- If spiritual level is insufficient, the teleportation cannot be initiated — there is no partial or dangerous attempt
+- The player must raise their aggregate ring XP (by using rings in battle) to unlock a higher-threshold destination
+
+**Distance and spiritual level:**
+- Nearby waystone (same or adjacent biome): low threshold — accessible early game
+- Distant waystone (far biome, different region): high threshold — requires veteran ring collection
+- Late game: a powerful protagonist can teleport almost anywhere in the world from a single meditation session
+
+**The biome loop:**
+1. Meditate in Sanctum → teleport to a newly attuned waystone
+2. Anchor Sanctum; other players may already be anchored here (safe area community)
+3. Follow the compass → range on foot → find treasure, fight NPCs, locate shrines
+4. Touch undiscovered waystones to add destinations to the map
+5. Boss of the biome guards a critical waystone (or the path to the city) — required for chapter progression; drops significant food cache and rare items
+6. As ring XP accumulates through combat, new higher-threshold destinations unlock
+7. When ready: return to Sanctum, meditate, choose next destination
+
+---
+
+### 10.9 Key Locations
 
 | Location | Purpose |
 |---|---|
-| **Player Camp** | Sleep (advance game day + recharge all rings); paid immediate recharge; full inventory management; pack carry loadout before setting out |
-| **Cities / Settlements** | Merchants, services, social NPCs; safe zone — no duels initiated here |
-| **Shrines** | One per fusion recipe; discovered via shrine maps dropped by fusion-type enemies |
+| **Sanctum** | The protagonist's traveling home — sleep, cook, meditate, manage inventory, teleport |
+| **Safe Areas** | Naturally formed clusters of sanctums near waystones; campfire gatherings; PvP between anchored players |
+| **Cities / Settlements** | Persistent world locations with merchants, services, social NPCs; chapter task endpoints |
+| **Waystones** | Ancient permanent objects; touch to attune and add to teleportation map |
+| **Shrines** | One per fusion recipe; discovered via shrine maps and compass |
 | **Dark/Underground Areas** | Shadow ring drop locations; high risk, unpredictable opposition |
-| **Boss Arenas** | Fixed high-XP encounters; unique ring rewards; may gate world regions |
+| **Boss Arenas** | Fixed high-XP encounters; unique rings; often guard critical waystones |
 
-**Camp vs City distinction:**
-- Camp is a temporary personal rest stop — only the player's own rings and resources are accessible
-- Cities are persistent world locations shared by all players, with access to merchants, trade, and social features
-- Ring inventory management (choosing the 10 you carry) happens at **camp only** — you pack before you leave, not mid-expedition
+---
 
-### 10.7 Food and Foraging
+### 10.10 Food and Foraging
 
-Food is the fuel of the expedition. It sustains the protagonist (sleep → spirit restore) and the horse (caravan travel).
+Food sustains the protagonist's ability to meditate and restore their spirit.
 
 **Food units** (one type currently; future segments: fruits, vegetables, grains, meats)
 
 | Use | Cost |
 |---|---|
-| Sleep at camp (full spirit restore) | 25 food units |
-| Horse travel | 100 food units per travel day |
+| Sleep in Sanctum (full spirit restore) | 25 food units |
+
+> **Horse travel removed (v4.4):** Movement between areas is now spiritual teleportation, not physical travel. Horse food costs no longer exist.
 
 **Foraging:**
 - Gathered during overworld exploration (bushes, fields, hunting, mushroom patches, abandoned caches)
-- Brought back to camp and stored — no weight limit on food carried
-- The primary reason to range out from camp even when not seeking duels
+- Stored in the Sanctum — no carry weight limit on food
+- The primary non-combat reason to range out from the Sanctum
 
 **Merchant food:**
-- Buy at **2× forage value** (emergency option)
+- Buy at **2× forage value** (emergency option when supplies are low)
 - Sell at base forage value
 - Creates a gold sink when expeditions run short
 
 **Boss food drop:**
 - Every biome boss drops a significant food cache on defeat
-- Minimum drop should cover horse travel to the next safe area
-- Removes food pressure at the chapter transition point and rewards completing the biome
+- Intended to remove food pressure at chapter transitions and reward completing the biome
 
 **Starvation:**
 - No food + no gold → cannot sleep → spirit stays depleted → rings cannot be recharged in bulk
-- Player can still duel on remaining spirit and ring uses — desperation play is possible
+- Player can still duel on remaining spirit and ring uses — desperation play is valid
 - Eventually forces retreat toward a food source or merchant
 
-### 10.9 Merchants
+---
 
-Merchants are encountered in cities and occasionally wandering the overworld between biomes.
+### 10.11 Merchants
+
+Merchants are encountered in cities and occasionally wandering the overworld between biomes. They may anchor their own modest sanctums near safe areas temporarily.
 
 **Wares:**
 
 | Category | Examples | Currency |
 |---|---|---|
 | Rings | Tier 1 base rings, rare element variants | Gold |
-| Carry capacity | +1 carry slot upgrades (up to a cap) | Gold |
-| Garments | Equipment that modifies passive staking behavior or carry cap | Gold + rare materials |
+| Sanctum upgrades | Expanded ring storage, meditation circle enhancements | Gold + rare materials |
+| Garments | Equipment that expands spiritual carry capacity | Gold + rare materials |
 | Fusion stones | Catalysts for ring fusion recipes | Gold + ring sacrifice |
-| Shrine maps | Reveal fusion shrine locations on the overworld map | Gold |
+| Shrine maps | Reveal shrine locations on the world map | Gold |
+| Food | Emergency provisions at 2× forage value | Gold |
 
-**Carry cap expansion:**
-- Players start with `carry_cap = 10`
-- Each +1 carry capacity upgrade costs increasing amounts of gold (exact costs TBD — tuned for scarcity)
-- Maximum carry cap TBD — progression gate for late-game ring diversity
+**Carry cap (garments):**
+- Players start with `carry_cap = 10` (spiritually derived from base spirit gauge)
+- Garments from merchants can expand it beyond the spirit-derived default
+- Maximum carry cap TBD
 
 **Wandering merchants:**
-- A subset of merchants patrol fixed routes between biomes
-- Encounter windows are limited — if the player doesn't trade during a patrol window they must wait for the next cycle
-- Creates strategic timing decisions: return to trade now or continue the expedition?
+- A subset patrol fixed routes between biomes; they may anchor near safe areas briefly
+- Encounter windows are limited — if the player doesn't trade during a visit they must wait for the next cycle
+- Creates strategic decisions: return to trade now or continue the expedition?
 
 ---
