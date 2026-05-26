@@ -1,5 +1,5 @@
 # Elemental Rings — Game Design Document
-**Version 4.4 | Stack: Phaser.js + Colyseus | Multiplayer-first**
+**Version 4.5 | Stack: Phaser.js + Colyseus | Multiplayer-first**
 
 ---
 
@@ -36,6 +36,9 @@ Each section lives in its own file. Read only what you need.
 ---
 
 ## Changelog
+
+*Document version 4.5 — Updated May 2026*
+*v4.5 changes: Rewrote §5 Fusion System to match the v4 element model. Previous §5 referenced non-existent elements (Lightning, Ice, Metal, Lava, Frost, Ash, Obsidian) and same-element upgrade paths that don't exist in v4. New §5 documents the 10 cross-element Tier 2 fusions (all 5C2 pairs), Tier 3 framework (two maxed Tier 2 parents, recipes deferred), fusion cost (maxed parent rings + shrine access — no fusion stones), and cross-references §3.4 for all combat mechanics. Closed fusion-stone open question.*
 
 *Document version 4.4 — Updated May 2026*
 *v4.4 changes: The Sanctum replaces the horse/caravan as the protagonist's mobile home. Waystones (ancient permanent world objects) are touched to attune, adding teleportation destinations to the world map. A spiritual compass guides the protagonist toward nearby undiscovered waystones. Teleportation is initiated from the Sanctum's meditation circle and requires sufficient aggregate ring XP as the spiritual level threshold. Horse food removed — food is now only for sleeping (25 food = full spirit restore). §8 rewritten: protagonist has no independent XP — spirit gauge max is directly derived from aggregate ring XP (Option A). §10 overworld comprehensively rewritten with Sanctum, Waystone, Compass, Teleportation, and updated Key Locations. §12 spirit system updated: spirit gauge vs aggregate XP distinction clarified; teleportation unlocks via aggregate, not spirit gauge. Staking strategic implications documented.*

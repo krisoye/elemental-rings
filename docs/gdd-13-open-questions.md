@@ -4,7 +4,8 @@
 - Full element relationship web — all matchups documented for all 11 named elements
 - Ring passive and active abilities unlocked at XP milestones
 - ~~Exact heart count per duel~~ → settled: **3 hearts**
-- Exact catalyst (fusion stone) costs per tier
+- ~~Exact catalyst (fusion stone) costs per tier~~ → settled: **no fusion stones** — maxed parent rings + shrine access (§5.5)
+- Tier 3 fusion recipe names and which shrines unlock them (§5.3 deferred to Phase 8)
 - Tier 4 triple fusion full details
 - ~~NPC personality tuning and difficulty progression curve~~ → settled: **4 archetypes with 10 randomized loadout templates** (see §10.5)
 - Inventory expansion milestones and exact costs
