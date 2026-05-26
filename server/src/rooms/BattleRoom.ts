@@ -288,9 +288,18 @@ export class BattleRoom extends Room<{ state: BattleState }> {
         ? this.sessionToRingIds.get(loserId)?.thumb
         : undefined;
 
+      // Track the ring the (human) winner gains so the client can prompt the
+      // player to carry/leave/discard it on returning to camp (#40).
+      let wonRingId: string | undefined;
+      let wonRingElement: number | undefined;
+
       if (loserPlayerId && loserThumbRingId) {
         if (winnerPlayerId) {
-          PlayerRepo.transferRing(loserThumbRingId, loserPlayerId, winnerPlayerId);
+          const loserThumb = this.sessionToRingIds.get(loserId!)?.thumb;
+          const loserPs = loserId ? this.state.players.get(loserId) : undefined;
+          wonRingId = PlayerRepo.transferRing(loserThumbRingId, loserPlayerId, winnerPlayerId);
+          wonRingElement = loserPs?.thumb.element;
+          void loserThumb;
         } else {
           // vsAI: winner has no DB record — just delete the ring.
           PlayerRepo.forfeitRing(loserThumbRingId, loserPlayerId);
@@ -301,7 +310,8 @@ export class BattleRoom extends Room<{ state: BattleState }> {
         const aiPs = this.state.players.get(loserId);
         if (aiPs) {
           const t = aiPs.thumb;
-          PlayerRepo.grantRing(winnerPlayerId, t.element, t.tier, t.maxUses, t.xp);
+          wonRingId = PlayerRepo.grantRing(winnerPlayerId, t.element, t.tier, t.maxUses, t.xp);
+          wonRingElement = t.element;
         }
       }
 
@@ -309,6 +319,14 @@ export class BattleRoom extends Room<{ state: BattleState }> {
       for (const sessionId of sessions) {
         const tid = this.sessionToRingIds.get(sessionId)?.thumb;
         if (tid) PlayerRepo.setEscrowed(tid, false);
+      }
+
+      // Notify the winning client of the ring they gained so CampScene can show
+      // the carry/leave/discard prompt. The grant is server-authoritative; the
+      // client only stores the id and renders the modal.
+      if (wonRingId && winnerId) {
+        const winnerClient = this.clients.find((c) => c.sessionId === winnerId);
+        winnerClient?.send('wonRing', { ringId: wonRingId, element: wonRingElement ?? 0 });
       }
     } catch (err: unknown) {
       console.error('[BattleRoom] persistBattleResult failed:', err);

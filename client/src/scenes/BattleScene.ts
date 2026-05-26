@@ -76,9 +76,18 @@ export class BattleScene extends Phaser.Scene {
       this.recordRevealedElements(result, myId);
     });
 
+    // The server sends `wonRing` to the winning client when a ring is gained
+    // (transfer or grant). Stash the server-decided ring id so CampScene can
+    // prompt the player to carry / leave / discard it (#40). The server remains
+    // authoritative — the client only persists the id locally for the prompt.
+    const offWonRing = room.onMessage('wonRing', (payload: { ringId: string }) => {
+      if (payload?.ringId) localStorage.setItem('er_pending_ring', payload.ringId);
+    });
+
     this.events.once('shutdown', () => {
       room.onStateChange.remove(onState);
       offExchange();
+      offWonRing();
       window.__scene = null;
     });
   }

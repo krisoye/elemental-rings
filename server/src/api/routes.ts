@@ -11,13 +11,17 @@ import {
   getLoadout,
   saveLoadout,
   sleepRecharge,
-  rechargeRing,
-  addGold,
+  packLoadout,
+  discardRing,
+  spendFood,
+  restoreSpirit,
+  rechargeRingWithSpirit,
+  rechargeAllWithSpirit,
+  getSpiritAndFood,
   lockStake,
   unlockStake,
 } from '../persistence/PlayerRepo';
-
-const SLEEP_COST = 50;
+import { FOOD_PER_SLEEP } from '../game/constants';
 
 const BCRYPT_ROUNDS = 10;
 
@@ -101,17 +105,23 @@ apiRouter.get('/api/me', requireAuth, (req: Request, res: Response): void => {
 });
 
 /**
- * POST /api/camp/sleep — advance game_day by 1 and fully recharge all rings.
- * Requires auth.
+ * POST /api/camp/sleep — spend food to rest: advance game_day by 1 and fully
+ * restore the spirit gauge (#41 replaces the old gold cost). 400 if the player
+ * has fewer than FOOD_PER_SLEEP food units. Requires auth.
  */
 apiRouter.post('/api/camp/sleep', requireAuth, (req: Request, res: Response): void => {
   const playerId = req.playerId as string;
   const player = getPlayerById(playerId);
-  if (!player || player.gold < SLEEP_COST) {
-    res.status(400).json({ error: `Sleep costs ${SLEEP_COST}g (not enough gold)` });
+  if (!player) {
+    res.status(404).json({ error: 'Player not found' });
     return;
   }
-  addGold(playerId, -SLEEP_COST);
+  if (player.food_units < FOOD_PER_SLEEP) {
+    res.status(400).json({ error: `Not enough food (need ${FOOD_PER_SLEEP})` });
+    return;
+  }
+  spendFood(playerId, FOOD_PER_SLEEP);
+  restoreSpirit(playerId);
   sleepRecharge(playerId);
   res.status(200).json({
     player: getPlayerById(playerId),
@@ -120,26 +130,84 @@ apiRouter.post('/api/camp/sleep', requireAuth, (req: Request, res: Response): vo
 });
 
 /**
- * POST /api/camp/recharge — pay gold to recharge a specific ring to full.
- * Body: { ringId: string }
+ * PUT /api/carry — set the carried set to exactly the given ring ids (#40).
+ * Body: { ringIds: string[] }. Returns the full updated ring list. 400 when the
+ * count exceeds the carry cap or an id is not owned by the player. Requires auth.
+ */
+apiRouter.put('/api/carry', requireAuth, (req: Request, res: Response): void => {
+  const playerId = req.playerId as string;
+  const { ringIds } = req.body ?? {};
+  if (!Array.isArray(ringIds) || ringIds.some((id) => typeof id !== 'string')) {
+    res.status(400).json({ error: 'ringIds must be an array of strings' });
+    return;
+  }
+  try {
+    packLoadout(playerId, ringIds as string[]);
+    res.status(200).json({ rings: getRingsByOwner(playerId) });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : 'Unknown error';
+    res.status(400).json({ error: msg });
+  }
+});
+
+/**
+ * DELETE /api/rings/:ringId — permanently discard a ring the player owns (#40
+ * won-ring prompt Discard choice). Requires auth.
+ */
+apiRouter.delete('/api/rings/:ringId', requireAuth, (req: Request, res: Response): void => {
+  const playerId = req.playerId as string;
+  const ringId = req.params.ringId;
+  const result = discardRing(playerId, ringId);
+  if (!result.ok) {
+    res.status(404).json({ error: 'ring not found' });
+    return;
+  }
+  res.status(200).json({ rings: getRingsByOwner(playerId) });
+});
+
+/**
+ * POST /api/spirit/recharge — recharge one ring using spirit (#41). Body:
+ * { ringId: string, uses?: number }. uses defaults to a full top-off. Spends
+ * SPIRIT_PER_RING_USE per restored use. 400 when out of spirit or not owned.
  * Requires auth.
  */
-apiRouter.post('/api/camp/recharge', requireAuth, (req: Request, res: Response): void => {
+apiRouter.post('/api/spirit/recharge', requireAuth, (req: Request, res: Response): void => {
   const playerId = req.playerId as string;
-  const { ringId } = req.body ?? {};
+  const { ringId, uses } = req.body ?? {};
   if (typeof ringId !== 'string' || !ringId) {
     res.status(400).json({ error: 'ringId is required' });
     return;
   }
-  const result = rechargeRing(playerId, ringId);
+  if (uses !== undefined && (typeof uses !== 'number' || uses < 0)) {
+    res.status(400).json({ error: 'uses must be a non-negative number' });
+    return;
+  }
+  const result = rechargeRingWithSpirit(playerId, ringId, uses);
   if (!result.ok) {
     res.status(400).json({ error: result.reason });
     return;
   }
   const rings = getRingsByOwner(playerId);
   const ring = rings.find((r) => r.id === ringId);
-  const player = getPlayerById(playerId);
-  res.status(200).json({ ring, gold: player?.gold ?? 0 });
+  res.status(200).json({
+    ring,
+    restored: result.restored,
+    spirit_current: getSpiritAndFood(playerId).spirit_current,
+  });
+});
+
+/**
+ * POST /api/spirit/recharge-all — recharge every carried ring in priority order
+ * (Thumb→A1→A2→D1→D2→spares), stopping when spirit hits 0 (#41). No body.
+ * Requires auth.
+ */
+apiRouter.post('/api/spirit/recharge-all', requireAuth, (req: Request, res: Response): void => {
+  const playerId = req.playerId as string;
+  const spiritRemaining = rechargeAllWithSpirit(playerId);
+  res.status(200).json({
+    rings: getRingsByOwner(playerId),
+    spirit_current: spiritRemaining,
+  });
 });
 
 /**

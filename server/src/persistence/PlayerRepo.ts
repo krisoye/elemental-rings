@@ -1,7 +1,7 @@
 import { v4 as uuidv4 } from 'uuid';
 import { db } from './db';
 import { ElementEnum } from '../../../shared/types';
-import { RECHARGE_COST_PER_USE } from '../game/constants';
+import { SPIRIT_PER_RING_USE } from '../game/constants';
 
 /** A persisted player row (no password hash exposed to callers of read helpers). */
 export interface PlayerRow {
@@ -9,6 +9,10 @@ export interface PlayerRow {
   username: string;
   gold: number;
   game_day: number;
+  carry_cap: number;
+  spirit_max: number;
+  spirit_current: number;
+  food_units: number;
 }
 
 /** A persisted ring row. */
@@ -21,6 +25,7 @@ export interface RingRow {
   current_uses: number;
   xp: number;
   escrowed: number;
+  in_carry: number;
 }
 
 /** A persisted loadout row — each slot holds a ring id (or null when empty). */
@@ -67,7 +72,8 @@ const insertLoadout = db.prepare(
 
 const selectByUsername = db.prepare(`SELECT * FROM players WHERE username = ?`);
 const selectById = db.prepare(
-  `SELECT id, username, gold, game_day FROM players WHERE id = ?`,
+  `SELECT id, username, gold, game_day, carry_cap, spirit_max, spirit_current, food_units
+   FROM players WHERE id = ?`,
 );
 const selectRingsByOwner = db.prepare(`SELECT * FROM rings WHERE owner_id = ?`);
 const selectLoadout = db.prepare(`SELECT * FROM loadout WHERE player_id = ?`);
@@ -105,14 +111,19 @@ export const createPlayer = db.transaction(
 
     // Default loadout: thumb=Fire[0], a1=Fire[1], a2=Water[0], d1=Wood[0],
     // d2=Earth[0] (GDD §6.1 / issue #26 spec).
-    insertLoadout.run({
-      player_id: playerId,
+    const defaultSlots = {
       thumb: ringsByElement[ElementEnum.FIRE][0],
       a1: ringsByElement[ElementEnum.FIRE][1],
       a2: ringsByElement[ElementEnum.WATER][0],
       d1: ringsByElement[ElementEnum.WOOD][0],
       d2: ringsByElement[ElementEnum.EARTH][0],
-    });
+    };
+    insertLoadout.run({ player_id: playerId, ...defaultSlots });
+
+    // #40 — the five battle-slot rings start carried (in_carry = 1); the other
+    // five starter rings remain at the Sanctum, well within the carry_cap of 10.
+    const setCarry = db.prepare('UPDATE rings SET in_carry = 1 WHERE id = ?');
+    for (const ringId of Object.values(defaultSlots)) setCarry.run(ringId);
 
     return playerId;
   },
@@ -157,16 +168,31 @@ const updateRingXP = db.prepare(`UPDATE rings SET xp = xp + ? WHERE id = ?`);
 const updatePlayerGold = db.prepare(`UPDATE players SET gold = gold + ? WHERE id = ?`);
 const updateRingEscrowed = db.prepare(`UPDATE rings SET escrowed = ? WHERE id = ?`);
 const updateRingOwner = db.prepare(
-  `UPDATE rings SET owner_id = ?, escrowed = 0 WHERE id = ? AND owner_id = ?`,
+  `UPDATE rings SET owner_id = ?, escrowed = 0, in_carry = 0 WHERE id = ? AND owner_id = ?`,
 );
 const deleteRing = db.prepare(`DELETE FROM rings WHERE id = ? AND owner_id = ?`);
 const updateGameDay = db.prepare(`UPDATE players SET game_day = game_day + 1 WHERE id = ?`);
-const rechargeAllRings = db.prepare(`UPDATE rings SET current_uses = max_uses WHERE owner_id = ?`);
-const updatePlayerGoldDeduct = db.prepare(
-  `UPDATE players SET gold = gold - ? WHERE id = ?`,
+
+// #40 — carry flag management.
+const selectCarryByOwner = db.prepare(`SELECT * FROM rings WHERE owner_id = ? AND in_carry = 1`);
+const updateRingCarry = db.prepare(`UPDATE rings SET in_carry = ? WHERE id = ?`);
+const clearCarryForOwner = db.prepare(`UPDATE rings SET in_carry = 0 WHERE owner_id = ?`);
+const selectCarryCap = db.prepare(`SELECT carry_cap FROM players WHERE id = ?`);
+
+// #41 — spirit / food economy.
+const selectSpiritFood = db.prepare(
+  `SELECT spirit_current, spirit_max, food_units FROM players WHERE id = ?`,
 );
-const updateRingUsesMax = db.prepare(
-  `UPDATE rings SET current_uses = max_uses WHERE id = ?`,
+const updateSpiritDeduct = db.prepare(
+  `UPDATE players SET spirit_current = spirit_current - ? WHERE id = ?`,
+);
+const updateSpiritRestore = db.prepare(
+  `UPDATE players SET spirit_current = spirit_max WHERE id = ?`,
+);
+const updateFoodAdd = db.prepare(`UPDATE players SET food_units = food_units + ? WHERE id = ?`);
+const updateFoodDeduct = db.prepare(`UPDATE players SET food_units = food_units - ? WHERE id = ?`);
+const updateRingUsesAdd = db.prepare(
+  `UPDATE rings SET current_uses = MIN(current_uses + ?, max_uses) WHERE id = ?`,
 );
 
 const SLOT_KEYS: ReadonlyArray<keyof LoadoutRow> = ['thumb', 'a1', 'a2', 'd1', 'd2'];
@@ -255,9 +281,10 @@ export function grantRing(
   tier = STARTER_TIER,
   maxUses = STARTER_MAX_USES,
   xp = 0,
-): void {
+): string {
+  const ringId = uuidv4();
   insertRing.run({
-    id: uuidv4(),
+    id: ringId,
     owner_id: ownerId,
     element,
     tier,
@@ -265,6 +292,7 @@ export function grantRing(
     current_uses: maxUses,
     xp,
   });
+  return ringId;
 }
 
 /**
@@ -273,7 +301,7 @@ export function grantRing(
  * travels with it (GDD §9.1).
  */
 export const transferRing = db.transaction(
-  (ringId: string, fromPlayerId: string, toPlayerId: string): void => {
+  (ringId: string, fromPlayerId: string, toPlayerId: string): string => {
     const fromLoadout = selectLoadout.get(fromPlayerId) as LoadoutRow | undefined;
     if (fromLoadout) {
       const slots: Record<string, string | null> = {
@@ -302,6 +330,7 @@ export const transferRing = db.transaction(
       }
     }
     updateRingOwner.run(toPlayerId, ringId, fromPlayerId);
+    return ringId;
   },
 );
 
@@ -355,34 +384,184 @@ export function unlockStake(playerId: string): void {
 }
 
 /**
- * Advance the game day by 1 and fully recharge all rings owned by the player
- * (simplified full recharge for all tiers per issue #27 spec).
+ * Advance the game day by 1. Resting recovery now flows through the spirit
+ * system (#41): the sleep route restores spirit and spends food separately, so
+ * sleeping no longer auto-recharges every ring.
  */
 export const sleepRecharge = db.transaction((playerId: string): void => {
   updateGameDay.run(playerId);
-  rechargeAllRings.run(playerId);
 });
 
+// ---------------------------------------------------------------------------
+// #40 — Carry system
+// ---------------------------------------------------------------------------
+
+/** All rings the player is currently carrying (in_carry = 1). */
+export function getCarry(playerId: string): RingRow[] {
+  return selectCarryByOwner.all(playerId) as RingRow[];
+}
+
+/** Set or clear the in_carry flag on a single ring (true → 1, false → 0). */
+export function setInCarry(ringId: string, inCarry: boolean): void {
+  updateRingCarry.run(inCarry ? 1 : 0, ringId);
+}
+
 /**
- * Pay gold to recharge a single ring to full uses.
- *
- * Returns `{ ok: false, reason }` if the ring is already full, not owned by
- * the player, or the player lacks sufficient gold. Otherwise deducts gold and
- * sets current_uses = max_uses.
+ * Permanently delete a ring the player owns (the Discard choice on the
+ * post-battle won-ring prompt). No-op if the ring is not owned by the player.
  */
-export const rechargeRing = db.transaction(
-  (playerId: string, ringId: string): { ok: boolean; reason?: string } => {
+export function discardRing(playerId: string, ringId: string): { ok: boolean } {
+  const info = deleteRing.run(ringId, playerId);
+  return { ok: info.changes > 0 };
+}
+
+/** The player's carry cap (rings carryable on an expedition). */
+export function getCarryCap(playerId: string): number {
+  const row = selectCarryCap.get(playerId) as { carry_cap: number } | undefined;
+  return row?.carry_cap ?? 0;
+}
+
+/**
+ * Atomically set the carried set to EXACTLY the given ring ids. Validates that
+ * the count is within the player's carry_cap and that every id is owned by the
+ * player; throws otherwise. All other rings have their in_carry flag cleared.
+ */
+export const packLoadout = db.transaction(
+  (playerId: string, ringIds: string[]): void => {
+    const cap = getCarryCap(playerId);
+    // Dedupe defensively so a repeated id can't inflate the count past the cap.
+    const unique = Array.from(new Set(ringIds));
+    if (unique.length > cap) {
+      throw new Error(`carry cap exceeded (${unique.length} > ${cap})`);
+    }
+    const ownerRings = new Set(
+      (selectRingsByOwner.all(playerId) as RingRow[]).map((r) => r.id),
+    );
+    for (const id of unique) {
+      if (!ownerRings.has(id)) throw new Error(`ring ${id} not owned by player`);
+    }
+    clearCarryForOwner.run(playerId);
+    for (const id of unique) updateRingCarry.run(1, id);
+  },
+);
+
+// ---------------------------------------------------------------------------
+// #41 — Spirit / food economy
+// ---------------------------------------------------------------------------
+
+/** The player's current spirit gauge and food balance. */
+export function getSpiritAndFood(playerId: string): {
+  spirit_current: number;
+  spirit_max: number;
+  food_units: number;
+} {
+  const row = selectSpiritFood.get(playerId) as
+    | { spirit_current: number; spirit_max: number; food_units: number }
+    | undefined;
+  if (!row) throw new Error(`player ${playerId} not found`);
+  return row;
+}
+
+/** Deduct spirit; throws if the player lacks the requested amount. */
+export function spendSpirit(playerId: string, amount: number): void {
+  const { spirit_current } = getSpiritAndFood(playerId);
+  if (spirit_current < amount) throw new Error('insufficient spirit');
+  updateSpiritDeduct.run(amount, playerId);
+}
+
+/** Restore the spirit gauge to its maximum (resting effect). */
+export function restoreSpirit(playerId: string): void {
+  updateSpiritRestore.run(playerId);
+}
+
+/** Add food units to the player's larder. */
+export function addFood(playerId: string, amount: number): void {
+  updateFoodAdd.run(amount, playerId);
+}
+
+/** Spend food units; throws if the player lacks the requested amount. */
+export function spendFood(playerId: string, amount: number): void {
+  const { food_units } = getSpiritAndFood(playerId);
+  if (food_units < amount) throw new Error('insufficient food');
+  updateFoodDeduct.run(amount, playerId);
+}
+
+/**
+ * Recharge a specific ring using spirit. Restores `uses` (or as many as the
+ * deficit and the player's spirit allow when omitted), spending
+ * SPIRIT_PER_RING_USE per restored use. Returns the number of uses restored.
+ *
+ * Throws on an unowned ring or when the player has no spirit to spend.
+ */
+export const rechargeRingWithSpirit = db.transaction(
+  (playerId: string, ringId: string, uses?: number): { ok: boolean; reason?: string; restored: number } => {
     const ring = selectRingById.get(ringId) as RingRow | undefined;
     if (!ring || ring.owner_id !== playerId) {
-      return { ok: false, reason: 'ring not found' };
+      return { ok: false, reason: 'ring not found', restored: 0 };
     }
     const deficit = ring.max_uses - ring.current_uses;
-    if (deficit === 0) return { ok: false, reason: 'already full' };
-    const cost = RECHARGE_COST_PER_USE * deficit;
-    const player = selectById.get(playerId) as { gold: number } | undefined;
-    if (!player || player.gold < cost) return { ok: false, reason: 'insufficient gold' };
-    updatePlayerGoldDeduct.run(cost, playerId);
-    updateRingUsesMax.run(ringId);
-    return { ok: true };
+    if (deficit === 0) return { ok: false, reason: 'already full', restored: 0 };
+
+    const { spirit_current } = getSpiritAndFood(playerId);
+    const affordable = Math.floor(spirit_current / SPIRIT_PER_RING_USE);
+    if (affordable === 0) return { ok: false, reason: 'insufficient spirit', restored: 0 };
+
+    // Requested uses (default: top off) clamped to the deficit and to spirit.
+    const wanted = uses === undefined ? deficit : Math.max(0, Math.min(uses, deficit));
+    const restored = Math.min(wanted, affordable);
+    if (restored === 0) return { ok: false, reason: 'insufficient spirit', restored: 0 };
+
+    updateRingUsesAdd.run(restored, ringId);
+    updateSpiritDeduct.run(restored * SPIRIT_PER_RING_USE, playerId);
+    return { ok: true, restored };
+  },
+);
+
+/**
+ * Recharge every carried ring in priority order (Thumb → A1 → A2 → D1 → D2,
+ * then spares most-depleted first), stopping when spirit reaches 0. Returns the
+ * remaining spirit after the operation.
+ */
+export const rechargeAllWithSpirit = db.transaction(
+  (playerId: string): number => {
+    const loadout = selectLoadout.get(playerId) as LoadoutRow | undefined;
+    const carried = selectCarryByOwner.all(playerId) as RingRow[];
+    const byId = new Map(carried.map((r) => [r.id, r]));
+
+    // Priority list: battle-slot rings first (in slot order), then spares.
+    const ordered: RingRow[] = [];
+    const seen = new Set<string>();
+    if (loadout) {
+      for (const slot of SLOT_KEYS) {
+        const id = loadout[slot] as string | null;
+        if (id && byId.has(id) && !seen.has(id)) {
+          ordered.push(byId.get(id)!);
+          seen.add(id);
+        }
+      }
+    }
+    const spares = carried
+      .filter((r) => !seen.has(r.id))
+      .sort((a, b) => {
+        // Most-depleted first (largest deficit), then stable by id.
+        const da = a.max_uses - a.current_uses;
+        const dbf = b.max_uses - b.current_uses;
+        return dbf !== da ? dbf - da : a.id.localeCompare(b.id);
+      });
+    ordered.push(...spares);
+
+    let spirit = getSpiritAndFood(playerId).spirit_current;
+    for (const ring of ordered) {
+      if (spirit <= 0) break;
+      const deficit = ring.max_uses - ring.current_uses;
+      if (deficit === 0) continue;
+      const affordable = Math.floor(spirit / SPIRIT_PER_RING_USE);
+      const restored = Math.min(deficit, affordable);
+      if (restored === 0) break;
+      updateRingUsesAdd.run(restored, ring.id);
+      spirit -= restored * SPIRIT_PER_RING_USE;
+    }
+    updateSpiritDeduct.run(getSpiritAndFood(playerId).spirit_current - spirit, playerId);
+    return spirit;
   },
 );
