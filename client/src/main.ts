@@ -2,6 +2,7 @@ import Phaser from 'phaser';
 import { BootScene } from './scenes/BootScene';
 import { LoginScene } from './scenes/LoginScene';
 import { CampScene } from './scenes/CampScene';
+import { OverworldScene } from './scenes/OverworldScene';
 import { EncounterScene } from './scenes/EncounterScene';
 import { LobbyScene } from './scenes/LobbyScene';
 import { BattleScene } from './scenes/BattleScene';
@@ -119,7 +120,9 @@ const game = new Phaser.Game({
   physics: { default: 'arcade', arcade: { gravity: { x: 0, y: 0 }, debug: false } },
   // BootScene must stay first (it routes by auth state). LoginScene/CampScene
   // are the new auth flow; Encounter/Lobby/Battle are unchanged.
-  scene: [BootScene, LoginScene, CampScene, EncounterScene, LobbyScene, BattleScene],
+  // OverworldScene follows CampScene and does NOT auto-start (reached via the
+  // Sanctum exit door / scene.start). BootScene stays first (routes by auth).
+  scene: [BootScene, LoginScene, CampScene, OverworldScene, EncounterScene, LobbyScene, BattleScene],
 });
 
 window.__game = game;
