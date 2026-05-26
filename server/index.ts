@@ -30,9 +30,11 @@ const gameServer = new Server({
 // E2E ONLY: filterBy(['e2eRoomId']) makes joinOrCreate('battle', { e2eRoomId })
 // match only rooms created with the same id, so parallel Playwright workers each
 // pair into their own isolated room instead of cross-pairing in the global pool
-// (#67). Gated on E2E_TEST_ROUTES so production keeps the pure global pool with
-// zero behavior change (the field is absent in prod, so filterBy would be moot —
-// but we gate it anyway to eliminate any risk).
+// (#67). IMPORTANT: with filterBy active, every PvP connection MUST supply a
+// unique e2eRoomId (via setupBattle → create-battle-room → __encounterSelectPvP).
+// Callers that omit the key land in the undefined-bucket and cross-pair.
+// Gated on E2E_TEST_ROUTES so production (which never sets that env) uses the
+// unfiltered global pool with zero behavior change.
 if (process.env.E2E_TEST_ROUTES === '1') {
   gameServer.define('battle', BattleRoom).filterBy(['e2eRoomId']);
 } else {
