@@ -192,9 +192,9 @@ test('zones: ring-wall fusion consumes two parents and adds a fusion ring', asyn
 // /api/spirit/recharge-all route. A fresh player's rings start full, so the
 // server-confirmed post-state is all carried rings at max uses with spirit never
 // negative (the deterministic, non-battle assertion — depleting uses requires a
-// real duel, covered by spirit.spec.ts). The overlay also exposes a disabled
-// Teleport (8B) control.
-test('zones: meditation overlay recharges (server-confirmed) and shows disabled teleport', async ({ browser }) => {
+// real duel, covered by spirit.spec.ts). The overlay also exposes an enabled
+// [Teleport] button (8B.3 replaced the 8B stub).
+test('zones: meditation overlay recharges (server-confirmed) and shows teleport button', async ({ browser }) => {
   const ctx = await browser.newContext();
   await seedAuthToken(ctx);
   const page = await ctx.newPage();
@@ -206,13 +206,13 @@ test('zones: meditation overlay recharges (server-confirmed) and shows disabled 
     timeout: 5000,
   });
 
-  // A disabled Teleport (8B) control is present in the overlay.
+  // An enabled [Teleport] button is present in the meditation overlay (8B.3).
   const hasTeleport = await page.evaluate(() => {
     const scene = (window as any).__scene as Phaser.Scene;
     return !!scene.children
       .getAll()
       .flatMap((c: any) => (c.getAll ? c.getAll() : [c]))
-      .find((o: any) => o.name === 'teleport-disabled');
+      .find((o: any) => o.name === 'teleport-btn');
   });
   expect(hasTeleport).toBe(true);
 

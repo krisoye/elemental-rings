@@ -625,15 +625,16 @@ export class CampScene extends Phaser.Scene {
     }
   }
 
-  /** Show an error inside the open teleport overlay (if any). */
+  /** Show a teleport error — kept in the scene display list (not the overlay container)
+   *  so E2E can locate it via scene.children.getByName('teleport-error'). */
   private showTeleportError(message: string): void {
-    if (!this.overlay) return;
     const errText = this.add
       .text(CANVAS_W / 2, 420, message, { fontSize: '13px', color: '#ff6666' })
       .setOrigin(0.5)
       .setScrollFactor(0)
+      .setDepth(4001) // above the overlay container (depth 4000)
       .setName('teleport-error');
-    this.overlay.add(errText);
+    this.time.delayedCall(8000, () => { if (errText.active) errText.destroy(); });
   }
 
   /** Bed: sleep confirmation overlay ([Sleep — 25 food] → doSleep). */

@@ -50,13 +50,14 @@ test('overworld: Sanctum door transitions into OverworldScene at spawn', async (
     timeout: 8000,
   });
   await page.waitForFunction(() => !!(window as any).__player, { timeout: 8000 });
-  // Player is positioned at the overworld spawn (x=128, y=128 ± body centering).
+  // 8B.3 anchor-derived spawn: fresh users default to anchor=forest_entry (center
+  // ≈ 336, 208 in the generated map); the scene spawns the player at y+40 → ~(336, 248).
   const pos = await page.evaluate(() => ({
     x: (window as any).__player.x,
     y: (window as any).__player.y,
   }));
-  expect(pos.x).toBeLessThan(300);
-  expect(pos.y).toBeLessThan(300);
+  expect(Math.abs(pos.x - 336)).toBeLessThan(100);
+  expect(Math.abs(pos.y - 248)).toBeLessThan(100);
   await ctx.close();
 });
 
@@ -95,8 +96,10 @@ test('overworld: player collides with the west perimeter wall', async ({ browser
     timeout: 8000,
   });
 
-  // Spawn is at x=128; the west wall fills tile column 0 (0..32). Hold left to
-  // press against it.
+  // 8B.3 anchor-derived spawn puts the player at forest_entry (~336, 248), too far
+  // to reach the west wall in 1.5 s. Pre-position them at x=100 so the collision
+  // assertion is independent of spawn position.
+  await page.evaluate(() => (window as any).__player.setPosition(100, 248));
   await page.keyboard.down('ArrowLeft');
   await page.waitForTimeout(1500);
   const blocked = await page.evaluate(() => (window as any).__player.body.blocked.left);
