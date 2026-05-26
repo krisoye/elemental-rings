@@ -146,12 +146,17 @@ export class EncounterScene extends Phaser.Scene {
     window.__encounterManageBattleHand = (): void => void this.openManageBattleHand();
     window.__encounterResolveWonRing = (choice: 'carry' | 'discard'): void =>
       void this.resolveWonRing(choice);
+    // Discard a carried ring (Manage Battle Hand path) — frees a slot and
+    // auto-carries any pending won ring. Same code path as the per-ring [×].
+    window.__encounterDiscardRing = (ringId: string): void =>
+      void this.discardCarriedRing(ringId);
     window.__encounterState = { pendingWonRing: null };
     this.events.once('shutdown', () => {
       window.__encounterSelect = undefined;
       window.__encounterSelectWithOverrides = undefined;
       window.__encounterManageBattleHand = undefined;
       window.__encounterResolveWonRing = undefined;
+      window.__encounterDiscardRing = undefined;
       window.__encounterState = undefined;
     });
 

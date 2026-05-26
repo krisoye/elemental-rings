@@ -57,6 +57,9 @@ declare global {
     // simple modal offers 'carry' or 'discard'; when carry is full there is no
     // modal — the player is routed to Manage Battle Hand to free a slot.
     __encounterResolveWonRing?: (choice: 'carry' | 'discard') => void;
+    // Discard a carried ring from Manage Battle Hand (frees a slot; auto-carries
+    // any pending won ring). Same path as the per-ring [×] button.
+    __encounterDiscardRing?: (ringId: string) => void;
     // Set while the won-ring modal is open in EncounterScene.
     __encounterState?: {
       pendingWonRing: { ringId: string; element: number } | null;
