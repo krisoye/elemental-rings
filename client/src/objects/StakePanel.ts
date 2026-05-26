@@ -14,6 +14,8 @@ export class StakePanel extends Phaser.GameObjects.Container {
   private readonly titleLbl: Phaser.GameObjects.Text;
   private readonly elemLbl: Phaser.GameObjects.Text;
   private readonly usesLbl: Phaser.GameObjects.Text;
+  private readonly xpLbl: Phaser.GameObjects.Text;
+  private readonly tierLbl: Phaser.GameObjects.Text;
   private readonly lockLbl: Phaser.GameObjects.Text;
   private readonly hintLbl: Phaser.GameObjects.Text;
 
@@ -34,23 +36,31 @@ export class StakePanel extends Phaser.GameObjects.Container {
     this.bg.setStrokeStyle(2, 0xaa8800);
 
     this.titleLbl = scene.add
-      .text(cx, cy - 34, 'THUMB', { fontSize: '9px', color: '#ffcc44' })
+      .text(cx, cy - 36, 'THUMB', { fontSize: '9px', color: '#ffcc44' })
       .setOrigin(0.5);
 
     this.elemLbl = scene.add
-      .text(cx, cy - 14, '—', { fontSize: '10px', color: '#888888' })
+      .text(cx, cy - 22, '—', { fontSize: '10px', color: '#888888' })
       .setOrigin(0.5);
 
     this.usesLbl = scene.add
-      .text(cx, cy + 8, '', { fontSize: '9px', color: '#ffff88' })
+      .text(cx, cy - 5, '', { fontSize: '9px', color: '#ffff88' })
+      .setOrigin(0.5);
+
+    this.xpLbl = scene.add
+      .text(cx, cy + 12, '', { fontSize: '9px', color: '#000000' })
+      .setOrigin(0.5);
+
+    this.tierLbl = scene.add
+      .text(cx, cy + 27, '', { fontSize: '9px', color: '#000000' })
       .setOrigin(0.5);
 
     this.lockLbl = scene.add
-      .text(cx, cy + 24, '', { fontSize: '10px', color: '#ff6666' })
+      .text(cx, cy + 41, '', { fontSize: '10px', color: '#ff6666' })
       .setOrigin(0.5);
 
     this.hintLbl = scene.add
-      .text(cx, cy + 38, 'click to stake', { fontSize: '8px', color: '#666666' })
+      .text(cx, cy + 41, 'click to stake', { fontSize: '8px', color: '#666666' })
       .setOrigin(0.5);
 
     this.bg.setInteractive({ useHandCursor: true });
@@ -58,7 +68,7 @@ export class StakePanel extends Phaser.GameObjects.Container {
       if (!this.escrowed) onAssign();
     });
 
-    this.add([this.bg, this.titleLbl, this.elemLbl, this.usesLbl, this.lockLbl, this.hintLbl]);
+    this.add([this.bg, this.titleLbl, this.elemLbl, this.usesLbl, this.xpLbl, this.tierLbl, this.lockLbl, this.hintLbl]);
     scene.add.existing(this);
   }
 
@@ -77,6 +87,8 @@ export class StakePanel extends Phaser.GameObjects.Container {
       this.usesLbl
         .setText('●'.repeat(ring.current_uses) + '○'.repeat(Math.max(0, used)))
         .setColor('#000000');
+      this.xpLbl.setText(`XP:${ring.xp}`).setColor('#000000');
+      this.tierLbl.setText(`T${ring.tier}`).setColor('#000000');
       this.hintLbl.setText('');
 
       this.escrowed = ring.escrowed === 1;
@@ -93,6 +105,8 @@ export class StakePanel extends Phaser.GameObjects.Container {
       this.bg.setStrokeStyle(2, 0xaa8800);
       this.elemLbl.setText('—').setColor('#888888');
       this.usesLbl.setText('');
+      this.xpLbl.setText('');
+      this.tierLbl.setText('');
       this.lockLbl.setText('');
       this.hintLbl.setText('click to stake');
     }
