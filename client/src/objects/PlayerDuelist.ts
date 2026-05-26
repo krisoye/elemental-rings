@@ -15,9 +15,18 @@ import {
  * suffix marks a gauge that has reached the GDD §6.1 status threshold. Wind and
  * Earth have no gauge (GDD §7.1).
  */
+// GDD §7.2 status badges — one per triangle gauge. Derived from broadcast gauges
+// (gauge ≥ GAUGE_THRESHOLD ⇒ status active). Order matches GAUGE_KEYS / GAUGE_ELEMENTS.
+const STATUS_BADGES: { label: string; color: string }[] = [
+  { label: '🔥 BURN', color: '#ff6644' }, // fireGauge → Burning
+  { label: '💧 DROWN', color: '#44aaff' }, // waterGauge → Drowning
+  { label: '🌿 TANGLE', color: '#55cc44' }, // woodGauge → Entangled
+];
+
 export class PlayerDuelist extends Phaser.GameObjects.Container {
   private readonly hearts: Phaser.GameObjects.Text;
   private readonly gaugeTexts: Phaser.GameObjects.Text[] = [];
+  private readonly statusBadge: Phaser.GameObjects.Text;
 
   constructor(scene: Phaser.Scene) {
     super(scene, PLAYER_X, PLAYER_Y);
@@ -36,20 +45,31 @@ export class PlayerDuelist extends Phaser.GameObjects.Container {
       this.gaugeTexts.push(gt);
     });
 
+    // Active-status badge line beneath the gauges (e.g. "🔥 BURN  💧 DROWN").
+    // Stacks all active statuses; empty when none are active.
+    this.statusBadge = scene.add.text(PLAYER_X + 50, PLAYER_Y + 22, '', {
+      fontSize: '11px',
+      color: '#ffaa44',
+      fontStyle: 'bold',
+    });
+
     scene.add.existing(this);
   }
 
-  /** Sync hearts and gauges to the local player's PlayerState. */
+  /** Sync hearts, gauges, and status badges to the local player's PlayerState. */
   updateFromState(playerState: any): void {
     if (!playerState) return;
     const hearts = playerState.hearts ?? 0;
     this.hearts.setText('♥'.repeat(hearts) + '♡'.repeat(Math.max(0, 3 - hearts)));
 
+    const active: string[] = [];
     GAUGE_KEYS.forEach((key, i) => {
       const val = playerState[key] ?? 0;
-      const active = val >= GAUGE_THRESHOLD;
+      const isActive = val >= GAUGE_THRESHOLD;
       const el = GAUGE_ELEMENTS[i];
-      this.gaugeTexts[i].setText(`${ELEMENT_NAMES[el]}: ${val}${active ? '!' : ''}`);
+      this.gaugeTexts[i].setText(`${ELEMENT_NAMES[el]}: ${val}${isActive ? '!' : ''}`);
+      if (isActive) active.push(STATUS_BADGES[i].label);
     });
+    this.statusBadge.setText(active.join('  '));
   }
 }

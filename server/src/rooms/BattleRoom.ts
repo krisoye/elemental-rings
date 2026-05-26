@@ -4,6 +4,7 @@ import { PlayerState } from '../schemas/PlayerState';
 import { Ring } from '../schemas/Ring';
 import { classifyTiming, resolveBlock } from '../game/BlockResolver';
 import { componentsOf, fusionParents, isFusion } from '../game/ElementSystem';
+import * as StatusEffects from '../game/StatusEffects';
 import { AIController } from '../game/ai/AIController';
 import { makeRng } from '../game/ai/AIProfiles';
 import { generateAILoadout, type SlotSpec } from '../game/ai/AILoadout';
@@ -27,6 +28,7 @@ import {
   XP_THUMB_BUFF,
   XP_THUMB_MID,
   XP_THUMB_ABSORB,
+  GAUGE_SOFT_CAP,
 } from '../game/constants';
 import {
   ElementEnum,
@@ -41,6 +43,24 @@ import {
 
 /** Fixed sessionId used for the virtual AI player (it has no Colyseus client). */
 const AI_ID = 'AI';
+
+/**
+ * Test-only payload for the `__testSetState` handler (E2E_TEST_ROUTES gate).
+ * `target` selects whose state to mutate: 'self' = the sender, 'opponent' = the
+ * other seat (the AI in a vsAI room), or an explicit sessionId. Any provided
+ * field is written; absent fields are left untouched. NEVER reachable in prod.
+ */
+interface TestSetStatePayload {
+  target?: 'self' | 'opponent' | string;
+  hearts?: number;
+  fireGauge?: number;
+  waterGauge?: number;
+  woodGauge?: number;
+  /** Per-slot currentUses overrides; sets isExtinguished accordingly. */
+  uses?: Partial<Record<SlotKey, number>>;
+  /** Per-slot element overrides (so a test can give a defense slot WATER, etc.). */
+  elements?: Partial<Record<SlotKey, number>>;
+}
 
 const ATTACK_SLOTS: ReadonlySet<string> = new Set<AttackSlot>(['a1', 'a2']);
 const DEFENSE_SLOTS: ReadonlySet<string> = new Set<DefenseSlot>(['d1', 'd2']);
@@ -101,6 +121,19 @@ export class BattleRoom extends Room<{ state: BattleState }> {
     this.onMessage('submitDefense', (client, payload: SubmitDefensePayload) =>
       this.handleSubmitDefense(client.sessionId, payload),
     );
+
+    // Test-only state-setter. Mounted ONLY when E2E_TEST_ROUTES=1 (set by the
+    // Playwright webServer env), never in production. Lets E2E status-effect
+    // specs seed an exact gauge / hearts / ring-use configuration on a player
+    // deterministically — engineering a precise gauge value through real timed
+    // play vs the AI is impractical (GDD §7 thresholds depend on uncontested
+    // hits landing at specific counts). The setter only WRITES state; all status
+    // resolution still runs through the authoritative server paths.
+    if (process.env.E2E_TEST_ROUTES === '1') {
+      this.onMessage('__testSetState', (client, payload: TestSetStatePayload) =>
+        this.handleTestSetState(client.sessionId, payload),
+      );
+    }
 
     if (options.vsAI) {
       const personality = options.personality ?? 'AGGRESSIVE';
@@ -241,6 +274,10 @@ export class BattleRoom extends Room<{ state: BattleState }> {
       const ids = Array.from(this.state.players.keys());
       this.state.currentAttackerId = ids[0];
       this.state.phase = 'ATTACK_SELECT';
+      if (this.applyAttackerTurnStart()) {
+        this.notifyAI();
+        return;
+      }
       this.checkAttackForfeit();
       this.notifyAI();
     }
@@ -299,6 +336,34 @@ export class BattleRoom extends Room<{ state: BattleState }> {
   /** A player can still attack iff at least one of their attack rings is lit. */
   private hasUsableAttack(ps: PlayerState): boolean {
     return !ps.a1.isExtinguished || !ps.a2.isExtinguished;
+  }
+
+  /**
+   * GDD §7 start-of-turn status tick for the current attacker. Runs at every
+   * ATTACK_SELECT entry BEFORE checkAttackForfeit (Burning is lethal — design
+   * decision #46). Applies:
+   *   - Burning: −1 heart. If it KOs the attacker, ends the duel (opponent wins).
+   *   - Entangled: the attacker's highest-use battle ring loses 1 use.
+   *
+   * Returns true if the duel ended here (Burning KO) — the caller must then skip
+   * checkAttackForfeit and return after notifyAI(). Does NOT notify the AI itself
+   * (the caller owns the single notifyAI() per transition, like checkAttackForfeit).
+   */
+  private applyAttackerTurnStart(): boolean {
+    const state = this.state;
+    const attackerId = state.currentAttackerId;
+    const ids = Array.from(state.players.keys());
+    const defenderId = ids.find((id) => id !== attackerId)!;
+    const attacker = state.players.get(attackerId)!;
+
+    const { heartLost } = StatusEffects.applyTurnStart(attacker);
+    if (heartLost && attacker.hearts <= 0) {
+      state.winnerId = defenderId;
+      state.phase = 'ENDED';
+      this.finalizeEnded();
+      return true;
+    }
+    return false;
   }
 
   /**
@@ -439,13 +504,24 @@ export class BattleRoom extends Room<{ state: BattleState }> {
     const ring = attacker.getSlot(payload.slot);
     if (ring.isExtinguished) return;
 
-    // Tailwind passive: Wind thumb pays the use cost instead of the attack ring.
+    // Drowning (GDD §7.2): while the attacker's waterGauge ≥ threshold, every
+    // attack throw costs +1 use. The penalty hits the attack ring itself even
+    // when Tailwind covers the base throw cost.
+    const drowningCost = StatusEffects.isDrowning(attacker) ? 1 : 0;
+
+    // Tailwind passive: Wind thumb pays the BASE use cost instead of the attack
+    // ring. The Drowning surcharge always falls on the attack ring.
     const usePaidByStake = StakeResolver.applyTailwind(attacker, ring);
     if (!usePaidByStake) {
-      ring.currentUses = Math.max(0, ring.currentUses - 1);
+      ring.currentUses = Math.max(0, ring.currentUses - 1 - drowningCost);
       ring.isExtinguished = ring.currentUses === 0;
     } else {
-      // Tailwind fired: award the attacker's thumb mid-tier XP.
+      // Tailwind fired: thumb pays the base throw; Drowning still surcharges the ring.
+      if (drowningCost > 0) {
+        ring.currentUses = Math.max(0, ring.currentUses - drowningCost);
+        ring.isExtinguished = ring.currentUses === 0;
+      }
+      // Award the attacker's thumb mid-tier XP.
       this.addXp(id, 'thumb', XP_THUMB_MID);
     }
 
@@ -473,6 +549,55 @@ export class BattleRoom extends Room<{ state: BattleState }> {
       this.defenseSlotKey = payload.slot;
       // Server-authoritative timing: timestamp on message ARRIVAL.
       this.defensePressTime = Date.now();
+    }
+  }
+
+  /**
+   * Test-only state-setter (E2E_TEST_ROUTES gate — handler is registered only in
+   * that mode). Writes an exact gauge/hearts/uses configuration onto a player so
+   * status-effect E2E specs are deterministic. Does NOT advance phase or trigger
+   * any status resolution — the authoritative turn-start tick / cleanse paths
+   * still own all effect logic; this only seeds the inputs.
+   */
+  private handleTestSetState(senderId: string, payload: TestSetStatePayload): void {
+    const ids = Array.from(this.state.players.keys());
+    const opponentId = ids.find((id) => id !== senderId);
+    const targetId =
+      payload.target === 'opponent'
+        ? opponentId
+        : payload.target && payload.target !== 'self'
+          ? payload.target
+          : senderId;
+    if (!targetId) return;
+    const ps = this.state.players.get(targetId);
+    if (!ps) return;
+
+    if (payload.hearts !== undefined) ps.hearts = Math.max(0, payload.hearts);
+    if (payload.fireGauge !== undefined) ps.fireGauge = Math.max(0, payload.fireGauge);
+    if (payload.waterGauge !== undefined) ps.waterGauge = Math.max(0, payload.waterGauge);
+    if (payload.woodGauge !== undefined) ps.woodGauge = Math.max(0, payload.woodGauge);
+
+    if (payload.uses) {
+      for (const key of Object.keys(payload.uses) as SlotKey[]) {
+        const v = payload.uses[key];
+        if (v === undefined) continue;
+        const ring = ps.getSlot(key);
+        ring.currentUses = Math.max(0, v);
+        ring.isExtinguished = ring.currentUses === 0;
+      }
+    }
+
+    if (payload.elements) {
+      for (const key of Object.keys(payload.elements) as SlotKey[]) {
+        const el = payload.elements[key];
+        if (el === undefined) continue;
+        const ring = ps.getSlot(key);
+        ring.element = el;
+        ring.isFusion = isFusion(el);
+        const parents = fusionParents(el);
+        ring.fusionParents.clear();
+        if (parents) ring.fusionParents.push(parents[0], parents[1]);
+      }
     }
   }
 
@@ -536,11 +661,19 @@ export class BattleRoom extends Room<{ state: BattleState }> {
     }
 
     // Increment the defender's matching triangle gauges (FIRE/WATER/WOOD), capped
-    // at 8 (2x the GDD §6.1 threshold of 4). Fusions can fill two gauges at once.
+    // at GAUGE_SOFT_CAP (2x the GDD §7.1 threshold). Fusions can fill two gauges.
     for (const el of result.gaugeElements) {
-      if (el === ElementEnum.FIRE) defenderPlayer.fireGauge = Math.min(8, defenderPlayer.fireGauge + 1);
-      else if (el === ElementEnum.WATER) defenderPlayer.waterGauge = Math.min(8, defenderPlayer.waterGauge + 1);
-      else if (el === ElementEnum.WOOD) defenderPlayer.woodGauge = Math.min(8, defenderPlayer.woodGauge + 1);
+      if (el === ElementEnum.FIRE) defenderPlayer.fireGauge = Math.min(GAUGE_SOFT_CAP, defenderPlayer.fireGauge + 1);
+      else if (el === ElementEnum.WATER) defenderPlayer.waterGauge = Math.min(GAUGE_SOFT_CAP, defenderPlayer.waterGauge + 1);
+      else if (el === ElementEnum.WOOD) defenderPlayer.woodGauge = Math.min(GAUGE_SOFT_CAP, defenderPlayer.woodGauge + 1);
+    }
+
+    // Gauge cleanse (GDD §7.2): a successful catch (BLOCK/PARRY) with a triangle
+    // ring reduces the gauge that element counters — Water catch −fireGauge, Wood
+    // catch −waterGauge, Fire catch −woodGauge. Non-triangle defenses cleanse
+    // nothing. Independent of whether the catch was safe or a weak catch.
+    if ((timing === 'BLOCK' || timing === 'PARRY') && defenderRing) {
+      StatusEffects.applyGaugeCleanse(defenderPlayer, defenderRing.element);
     }
 
     if (defenderRing && this.defenseSlotKey) {
@@ -605,6 +738,12 @@ export class BattleRoom extends Room<{ state: BattleState }> {
       state.rallyActive = false;
       state.volleyedElement = 0;
       state.phase = 'ATTACK_SELECT';
+      // GDD §7 turn-start status tick (Burning/Entangled) runs before the §6.6
+      // attack-ring forfeit check. A Burning KO ends the duel here.
+      if (this.applyAttackerTurnStart()) {
+        this.notifyAI();
+        return;
+      }
       this.checkAttackForfeit();
       this.notifyAI();
     }
