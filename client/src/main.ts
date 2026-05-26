@@ -29,6 +29,20 @@ declare global {
     // Which Sanctum overlay is open ('ringwall'/'bed'/'meditation'/'campfire')
     // or null when none. (8A.2)
     __sanctumOverlayOpen?: string | null;
+    // ── Phase 8B overworld hooks ──────────────────────────────────────────
+    // Latest GET /api/waystones payload, published by OverworldScene on load and
+    // after each attune. Read by E2E to assert real server-backed attunement
+    // state. Cleared on scene shutdown.
+    __waystones?: {
+      aggregateXp: number;
+      waystones: Array<{
+        id: string;
+        name: string;
+        xpThreshold: number;
+        attuned: boolean;
+        meetsThreshold: boolean;
+      }>;
+    };
     __lastExchangeResult: ExchangeResultPayload | null;
     __slotPositions: { x: number; y: number }[];
     __orbLaunchCount: number;

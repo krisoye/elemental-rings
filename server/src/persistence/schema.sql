@@ -28,3 +28,11 @@ CREATE TABLE IF NOT EXISTS loadout (
   d1    TEXT REFERENCES rings(id),
   d2    TEXT REFERENCES rings(id)
 );
+-- #61 — Phase 8B waystone attunement (GDD §10.7). One row per (player, waystone)
+-- the player has permanently attuned. attuned_at is a millisecond epoch.
+CREATE TABLE IF NOT EXISTS waystone_attunements (
+  player_id   TEXT NOT NULL REFERENCES players(id),
+  waystone_id TEXT NOT NULL,
+  attuned_at  INTEGER NOT NULL,
+  PRIMARY KEY (player_id, waystone_id)
+);

@@ -1,16 +1,38 @@
 import Phaser from 'phaser';
 import { Player } from '../objects/world/Player';
 import { InteractionZone } from '../objects/world/InteractionZone';
+import { Waystone } from '../objects/world/Waystone';
+
+declare const __SERVER_URL__: string;
+
+const WS = __SERVER_URL__ || `ws://${window.location.hostname}:2567`;
+const API_BASE = WS.replace(/^ws/, 'http');
+
+/** One entry of the GET /api/waystones payload (server is the authority). */
+interface WaystoneInfo {
+  id: string;
+  name: string;
+  xpThreshold: number;
+  attuned: boolean;
+  meetsThreshold: boolean;
+}
+interface WaystonesPayload {
+  aggregateXp: number;
+  waystones: WaystoneInfo[];
+}
 
 /**
- * Overworld stub (GDD §10 / §10.8 biome-loop seam). A minimal walkable
- * placeholder map reached from the Sanctum's exit door (8A.3). It reuses the
- * exact spatial engine pattern as the Sanctum: tilemap → collision layer →
- * Player at spawn → collider → camera follow + bounds. A `sanctum_return` zone
- * walks the player back into the Sanctum (CampScene).
+ * The Forest biome overworld (GDD §10, Phase 8B). Reached from the Sanctum's
+ * exit door (8A.3). It reuses the spatial-engine pattern: tilemap → collision
+ * layer → Player at spawn → collider → camera follow + bounds, plus a
+ * `sanctum_return` zone that walks the player back into the Sanctum.
  *
- * No waystones, NPCs, or biome content yet — those are 8B/8C. Client-only; no
- * server changes. The scene does not auto-start (it is reached via the door).
+ * Phase 8B.1 adds waystones (GDD §10.7): permanent standing stones the player
+ * walks onto and attunes with E. Attunement is server-enforced (the overworld
+ * itself is per-player/client-side, but the attunement RECORD is a rule). The
+ * scene GETs /api/waystones on create and POSTs /api/waystones/attune on E. No
+ * compass and no teleport yet — those are 8B.2 / 8B.3. The scene does not
+ * auto-start; it is reached via the Sanctum door.
  */
 export class OverworldScene extends Phaser.Scene {
   private player!: Player;
@@ -18,6 +40,10 @@ export class OverworldScene extends Phaser.Scene {
   private wasd!: { W: Phaser.Input.Keyboard.Key; A: Phaser.Input.Keyboard.Key; S: Phaser.Input.Keyboard.Key; D: Phaser.Input.Keyboard.Key };
   private zones: InteractionZone[] = [];
   private activeZone: InteractionZone | null = null;
+  /** Waystone markers keyed by waystone id (for recolor on attune). */
+  private waystones: Map<string, Waystone> = new Map();
+  /** Latest GET /api/waystones payload (mirrored to window.__waystones). */
+  private waystonePayload: WaystonesPayload | null = null;
 
   constructor() {
     super({ key: 'OverworldScene' });
@@ -49,10 +75,11 @@ export class OverworldScene extends Phaser.Scene {
     this.cameras.main.setBounds(0, 0, map.widthInPixels, map.heightInPixels);
     this.cameras.main.startFollow(this.player, true, 0.1, 0.1);
 
-    // Title hint so the placeholder room is legible.
+    // Biome title (pinned to the camera).
     this.add
-      .text(map.widthInPixels / 2, 24, 'OVERWORLD (stub)', { fontSize: '16px', color: '#cfe3ff' })
-      .setOrigin(0.5);
+      .text(16, 16, 'FOREST', { fontSize: '16px', color: '#cfe3ff' })
+      .setScrollFactor(0)
+      .setDepth(500);
 
     // Interaction zones: sanctum_return → back to the Sanctum.
     this.buildZones(map);
@@ -69,9 +96,15 @@ export class OverworldScene extends Phaser.Scene {
       window.__scene = null;
       window.__sanctumInteract = undefined;
       window.__sanctumZones = undefined;
+      window.__waystones = undefined;
       this.zones.forEach((z) => z.destroy());
+      this.waystones.forEach((w) => w.destroy());
       this.zones = [];
+      this.waystones.clear();
     });
+
+    // Load waystone state from the authoritative server and render the markers.
+    void this.loadWaystones(map);
   }
 
   update(): void {
@@ -88,6 +121,97 @@ export class OverworldScene extends Phaser.Scene {
       this.physics.add.overlap(this.player, zone.overlapZone);
       this.zones.push(zone);
     }
+  }
+
+  /**
+   * Fetch GET /api/waystones, then instantiate a Waystone marker for every
+   * `waystone` object on the map, colored by the matching `attuned` flag. The
+   * waystone's wrapped InteractionZone is registered into the shared zone list
+   * so the existing overlap / nearest-zone / E machinery drives it.
+   */
+  private async loadWaystones(map: Phaser.Tilemaps.Tilemap): Promise<void> {
+    const payload = await this.fetchWaystones();
+    if (!payload) return; // unauthenticated → already routed to LoginScene
+    this.cachePayload(payload);
+
+    const byId = new Map(payload.waystones.map((w) => [w.id, w]));
+    const objs = map.getObjectLayer('objects')?.objects ?? [];
+    for (const o of objs) {
+      if (o.name !== 'waystone') continue;
+      const id = this.waystoneIdOf(o);
+      if (!id) continue;
+      const info = byId.get(id);
+      const marker = new Waystone(this, o, id, info?.name ?? id, info?.attuned ?? false, () =>
+        void this.onAttune(id),
+      );
+      this.physics.add.overlap(this.player, marker.interactionZone.overlapZone);
+      this.zones.push(marker.interactionZone);
+      this.waystones.set(id, marker);
+    }
+  }
+
+  /** Read the `waystoneId` custom property off a Tiled object, if present. */
+  private waystoneIdOf(obj: Phaser.Types.Tilemaps.TiledObject): string | null {
+    const props = (obj.properties ?? []) as Array<{ name: string; value: unknown }>;
+    const prop = props.find((p) => p.name === 'waystoneId');
+    return typeof prop?.value === 'string' ? prop.value : null;
+  }
+
+  /** GET /api/waystones with the stored Bearer token. Null on auth failure. */
+  private async fetchWaystones(): Promise<WaystonesPayload | null> {
+    const token = localStorage.getItem('er_token');
+    if (!token) {
+      this.scene.start('LoginScene');
+      return null;
+    }
+    try {
+      const res = await fetch(`${API_BASE}/api/waystones`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (res.status === 401) {
+        localStorage.removeItem('er_token');
+        this.scene.start('LoginScene');
+        return null;
+      }
+      if (!res.ok) return null;
+      return (await res.json()) as WaystonesPayload;
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Attune the given waystone: POST /api/waystones/attune, then recolor the
+   * marker attuned and cache the refreshed payload. The server is authoritative;
+   * the client only reflects the returned state.
+   */
+  private async onAttune(waystoneId: string): Promise<void> {
+    const token = localStorage.getItem('er_token');
+    if (!token) {
+      this.scene.start('LoginScene');
+      return;
+    }
+    try {
+      const res = await fetch(`${API_BASE}/api/waystones/attune`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ waystoneId }),
+      });
+      if (!res.ok) return;
+      const payload = (await res.json()) as WaystonesPayload;
+      this.cachePayload(payload);
+      for (const info of payload.waystones) {
+        this.waystones.get(info.id)?.setAttuned(info.attuned);
+      }
+    } catch {
+      // Network error — leave the marker unchanged; the next GET will reconcile.
+    }
+  }
+
+  /** Store the latest payload and mirror it to window.__waystones for E2E. */
+  private cachePayload(payload: WaystonesPayload): void {
+    this.waystonePayload = payload;
+    window.__waystones = payload;
   }
 
   /** Per-frame: show the prompt for the nearest overlapping zone. */
