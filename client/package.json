@@ -5,7 +5,8 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "gen:maps": "node scripts/gen-overworld-map.mjs"
   },
   "dependencies": {
     "@colyseus/sdk": "^0.17.42",

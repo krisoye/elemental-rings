@@ -48,6 +48,13 @@ if (!hasPlayerCol('food_units')) {
   db.exec('ALTER TABLE players ADD COLUMN food_units INTEGER NOT NULL DEFAULT 100');
 }
 
+// #63 — Phase 8B.3 teleportation: the waystone the player's Sanctum is currently
+// anchored at. Drives overworld spawn placement. Defaults to the Forest entry
+// waystone so existing players (and fresh ones) start anchored there.
+if (!hasPlayerCol('anchored_waystone')) {
+  db.exec("ALTER TABLE players ADD COLUMN anchored_waystone TEXT NOT NULL DEFAULT 'forest_entry'");
+}
+
 // Recompute spirit_max on every boot using the same formula as computeSpiritMax()
 // in PlayerRepo: SPIRIT_BASE + floor(aggregate_ring_xp / XP_SCALER). Template
 // literals embed the constants so this stays in sync when either value changes.
@@ -69,6 +76,37 @@ db.exec(`UPDATE players SET spirit_current = spirit_max WHERE spirit_current < $
 if (!ringCols.some((c) => c.name === 'in_carry')) {
   db.exec('ALTER TABLE rings ADD COLUMN in_carry INTEGER NOT NULL DEFAULT 0');
   backfillCarry();
+}
+
+// #61 — Phase 8B waystone attunement. The table is created by the idempotent
+// schema.sql apply above. Backfill the `forest_entry` attunement for every
+// existing player so everyone starts attuned to the biome's entry waystone
+// (GDD §10.7). Guarded so the one-time backfill never re-runs: it only fires
+// when the table holds no rows yet (first boot after the migration). The
+// INSERT OR IGNORE is itself idempotent, so a re-run could never clobber player
+// attunements — the guard simply avoids a redundant scan on every boot.
+const attunementCount = (
+  db.prepare('SELECT COUNT(*) AS n FROM waystone_attunements').get() as { n: number }
+).n;
+if (attunementCount === 0) {
+  backfillEntryAttunement();
+}
+
+/**
+ * One-time backfill: grant every existing player the `forest_entry` waystone
+ * attunement (attuned_at = now). INSERT OR IGNORE keeps it safe against the
+ * (player_id, waystone_id) primary key. Runs inside a single transaction.
+ */
+function backfillEntryAttunement(): void {
+  const players = db.prepare('SELECT id FROM players').all() as Array<{ id: string }>;
+  const insert = db.prepare(
+    'INSERT OR IGNORE INTO waystone_attunements (player_id, waystone_id, attuned_at) VALUES (?, ?, ?)',
+  );
+  const now = Date.now();
+  const run = db.transaction(() => {
+    for (const player of players) insert.run(player.id, 'forest_entry', now);
+  });
+  run();
 }
 
 /**

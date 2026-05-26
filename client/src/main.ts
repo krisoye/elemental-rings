@@ -29,6 +29,32 @@ declare global {
     // Which Sanctum overlay is open ('ringwall'/'bed'/'meditation'/'campfire')
     // or null when none. (8A.2)
     __sanctumOverlayOpen?: string | null;
+    // ── Phase 8B overworld hooks ──────────────────────────────────────────
+    // Latest GET /api/waystones payload, published by OverworldScene on load and
+    // after each attune. Read by E2E to assert real server-backed attunement
+    // state. Cleared on scene shutdown.
+    __waystones?: {
+      aggregateXp: number;
+      anchor: string;
+      waystones: Array<{
+        id: string;
+        name: string;
+        xpThreshold: number;
+        attuned: boolean;
+        meetsThreshold: boolean;
+      }>;
+    };
+    // Compass HUD state (8B.2), published every OverworldScene update frame.
+    // `visible` is false when no unattuned waystone is within COMPASS_RANGE (or
+    // all are attuned); otherwise it points at `targetId` with a math-angle
+    // `angle` (rad) and `intensity` ∈ [0,1] rising as the player approaches.
+    // Cleared on scene shutdown.
+    __compass?: {
+      visible: boolean;
+      targetId: string | null;
+      angle: number | null;
+      intensity: number | null;
+    };
     __lastExchangeResult: ExchangeResultPayload | null;
     __slotPositions: { x: number; y: number }[];
     __orbLaunchCount: number;
@@ -54,6 +80,20 @@ declare global {
     // #47 fusion hooks — open the fusion modal / fuse two parents directly.
     __campOpenFusion?: () => void;
     __campFuse?: (ringId1: string, ringId2: string) => Promise<string | null>;
+    // #63 teleport hooks — open the teleport modal / travel to a waystone.
+    __campOpenTeleport?: () => Promise<void>;
+    __campTeleport?: (waystoneId: string) => Promise<void>;
+    // Teleport modal snapshot (set by CampScene.openTeleportModal before render).
+    __teleportState?: {
+      anchor: string;
+      rows: Array<{
+        id: string;
+        name: string;
+        attuned: boolean;
+        meetsThreshold: boolean;
+        xpThreshold: number;
+      }>;
+    };
     // Fusion modal availability snapshot (set by FusionPanel.open).
     __fusionState?: {
       recipes: Array<{

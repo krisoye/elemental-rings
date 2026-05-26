@@ -24,8 +24,45 @@ import {
   unlockStake,
   fuseRings,
   setRingXP,
+  getAttunements,
+  attuneWaystone,
+  getAnchor,
+  setAnchor,
 } from '../persistence/PlayerRepo';
 import { FOOD_PER_SLEEP } from '../game/constants';
+import { WAYSTONES, getWaystone, canTeleport } from '../../../shared/waystones';
+
+/**
+ * Build the /api/waystones payload for a player: the catalog joined with the
+ * player's attunement set and aggregate XP. `meetsThreshold` is the pure
+ * teleport-gate predicate (aggregate XP ≥ the waystone's threshold) used by the
+ * 8B.3 teleport flow; it is additive here so the GET and POST share one shape.
+ */
+function buildWaystonePayload(playerId: string): {
+  aggregateXp: number;
+  anchor: string;
+  waystones: Array<{
+    id: string;
+    name: string;
+    xpThreshold: number;
+    attuned: boolean;
+    meetsThreshold: boolean;
+  }>;
+} {
+  const { aggregateXp } = getSpiritStats(playerId);
+  const attuned = new Set(getAttunements(playerId));
+  return {
+    aggregateXp,
+    anchor: getAnchor(playerId),
+    waystones: WAYSTONES.map((w) => ({
+      id: w.id,
+      name: w.name,
+      xpThreshold: w.xpThreshold,
+      attuned: attuned.has(w.id),
+      meetsThreshold: aggregateXp >= w.xpThreshold,
+    })),
+  };
+}
 
 const BCRYPT_ROUNDS = 10;
 
@@ -308,6 +345,62 @@ apiRouter.post('/api/fusion/combine', requireAuth, (req: Request, res: Response)
     const msg = err instanceof Error ? err.message : 'Fusion failed';
     res.status(400).json({ error: msg });
   }
+});
+
+/**
+ * GET /api/waystones — the waystone catalog joined with this player's
+ * attunements and aggregate XP (#61, GDD §10.7). Each entry reports `attuned`
+ * (the player has touched it) and `meetsThreshold` (aggregate XP ≥ its teleport
+ * gate). Requires auth.
+ */
+apiRouter.get('/api/waystones', requireAuth, (req: Request, res: Response): void => {
+  const playerId = req.playerId as string;
+  res.status(200).json(buildWaystonePayload(playerId));
+});
+
+/**
+ * POST /api/waystones/attune — attune the player to a waystone (#61). Body:
+ * { waystoneId: string }. 400 when the id is not in the catalog. Idempotent —
+ * re-attuning an already-attuned waystone succeeds. Returns the same payload as
+ * GET /api/waystones so the client can refresh in one round-trip. Requires auth.
+ */
+apiRouter.post('/api/waystones/attune', requireAuth, (req: Request, res: Response): void => {
+  const playerId = req.playerId as string;
+  const { waystoneId } = req.body ?? {};
+  if (typeof waystoneId !== 'string' || !getWaystone(waystoneId)) {
+    res.status(400).json({ error: 'Unknown waystone' });
+    return;
+  }
+  attuneWaystone(playerId, waystoneId);
+  res.status(200).json(buildWaystonePayload(playerId));
+});
+
+/**
+ * POST /api/teleport — re-anchor the player's Sanctum to a waystone (#63, GDD
+ * §10.7). Body: { waystoneId: string }. Three rejection cases each return 400:
+ * an unknown id, a waystone the player has not attuned, and one whose aggregate
+ * XP teleport gate is not yet met. On success persists the anchor and returns
+ * { anchor }. Requires auth.
+ */
+apiRouter.post('/api/teleport', requireAuth, (req: Request, res: Response): void => {
+  const playerId = req.playerId as string;
+  const { waystoneId } = req.body ?? {};
+  if (typeof waystoneId !== 'string' || !getWaystone(waystoneId)) {
+    res.status(400).json({ error: 'unknown waystone' });
+    return;
+  }
+  if (!getAttunements(playerId).includes(waystoneId)) {
+    res.status(400).json({ error: 'not attuned' });
+    return;
+  }
+  const { aggregateXp } = getSpiritStats(playerId);
+  if (!canTeleport(aggregateXp, waystoneId)) {
+    const def = getWaystone(waystoneId)!;
+    res.status(400).json({ error: `requires ${def.xpThreshold} aggregate XP` });
+    return;
+  }
+  setAnchor(playerId, waystoneId);
+  res.status(200).json({ anchor: waystoneId });
 });
 
 // ───────────────────────────────────────────────────────────────────────────

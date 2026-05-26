@@ -144,6 +144,14 @@ export class CampScene extends Phaser.Scene {
     window.__campOpenFusion = (): void => this.openFusionPanel();
     window.__campFuse = (ringId1: string, ringId2: string): Promise<string | null> =>
       this.doFuse(ringId1, ringId2);
+    // #63 teleport hooks — open the modal / travel directly to a waystone.
+    window.__campOpenTeleport = (): Promise<void> => this.openTeleportModal();
+    window.__campTeleport = (waystoneId: string): Promise<void> =>
+      this.doTeleport(
+        waystoneId,
+        window.__teleportState?.rows.find((r) => r.id === waystoneId)?.name ?? waystoneId,
+      );
+    window.__teleportState = undefined;
 
     this.events.once('shutdown', () => {
       window.__campGoEncounter = undefined;
@@ -154,6 +162,9 @@ export class CampScene extends Phaser.Scene {
       window.__campLeaveAtSanctum = undefined;
       window.__campOpenFusion = undefined;
       window.__campFuse = undefined;
+      window.__campOpenTeleport = undefined;
+      window.__campTeleport = undefined;
+      window.__teleportState = undefined;
       window.__campState = undefined;
       window.__fusionState = undefined;
       window.__player = null;
@@ -456,14 +467,174 @@ export class CampScene extends Phaser.Scene {
         .setInteractive({ useHandCursor: true })
         .on('pointerdown', () => void this.doRechargeAll()),
     );
-    // Teleport stub — present but disabled (8B).
+    // Teleport (8B.3): opens the waystone teleport modal (server-gated).
     c.add(
       this.add
-        .text(CANVAS_W / 2, 300, 'Teleport (8B)', { fontSize: '15px', color: '#555555' })
+        .text(CANVAS_W / 2, 300, '[Teleport]', { fontSize: '15px', color: '#ffcc44' })
         .setOrigin(0.5)
         .setScrollFactor(0)
-        .setName('teleport-disabled'),
+        .setName('teleport-btn')
+        .setInteractive({ useHandCursor: true })
+        .on('pointerdown', () => void this.openTeleportModal()),
     );
+  }
+
+  // ── Teleport / Sanctum anchoring (8B.3, #63) ──────────────────────────────
+
+  /**
+   * Open the teleport modal: GET /api/waystones, then render one row per
+   * waystone in the correct gate state — undiscovered (not attuned) rows are
+   * masked, attuned-but-XP-locked rows show their requirement, and attuned +
+   * unlocked rows expose a [Travel] button. The current anchor is labeled. The
+   * full payload is published to window.__teleportState for E2E before render.
+   */
+  private async openTeleportModal(): Promise<void> {
+    const token = localStorage.getItem('er_token');
+    if (!token) return;
+    let payload: {
+      aggregateXp: number;
+      anchor: string;
+      waystones: Array<{
+        id: string;
+        name: string;
+        xpThreshold: number;
+        attuned: boolean;
+        meetsThreshold: boolean;
+      }>;
+    };
+    try {
+      const res = await fetch(`${API_BASE}/api/waystones`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!res.ok) return;
+      payload = await res.json();
+    } catch {
+      return;
+    }
+
+    // Publish for E2E before rendering.
+    window.__teleportState = {
+      anchor: payload.anchor,
+      rows: payload.waystones.map((w) => ({
+        id: w.id,
+        name: w.name,
+        attuned: w.attuned,
+        meetsThreshold: w.meetsThreshold,
+        xpThreshold: w.xpThreshold,
+      })),
+    };
+
+    const c = this.beginOverlay('teleport', 'TELEPORT');
+    let y = 150;
+    for (const w of payload.waystones) {
+      const isAnchor = w.id === payload.anchor;
+      const suffix = isAnchor ? ' (anchored here)' : '';
+      if (!w.attuned) {
+        // Undiscovered — masked, non-actionable.
+        c.add(
+          this.add
+            .text(CANVAS_W / 2, y, `??? — undiscovered${suffix}`, {
+              fontSize: '14px',
+              color: '#555555',
+            })
+            .setOrigin(0.5)
+            .setScrollFactor(0),
+        );
+      } else if (!w.meetsThreshold) {
+        // Attuned but XP-locked — show the gate, no Travel button.
+        c.add(
+          this.add
+            .text(CANVAS_W / 2, y, `${w.name}${suffix}`, { fontSize: '14px', color: '#888888' })
+            .setOrigin(0.5)
+            .setScrollFactor(0),
+        );
+        c.add(
+          this.add
+            .text(
+              CANVAS_W / 2,
+              y + 20,
+              `Requires ${w.xpThreshold} aggregate XP (have ${payload.aggregateXp})`,
+              { fontSize: '12px', color: '#666666' },
+            )
+            .setOrigin(0.5)
+            .setScrollFactor(0),
+        );
+        y += 20;
+      } else {
+        // Attuned + unlocked — actionable [Travel] button.
+        c.add(
+          this.add
+            .text(CANVAS_W / 2 - 60, y, `${w.name}${suffix}`, { fontSize: '14px', color: '#cccccc' })
+            .setOrigin(0.5)
+            .setScrollFactor(0),
+        );
+        c.add(
+          this.add
+            .text(CANVAS_W / 2 + 80, y, '[Travel]', { fontSize: '14px', color: '#ffcc44' })
+            .setOrigin(0.5)
+            .setScrollFactor(0)
+            .setName(`travel-${w.id}`)
+            .setInteractive({ useHandCursor: true })
+            .on('pointerdown', () => void this.doTeleport(w.id, w.name)),
+        );
+      }
+      y += 44;
+    }
+  }
+
+  /**
+   * POST /api/teleport to re-anchor the Sanctum. On success closes the modal and
+   * shows a brief confirmation toast; on a 400 surfaces the server's error inline
+   * in the open overlay. The anchor in window.__teleportState is updated so E2E
+   * can read the new state without a re-fetch.
+   */
+  private async doTeleport(waystoneId: string, waystoneName: string): Promise<void> {
+    const token = localStorage.getItem('er_token');
+    if (!token) return;
+    let res: Response;
+    try {
+      res = await fetch(`${API_BASE}/api/teleport`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ waystoneId }),
+      });
+    } catch {
+      this.showTeleportError('Network error during teleport');
+      return;
+    }
+    if (res.ok) {
+      this.closeOverlay();
+      const msg = this.add
+        .text(CANVAS_W / 2, CANVAS_H / 2 - 50, `Sanctum re-anchored near ${waystoneName}`, {
+          fontSize: '14px',
+          color: '#aaffaa',
+          backgroundColor: '#222222',
+          padding: { x: 8, y: 4 },
+        })
+        .setOrigin(0.5)
+        .setScrollFactor(0)
+        .setDepth(600)
+        .setName('teleport-confirm');
+      this.time.delayedCall(2000, () => msg.destroy());
+      if (window.__teleportState) {
+        window.__teleportState.anchor = waystoneId;
+      }
+    } else {
+      const body = (await res.json().catch(() => ({}))) as { error?: string };
+      this.showTeleportError(body?.error ?? 'Teleport failed');
+    }
+  }
+
+  /** Show a teleport error — kept in the scene display list (not the overlay container)
+   *  so E2E can locate it via scene.children.getByName('teleport-error'). */
+  private showTeleportError(message: string): void {
+    const errText = this.add
+      .text(CANVAS_W / 2, 420, message, { fontSize: '13px', color: '#ff6666' })
+      .setOrigin(0.5)
+      .setScrollFactor(0)
+      .setDepth(4001) // above the overlay container (depth 4000)
+      .setName('teleport-error');
+    this.time.delayedCall(8000, () => { if (errText.active) errText.destroy(); });
   }
 
   /** Bed: sleep confirmation overlay ([Sleep — 25 food] → doSleep). */

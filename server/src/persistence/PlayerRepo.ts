@@ -77,6 +77,21 @@ const insertLoadout = db.prepare(
   `INSERT INTO loadout (player_id, thumb, a1, a2, d1, d2)
    VALUES (@player_id, @thumb, @a1, @a2, @d1, @d2)`,
 );
+// #61 — waystone attunement (idempotent via the composite primary key).
+const insertAttunement = db.prepare(
+  `INSERT OR IGNORE INTO waystone_attunements (player_id, waystone_id, attuned_at)
+   VALUES (?, ?, ?)`,
+);
+const selectAttunements = db.prepare(
+  `SELECT waystone_id FROM waystone_attunements WHERE player_id = ?`,
+);
+// #63 — Sanctum anchor (the waystone the overworld spawns the player beside).
+const selectAnchor = db.prepare(
+  `SELECT anchored_waystone FROM players WHERE id = ?`,
+);
+const updateAnchor = db.prepare(
+  `UPDATE players SET anchored_waystone = ? WHERE id = ?`,
+);
 
 const selectByUsername = db.prepare(`SELECT * FROM players WHERE username = ?`);
 const selectById = db.prepare(
@@ -132,6 +147,10 @@ export const createPlayer = db.transaction(
     // five starter rings remain at the Sanctum, well within the carry_cap of 10.
     const setCarry = db.prepare('UPDATE rings SET in_carry = 1 WHERE id = ?');
     for (const ringId of Object.values(defaultSlots)) setCarry.run(ringId);
+
+    // #61 — every new player starts attuned to the Forest entry waystone so the
+    // overworld's first teleport destination is available immediately (GDD §10.7).
+    insertAttunement.run(playerId, 'forest_entry', Date.now());
 
     return playerId;
   },
@@ -649,6 +668,45 @@ export function getSpiritStats(playerId: string): { aggregateXp: number; spiritM
 /** Return the raw sum of XP across all rings owned by the player. */
 export function getAggregateXp(playerId: string): number {
   return getSpiritStats(playerId).aggregateXp;
+}
+
+// ---------------------------------------------------------------------------
+// #61 — Waystone attunement (Phase 8B, GDD §10.7)
+// ---------------------------------------------------------------------------
+
+/** The ids of every waystone the player has attuned (permanent, append-only). */
+export function getAttunements(playerId: string): string[] {
+  return (selectAttunements.all(playerId) as Array<{ waystone_id: string }>).map(
+    (r) => r.waystone_id,
+  );
+}
+
+/**
+ * Attune the player to a waystone. Idempotent — repeated calls for the same
+ * (player, waystone) are no-ops via the composite primary key. Caller validates
+ * that waystoneId is a known waystone (the catalog lives in shared/waystones.ts).
+ */
+export function attuneWaystone(playerId: string, waystoneId: string): void {
+  insertAttunement.run(playerId, waystoneId, Date.now());
+}
+
+/**
+ * The waystone the player's Sanctum is currently anchored at (#63, GDD §10.7).
+ * Drives the overworld spawn point. Falls back to `forest_entry` for a player
+ * row that predates the column default (defensive — the migration backfills it).
+ */
+export function getAnchor(playerId: string): string {
+  const row = selectAnchor.get(playerId) as { anchored_waystone: string } | undefined;
+  return row?.anchored_waystone ?? 'forest_entry';
+}
+
+/**
+ * Re-anchor the player's Sanctum to a waystone (#63). Caller is responsible for
+ * validating that the waystone is known, attuned, and meets the teleport gate;
+ * this is a bare persistence write.
+ */
+export function setAnchor(playerId: string, waystoneId: string): void {
+  updateAnchor.run(waystoneId, playerId);
 }
 
 /**
