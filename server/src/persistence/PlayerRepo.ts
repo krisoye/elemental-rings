@@ -1,7 +1,7 @@
 import { v4 as uuidv4 } from 'uuid';
 import { db } from './db';
 import { ElementEnum } from '../../../shared/types';
-import { SPIRIT_PER_RING_USE, SPIRIT_BASE } from '../game/constants';
+import { SPIRIT_PER_RING_USE, SPIRIT_BASE, XP_SCALER } from '../game/constants';
 
 /** A persisted player row (no password hash exposed to callers of read helpers). */
 export interface PlayerRow {
@@ -186,10 +186,10 @@ const selectSpiritFood = db.prepare(
 const updateSpiritDeduct = db.prepare(
   `UPDATE players SET spirit_current = spirit_current - ? WHERE id = ?`,
 );
-// spirit_max is XP-derived (SPIRIT_BASE + SUM(ring xp)), so restoring sets
-// spirit_current to the freshly computed max rather than the stored column.
+// spirit_max is XP-derived (SPIRIT_BASE + floor(SUM(ring xp) / XP_SCALER)), so
+// restoring sets spirit_current to the freshly computed max, not the column.
 const selectAggregateRingXp = db.prepare(
-  `SELECT COALESCE(SUM(xp), 0) AS xp FROM rings WHERE owner_id = ?`,
+  `SELECT COALESCE(SUM(xp), 0) AS xp_sum FROM rings WHERE owner_id = ?`,
 );
 const updateSpiritCurrent = db.prepare(
   `UPDATE players SET spirit_current = ? WHERE id = ?`,
@@ -477,13 +477,13 @@ export function spendSpirit(playerId: string, amount: number): void {
 
 /**
  * Compute the player's spirit_max from their aggregate ring XP:
- *   spirit_max = SPIRIT_BASE + SUM(rings.xp)
+ *   spirit_max = SPIRIT_BASE + floor(SUM(rings.xp) / XP_SCALER)
  * Always derived live so it reflects the current inventory (rings won/lost/
  * leveled change the total). Does not write to the DB — see refreshSpiritMax.
  */
 export function computeSpiritMax(playerId: string): number {
-  const row = selectAggregateRingXp.get(playerId) as { xp: number } | undefined;
-  return SPIRIT_BASE + (row?.xp ?? 0);
+  const row = selectAggregateRingXp.get(playerId) as { xp_sum: number } | undefined;
+  return SPIRIT_BASE + Math.floor((row?.xp_sum ?? 0) / XP_SCALER);
 }
 
 /**

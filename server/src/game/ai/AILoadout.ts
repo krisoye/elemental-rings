@@ -16,6 +16,19 @@ export interface SlotSpec {
 type LoadoutTemplate = Record<SlotKey, number>;
 
 /**
+ * Per-personality starting XP on the AI's thumb (stake) ring. Tougher
+ * personalities stake a more-seasoned ring, so beating them transfers more XP
+ * (and thus a larger spirit_max boost). Only the thumb carries this XP; all
+ * other AI slots start at 0.
+ */
+const PERSONALITY_THUMB_XP: Record<AIPersonality, number> = {
+  AGGRESSIVE: 10,
+  DEFENSIVE: 20,
+  STATUS_HUNTER: 30,
+  RESILIENT: 40,
+};
+
+/**
  * Per-personality loadout archetypes. Each entry is a valid, strategically
  * coherent variant; the RNG picks one per duel. Thumb is the staked ring.
  *
@@ -79,7 +92,10 @@ export function generateAILoadout(
   const template = templates[rng.intBetween(0, templates.length - 1)];
   const spec: Partial<Record<SlotKey, SlotSpec>> = {};
   for (const [slot, element] of Object.entries(template) as [SlotKey, number][]) {
-    spec[slot] = { element, tier, currentUses: maxUses, maxUses, xp };
+    // The thumb carries personality-based XP; every other slot stays at `xp`
+    // (0 by default). Beating the AI transfers that thumb XP to the winner.
+    const slotXp = slot === 'thumb' ? PERSONALITY_THUMB_XP[personality] : xp;
+    spec[slot] = { element, tier, currentUses: maxUses, maxUses, xp: slotXp };
   }
   return spec;
 }

@@ -37,9 +37,12 @@ function chargeThumb(ps: PlayerState): void {
  * Each buffed ring gets +1 currentUses (maxUses raised to match if needed),
  * and isExtinguished is cleared. Stops when thumb uses run out or all slots
  * have been visited.
+ *
+ * Returns the number of rings buffed (0 if the passive did not apply) so the
+ * caller can award thumb XP per buffed ring.
  */
-export function applySetupPassive(ps: PlayerState): void {
-  if (!thumbActive(ps)) return;
+export function applySetupPassive(ps: PlayerState): number {
+  if (!thumbActive(ps)) return 0;
 
   let targetEl: number;
   let order: ReadonlyArray<'a1' | 'a2' | 'd1' | 'd2'>;
@@ -51,9 +54,10 @@ export function applySetupPassive(ps: PlayerState): void {
     targetEl = EARTH;
     order = ['d1', 'd2', 'a1', 'a2'];
   } else {
-    return;
+    return 0;
   }
 
+  let buffed = 0;
   for (const slot of order) {
     if (ps.thumb.currentUses <= 0) break;
     const ring = ps.getSlot(slot);
@@ -62,7 +66,9 @@ export function applySetupPassive(ps: PlayerState): void {
     ring.maxUses = Math.max(ring.maxUses, ring.currentUses);
     ring.isExtinguished = false;
     chargeThumb(ps);
+    buffed += 1;
   }
+  return buffed;
 }
 
 /**
