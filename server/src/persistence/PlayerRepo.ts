@@ -1,7 +1,7 @@
 import { v4 as uuidv4 } from 'uuid';
 import { db } from './db';
 import { ElementEnum } from '../../../shared/types';
-import { SPIRIT_PER_RING_USE } from '../game/constants';
+import { SPIRIT_PER_RING_USE, SPIRIT_BASE } from '../game/constants';
 
 /** A persisted player row (no password hash exposed to callers of read helpers). */
 export interface PlayerRow {
@@ -186,9 +186,15 @@ const selectSpiritFood = db.prepare(
 const updateSpiritDeduct = db.prepare(
   `UPDATE players SET spirit_current = spirit_current - ? WHERE id = ?`,
 );
-const updateSpiritRestore = db.prepare(
-  `UPDATE players SET spirit_current = spirit_max WHERE id = ?`,
+// spirit_max is XP-derived (SPIRIT_BASE + SUM(ring xp)), so restoring sets
+// spirit_current to the freshly computed max rather than the stored column.
+const selectAggregateRingXp = db.prepare(
+  `SELECT COALESCE(SUM(xp), 0) AS xp FROM rings WHERE owner_id = ?`,
 );
+const updateSpiritCurrent = db.prepare(
+  `UPDATE players SET spirit_current = ? WHERE id = ?`,
+);
+const updateSpiritMax = db.prepare(`UPDATE players SET spirit_max = ? WHERE id = ?`);
 const updateFoodAdd = db.prepare(`UPDATE players SET food_units = food_units + ? WHERE id = ?`);
 const updateFoodDeduct = db.prepare(`UPDATE players SET food_units = food_units - ? WHERE id = ?`);
 const updateRingUsesAdd = db.prepare(
@@ -469,9 +475,31 @@ export function spendSpirit(playerId: string, amount: number): void {
   updateSpiritDeduct.run(amount, playerId);
 }
 
-/** Restore the spirit gauge to its maximum (resting effect). */
+/**
+ * Compute the player's spirit_max from their aggregate ring XP:
+ *   spirit_max = SPIRIT_BASE + SUM(rings.xp)
+ * Always derived live so it reflects the current inventory (rings won/lost/
+ * leveled change the total). Does not write to the DB — see refreshSpiritMax.
+ */
+export function computeSpiritMax(playerId: string): number {
+  const row = selectAggregateRingXp.get(playerId) as { xp: number } | undefined;
+  return SPIRIT_BASE + (row?.xp ?? 0);
+}
+
+/**
+ * Recompute spirit_max from aggregate ring XP and persist it to the players
+ * column. Call after XP is awarded (or rings are transferred) so a subsequent
+ * /api/me reflects the updated cap. Returns the new spirit_max.
+ */
+export function refreshSpiritMax(playerId: string): number {
+  const max = computeSpiritMax(playerId);
+  updateSpiritMax.run(max, playerId);
+  return max;
+}
+
+/** Restore the spirit gauge to its (XP-derived) maximum (resting effect). */
 export function restoreSpirit(playerId: string): void {
-  updateSpiritRestore.run(playerId);
+  updateSpiritCurrent.run(computeSpiritMax(playerId), playerId);
 }
 
 /** Add food units to the player's larder. */

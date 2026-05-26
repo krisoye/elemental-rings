@@ -14,3 +14,8 @@ export const STARTER_GOLD = 200;
 export const FOOD_PER_SLEEP = 25;
 export const SPIRIT_PER_RING_USE = 1;
 export const MERCHANT_FOOD_MARKUP = 2;
+
+// Spirit gauge maximum is XP-derived: spirit_max = SPIRIT_BASE + aggregate ring
+// XP. SPIRIT_BASE is the flat floor every player starts with (replaces the old
+// flat 30 default).
+export const SPIRIT_BASE = 50;

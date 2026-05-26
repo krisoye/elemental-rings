@@ -36,16 +36,28 @@ if (!hasPlayerCol('carry_cap')) {
   db.exec('ALTER TABLE players ADD COLUMN carry_cap INTEGER NOT NULL DEFAULT 10');
 }
 
-// #41 — spirit system: spirit gauge + food economy.
+// #41 — spirit system: spirit gauge + food economy. Defaults are 50 (SPIRIT_BASE)
+// for new rows; the spirit_max is otherwise XP-derived (SPIRIT_BASE + ring XP).
 if (!hasPlayerCol('spirit_max')) {
-  db.exec('ALTER TABLE players ADD COLUMN spirit_max INTEGER NOT NULL DEFAULT 30');
+  db.exec('ALTER TABLE players ADD COLUMN spirit_max INTEGER NOT NULL DEFAULT 50');
 }
 if (!hasPlayerCol('spirit_current')) {
-  db.exec('ALTER TABLE players ADD COLUMN spirit_current INTEGER NOT NULL DEFAULT 30');
+  db.exec('ALTER TABLE players ADD COLUMN spirit_current INTEGER NOT NULL DEFAULT 50');
 }
 if (!hasPlayerCol('food_units')) {
   db.exec('ALTER TABLE players ADD COLUMN food_units INTEGER NOT NULL DEFAULT 100');
 }
+
+// XP-derived spirit_max backfill: recompute every player's spirit_max as
+// 50 + aggregate ring XP, and lift spirit_current to at least the old floor (50)
+// so pre-existing rows (seeded at the flat 30 default) gain the larger gauge.
+// Idempotent: re-running recomputes the same value and only raises low currents.
+db.exec(
+  `UPDATE players
+     SET spirit_max = 50 + COALESCE(
+       (SELECT SUM(xp) FROM rings WHERE owner_id = players.id), 0)`,
+);
+db.exec('UPDATE players SET spirit_current = spirit_max WHERE spirit_current < 50');
 
 // #40 — carry flag on rings. On first introduction of the column, backfill it:
 // rings already assigned to a loadout slot become carried, then remaining slots

@@ -328,6 +328,12 @@ export class BattleRoom extends Room<{ state: BattleState }> {
         }
       }
 
+      // Recompute each human player's XP-derived spirit_max now that XP has been
+      // awarded and rings transferred/granted, so a post-battle /api/me reflects
+      // the new cap. AI players have no DB record and are skipped.
+      if (winnerPlayerId) PlayerRepo.refreshSpiritMax(winnerPlayerId);
+      if (loserPlayerId) PlayerRepo.refreshSpiritMax(loserPlayerId);
+
       // Release escrow on every human thumb ring still escrowed.
       for (const sessionId of sessions) {
         const tid = this.sessionToRingIds.get(sessionId)?.thumb;

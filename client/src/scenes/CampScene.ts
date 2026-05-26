@@ -183,7 +183,8 @@ export class CampScene extends Phaser.Scene {
     this.statLineText.setText(
       `Day: ${player.game_day ?? 0} | Gold: ${player.gold ?? 0} | ` +
         `Food: ${player.food_units ?? 0} | ` +
-        `Spirit: ${player.spirit_current ?? 0}/${player.spirit_max ?? 0}`,
+        `Spirit: ${player.spirit_current ?? 0}/${player.spirit_max ?? 0} | ` +
+        `XP: ${player.aggregate_xp ?? 0}`,
     );
 
     const battleHandIds = new Set(
@@ -214,6 +215,7 @@ export class CampScene extends Phaser.Scene {
       spirit_current: player.spirit_current ?? 0,
       spirit_max: player.spirit_max ?? 0,
       food_units: player.food_units ?? 0,
+      aggregate_xp: player.aggregate_xp ?? 0,
     };
   }
 

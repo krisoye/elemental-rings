@@ -48,6 +48,8 @@ declare global {
       spirit_current: number;
       spirit_max: number;
       food_units: number;
+      // XP-derived spirit: aggregate ring XP (spirit_max = SPIRIT_BASE + this).
+      aggregate_xp: number;
     };
     // #40 encounter modal hooks.
     __encounterManageBattleHand?: () => void;
