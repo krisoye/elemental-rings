@@ -7,8 +7,26 @@ The spirit gauge represents the protagonist's spiritual energy — the force tha
 The protagonist has **no independent XP pool**. Their spiritual power is entirely derived from their rings. The spirit gauge maximum is a direct function of **aggregate ring XP** — the sum of XP across every ring the protagonist owns (including those stored in the Sanctum). As rings gain XP through battle, the aggregate rises and the spirit gauge maximum grows.
 
 ```
-spirit_max = f(aggregate_ring_xp)   [exact formula: TBD during tuning]
+spirit_max = SPIRIT_BASE + floor(aggregate_ring_xp / XP_SCALER)
 ```
+
+| Constant | Value | Location |
+|---|---|---|
+| `SPIRIT_BASE` | 50 | `server/src/game/constants.ts` |
+| `XP_SCALER` | 5 | `server/src/game/constants.ts` |
+
+Both constants are in one file — changing them automatically updates the boot-time backfill, all runtime recharge logic, and the sleep restore, with no other code to touch.
+
+**Reference values:**
+
+| Aggregate ring XP | spirit_max |
+|---|---|
+| 0 (new player) | 50 |
+| 100 | 70 |
+| 250 | 100 |
+| 500 | 150 |
+| 1 000 | 250 |
+| 2 500 | 550 |
 
 **Implications:**
 - Use rings in battle → rings earn XP → aggregate rises → spirit max increases
@@ -21,7 +39,7 @@ spirit_max = f(aggregate_ring_xp)   [exact formula: TBD during tuning]
 Rings are not heavy — they are spiritually demanding. Attuning to too many simultaneously fragments the wielder's focus. The number of rings a protagonist can carry on an expedition is determined by their **spirit gauge maximum**, not physical weight.
 
 - Base spirit capacity → `carry_cap = 10` rings (starting)
-- As spirit max grows, carry cap grows proportionally
+- _(Phase 8 planned)_ As spirit max grows, carry cap grows proportionally — the exact ratio is an open question (§13)
 - Garments from merchants can further expand carry cap beyond the spirit-derived baseline
 - Rings stored in the Sanctum count toward aggregate XP even when not carried
 
