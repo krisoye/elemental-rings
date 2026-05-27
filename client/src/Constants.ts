@@ -78,6 +78,13 @@ export const THUMB_PASSIVE_INFO: Record<number, { name: string; effect: string }
   4: { name: 'Deep Roots', effect: 'A lost heart is redirected — Thumb loses a use instead' },
 };
 
+// #85 Fix 1 — width (px) of the Thumb staked-passive reminder strip in the Ring
+// Storage overlay (CampScene) and Manage Battle Hand modal. Wider than the 70px
+// Thumb stake card (STAKE_CARD_WIDTH) so the longest base passive — WATER's
+// "A successful block refunds the defending ring's use (Thumb pays)" — wraps to a
+// readable number of lines instead of one word per line clipped at maxLines.
+export const PASSIVE_STRIP_WIDTH = 88;
+
 // Triangle element indices for the 3-gauge HUD (FIRE/WATER/WOOD).
 export const GAUGE_ELEMENTS = [0, 1, 4];
 export const GAUGE_KEYS = ['fireGauge', 'waterGauge', 'woodGauge'];

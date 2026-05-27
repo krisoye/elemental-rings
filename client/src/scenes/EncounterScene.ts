@@ -118,16 +118,27 @@ export class EncounterScene extends Phaser.Scene {
         .setInteractive({ useHandCursor: true });
       rects.set(m.choice, rect);
 
-      // Personality label
+      // Personality label. #85 Fix 4 — 11px + wordWrap(86) + center so longer
+      // labels (e.g. "Status-hunter") fit within the 90px card instead of
+      // overflowing its edges.
       this.add
-        .text(x, markerY - 40, m.label, { fontSize: '13px', color: '#ffffff' })
+        .text(x, markerY - 40, m.label, {
+          fontSize: '11px',
+          color: '#ffffff',
+          align: 'center',
+          wordWrap: { width: 86 },
+        })
         .setOrigin(0.5);
 
-      // Stake element label (filled in after preview fetch)
+      // Stake element label (filled in after preview fetch). #85 Fix 4 — set
+      // wordWrap(86) at construction (not only when the preview arrives) so the
+      // multi-line stake text wraps within the 90px card from the first render.
       const stakeLabel = this.add
         .text(x, markerY + 30, m.choice === 'PVP' ? '' : '…', {
           fontSize: '11px',
           color: '#ffffffaa',
+          align: 'center',
+          wordWrap: { width: 86 },
         })
         .setOrigin(0.5);
       stakeLabels.set(m.choice, stakeLabel);
@@ -634,9 +645,13 @@ export class EncounterScene extends Phaser.Scene {
     // the player only sees spare carried rings available for assignment.
     const slottedIds = new Set(Object.values(this.manageLoadout).filter(Boolean) as string[]);
     const availableRings = this.manageRings.filter((r) => !slottedIds.has(r.id));
-    const ringY = CANVAS_H / 2 + 45;
+    // #85 Fix 3 — push the carried-rings section down 49px so the label + row clear
+    // the (now uncapped) Thumb passive strip below the battle slots. ringY 45→94,
+    // carriedLbl y CANVAS_H/2-5 → CANVAS_H/2+44. The 520px panel (y=28–548) still
+    // contains the shifted rows.
+    const ringY = CANVAS_H / 2 + 94;
     const carriedLbl = this.add
-      .text(CANVAS_W / 2, CANVAS_H / 2 - 5, 'Carried rings (select one, then a slot):', {
+      .text(CANVAS_W / 2, CANVAS_H / 2 + 44, 'Carried rings (select one, then a slot):', {
         fontSize: '12px',
         color: '#aaccff',
       })
@@ -672,7 +687,9 @@ export class EncounterScene extends Phaser.Scene {
     });
 
     // ── Recharge controls (spirit-powered, mirrors Sanctum) ───────────────
-    const rechargeY = CANVAS_H / 2 + 185;
+    // #85 Fix 3 — shifted 35px down (185→220) to follow the lowered carried-rings
+    // row; at y≈508 it stays within the 520px panel (y=28–548).
+    const rechargeY = CANVAS_H / 2 + 220;
     const rechargeBtn = this.add
       .text(CANVAS_W / 2 - 100, rechargeY, '[Recharge]', { fontSize: '13px', color: '#ffcc44' })
       .setOrigin(0.5)
@@ -711,13 +728,15 @@ export class EncounterScene extends Phaser.Scene {
     if (!thumbRing) return; // no Thumb staked → no reminder
     const info = THUMB_PASSIVE_INFO[thumbRing.element];
     const text = info ? `${info.name}\n${info.effect}` : `No passive\nFused rings grant no passive`;
+    // #85 Fix 3 — drop the 6-line cap so the longest base passive (WATER/Wellspring,
+    // ~65 chars) renders in full. The carried-rings section below was shifted down
+    // 49px (renderManageModal) so the now-taller strip never overlaps it.
     const strip = this.add
       .text(thumbX, slotY + 46, text, {
         fontSize: '9px',
         color: '#ffcc88',
         align: 'center',
         wordWrap: { width: 100 },
-        maxLines: 6,
         lineSpacing: 1,
       })
       .setOrigin(0.5, 0)

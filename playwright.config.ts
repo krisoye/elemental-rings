@@ -28,6 +28,7 @@ const SOLO_SPECS = [
   'fusion.spec.ts',
   'npc-population.spec.ts',
   'overworld-transition.spec.ts',
+  'ring-storage-ux.spec.ts',
   'sanctum-movement.spec.ts',
   'sanctum-zones.spec.ts',
   'spirit.spec.ts',

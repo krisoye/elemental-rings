@@ -3,7 +3,7 @@ import { InventoryGrid, type RingData } from '../objects/InventoryGrid';
 import { LoadoutPanel, type LoadoutSlot } from '../objects/LoadoutPanel';
 import { StakePanel } from '../objects/StakePanel';
 import { FusionPanel } from '../objects/FusionPanel';
-import { ELEMENT_NAMES, CANVAS_W, CANVAS_H, THUMB_PASSIVE_INFO } from '../Constants';
+import { ELEMENT_NAMES, CANVAS_W, CANVAS_H, THUMB_PASSIVE_INFO, PASSIVE_STRIP_WIDTH } from '../Constants';
 import { Player } from '../objects/world/Player';
 import { InteractionZone } from '../objects/world/InteractionZone';
 import { getTalisman } from '../../../shared/talismans';
@@ -20,6 +20,12 @@ const BATTLE_SLOTS = ['thumb', 'a1', 'a2', 'd1', 'd2'] as const;
 // Thumb column (adopted at x=580) and never overlaps the LoadoutPanel battle
 // slots that begin at x=670 to its right.
 const STAKE_CARD_WIDTH = 70;
+
+// #85 Fix 2A — the inventory grids in the Ring Storage overlay clip to this many
+// rows; beyond that the ▲/▼ arrows + mouse wheel scroll the grid. 3 rows (6 rings)
+// fit comfortably above the y=430 status echo without colliding with the action
+// buttons relocated to the y=96 header row.
+const RINGWALL_VISIBLE_ROWS = 3;
 
 // The off-screen holding origin for the reusable panel instances. The panels are
 // created once and parked here while the spatial room is shown; 8A.2 re-parents
@@ -179,6 +185,8 @@ export class CampScene extends Phaser.Scene {
       window.__campOpenTeleport = undefined;
       window.__campTeleport = undefined;
       window.__campHitTestRing = undefined;
+      window.__campSanctumScroll = undefined;
+      window.__campLoadoutScroll = undefined;
       window.__teleportState = undefined;
       window.__campState = undefined;
       window.__fusionState = undefined;
@@ -446,6 +454,14 @@ export class CampScene extends Phaser.Scene {
    */
   private openRingwallOverlay(): void {
     const c = this.beginOverlay('ringwall', 'RING STORAGE', () => {
+      // #85 Fix 2A — tear down the wheel handler + scroll hooks/masks before the
+      // grids are released back off-screen (a stale mask on a parked grid would
+      // clip nothing but leak a Graphics object).
+      this.input.off('wheel', this.onRingwallWheel, this);
+      this.sanctumGrid.setVisibleRows(0);
+      this.loadoutGrid.setVisibleRows(0);
+      window.__campSanctumScroll = undefined;
+      window.__campLoadoutScroll = undefined;
       this.releasePanel(c, this.sanctumGrid);
       this.releasePanel(c, this.loadoutGrid);
       this.releasePanel(c, this.stakePanel);
@@ -456,11 +472,22 @@ export class CampScene extends Phaser.Scene {
       window.__campHitTestRing = undefined;
     });
 
-    // Column headers.
-    c.add(this.add.text(40, 96, 'At Sanctum', { fontSize: '13px', color: '#cccccc' }).setScrollFactor(0));
-    const loadoutHdr = this.add.text(300, 96, this.loadoutHeaderText.text, { fontSize: '13px', color: '#cccccc' }).setScrollFactor(0);
-    c.add(loadoutHdr);
-    c.add(this.add.text(580, 96, 'Battle Hand', { fontSize: '13px', color: '#cccccc' }).setScrollFactor(0));
+    // #85 Fix 2B — column headers paired with their action buttons on one row
+    // (y=96), above the grids, so the actions are never buried under an
+    // overflowing inventory. Header text at its column x, then a bracket-style
+    // action 12px + the header width to its right.
+    this.addHeaderWithAction(
+      c, 40, 96, 'At Sanctum', '[Add to Loadout]', '#aaffaa',
+      () => void this.addSelectedToLoadout(),
+    );
+    this.addHeaderWithAction(
+      c, 300, 96, this.loadoutHeaderText.text, '[Leave at Sanctum]', '#ffaaaa',
+      () => void this.leaveSelectedAtSanctum(),
+    );
+    this.addHeaderWithAction(
+      c, 580, 96, 'Battle Hand', '[Fuse Rings]', '#cc88ff',
+      () => this.openFusionPanel(),
+    );
 
     // Adopt the reusable grids/panels into the overlay.
     this.adoptPanel(c, this.sanctumGrid, 40, 120);
@@ -468,28 +495,28 @@ export class CampScene extends Phaser.Scene {
     this.adoptPanel(c, this.stakePanel, 580, 120);
     this.adoptPanel(c, this.loadoutPanel, 670, 120);
 
-    // Carry move buttons.
-    c.add(
-      this.add
-        .text(40, 400, '[Add to Loadout]', { fontSize: '13px', color: '#aaffaa' })
-        .setScrollFactor(0)
-        .setInteractive({ useHandCursor: true })
-        .on('pointerdown', () => void this.addSelectedToLoadout()),
-    );
-    c.add(
-      this.add
-        .text(300, 400, '[Leave at Sanctum]', { fontSize: '13px', color: '#ffaaaa' })
-        .setScrollFactor(0)
-        .setInteractive({ useHandCursor: true })
-        .on('pointerdown', () => void this.leaveSelectedAtSanctum()),
-    );
-    c.add(
-      this.add
-        .text(580, 400, '[Fuse Rings]', { fontSize: '13px', color: '#cc88ff' })
-        .setScrollFactor(0)
-        .setInteractive({ useHandCursor: true })
-        .on('pointerdown', () => this.openFusionPanel()),
-    );
+    // #85 Fix 2A — cap both grids at RINGWALL_VISIBLE_ROWS visible rows now that
+    // they are positioned in the overlay (the mask geometry needs the live world
+    // position). Grids with ≤3 rows show no arrows and behave exactly as before.
+    this.sanctumGrid.setVisibleRows(RINGWALL_VISIBLE_ROWS);
+    this.loadoutGrid.setVisibleRows(RINGWALL_VISIBLE_ROWS);
+    // Mouse wheel over a scrollable grid scrolls it; over a non-scrollable grid or
+    // outside both is a no-op. Torn down in the overlay's onClose above.
+    this.input.on('wheel', this.onRingwallWheel, this);
+
+    // E2E scroll hooks — fire the same scrollBy path as the arrows/wheel. Cleared
+    // in overlayOnClose. publishScrollState mirrors the live row state into
+    // __campState so a test can assert before/after each scroll.
+    window.__campSanctumScroll = (delta: number): void => {
+      this.sanctumGrid.scrollBy(delta);
+      this.publishScrollState();
+    };
+    window.__campLoadoutScroll = (delta: number): void => {
+      this.loadoutGrid.scrollBy(delta);
+      this.publishScrollState();
+    };
+    this.publishScrollState();
+
     // Live status echo (errors from carry / assign).
     c.add(this.add.text(40, 430, this.statusText.text, { fontSize: '12px', color: '#ff8888' }).setName('overlay-status').setScrollFactor(0));
 
@@ -545,6 +572,91 @@ export class CampScene extends Phaser.Scene {
       cam.startFollow(this.player, true, 0.1, 0.1);
       return { found: true, hit: out.indexOf(bg) !== -1 };
     };
+  }
+
+  /**
+   * #85 Fix 2B — add a column header at (x, y) paired with a bracket-style action
+   * label 12px to its right. Both live on the overlay container (camera-pinned).
+   * The action width is computed from the header text width so the gap is stable
+   * across the three columns regardless of header length.
+   */
+  private addHeaderWithAction(
+    c: Phaser.GameObjects.Container,
+    x: number,
+    y: number,
+    headerText: string,
+    actionText: string,
+    actionColor: string,
+    onClick: () => void,
+  ): void {
+    const header = this.add
+      .text(x, y, headerText, { fontSize: '13px', color: '#cccccc' })
+      .setScrollFactor(0);
+    c.add(header);
+    const action = this.add
+      .text(x + header.width + 12, y, actionText, { fontSize: '13px', color: actionColor })
+      .setScrollFactor(0)
+      .setInteractive({ useHandCursor: true })
+      .on('pointerdown', onClick);
+    c.add(action);
+  }
+
+  /**
+   * #85 Fix 2A — route a mouse-wheel event to whichever inventory grid the pointer
+   * is over (if any), scrolling it one row per notch. The pointer's screen
+   * position is tested against each grid's clip rectangle (world transform +
+   * getMaskSize). A wheel outside both grids, or over a non-scrollable grid, is a
+   * no-op. Bound while the ring-storage overlay is open; removed in onClose.
+   */
+  private onRingwallWheel(
+    pointer: Phaser.Input.Pointer,
+    _over: unknown,
+    _dx: number,
+    deltaY: number,
+  ): void {
+    if (this.overlayName !== 'ringwall') return;
+    const dir = deltaY > 0 ? 1 : -1;
+    const grid = this.gridUnderPointer(pointer);
+    if (!grid) return;
+    grid.scrollBy(dir);
+    this.publishScrollState();
+  }
+
+  /**
+   * Return the inventory grid whose visible clip rectangle contains the pointer's
+   * screen position, or null. The overlay is camera-pinned (scrollFactor 0), so a
+   * grid's getWorldTransformMatrix tx/ty is its top-left in screen space and the
+   * pointer's plain x/y compares directly.
+   */
+  private gridUnderPointer(pointer: Phaser.Input.Pointer): InventoryGrid | null {
+    for (const grid of [this.sanctumGrid, this.loadoutGrid]) {
+      const m = grid.getWorldTransformMatrix();
+      const { width, height } = grid.getMaskSize();
+      if (
+        pointer.x >= m.tx &&
+        pointer.x <= m.tx + width &&
+        pointer.y >= m.ty &&
+        pointer.y <= m.ty + height
+      ) {
+        return grid;
+      }
+    }
+    return null;
+  }
+
+  /**
+   * #85 Fix 2A — mirror both grids' live scroll state into __campState so E2E can
+   * assert it before/after every scroll. Only meaningful while the ring-storage
+   * overlay is open (the grids are masked); a no-op when __campState is absent.
+   */
+  private publishScrollState(): void {
+    if (!window.__campState) return;
+    window.__campState.sanctumScrollRow = this.sanctumGrid.getScrollRow();
+    window.__campState.sanctumTotalRows = this.sanctumGrid.getTotalRows();
+    window.__campState.sanctumVisibleRows = this.sanctumGrid.getVisibleRows();
+    window.__campState.loadoutScrollRow = this.loadoutGrid.getScrollRow();
+    window.__campState.loadoutTotalRows = this.loadoutGrid.getTotalRows();
+    window.__campState.loadoutVisibleRows = this.loadoutGrid.getVisibleRows();
   }
 
   /**
@@ -975,6 +1087,11 @@ export class CampScene extends Phaser.Scene {
       aggregate_xp: player.aggregate_xp ?? 0,
       staked_passive: this.stakedPassive,
     };
+
+    // #85 Fix 2A — refreshPools rebuilds __campState wholesale, which can happen
+    // while the ring-storage overlay is open (after a carry move reloads). Re-mirror
+    // the grids' live scroll state so the E2E scroll fields are never dropped.
+    this.publishScrollState();
   }
 
   /**
@@ -994,17 +1111,18 @@ export class CampScene extends Phaser.Scene {
     if (!this.passiveLabel) {
       // Beneath the stake card (adopted at x=580, y=120; the StakePanel card bg is
       // 70px wide → spans x≈580–650, then the LoadoutPanel battle slots begin at
-      // x=670). Constrain the strip to the 70px-wide Thumb column so it wraps within
-      // that column and never overlaps the defensive/attack ring slots to its right.
+      // x=670). #85 Fix 1 — widen the strip to PASSIVE_STRIP_WIDTH (88px) and drop
+      // the 6-line cap so the longest base passive (WATER/Wellspring) renders in
+      // full. 88px still wraps within the Thumb column without reaching the battle
+      // slots at x=670, and no maxLines means no clipping.
       this.passiveLabel = this.add
         .text(580, 230, text, {
           fontSize: '10px',
           color: '#ffcc88',
-          wordWrap: { width: STAKE_CARD_WIDTH },
-          maxLines: 6,
+          wordWrap: { width: PASSIVE_STRIP_WIDTH },
           lineSpacing: 2,
         })
-        .setFixedSize(STAKE_CARD_WIDTH, 0)
+        .setFixedSize(PASSIVE_STRIP_WIDTH, 0)
         .setScrollFactor(0)
         .setDepth(4001) // above the overlay container (depth 4000)
         .setName('staked-passive-strip');
