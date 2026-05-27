@@ -9,7 +9,7 @@
 - Post-battle → reorganize loadout, absorb won ring, return exhausted rings to inventory
 - Return to camp → full recharge after one game day, reassess full inventory
 - Level up rings → fuse them into more powerful variants at shrines
-- Higher player XP unlocks new world areas and stronger opponents
+- Higher aggregate ring XP unlocks new world areas and stronger opponents
 
 ### Tone
 Nobody dies. Monsters flee when beaten and steal a ring when they win. NPCs hand over their staked ring on loss and walk away. The world is alive, consequential, but never grim.

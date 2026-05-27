@@ -18,7 +18,8 @@ Each section lives in its own file. Read only what you need.
 | 7 | Status Effects | [gdd-07-status-effects.md](gdd-07-status-effects.md) | Gauge mechanics, statuses, Shadow curse |
 | 8 | Player Progression | [gdd-08-player-progression.md](gdd-08-player-progression.md) | Player XP, world gating, inventory |
 | 9 | Staking Economy | [gdd-09-staking-economy.md](gdd-09-staking-economy.md) | Stake rules, jewelry positions, self-regulation |
-| 10 | Overworld | [gdd-10-overworld.md](gdd-10-overworld.md) | Biomes, detection, NPC types, locations; §10.13 short-range blink; §10.14 overworld battle-hand (Tab) |
+| 10 | Overworld | [gdd-10-overworld.md](gdd-10-overworld.md) | Biomes, detection, NPC types, Sanctum, waystones, anchorages, teleportation; §10.13 short-range blink; §10.14 overworld battle-hand (Tab) |
+| 10r | World Regions & Build Decomposition | [gdd-10-regions.md](gdd-10-regions.md) | Phase 8 build phases (8A–8E), Forest region screen manifest (§10.15), 8D asset mapping (§10.16), 8E BiomeScene architecture (§10.17) |
 | 11 | UI and Information Display | [gdd-11-ui.md](gdd-11-ui.md) | HUD, ring reveal, status display |
 | 12 | Spirit System | [gdd-12-spirit-system.md](gdd-12-spirit-system.md) | Spirit gauge, carry capacity, ring recharge, food/sleep; §12.7 short-range blink cost; §12.8 ambush premium |
 | 13 | Open Questions | [gdd-13-open-questions.md](gdd-13-open-questions.md) | Unresolved design decisions |
