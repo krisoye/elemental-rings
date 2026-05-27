@@ -90,6 +90,10 @@ export class BattleHandOverlay {
     } catch {
       return;
     }
+    // Auto-carry the pending won ring if carry has room — avoids showing the
+    // "discard a carried ring to keep it" prompt when space is available.
+    await this.tryAutoCarryPending();
+    if (this.manageModal) return; // closed during async auto-carry
     this.renderManageModal();
   }
 

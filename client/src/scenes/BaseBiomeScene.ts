@@ -27,6 +27,9 @@ interface NpcInfo {
   x: number;
   y: number;
   element: number;
+  /** Stable loadout seed (= hashNpcId) so the battle-ai room reproduces the
+   * same staked element shown on the overworld marker (#111). */
+  aiSeed?: number;
 }
 
 declare const __SERVER_URL__: string;
@@ -122,9 +125,17 @@ export abstract class BaseBiomeScene extends Phaser.Scene {
   /** NPC marker graphics (ellipse + label), tracked for shutdown removal. */
   private npcGraphics: Phaser.GameObjects.GameObject[] = [];
   /** The NPC currently within detectionRadius() (nearest), or null when none. */
-  private detectedNpc: { id: string; personality: string; x: number; y: number } | null = null;
+  private detectedNpc: {
+    id: string;
+    personality: string;
+    x: number;
+    y: number;
+    aiSeed?: number;
+  } | null = null;
   /** Camera-pinned Approach [E] detection prompt; created lazily, reused/hidden. */
   private npcPrompt: Phaser.GameObjects.Text | null = null;
+  /** #112 — camera-pinned persistent HUD (Day · Gold · Food · Spirit · XP). */
+  private hudText: Phaser.GameObjects.Text | null = null;
   /** #88 — true when this create() restored the player from window.__duelOrigin. */
   private returnedFromDuel = false;
   /** #87 Part A — double-click-to-blink controller (onto interaction zones). */
@@ -249,6 +260,21 @@ export abstract class BaseBiomeScene extends Phaser.Scene {
       .setScrollFactor(0)
       .setDepth(500);
 
+    // #112 — persistent resource HUD pinned to the top-right corner. Sits below
+    // the compass (depth 500) and above the world; right-aligned 12px from the
+    // edge. Populated immediately and refreshed on every relevant server event.
+    this.hudText = this.add
+      .text(this.scale.width - 12, 10, '', {
+        fontSize: '13px',
+        color: '#e8e0d0',
+        backgroundColor: '#00000088',
+        padding: { x: 8, y: 4 },
+      })
+      .setOrigin(1, 0)
+      .setScrollFactor(0)
+      .setDepth(490);
+    void this.refreshHud();
+
     // Compass HUD (8B.2) — hidden until the first update() finds a target.
     this.compass = new Compass(this);
     window.__compass = { visible: false, targetId: null, angle: null, intensity: null };
@@ -275,7 +301,10 @@ export abstract class BaseBiomeScene extends Phaser.Scene {
     window.__overworldToggleBattleHand = (): void => this.toggleBattleHand();
 
     // #87 Part A — double-click an interaction zone within range to blink onto it.
-    this.blink = new BlinkController(this, this.player, () => this.overlayOpen);
+    // #112 — refresh the HUD after a blink so the spirit readout reflects the spend.
+    this.blink = new BlinkController(this, this.player, () => this.overlayOpen, () =>
+      void this.refreshHud(),
+    );
     this.blink.register(this.zones);
 
     window.__player = this.player;
@@ -309,6 +338,8 @@ export abstract class BaseBiomeScene extends Phaser.Scene {
       this.npcGraphics = [];
       this.npcPrompt?.destroy();
       this.npcPrompt = null;
+      this.hudText?.destroy();
+      this.hudText = null;
       this.zones.forEach((z) => z.destroy());
       this.waystones.forEach((w) => w.destroy());
       this.compass.destroy();
@@ -494,6 +525,7 @@ export abstract class BaseBiomeScene extends Phaser.Scene {
       this.scene.start('EncounterScene', {
         npcId: this.detectedNpc.id,
         personality: this.detectedNpc.personality as AIPersonality,
+        aiSeed: this.detectedNpc.aiSeed,
       });
       return;
     }
@@ -1022,6 +1054,7 @@ export abstract class BaseBiomeScene extends Phaser.Scene {
     this.scene.start('EncounterScene', {
       npcId: npc.id,
       personality: npc.personality as AIPersonality,
+      aiSeed: npc.aiSeed,
       ambush: true,
     });
   }
@@ -1046,7 +1079,13 @@ export abstract class BaseBiomeScene extends Phaser.Scene {
     }
 
     if (nearest) {
-      this.detectedNpc = { id: nearest.id, personality: nearest.personality, x: nearest.x, y: nearest.y };
+      this.detectedNpc = {
+        id: nearest.id,
+        personality: nearest.personality,
+        x: nearest.x,
+        y: nearest.y,
+        aiSeed: nearest.aiSeed,
+      };
       const elementName = ELEMENT_NAMES[nearest.element] ?? '?';
       this.showNpcPrompt(`${elementName} duelist — Approach [E]`);
       window.__detectedNpc = { id: nearest.id, personality: nearest.personality };
@@ -1084,6 +1123,46 @@ export abstract class BaseBiomeScene extends Phaser.Scene {
     this.waystonePayload = payload;
     window.__waystones = payload;
     this.updateAnchorageVisuals(payload.waystones);
+    // #112 — the waystone payload updates on most state-changing server
+    // interactions (initial load, attune, teleport, sleep, recharge), so refresh
+    // the resource HUD here to keep Day/Gold/Food/Spirit/XP current.
+    void this.refreshHud();
+  }
+
+  /**
+   * #112 — fetch the authoritative player state from GET /api/me and repaint the
+   * persistent resource HUD (Day · Gold · Food · Spirit · XP). The server is the
+   * source of truth; on any network/auth failure the HUD is left as-is.
+   */
+  private async refreshHud(): Promise<void> {
+    const token = localStorage.getItem('er_token');
+    if (!token || !this.hudText) return;
+    try {
+      const res = await fetch(`${API_BASE}/api/me`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      // The scene may have shut down during the await; bail if the text is gone.
+      if (!res.ok || !this.hudText) return;
+      const data: {
+        player: {
+          game_day?: number;
+          gold?: number;
+          food_units?: number;
+          spirit_current?: number;
+          spirit_max?: number;
+          aggregate_xp?: number;
+        };
+      } = await res.json();
+      const p = data.player;
+      const xpStr = (p.aggregate_xp ?? 0).toLocaleString();
+      const spiritStr = `${p.spirit_current ?? 0}/${p.spirit_max ?? 0}`;
+      this.hudText.setText(
+        `Day ${p.game_day ?? 1}  ·  Gold ${p.gold ?? 0}  ·  Food ${p.food_units ?? 0}` +
+          `  ·  Spirit ${spiritStr}  ·  XP ${xpStr}`,
+      );
+    } catch {
+      // Network failure — leave the HUD showing its last good value.
+    }
   }
 
   /** Per-frame: show the prompt for the nearest overlapping zone. */
