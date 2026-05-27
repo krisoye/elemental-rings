@@ -68,7 +68,7 @@ Each passive fires at specific moments during battle and **costs the Thumb ring 
 ### 9.4 Staked Ring XP
 - The staked ring earns passive XP through its use cost each time its passive triggers
 - A ring used as a permanent stake slowly levels up through its passive role
-- Higher XP stakes provide stronger buffs — a maxed Tier 2 staked ring provides noticeably more than a Tier 1
+- Higher XP stakes provide more passive durability — a maxed Tier 2 staked ring has more uses than a Tier 1, so its passive triggers more times before the Thumb extinguishes. The passive effect per trigger is the same; the advantage is longevity and the number of times it fires during a duel
 - This creates a reason to stake high-value rings even at personal risk
 
 ### 9.5 Gold Rewards

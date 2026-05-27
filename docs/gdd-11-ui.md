@@ -27,7 +27,7 @@ The attack is **telegraphed before the defender commits**: when the attacker thr
 When a ring is extinguished during battle the use count for that element type drops to 0 and the element icon becomes inactive in the HUD. Both players can see exactly which element types are exhausted.
 
 ### 11.5 Status Effect Display
-Active status effects are shown in the battle HUD alongside the affected player's hearts. The status name, icon, and remaining duration (in turns) are visible to both players.
+Active status effects are shown in the battle HUD alongside the affected player's hearts. The status name, icon, and current gauge value are visible to both players. Statuses persist as long as the gauge meets or exceeds the threshold — they have no fixed turn duration (see §7.1 for gauge mechanics). The Shadow gauge additionally shows how many HUD elements are currently hidden.
 
 ### 11.6 Passive Trigger Visual (Phase 6+)
 When a Thumb passive triggers mid-battle (Wellspring block refund, Deep Roots heart guard, Tailwind attack refund), a brief elemental pulse effect plays on the Thumb ring — color matching the element. Both players see this, signaling that the passive fired and the Thumb ring lost a use. *Visual not yet implemented; flagged for Phase 6.*

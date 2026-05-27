@@ -8,11 +8,13 @@
 - The two parent rings are **consumed** by the fusion — they no longer exist as separate rings
 - Fusing is a long-term gain (higher tier, more uses, more power) but a short-term cost (both parents lost, new ring must earn XP)
 
-> **Design note (v4.5):** Earlier drafts included same-element upgrades (Fire+Fire→Lightning, etc.) and elements that no longer exist in v4 (Lightning, Ice, Metal, Lava, Frost, Ash, Obsidian). The v4 element system uses only 5 base elements (Fire/Water/Earth/Wind/Wood). All fusions are cross-element pairs — there are no same-element upgrade paths.
+> **Design note (v4.5/v5.0):** Earlier drafts included same-element upgrades (Fire+Fire→Lightning, etc.) and elements that no longer exist in v4 (Lightning, Ice, Metal, Lava, Frost, Ash, Obsidian). The v4 element system uses 5 base elements (Fire/Water/Earth/Wind/Wood) plus Shadow (a special 6th element obtained only as a drop — see §3.5). All base fusions are cross-element pairs; there are no same-element upgrade paths. Shadow fuses with all 5 base elements to produce 5 additional dark-variant Tier 2 fusions (see §5.2 Shadow Fusions).
 
 ### 5.2 Fusion Table (All Tier 2 Recipes)
 
-There are **10 Tier 2 fusions** — one for every distinct pair of the 5 base elements. All are valid. Each appears in the code as a named fusion element (see `ElementEnum` in `shared/types.ts`).
+There are **15 Tier 2 fusions**: 10 base-element fusions (every distinct pair of the 5 base elements) and 5 Shadow fusions (Shadow + each base element). All are valid Tier 2 rings.
+
+**Base fusions (10):**
 
 | Fusion | Parents | Name | Gauge contribution (uncontested hit) |
 |---|---|---|---|
@@ -28,6 +30,18 @@ There are **10 Tier 2 fusions** — one for every distinct pair of the 5 base el
 | Wind + Earth | Wind, Earth | **Dust** | None (neither parent is a triangle element) |
 
 Only triangle components (Fire, Water, Wood) contribute to gauges. Wind and Earth carry no gauge weight in any fusion.
+
+**Shadow fusions (5) — dark-variant Tier 2:**
+
+These require a Shadow drop ring as a parent. Obtainable only at shrines; Shadow cannot be crafted, only found (§3.5). Shadow fusions participate in the Shadow gauge / Curse system rather than the triangle gauge system; their specific combat mechanics require a dedicated design pass.
+
+| Fusion | Parents | Name |
+|---|---|---|
+| Shadow + Fire | Shadow, Fire | **Eclipse** |
+| Shadow + Water | Shadow, Water | **Void** |
+| Shadow + Earth | Shadow, Earth | **Abyss** |
+| Shadow + Wind | Shadow, Wind | **Wraith** |
+| Shadow + Wood | Shadow, Wood | **Plague** |
 
 ### 5.3 Tier 3 Fusions
 

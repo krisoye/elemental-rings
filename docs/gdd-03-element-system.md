@@ -51,7 +51,7 @@ Fusion rings combine two different base elements. There are **10 fusion rings** 
 | Water + Wind | Water + Wind  | Storm        |
 | Water + Earth| Water + Earth | Mud          |
 | Wood + Wind  | Wood + Wind   | Thornado     |
-| Wood + Earth | Wood + Earth  | Nature/Bloom |
+| Wood + Earth | Wood + Earth  | Bloom |
 | Wind + Earth | Wind + Earth  | Dust         |
 
 **Gauge rule:** only triangle-element components contribute gauges. Wind and Earth components contribute nothing. A dual-triangle fusion (e.g. Steam = Fire + Water) fills **both** parent gauges on an uncontested hit. See §7.1 for the full per-fusion table.
@@ -76,7 +76,7 @@ A single defense ring can only engage **one** attack component. It automatically
 
 **Tiebreaker:** when equally matched against both components, align to the component listed first on the ring (always deterministic).
 
-**Example — Forest (Water + Wood) attack vs single base-element defense (Parry timing):**
+**Example — Tidal (Water + Wood) attack vs single base-element defense (Parry timing):**
 
 | Defense ring | Auto-aligns to | Engaged component result | Unengaged component (NO_BLOCK) | Net outcome |
 |---|---|---|---|---|
@@ -86,7 +86,7 @@ A single defense ring can only engage **one** attack component. It automatically
 
 No single base-element ring fully stops a dual-triangle fusion attack without giving something up — the defender always absorbs at least one heart or triggers a rally that continues the exchange. Fire and Wood defenses both generate a rally (via their STRONG component match); Water defense neutralises the Water component and absorbs the Wood component as NO_BLOCK.
 
-**Example — Forest (Water + Wood) attack — all timing outcomes with Fire defense:**
+**Example — Tidal (Water + Wood) attack — all timing outcomes with Fire defense:**
 
 | Timing | Wood component (Fire aligned) | Water component (NO_BLOCK) | Net |
 |--------|-------------------------------|---------------------------|-----|
@@ -95,11 +95,13 @@ No single base-element ring fully stops a dual-triangle fusion attack without gi
 | Block | Block Strong → safe | −1 ♥ · +Water gauge | −1 ♥ · +Water gauge |
 | Parry | Parry Strong → rally | −1 ♥ · +Water gauge | −1 ♥ · +Water gauge · rally |
 
+**Note:** All examples in §3.4 use the Tidal (Water + Wood) ring. "Tidal" was formerly called "Forest" in earlier GDD drafts — the canonical v4 name is **Tidal** (see §5.2).
+
 #### Countering fusion attacks with a fusion defense
 
 A fusion defense ring applies the same auto-align rule per component — giving the defender two coverage slots instead of one. A well-chosen fusion defense can neutralise both components of an incoming fusion attack.
 
-**Example — Forest (Water + Wood) attack vs Steam (Fire + Water) defense (Parry timing):**
+**Example — Tidal (Water + Wood) attack vs Steam (Fire + Water) defense (Parry timing):**
 
 | Defense component | Attack component aligned to | Relationship | Result |
 |---|---|---|---|
@@ -114,7 +116,7 @@ Fusion defense rings are the primary tool for cleanly answering fusion attacks �
 
 When a fusion defense ring faces a single base-element attack, both defense components can potentially engage — but only one attack must be handled. The auto-align rule picks the STRONGEST defense component; the other is simply unused (there is no second attack for it to defend against).
 
-**Example — Fire attack vs Forest (Water + Wood) defense (Parry timing):**
+**Example — Fire attack vs Tidal (Water + Wood) defense (Parry timing):**
 
 | Defense component | vs Fire attack | Relationship | Result |
 |---|---|---|---|
@@ -123,7 +125,7 @@ When a fusion defense ring faces a single base-element attack, both defense comp
 
 Net: rally triggered · no heart lost · Forest ring −1 use.
 
-**Coverage profile of Forest in a defense slot:**
+**Coverage profile of Tidal in a defense slot:**
 
 | Incoming attack | Component engaged | Relationship | Outcome |
 |---|---|---|---|
@@ -139,18 +141,47 @@ Forest defense is STRONG against two of the three triangle elements and NEUTRAL 
 Fusion-vs-fusion component assignment uses a **greedy auto-align** algorithm: each defense component (in defender-ring order) is assigned to the unmatched attack component it is STRONGEST against (STRONG > NEUTRAL > WEAK). Ties break by the attack component's listed order (first listed wins). The result is fully deterministic — no randomness, fully reproducible.
 
 ### 3.5 Shadow (Special Case)
-Shadow is the only element that cannot be fused or crafted from base elements. It exists outside the normal system.
 
-- **How to obtain:** Rare drop only, found in dark/underground areas of the overworld
-- **No fusion recipe exists** for Shadow
-- **Cannot be upgraded** via same-element fusion
-- **Thematic identity:** Uncanny, unpredictable, a mystery the lore can explore
+Shadow exists outside the element pentagon. It cannot be crafted from base rings — it is obtained solely as a rare overworld drop in dark underground areas.
 
-**Shadow relationships:**
-- Beats: Lightning, Wind
-- Loses to: Fire, Earth
+**How to obtain:** Rare drop only. Underground/Cave biome. Cannot be purchased, fused, or created from other rings.
 
-> **Known inconsistency:** "Lightning" does not exist in the v4 element enum (it was an earlier-draft fusion that was removed). Shadow matchups referencing Lightning will be revised when Shadow is brought into active scope.
-- **Passive ability:** Every Shadow attack has a 25% chance to inflict Cursed regardless of the element matchup (see Section 7)
+**Fusion:** Shadow fuses with all 5 base elements to produce 5 Tier 2 dark-variant fusions (Eclipse, Void, Abyss, Wraith, Plague — see §5.2). These are the rarest fusions: a Shadow drop ring is required as a parent and the recipe can only be completed at a shrine. Shadow itself must be found before any dark-variant fusion is accessible.
+
+#### Shadow Matchups
+
+Shadow has its own asymmetric matchup table, independent of the Fire→Wood→Water→Fire triangle:
+
+| Relationship | Element | Reason |
+|---|---|---|
+| **Shadow beats** | Wood | Darkness suppresses growth |
+| **Shadow loses to** | Fire | Light illuminates and dispels darkness |
+| **Shadow neutral** | Water, Earth, Wind | No inherent advantage either direction |
+
+Shadow vs. Shadow is neutral (mirror match).
+
+#### Staked Shadow Passive
+
+When Shadow is the staked Thumb ring, the **last 20% of every telegraph duration is hidden from the opponent** — the orb disappears from the screen ~180 ms before impact, forcing the defender to anticipate hit timing from the first 80% of the animation only. This is an information-denial passive; the attack cannot be reacted to at the last moment.
+
+#### Shadow Gauge — Curse
+
+Shadow uses a **Shadow gauge** that builds on uncontested hits only (no-block or mistime), identical to triangle gauge rules. It does not build during successful rally chains. The gauge persists throughout the duel and progressively hides the **Cursed player's ring and heart information from themselves** — they must track from memory; their opponent still sees everything.
+
+| Shadow gauge | Newly hidden |
+|---|---|
+| 1 | A1 use count |
+| 2 | A2 use count |
+| 3 | D1 use count |
+| 4 | D2 use count |
+| 5 | Hearts |
+
+The gauge caps at 5. The Cursed player can still use rings normally.
+
+**Cleansing the Shadow gauge** follows the same parry/block rule as triangle cleanse (§7.1):
+- **Parry with Fire** (STRONG timing) → entire shadow gauge clears; all hidden information restores at once
+- **Block with Fire** (BLOCK timing) → shadow gauge −1; most-recently-hidden item restores
+
+Fire is the natural counter to Shadow — loading Fire defense rings is the correct preparation.
 
 ---

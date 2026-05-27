@@ -20,16 +20,16 @@ The **spirit gauge maximum** — the protagonist's spiritual capacity — is a d
 As aggregate ring XP grows:
 - Spirit gauge maximum increases
 - Carry capacity increases (more rings can be brought on expedition)
-- Higher-threshold waystones become reachable (more of the world opens)
+- More Anchorages become affordable to teleport to (spirit_max grows → longer-range travel on a full gauge)
 - More ring uses can be restored per sleep cycle
 
 There is no XP milestone UI or level-up screen. Growth is continuous and felt through increased capability — carrying more rings, ranging further, reaching new areas.
 
 ### 8.3 World Access Gating
 
-Waystones (§10.7) have spiritual level thresholds based on the aggregate ring XP required to teleport there safely. Higher-XP protagonists can reach more dangerous, more rewarding areas of the world.
+**Waystones** (§10.7) are revelation objects — attuning them reveals distant Anchorages and regions. **Anchorages** (§10.7a) are the actual teleportation destinations, and each carries a `spiritCost` that must be met at the moment of travel (§10.8, §12.5). Higher `spirit_max` (from aggregate XP) makes distant Anchorages affordable to reach.
 
-- Losing significant XP through staking can close off areas previously accessible
+- Losing significant XP through staking reduces `spirit_max` — long-distance Anchorages may become temporarily unreachable until spirit is rebuilt
 - This creates genuine long-term stakes: a catastrophic losing streak is recoverable, but costly
 - Players are naturally incentivized to build XP breadth (many rings) rather than depth (few high-XP rings) to protect against catastrophic aggregate loss
 

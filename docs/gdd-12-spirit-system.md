@@ -10,23 +10,23 @@ The protagonist has **no independent XP pool**. Their spiritual power is entirel
 spirit_max = SPIRIT_BASE + floor(aggregate_ring_xp / XP_SCALER)
 ```
 
-| Constant | Value | Location |
+| Constant | Location | Notes |
 |---|---|---|
-| `SPIRIT_BASE` | 50 | `server/src/game/constants.ts` |
-| `XP_SCALER` | 5 | `server/src/game/constants.ts` |
+| `SPIRIT_BASE` | `server/src/game/constants.ts` | Base spirit max for a new player with no rings |
+| `XP_SCALER` | `server/src/game/constants.ts` | Tune here — do not hardcode the value in the GDD |
 
 Both constants are in one file — changing them automatically updates the boot-time backfill, all runtime recharge logic, and the sleep restore, with no other code to touch.
 
-**Reference values:**
+**Reference values** (computed from current `constants.ts` — re-derive if the constants change):
 
 | Aggregate ring XP | spirit_max |
 |---|---|
 | 0 (new player) | 50 |
-| 100 | 70 |
-| 250 | 100 |
-| 500 | 150 |
-| 1 000 | 250 |
-| 2 500 | 550 |
+| 100 | 52 |
+| 500 | 60 |
+| 1 000 | 70 |
+| 2 000 | 90 |
+| 5 000 | 150 |
 
 **Implications:**
 - Use rings in battle → rings earn XP → aggregate rises → spirit max increases
@@ -39,7 +39,7 @@ Both constants are in one file — changing them automatically updates the boot-
 Rings are not heavy — they are spiritually demanding. Attuning to too many simultaneously fragments the wielder's focus. The number of rings a protagonist can carry on an expedition is determined by their **spirit gauge maximum**, not physical weight.
 
 - Base spirit capacity → `carry_cap = 10` rings (starting)
-- _(Phase 8 planned)_ As spirit max grows, carry cap grows proportionally — the exact ratio is an open question (§13)
+- As spirit max grows, carry cap grows proportionally — the exact ratio is an **open question** (§13); currently `carry_cap` is fixed at 10
 - Garments from merchants can further expand carry cap beyond the spirit-derived baseline
 - Rings stored in the Sanctum count toward aggregate XP even when not carried
 
@@ -81,7 +81,7 @@ The protagonist cannot sleep or restore spirit in the open overworld. The Sanctu
 
 ### 12.5 Teleportation Cost
 
-Teleporting the Sanctum to a distant waystone **spends current spirit** (8D, #87 — GDD §10.8). Each destination carries a `spiritCost` (`shared/waystones.ts`) that scales with spiritual distance: nearby/familiar Anchorages are cheap (0–5), distant or newly discovered ones cost more (8–15). The protagonist must hold at least `spiritCost`; on teleport that spirit is deducted.
+Teleporting the Sanctum to a distant Anchorage **spends current spirit** (8D, #87 — GDD §10.8). Each destination carries a `spiritCost` (`shared/waystones.ts`) that scales with spiritual distance: nearby/familiar Anchorages are cheap (0–5), distant or newly discovered ones cost more (8–15). The protagonist must hold at least `spiritCost`; on teleport that spirit is deducted.
 
 - **Spirit gauge (`spirit_current`)** = the resource teleporting now spends, alongside ring recharging; restored to `spirit_max` by sleeping (25 food)
 - **Aggregate ring XP** = the permanent level that raises `spirit_max` (the reserve ceiling) and gates *attunement* (whether a destination is reachable at all)
@@ -154,7 +154,7 @@ A second non-recharge spirit expenditure: paying `AMBUSH_SPIRIT_COST` (5 spirit)
 |---|---|
 | `AMBUSH_SPIRIT_COST` | 5 |
 
-**Interaction with the spirit gauge:** The ambush cost is independent of the blink cost. A player who blinks to an enemy and ambushes them pays the **blink cost + ambush cost** (separate deductions). A player who approaches on foot and ambushes pays only the ambush premium.
+**Interaction with the spirit gauge:** The ambush cost is independent of the blink cost. A player who blinks to an enemy and ambushes them pays the **blink cost + ambush cost** (separate deductions). Ambush requires the blink gesture (double-click) — walking to an enemy and pressing E launches a normal duel with no first-strike option.
 
 **Validation:** Server-enforced at `BattleRoom.onJoin`. Insufficient spirit → initiative defaults to normal; no spirit is spent.
 

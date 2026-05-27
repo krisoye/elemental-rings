@@ -163,20 +163,6 @@ After losing a duel:
 2. A monster opponent also steals one random ring from the player's full inventory (not just the loadout)
 3. An NPC opponent only takes the staked ring
 
-### 6.10 Ambush Initiative
-
-Normally the monster or NPC initiates overworld encounters (§6.9, §10.9), attacking first. A protagonist who **blinks** into a duel (see §10.3 and §12.8) can seize initiative instead.
-
-**Cost:** `AMBUSH_SPIRIT_COST` = 5 spirit, spent at the moment the duel room is joined.
-
-**Effect:** The initiating protagonist becomes the first attacker for that duel — they throw the first ring regardless of encounter type.
-
-**Validation:** The server (`BattleRoom.onJoin`) checks `spirit_current >= AMBUSH_SPIRIT_COST` before granting initiative. If the player cannot afford it, the duel begins with the normal (opponent-first) initiative and no spirit is spent. There is no partial refund or second-chance mechanic — afford it or don't attempt it.
-
-**Balance note:** Ambush is a meaningful but not decisive edge. The defender still has the full 900 ms telegraph window and can block or parry. The value is the first-throw flexibility, not a guaranteed advantage.
-
----
-
 ### 6.9 Monster Encounters
 - Monsters always initiate encounters in the overworld
 - The player can **flee** before formally agreeing to duel — always free, no penalty
@@ -185,5 +171,21 @@ Normally the monster or NPC initiates overworld encounters (§6.9, §10.9), atta
 - If a monster loses it **drops a ring as loot** and flees — outside the staking system
 - A monster that has stolen your ring is now carrying it in the world — it can be tracked down and won back
 - Monsters **respawn on a real-time or in-game day cycle**; named/boss monsters do not respawn
+
+---
+
+### 6.10 Ambush Initiative
+
+Normally the monster or NPC attacks first. A protagonist who **double-clicks an enemy within blink range** (§10.3, §12.8) can seize initiative instead.
+
+**Trigger:** Double-click only. Walking into detection range and pressing E launches a normal duel — no first-strike. Ambush is exclusively a blink gesture; the choice to spend spirit for initiative is made at the moment of the double-click.
+
+**Cost:** `AMBUSH_SPIRIT_COST` = 5 spirit, spent at the moment the duel room is joined (in addition to the blink distance cost).
+
+**Effect:** The initiating protagonist becomes the first attacker for that duel — they throw the first ring regardless of encounter type.
+
+**Validation:** The server (`BattleRoom.onJoin`) checks `spirit_current >= AMBUSH_SPIRIT_COST` before granting initiative. If the player cannot afford the ambush premium (not the blink cost — just the 5-spirit ambush flat fee), the duel begins with the normal (opponent-first) initiative and no ambush spirit is spent. The blink still moves the player; only the initiative is lost.
+
+**Balance note:** Ambush is a meaningful but not decisive edge. The defender still has the full 900 ms telegraph window. The value is first-throw flexibility, not a guaranteed advantage.
 
 ---

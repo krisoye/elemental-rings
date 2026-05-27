@@ -41,7 +41,9 @@ elemental-rings/
     gdd-06-battle-system.md       ← Combat rules, Block Resolution Table, rally
     gdd-03-element-system.md      ← Pentagon matchups, fused elements, Shadow
     gdd-07-status-effects.md      ← Gauge mechanics, status effects
-    gdd-0{1,2,4,5,8,9,10,11}.md  ← All other sections
+    gdd-10-overworld.md           ← Biomes, detection, NPCs, Sanctum, waystones, anchorages, teleport
+    gdd-10-regions.md             ← Phase 8 build decomposition, Forest region manifest, 8D/8E plans
+    gdd-0{1,2,4,5,8,9,11}.md     ← All other sections
 ```
 
 ---
@@ -59,11 +61,12 @@ The GDD is split into per-section files under `docs/`. Read only the section you
 | Task | Read |
 |------|------|
 | Any combat / timing / rally work | `docs/gdd-06-battle-system.md` |
-| Element matchups, fused elements | `docs/gdd-03-element-system.md` |
-| Gauge mechanics, status effects | `docs/gdd-07-status-effects.md` |
+| Element matchups, fused elements, Shadow | `docs/gdd-03-element-system.md` |
+| Gauge mechanics, status effects, Shadow curse | `docs/gdd-07-status-effects.md` |
 | Ring tiers, uses, XP, recharge | `docs/gdd-04-ring-system.md` |
 | Staking, jewelry positions | `docs/gdd-09-staking-economy.md` |
-| Overworld, biomes, NPCs | `docs/gdd-10-overworld.md` |
+| Overworld, biomes, NPCs, Sanctum, waystones, anchorages, teleport | `docs/gdd-10-overworld.md` |
+| Phase 8 build phases, Forest region screens, 8D assets, 8E architecture | `docs/gdd-10-regions.md` |
 | Navigation + quick reference | `docs/elemental_rings_GDD.md` |
 
 Always read the relevant section before designing or implementing any game system.

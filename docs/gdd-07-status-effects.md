@@ -26,7 +26,7 @@ A fusion ring contributes to gauges based only on its **triangle-element** compo
 | Storm | Water + Wind | Water ×1 (Wind: no gauge) |
 | Mud | Water + Earth | Water ×1 (Earth: no gauge) |
 | Thornado | Wood + Wind | Wood ×1 (Wind: no gauge) |
-| Nature/Bloom | Wood + Earth | Wood ×1 (Earth: no gauge) |
+| Bloom | Wood + Earth | Wood ×1 (Earth: no gauge) |
 | Dust | Wind + Earth | No gauge contribution |
 
 A caught attack against a fusion ring moves no gauge — the decomposition above applies only to uncontested hits.
@@ -47,12 +47,28 @@ A caught attack against a fusion ring moves no gauge — the decomposition above
 
 Each status is independent — multiple can be active simultaneously and stack their effects.
 
-### 7.3 Shadow Status (Unique)
+### 7.3 Shadow Status — Curse Gauge
 
-Shadow operates outside the gauge system.
+Shadow uses its own **Shadow gauge**, parallel to the three triangle gauges but with a distinct progressive effect. The same gauge rules apply: builds on uncontested hits (no-block or mistime) only; does not build during rally chains or caught attacks.
 
-- Any connecting Shadow attack has a **25% chance** to inflict **Cursed**
-- **Cursed:** the target's highest XP ring loses half its remaining uses for the entire battle
-- Cannot be cured; does not interact with gauges
+**Curse effect — progressive information hiding:**
+
+Each shadow gauge stack hides a piece of the Cursed player's HUD from themselves. Their opponent still sees everything; only the Cursed player loses visibility.
+
+| Shadow gauge | Newly hidden from Cursed player |
+|---|---|
+| 1 | A1 use count |
+| 2 | A2 use count |
+| 3 | D1 use count |
+| 4 | D2 use count |
+| 5 | Hearts |
+
+Gauge cap: 5. The Cursed player can still use rings normally — they must track uses from memory.
+
+**Cleanse — Fire is the counter:**
+- **Parry with Fire** (STRONG timing against a Shadow attack): entire shadow gauge clears; all hidden HUD elements restore at once
+- **Block with Fire** (BLOCK timing): shadow gauge −1; most-recently-hidden element restores
+
+**Status display:** The battle HUD shows the shadow gauge value. Hidden HUD elements are replaced with a shadow/obscured visual for the Cursed player. The Cursed status indicator is visible to both players.
 
 ---
