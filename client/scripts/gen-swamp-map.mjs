@@ -54,9 +54,10 @@ const WAYSTONES = [
   { id: 'swamp_secret_forest', tx: 28, ty: 24 },
 ];
 
-// Biome-exit zone back to the Forest. Placed near the NW edge on a navigable
-// (cleared) mud tile so the player can physically reach it.
-const BIOME_EXIT = { tx: 2, ty: 14, target: 'ForestScene' };
+// Biome-exit zone back to the Forest. Placed at the NORTH edge midpoint so the
+// exit direction (dir: 'north' in SWAMP_SCREENS) matches the visual layout.
+// The player enters the swamp from this edge and exits back through it.
+const BIOME_EXIT = { tx: Math.floor(WIDTH / 2), ty: 1, target: 'ForestScene', targetScreen: 'forest_swamp_gate' };
 
 // Reed/water clumps (circle centre + radius in tiles) for organic structure.
 // Auto-cleared near key objects via isClearZone().
@@ -168,19 +169,19 @@ function buildGround() {
     }
   }
 
-  // 5. Biome-exit clearing — 2-tile-radius floor circle so the exit is reachable.
-  for (let dy = -2; dy <= 2; dy++) {
-    for (let dx = -2; dx <= 2; dx++) {
-      if (dx * dx + dy * dy > 4) continue;
-      const tx = BIOME_EXIT.tx + dx,
-        ty = BIOME_EXIT.ty + dy;
-      if (tx <= 0 || ty <= 0 || tx >= WIDTH - 1 || ty >= HEIGHT - 1) continue;
-      data[at(tx, ty)] = GID_FLOOR;
-    }
+  // 5. Biome-exit at north edge: open a 5-tile-wide gap in the north perimeter wall
+  //    and carve a dirt corridor from the gap down to the swamp interior.
+  const exitTx = BIOME_EXIT.tx;
+  for (let dx = -2; dx <= 2; dx++) {
+    const tx = exitTx + dx;
+    if (tx <= 0 || tx >= WIDTH - 1) continue;
+    data[at(tx, 0)] = GID_FLOOR;   // north perimeter — open the gap
+    data[at(tx, 1)] = GID_ACCENT;  // dirt accent just inside the gap (visual cue)
+    data[at(tx, 2)] = GID_FLOOR;
   }
 
   // 6. Dirt paths connecting the exit + key objects.
-  bresenhamPath(data, 2, 14, 12, 8); // biome exit → swamp_entry
+  bresenhamPath(data, exitTx, 1, 12, 8); // biome exit → swamp_entry
   bresenhamPath(data, 12, 8, 8, 6); // swamp_entry → swamp_anchor_1
   bresenhamPath(data, 12, 8, 22, 18); // swamp_entry → swamp_depths
   bresenhamPath(data, 22, 18, 26, 20); // swamp_depths → swamp_anchor_2
@@ -254,7 +255,11 @@ function buildObjects() {
     rotation: 0,
     visible: true,
     point: false,
-    properties: [{ name: 'target', type: 'string', value: BIOME_EXIT.target }],
+    properties: [
+      { name: 'target', type: 'string', value: BIOME_EXIT.target },
+      { name: 'targetScreen', type: 'string', value: BIOME_EXIT.targetScreen },
+      { name: 'spawnEdge', type: 'string', value: 'south' },
+    ],
   });
 
   return objects;
