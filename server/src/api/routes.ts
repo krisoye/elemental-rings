@@ -38,35 +38,43 @@ import { NPC_SPAWNS, hashNpcId } from '../persistence/NpcSpawns';
 import { FOOD_PER_SLEEP } from '../game/constants';
 import { WAYSTONES, getWaystone, canTeleport } from '../../../shared/waystones';
 import { getTalisman } from '../../../shared/talismans';
+import { blinkCost } from '../../../shared/blink';
 
 /**
  * Build the /api/waystones payload for a player: the catalog joined with the
- * player's attunement set and aggregate XP. `meetsThreshold` is the pure
- * teleport-gate predicate (aggregate XP ≥ the waystone's threshold) used by the
- * 8B.3 teleport flow; it is additive here so the GET and POST share one shape.
+ * player's attunement set, aggregate XP, and current spirit. `meetsThreshold` is
+ * the §10.8 teleport-gate predicate — true when the player holds at least the
+ * destination's `spiritCost` (#87 Part B; replaces the old aggregate-XP gate).
+ * The GET and POST share this one shape so the client can render and disable
+ * unaffordable destinations in a single round-trip.
  */
 function buildWaystonePayload(playerId: string): {
   aggregateXp: number;
+  spiritCurrent: number;
   anchor: string;
   waystones: Array<{
     id: string;
     name: string;
     xpThreshold: number;
+    spiritCost: number;
     attuned: boolean;
     meetsThreshold: boolean;
   }>;
 } {
   const { aggregateXp } = getSpiritStats(playerId);
+  const { spirit_current } = getSpiritAndFood(playerId);
   const attuned = new Set(getAttunements(playerId));
   return {
     aggregateXp,
+    spiritCurrent: spirit_current,
     anchor: getAnchor(playerId),
     waystones: WAYSTONES.map((w) => ({
       id: w.id,
       name: w.name,
       xpThreshold: w.xpThreshold,
+      spiritCost: w.spiritCost,
       attuned: attuned.has(w.id),
-      meetsThreshold: aggregateXp >= w.xpThreshold,
+      meetsThreshold: spirit_current >= w.spiritCost,
     })),
   };
 }
@@ -265,6 +273,29 @@ apiRouter.post('/api/spirit/recharge-all', requireAuth, (req: Request, res: Resp
 });
 
 /**
+ * POST /api/spirit/blink — spend spirit to short-range blink onto an interaction
+ * zone (#87 Part A, GDD §12). Body: { distance: number } (pixels travelled). The
+ * server computes the authoritative cost via blinkCost(distance), guards that the
+ * player holds at least that much spirit, and on success spends it, returning
+ * { spirit_current, cost }. 400 { error: 'insufficient spirit' } when the player
+ * cannot afford the blink. This is the first non-recharge spirit sink. Requires
+ * auth. The client may pre-check with the same blinkCost, but the server is the
+ * authority — distance is clamped and re-costed here regardless of client input.
+ */
+apiRouter.post('/api/spirit/blink', requireAuth, (req: Request, res: Response): void => {
+  const playerId = req.playerId as string;
+  const { distance } = req.body ?? {};
+  const cost = blinkCost(typeof distance === 'number' ? distance : 0);
+  const { spirit_current } = getSpiritAndFood(playerId);
+  if (spirit_current < cost) {
+    res.status(400).json({ error: 'insufficient spirit' });
+    return;
+  }
+  spendSpirit(playerId, cost);
+  res.status(200).json({ spirit_current: getSpiritAndFood(playerId).spirit_current, cost });
+});
+
+/**
  * PUT /api/loadout — update one or more loadout slots.
  * Body: partial Record<SlotKey, string | null>
  * Requires auth.
@@ -402,10 +433,11 @@ apiRouter.post('/api/waystones/attune', requireAuth, (req: Request, res: Respons
 
 /**
  * POST /api/teleport — re-anchor the player's Sanctum to a waystone (#63, GDD
- * §10.7). Body: { waystoneId: string }. Three rejection cases each return 400:
- * an unknown id, a waystone the player has not attuned, and one whose aggregate
- * XP teleport gate is not yet met. On success persists the anchor and returns
- * { anchor }. Requires auth.
+ * §10.7/§10.8). Body: { waystoneId: string }. Three rejection cases each return
+ * 400: an unknown id, a waystone the player has not attuned, and one whose spirit
+ * cost the player cannot afford (§10.8 spirit gate, #87 Part B — replaces the old
+ * aggregate-XP gate). On success SPENDS the destination's spiritCost, persists the
+ * anchor, and returns { anchor, spirit_current, spiritCost }. Requires auth.
  */
 apiRouter.post('/api/teleport', requireAuth, (req: Request, res: Response): void => {
   const playerId = req.playerId as string;
@@ -418,14 +450,19 @@ apiRouter.post('/api/teleport', requireAuth, (req: Request, res: Response): void
     res.status(400).json({ error: 'not attuned' });
     return;
   }
-  const { aggregateXp } = getSpiritStats(playerId);
-  if (!canTeleport(aggregateXp, waystoneId)) {
-    const def = getWaystone(waystoneId)!;
-    res.status(400).json({ error: `requires ${def.xpThreshold} aggregate XP` });
+  const def = getWaystone(waystoneId)!;
+  const { spirit_current } = getSpiritAndFood(playerId);
+  if (!canTeleport(spirit_current, waystoneId)) {
+    res.status(400).json({ error: `requires ${def.spiritCost} spirit` });
     return;
   }
+  if (def.spiritCost > 0) spendSpirit(playerId, def.spiritCost);
   setAnchor(playerId, waystoneId);
-  res.status(200).json({ anchor: waystoneId });
+  res.status(200).json({
+    anchor: waystoneId,
+    spirit_current: getSpiritAndFood(playerId).spirit_current,
+    spiritCost: def.spiritCost,
+  });
 });
 
 /**

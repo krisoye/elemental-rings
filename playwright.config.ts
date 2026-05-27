@@ -22,11 +22,13 @@ const PVP_SPECS = [
 ];
 const SOLO_SPECS = [
   'auth.spec.ts',
+  'blink.spec.ts',
   'camp.spec.ts',
   'carry.spec.ts',
   'compass.spec.ts',
   'fusion.spec.ts',
   'npc-population.spec.ts',
+  'overworld-battlehand.spec.ts',
   'overworld-transition.spec.ts',
   'ring-storage-ux.spec.ts',
   'sanctum-movement.spec.ts',

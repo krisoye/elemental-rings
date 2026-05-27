@@ -6,6 +6,7 @@ import { FusionPanel } from '../objects/FusionPanel';
 import { ELEMENT_NAMES, CANVAS_W, CANVAS_H, THUMB_PASSIVE_INFO, PASSIVE_STRIP_WIDTH } from '../Constants';
 import { Player } from '../objects/world/Player';
 import { InteractionZone } from '../objects/world/InteractionZone';
+import { BlinkController } from '../objects/world/BlinkController';
 import { getTalisman } from '../../../shared/talismans';
 
 declare const __SERVER_URL__: string;
@@ -66,6 +67,8 @@ export class CampScene extends Phaser.Scene {
   private overlayName: string | null = null;
   /** Callback run when the overlay closes (re-parks adopted panels off-screen). */
   private overlayOnClose: (() => void) | null = null;
+  /** #87 Part A — double-click-to-blink controller (onto interaction zones). */
+  private blink: BlinkController | null = null;
 
   // ── Reusable inventory panels (parked off-screen, shown in overlays) ───────
   private sanctumGrid!: InventoryGrid;
@@ -139,6 +142,12 @@ export class CampScene extends Phaser.Scene {
     // ── Interaction zones (8A.2) ──────────────────────────────────────────
     this.buildZones(map);
 
+    // #87 Part A — double-click a Sanctum interaction zone within range to blink
+    // onto it (spending spirit, cost ∝ distance). Suppressed while a modal overlay
+    // is open (getModalOpen reads this.overlay). Registered on the built zones.
+    this.blink = new BlinkController(this, this.player, () => this.overlay !== null);
+    this.blink.register(this.zones);
+
     // ── Input ─────────────────────────────────────────────────────────────
     this.cursors = this.input.keyboard!.createCursorKeys();
     this.wasd = this.input.keyboard!.addKeys('W,A,S,D') as typeof this.wasd;
@@ -195,6 +204,8 @@ export class CampScene extends Phaser.Scene {
       window.__sanctumZones = undefined;
       window.__sanctumInteract = undefined;
       window.__sanctumOverlayOpen = undefined;
+      this.blink?.destroy();
+      this.blink = null;
       this.zones.forEach((z) => z.destroy());
       this.zones = [];
     });
@@ -753,11 +764,13 @@ export class CampScene extends Phaser.Scene {
     if (!token) return;
     let payload: {
       aggregateXp: number;
+      spiritCurrent?: number;
       anchor: string;
       waystones: Array<{
         id: string;
         name: string;
         xpThreshold: number;
+        spiritCost?: number;
         attuned: boolean;
         meetsThreshold: boolean;
       }>;
@@ -772,15 +785,18 @@ export class CampScene extends Phaser.Scene {
       return;
     }
 
-    // Publish for E2E before rendering.
+    // Publish for E2E before rendering. #87 Part B — include spirit cost + current
+    // so tests can assert the §10.8 spirit-gate affordability per destination.
     window.__teleportState = {
       anchor: payload.anchor,
+      spiritCurrent: payload.spiritCurrent,
       rows: payload.waystones.map((w) => ({
         id: w.id,
         name: w.name,
         attuned: w.attuned,
         meetsThreshold: w.meetsThreshold,
         xpThreshold: w.xpThreshold,
+        spiritCost: w.spiritCost,
       })),
     };
 
@@ -801,7 +817,8 @@ export class CampScene extends Phaser.Scene {
             .setScrollFactor(0),
         );
       } else if (!w.meetsThreshold) {
-        // Attuned but XP-locked — show the gate, no Travel button.
+        // #87 Part B — attuned but SPIRIT-locked: show the spirit gate, grey out,
+        // no Travel button (the §10.8 gate is current spirit, not aggregate XP).
         c.add(
           this.add
             .text(CANVAS_W / 2, y, `${w.name}${suffix}`, { fontSize: '14px', color: '#888888' })
@@ -813,7 +830,7 @@ export class CampScene extends Phaser.Scene {
             .text(
               CANVAS_W / 2,
               y + 20,
-              `Requires ${w.xpThreshold} aggregate XP (have ${payload.aggregateXp})`,
+              `Requires ${w.spiritCost ?? 0} spirit (have ${payload.spiritCurrent ?? 0})`,
               { fontSize: '12px', color: '#666666' },
             )
             .setOrigin(0.5)
@@ -821,16 +838,19 @@ export class CampScene extends Phaser.Scene {
         );
         y += 20;
       } else {
-        // Attuned + unlocked — actionable [Travel] button.
+        // Attuned + affordable — actionable [Travel] button labelled with the cost.
         c.add(
           this.add
-            .text(CANVAS_W / 2 - 60, y, `${w.name}${suffix}`, { fontSize: '14px', color: '#cccccc' })
+            .text(CANVAS_W / 2 - 90, y, `${w.name}${suffix}`, { fontSize: '14px', color: '#cccccc' })
             .setOrigin(0.5)
             .setScrollFactor(0),
         );
         c.add(
           this.add
-            .text(CANVAS_W / 2 + 80, y, '[Travel]', { fontSize: '14px', color: '#ffcc44' })
+            .text(CANVAS_W / 2 + 70, y, `[Travel — ${w.spiritCost ?? 0} spirit]`, {
+              fontSize: '13px',
+              color: '#ffcc44',
+            })
             .setOrigin(0.5)
             .setScrollFactor(0)
             .setName(`travel-${w.id}`)

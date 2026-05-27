@@ -60,3 +60,9 @@ export const MERCHANT_FOOD_MARKUP = 2;
 // XP. SPIRIT_BASE is the flat floor every player starts with (replaces the old
 // flat 30 default).
 export const SPIRIT_BASE = 50;
+
+// #87 Part C — ambush first-strike premium (GDD §10.3/§10.9). Double-clicking an
+// overworld NPC blinks into the duel and buys the opening attack for this flat
+// spirit cost. The server spends it in BattleRoom.onJoin when the firstStrike
+// option is set and the player can afford it; otherwise the flag is ignored.
+export const AMBUSH_SPIRIT_COST = 5;

@@ -41,6 +41,23 @@ export class Hand extends Phaser.GameObjects.Container {
       scene.input.keyboard!.addKey(code).on('down', () => this.triggerSlot(key));
     });
 
+    // #87 Part E — phase-relative slot-1/slot-2 hotkeys. Z is "slot 1" and C is
+    // "slot 2": each fires BOTH the attack and defense variant. BattleScene's
+    // phase gate (ATTACK_KEYS/DEFENSE_KEYS) silently drops the variant that does
+    // not match the current phase, so in ATTACK_SELECT Z throws A1 and in
+    // DEFEND_WINDOW Z submits D1 (likewise C → A2/D2). No extra logic needed.
+    const slot1Aliases: [number, SlotKey][] = [
+      [KC.Z, 'a1'],
+      [KC.Z, 'd1'],
+    ];
+    const slot2Aliases: [number, SlotKey][] = [
+      [KC.C, 'a2'],
+      [KC.C, 'd2'],
+    ];
+    [...slot1Aliases, ...slot2Aliases].forEach(([code, key]) => {
+      scene.input.keyboard!.addKey(code).on('down', () => this.triggerSlot(key));
+    });
+
     this.publishSlotPositions();
     scene.add.existing(this);
   }

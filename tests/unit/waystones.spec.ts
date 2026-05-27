@@ -23,32 +23,46 @@ describe('getWaystone — id → definition lookup', () => {
 });
 
 // ---------------------------------------------------------------------------
-// canTeleport — pure teleport-gate predicate (8B.3)
+// canTeleport — pure teleport-gate predicate (§10.8 spirit gate, #87 Part B)
 // ---------------------------------------------------------------------------
 
-describe('canTeleport — aggregate XP vs. waystone threshold', () => {
-  test('forest_entry (threshold 0) is always teleportable, even at 0 XP', () => {
+describe('canTeleport — current spirit vs. waystone spiritCost', () => {
+  test('forest_entry (spiritCost 0) is always teleportable, even at 0 spirit', () => {
     expect(canTeleport(0, 'forest_entry')).toBe(true);
   });
 
-  test('below threshold → false', () => {
-    expect(canTeleport(99, 'forest_glade')).toBe(false); // needs 100
-    expect(canTeleport(299, 'forest_depths')).toBe(false); // needs 300
+  test('below the spirit cost → false', () => {
+    expect(canTeleport(2, 'forest_glade')).toBe(false); // needs 3
+    expect(canTeleport(5, 'forest_depths')).toBe(false); // needs 6
   });
 
-  test('exactly at threshold → true (inclusive boundary)', () => {
-    expect(canTeleport(100, 'forest_glade')).toBe(true);
-    expect(canTeleport(300, 'forest_depths')).toBe(true);
+  test('exactly at the cost → true (inclusive boundary)', () => {
+    expect(canTeleport(3, 'forest_glade')).toBe(true);
+    expect(canTeleport(6, 'forest_depths')).toBe(true);
   });
 
-  test('above threshold → true', () => {
-    expect(canTeleport(500, 'forest_glade')).toBe(true);
-    expect(canTeleport(1000, 'forest_depths')).toBe(true);
+  test('above the cost → true', () => {
+    expect(canTeleport(50, 'forest_glade')).toBe(true);
+    expect(canTeleport(50, 'forest_depths')).toBe(true);
   });
 
-  test('unknown id → false regardless of XP', () => {
+  test('unknown id → false regardless of spirit', () => {
     expect(canTeleport(0, 'nope')).toBe(false);
     expect(canTeleport(99999, 'nope')).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// spiritCost — every catalog entry carries a non-negative cost (#87 Part B)
+// ---------------------------------------------------------------------------
+
+describe('waystone spiritCost', () => {
+  test('every entry has a non-negative spiritCost; the home Anchorage is free', () => {
+    for (const w of WAYSTONES) {
+      expect(typeof w.spiritCost).toBe('number');
+      expect(w.spiritCost).toBeGreaterThanOrEqual(0);
+    }
+    expect(getWaystone('forest_entry')?.spiritCost).toBe(0);
   });
 });
 

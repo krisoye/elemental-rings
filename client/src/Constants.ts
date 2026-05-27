@@ -139,6 +139,15 @@ export const ANCHORAGE_GROUND_RADIUS = 80; // px — tunable gathering-area radi
 // stake elements come from the server (GET /api/overworld/npcs).
 export const DETECTION_RADIUS = 160; // px — sensing radius for overworld NPCs
 
+// #87 Part A — short-range blink. Double-clicking an interaction zone (two
+// pointerdowns on the same zone within DOUBLE_CLICK_MS) within BLINK_MAX_RANGE
+// spends spirit (server-computed, cost ∝ distance) to snap the player onto the
+// zone and fire its interact(). DOUBLE_CLICK_MS bounds the double-click gesture;
+// BLINK_MAX_RANGE caps how far a single blink can reach. Pure input/layout — the
+// authoritative cost and spirit guard live on the server (POST /api/spirit/blink).
+export const DOUBLE_CLICK_MS = 300; // ms — max gap between the two clicks of a double-click
+export const BLINK_MAX_RANGE = 600; // px — farthest a blink may reach; beyond this, no-op
+
 // Layout
 export const CANVAS_W = 1024;
 export const CANVAS_H = 576;

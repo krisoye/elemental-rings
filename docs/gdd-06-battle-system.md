@@ -33,6 +33,8 @@ Combat is an **active, reaction-timed** exchange — not a hidden simultaneous s
 
 **Phase-locked input:** Attack buttons (A1/A2) only register during the **attack phase**. Defense buttons (D1/D2) only register during the **defense phase**. Wrong-phase presses are silently ignored — protective, not punishing. The phase transition is the most visually prominent UI moment in a battle.
 
+**Keyboard hotkeys (client, #87 Part E):** the four slots map to number keys — `1`→A1, `2`→A2, `3`→D1, `4`→D2. In addition, **`Z`** and **`C`** are **phase-relative slot hotkeys**: `Z` is "slot 1" and `C` is "slot 2". Each fires *both* the attack and defense variant of its slot (`Z`→A1 *and* D1; `C`→A2 *and* D2), and the phase-lock above silently drops the wrong-phase one — so in the attack phase `Z` throws A1 and in the defense phase `Z` submits D1, with one key per slot regardless of phase. Touch/mouse taps on the slot cards are unchanged.
+
 Because the defender sees the incoming element before committing, there is no simultaneous hidden selection. Bluffing lives in the loadout, stake, and jewelry layers (§9), not in the turn itself.
 
 ### 6.4 Damage Rules

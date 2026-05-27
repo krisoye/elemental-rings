@@ -25,6 +25,8 @@ Environmental passives (e.g. Fire rings losing uses faster in snow) are flagged 
 - As both parties continue to approach they can **formally agree to duel**
 - The player can always turn back and flee before formally agreeing — no penalty
 - Once formally agreed the duel begins and the battle hand management screen appears
+- **Approach options (8D, #87):** walk into detection range and press **E** to approach normally, OR **double-click the enemy** to **ambush** — spending a flat `AMBUSH_SPIRIT_COST` (5) spirit to blink into the duel and seize the **opening attack** (first-strike initiative). Ambush is server-guarded: if the player cannot afford the cost the flag is ignored and the duel proceeds with default initiative. See §10.9 (Key Locations) and §12 (Spirit System).
+- **Blink (8D, #87):** double-clicking a discrete interaction zone (Anchorage / waystone / Sanctum door) within `BLINK_MAX_RANGE` blinks the protagonist onto it — spending spirit proportional to distance — and fires the zone's interaction in the same gesture. This replaces walk-then-E for in-range points of interest. See §12.
 
 ### 10.4 NPC Categories
 
@@ -213,6 +215,8 @@ Movement between Anchorages is a **spiritual act**, not physical travel. The pro
 | **Dark/Underground Areas** | Shadow ring drop locations; high risk, unpredictable opposition |
 | **Boss Arenas** | Fixed high-XP encounters; unique rings; often guard critical waystones |
 
+> **Overworld battle-hand access (8D, #87):** press **Tab** anywhere in the overworld to open the **Manage Battle-Hand** overlay (reassign loadout slots, recharge rings with spirit, resolve a pending won ring) without returning to the Sanctum; **Escape** closes it. While open the protagonist is frozen and blink is suppressed. This is the same battle-hand management surface used at duel agreement (cf. §6.8 battle-hand management); it is implemented as the standalone `BattleHandOverlay` shared by the EncounterScene and the overworld.
+
 ---
 
 ### 10.10 Food and Foraging
@@ -315,7 +319,7 @@ Phase 8 is the largest phase in the roadmap — it introduces a full tilemap wor
 
 **What ships:** The 8A overworld *stub* becomes a real **Forest biome** — a generated Tiled map with 3 waystone markers (touch to attune, **server-persisted**), a compass HUD that pulls toward the nearest *unattuned* waystone, and teleportation from the Sanctum's meditation circle. Unlike 8A (client-only), **8B adds server state and routes** — attunement, the Sanctum anchor, and the teleport gate are game rules and are server-enforced (§2).
 
-> **Design note (v4.9 — 8B.4 shipped):** The 8B.4 EPIC (#70, PRs #77/#79 + the overworld-fixes follow-up) closed the visual foundation and a large part of the Waystone/Anchorage distinction. As shipped now: the three Forest locations render as **Anchorages** (campfire + ground ring, no standing stone) and **auto-attune on walk-in** (§10.7a); the Sanctum exterior sits **directly at the Anchorage center** (`SANCTUM_OFFSET = 0`) and materializes there; and two **first-class discovery waystones** now exist (standing stones, press-E attune) that reveal adjacent biomes. The one remaining deviation from §10.8 is the teleport gate: it still uses `aggregateXp >= threshold` rather than `spirit_current >= cost`. The data model still keeps Anchorages and waystones in one catalog (`shared/waystones.ts`), distinguished by the map object `name` — a full table-level separation remains a future pass.
+> **Design note (v4.9 — 8B.4 shipped):** The 8B.4 EPIC (#70, PRs #77/#79 + the overworld-fixes follow-up) closed the visual foundation and a large part of the Waystone/Anchorage distinction. As shipped now: the three Forest locations render as **Anchorages** (campfire + ground ring, no standing stone) and **auto-attune on walk-in** (§10.7a); the Sanctum exterior sits **directly at the Anchorage center** (`SANCTUM_OFFSET = 0`) and materializes there; and two **first-class discovery waystones** now exist (standing stones, press-E attune) that reveal adjacent biomes. As of **8D (#87)** the §10.8 teleport gate is the **`spirit_current >= spiritCost`** rule (spending spirit on travel — see §10.8), completing the preparation loop. The data model still keeps Anchorages and waystones in one catalog (`shared/waystones.ts`), distinguished by the map object `name` — a full table-level separation remains a future pass.
 
 **Sub-issues shipped (8B.1–8B.3):**
 - [#61](https://github.com/krisoye/elemental-rings/issues/61) — 8B.1: Forest biome map + waystone attunement (`shared/waystones.ts` catalog, map generator, `waystone_attunements` table, `GET /api/waystones` + `POST /api/waystones/attune`, overworld markers)
@@ -340,8 +344,9 @@ Phase 8 is the largest phase in the roadmap — it introduces a full tilemap wor
 
 **Known limitations (remaining after 8B.4):**
 - Anchorages and waystones still share one catalog (`shared/waystones.ts`); they are distinguished by the map object `name` and rendered differently, but a table-level separation (a dedicated `anchorages` table) is still future.
-- The teleport gate uses `aggregateXp >= threshold` instead of `spirit_current >= cost` (§10.8). The spirit_current gate correctly creates a preparation loop (sleep → restore spirit → teleport); the XP gate does not. Slated for a later pass.
 - The server cannot verify the player physically stood on an Anchorage before auto-attuning (per-player overworld MVP). A future shared `WorldRoom` would verify proximity authoritatively.
+
+> **Implemented in 8D (#87):** The §10.8 teleport gate now spends **`spiritCost`** (per-destination, in `shared/waystones.ts`) and rejects when `spirit_current < spiritCost`, completing the sleep → restore spirit → teleport preparation loop. Short-range **blink** (§12, below) and **ambush first-strike** (§10.3/§10.9) add the first non-recharge spirit sinks.
 
 ---
 
