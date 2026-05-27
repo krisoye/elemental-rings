@@ -51,6 +51,11 @@ export interface BattleRoomOptions {
   // 'battle' with the SAME id pair into one isolated room. Absent in production,
   // where 'battle' stays a pure global pool. See server/index.ts and #67.
   e2eRoomId?: string;
+  // #83 — the overworld NPC id this vsAI duel is against. When the human wins,
+  // BattleRoom records the defeat (recordNpcDefeat) so the NPC respawns per its
+  // spawn-table cadence. Only set on overworld-launched NPC duels (EncounterScene
+  // NPC path); the encounter-hub markers and PvP rooms leave it undefined.
+  npcId?: string;
 }
 
 export interface SelectAttackPayload {

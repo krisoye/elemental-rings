@@ -36,3 +36,21 @@ CREATE TABLE IF NOT EXISTS waystone_attunements (
   attuned_at  INTEGER NOT NULL,
   PRIMARY KEY (player_id, waystone_id)
 );
+-- #81 — Phase 8C.1 talisman loadout (GDD §14.2/§14.3). One row per player holds
+-- the equipped necklace talisman id and its remaining charges. A null necklace_id
+-- with 0 charges is the "nothing equipped" baseline (seeded at createPlayer).
+CREATE TABLE IF NOT EXISTS talisman_loadout (
+  player_id        TEXT PRIMARY KEY REFERENCES players(id),
+  necklace_id      TEXT,
+  necklace_charges INTEGER NOT NULL DEFAULT 0
+);
+-- #83 — Phase 8C.3 NPC defeat tracking (GDD §10.5). One row per (player, npc)
+-- the player has beaten. defeated_at_day is the player's game_day at the time of
+-- the win; permanent NPCs (respawnDays = 0) stay hidden forever, periodic ones
+-- reappear once game_day - defeated_at_day >= respawnDays.
+CREATE TABLE IF NOT EXISTS npc_defeats (
+  player_id        TEXT NOT NULL REFERENCES players(id),
+  npc_id           TEXT NOT NULL,
+  defeated_at_day  INTEGER NOT NULL,
+  PRIMARY KEY (player_id, npc_id)
+);

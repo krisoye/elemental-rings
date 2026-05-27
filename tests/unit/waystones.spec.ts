@@ -53,55 +53,89 @@ describe('canTeleport — aggregate XP vs. waystone threshold', () => {
 });
 
 // ---------------------------------------------------------------------------
-// Drift test — catalog ids must equal the map's catalog-backed object ids
+// Drift test — catalog ids must equal the COMBINED catalog-backed object ids
+// across every biome map
 // ---------------------------------------------------------------------------
 // Catalog-backed locations carry a `waystoneId` property on the map. After the
 // visual split (#79) they come in two flavours: `anchorage` objects (home base /
 // teleport destinations, rendered as campfire + ground ring) and `waystone`
-// objects (discovery standing-stones that reveal adjacent biomes). BOTH kinds
-// carry a `waystoneId`, and the union of their ids must equal the catalog.
+// objects (discovery standing-stones that reveal adjacent biomes). As of 8C.2
+// (#82) the catalog spans THREE maps — the Forest overworld, the Swamp, and the
+// hidden Forest alcove. The union of all `waystoneId`s across all three maps must
+// equal the catalog id-set (no map ships a waystone the catalog lacks, and no
+// catalog entry is unplaced). `biome_exit` / `return_exit` objects carry a
+// `target` (scene key) — NOT a `waystoneId` — so they are excluded.
 
-describe('waystone catalog ↔ map drift', () => {
-  function loadObjectLayer(): Array<{
-    name?: string;
-    properties?: Array<{ name: string; value: unknown }>;
-  }> {
-    const mapPath = path.resolve(__dirname, '../../client/public/assets/maps/overworld.json');
-    const map = JSON.parse(fs.readFileSync(mapPath, 'utf8')) as {
-      layers: Array<{
-        name: string;
-        type: string;
-        objects?: Array<{ name?: string; properties?: Array<{ name: string; value: unknown }> }>;
-      }>;
-    };
-    const objectLayer = map.layers.find((l) => l.type === 'objectgroup');
-    expect(objectLayer).toBeDefined();
-    return objectLayer?.objects ?? [];
-  }
+interface MapObject {
+  name?: string;
+  properties?: Array<{ name: string; value: unknown }>;
+}
 
-  test('every catalog id appears on a map object (anchorage or waystone), and vice versa', () => {
-    const mapIds = new Set<string>();
-    for (const obj of loadObjectLayer()) {
+const BIOME_MAPS = ['overworld.json', 'swamp.json', 'forest_hidden.json'] as const;
+
+function loadObjectLayer(mapFile: string): MapObject[] {
+  const mapPath = path.resolve(__dirname, '../../client/public/assets/maps', mapFile);
+  const map = JSON.parse(fs.readFileSync(mapPath, 'utf8')) as {
+    layers: Array<{ name: string; type: string; objects?: MapObject[] }>;
+  };
+  const objectLayer = map.layers.find((l) => l.type === 'objectgroup');
+  expect(objectLayer, `${mapFile} has an objectgroup layer`).toBeDefined();
+  return objectLayer?.objects ?? [];
+}
+
+/** Collect every `waystoneId` from the anchorage/waystone objects across all maps. */
+function collectMapWaystoneIds(): Set<string> {
+  const ids = new Set<string>();
+  for (const mapFile of BIOME_MAPS) {
+    for (const obj of loadObjectLayer(mapFile)) {
       if (obj.name !== 'anchorage' && obj.name !== 'waystone') continue;
       const prop = (obj.properties ?? []).find((p) => p.name === 'waystoneId');
-      expect(typeof prop?.value).toBe('string');
-      mapIds.add(prop!.value as string);
+      expect(typeof prop?.value, `${mapFile} ${obj.name} has a string waystoneId`).toBe('string');
+      ids.add(prop!.value as string);
     }
+  }
+  return ids;
+}
 
+describe('waystone catalog ↔ map drift', () => {
+  test('every catalog id appears on some biome map (anchorage or waystone), and vice versa', () => {
+    const mapIds = collectMapWaystoneIds();
     const catalogIds = new Set(WAYSTONES.map((w) => w.id));
     expect([...mapIds].sort()).toEqual([...catalogIds].sort());
   });
 
-  test('map ships both anchorage and discovery-waystone object kinds, each catalog-backed', () => {
-    const objs = loadObjectLayer();
-    const anchorages = objs.filter((o) => o.name === 'anchorage');
-    const waystones = objs.filter((o) => o.name === 'waystone');
-    // 3 anchorages (forest_entry/glade/depths) + 2 discovery waystones.
-    expect(anchorages.length).toBe(3);
-    expect(waystones.length).toBe(2);
-    for (const obj of [...anchorages, ...waystones]) {
-      const prop = (obj.properties ?? []).find((p) => p.name === 'waystoneId');
-      expect(typeof prop?.value).toBe('string');
+  test('combined catalog spans 12 waystones (5 Forest + 5 Swamp + 2 hidden Forest)', () => {
+    // 5 Forest (8B), 5 Swamp + 2 hidden-Forest (8C.2). Guards against silent
+    // catalog regressions; bump deliberately when a biome is added.
+    expect(WAYSTONES.length).toBeGreaterThanOrEqual(12);
+    expect(collectMapWaystoneIds().size).toBe(WAYSTONES.length);
+  });
+
+  test('overworld ships 3 anchorages + 2 discovery waystones; swamp ships 2 + 3; hidden 1 + 1', () => {
+    const count = (mapFile: string, name: string): number =>
+      loadObjectLayer(mapFile).filter((o) => o.name === name).length;
+    expect(count('overworld.json', 'anchorage')).toBe(3);
+    expect(count('overworld.json', 'waystone')).toBe(2);
+    expect(count('swamp.json', 'anchorage')).toBe(2);
+    expect(count('swamp.json', 'waystone')).toBe(3);
+    expect(count('forest_hidden.json', 'anchorage')).toBe(1);
+    expect(count('forest_hidden.json', 'waystone')).toBe(1);
+  });
+
+  test('Forest→Swamp and return transitions ship as biome-exit objects with a target', () => {
+    // The Forest overworld exits SW to the Swamp; the Swamp exits NW back to the
+    // Forest; the hidden alcove returns to the Forest. Each carries a `target`.
+    const overworldExit = loadObjectLayer('overworld.json').find((o) => o.name === 'biome_exit');
+    const swampExit = loadObjectLayer('swamp.json').find((o) => o.name === 'biome_exit');
+    const hiddenReturn = loadObjectLayer('forest_hidden.json').find((o) => o.name === 'return_exit');
+    for (const [obj, target] of [
+      [overworldExit, 'SwampScene'],
+      [swampExit, 'OverworldScene'],
+      [hiddenReturn, 'OverworldScene'],
+    ] as const) {
+      expect(obj).toBeDefined();
+      const prop = (obj!.properties ?? []).find((p) => p.name === 'target');
+      expect(prop?.value).toBe(target);
     }
   });
 });

@@ -93,6 +93,12 @@ export class BattleRoom extends Room<{ state: BattleState }> {
   private windowTimer: ReturnType<typeof setTimeout> | null = null;
   /** Non-null only in vsAI (`battle-ai`) rooms; a no-op via notifyAI() in PvP. */
   private ai: AIController | null = null;
+  /**
+   * #83 — the overworld NPC id this duel is against (only set on the
+   * EncounterScene NPC path). When the human wins a vsAI duel and this is set,
+   * persistBattleResult records the defeat so the NPC respawns per its cadence.
+   */
+  private npcId: string | undefined;
 
   /** Maps Colyseus sessionId → DB player id (only present for authenticated humans). */
   private sessionToPlayerId = new Map<string, string>();
@@ -137,6 +143,9 @@ export class BattleRoom extends Room<{ state: BattleState }> {
     }
 
     if (options.vsAI) {
+      // #83 — remember which overworld NPC this duel represents (if any) so a
+      // human win can be persisted as that NPC's defeat in persistBattleResult.
+      this.npcId = options.npcId;
       const personality = options.personality ?? 'AGGRESSIVE';
       const seed = options.aiSeed ?? (Date.now() & 0xffffffff);
       // Use a separate RNG stream for loadout generation so the combat RNG
@@ -467,6 +476,9 @@ export class BattleRoom extends Room<{ state: BattleState }> {
           wonRingId = PlayerRepo.grantRing(winnerPlayerId, t.element, t.tier, t.maxUses, t.xp);
           wonRingElement = t.element;
         }
+        // #83 — this was a win over an overworld NPC: record the defeat so the
+        // NPC respawns per its spawn-table cadence (permanent NPCs stay beaten).
+        if (this.npcId) PlayerRepo.recordNpcDefeat(winnerPlayerId, this.npcId);
       }
 
       // Recompute each human player's XP-derived spirit_max now that XP has been

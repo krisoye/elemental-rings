@@ -7,7 +7,11 @@
     "build": "tsc && vite build",
     "typecheck": "tsc --noEmit",
     "gen:tiles": "node scripts/gen-placeholder-tiles.mjs",
-    "gen:maps": "node scripts/gen-overworld-map.mjs"
+    "gen:overworld": "node scripts/gen-overworld-map.mjs",
+    "gen:swamp-tiles": "node scripts/gen-swamp-tiles.mjs",
+    "gen:swamp": "node scripts/gen-swamp-map.mjs",
+    "gen:hidden": "node scripts/gen-hidden-forest-map.mjs",
+    "gen:maps": "npm run gen:overworld && npm run gen:swamp-tiles && npm run gen:swamp && npm run gen:hidden"
   },
   "dependencies": {
     "@colyseus/sdk": "^0.17.42",

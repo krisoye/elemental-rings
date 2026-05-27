@@ -6,6 +6,7 @@ import { FusionPanel } from '../objects/FusionPanel';
 import { ELEMENT_NAMES, CANVAS_W, CANVAS_H, THUMB_PASSIVE_INFO } from '../Constants';
 import { Player } from '../objects/world/Player';
 import { InteractionZone } from '../objects/world/InteractionZone';
+import { getTalisman } from '../../../shared/talismans';
 
 declare const __SERVER_URL__: string;
 
@@ -272,13 +273,54 @@ export class CampScene extends Phaser.Scene {
   }
 
   /**
-   * Door zone → leave the Sanctum. Wired to OverworldScene in 8A.3; guarded so
-   * it is a safe no-op until that scene is registered.
+   * Door zone → leave the Sanctum into the biome containing the anchored waystone
+   * (#82). Wired to OverworldScene in 8A.3; 8C.2 makes it biome-aware: the Sanctum
+   * follows its anchor, so exiting near a Swamp anchor lands in the Swamp, and
+   * exiting after teleporting to the hidden Forest alcove lands there. Fetches the
+   * authoritative anchor, then routes; falls back to OverworldScene. Guarded so it
+   * is a safe no-op until the target scene is registered.
    */
   private onDoorInteract(): void {
-    if (this.scene.manager.keys['OverworldScene']) {
+    void this.routeToBiome();
+  }
+
+  /**
+   * Resolve the scene key for the currently-anchored waystone and start it. The
+   * Sanctum anchor (server authority) determines which biome the player exits
+   * into. Defaults to OverworldScene on any failure so the door always works.
+   */
+  private async routeToBiome(): Promise<void> {
+    let anchor = 'forest_entry';
+    const token = localStorage.getItem('er_token');
+    if (token) {
+      try {
+        const res = await fetch(`${API_BASE}/api/waystones`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (res.ok) {
+          anchor = ((await res.json()) as { anchor: string }).anchor ?? anchor;
+        }
+      } catch {
+        // Network error — fall through to the default Forest overworld.
+      }
+    }
+    const target = CampScene.biomeSceneForAnchor(anchor);
+    if (this.scene.manager.keys[target]) {
+      this.scene.start(target);
+    } else if (this.scene.manager.keys['OverworldScene']) {
       this.scene.start('OverworldScene');
     }
+  }
+
+  /**
+   * Map an anchor waystone id to the biome scene that contains it (#82). The
+   * hidden Forest alcove and the Swamp are distinct scenes from the Forest
+   * overworld; everything else is the Forest overworld.
+   */
+  private static biomeSceneForAnchor(anchorId: string): string {
+    if (anchorId.startsWith('forest_hidden')) return 'HiddenForestScene';
+    if (anchorId.startsWith('swamp')) return 'SwampScene';
+    return 'OverworldScene';
   }
 
   // ── Tiled object helpers ────────────────────────────────────────────────
@@ -456,6 +498,16 @@ export class CampScene extends Phaser.Scene {
     // closed, so draw from the cached snapshot here.
     this.renderPassiveStrip();
 
+    // #81 — necklace-slot display near the stake panel. Fetch the loadout and
+    // render the equipped talisman + remaining charges (filled/empty dots). No
+    // equip UI here — equipping happens via /api/talisman/equip elsewhere.
+    const necklaceLabel = this.add
+      .text(580, 470, 'Necklace: —', { fontSize: '12px', color: '#cfe3ff' })
+      .setScrollFactor(0)
+      .setName('necklace-slot');
+    c.add(necklaceLabel);
+    void this.loadTalismanLoadout(necklaceLabel);
+
     // #78 ① — hit-test probe. Scrolls the camera past a card's half-size, then
     // hit-tests the card's bg at its (scroll-independent) render position. With
     // the scrollFactor(0) fix applied the hit area tracks the render, so the test
@@ -493,6 +545,41 @@ export class CampScene extends Phaser.Scene {
       cam.startFollow(this.player, true, 0.1, 0.1);
       return { found: true, hit: out.indexOf(bg) !== -1 };
     };
+  }
+
+  /**
+   * #81 — fetch GET /api/talisman-loadout, publish it to window.__talismanLoadout
+   * for E2E, and render the equipped necklace talisman + remaining charges into
+   * the given label (e.g. "Sanctum Stone ●●○"). When nothing is equipped the label
+   * shows "Necklace: (empty)". Display-only — no equip UI. Best-effort: a network
+   * or auth failure leaves the placeholder label as-is.
+   */
+  private async loadTalismanLoadout(label: Phaser.GameObjects.Text): Promise<void> {
+    const token = localStorage.getItem('er_token');
+    if (!token) return;
+    let payload: { necklaceId: string | null; necklaceCharges: number };
+    try {
+      const res = await fetch(`${API_BASE}/api/talisman-loadout`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!res.ok) return;
+      payload = await res.json();
+    } catch {
+      return;
+    }
+    window.__talismanLoadout = payload;
+    // The label may have been destroyed if the overlay closed mid-fetch.
+    if (!label.active) return;
+    if (!payload.necklaceId) {
+      label.setText('Necklace: (empty)');
+      return;
+    }
+    const def = getTalisman(payload.necklaceId);
+    const name = def?.name ?? payload.necklaceId;
+    const max = def?.maxCharges ?? payload.necklaceCharges;
+    const filled = '●'.repeat(payload.necklaceCharges);
+    const empty = '○'.repeat(Math.max(0, max - payload.necklaceCharges));
+    label.setText(`${name} ${filled}${empty}`);
   }
 
   /**

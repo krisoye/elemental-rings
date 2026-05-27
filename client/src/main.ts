@@ -3,6 +3,8 @@ import { BootScene } from './scenes/BootScene';
 import { LoginScene } from './scenes/LoginScene';
 import { CampScene } from './scenes/CampScene';
 import { OverworldScene } from './scenes/OverworldScene';
+import { SwampScene } from './scenes/SwampScene';
+import { HiddenForestScene } from './scenes/HiddenForestScene';
 import { EncounterScene } from './scenes/EncounterScene';
 import { LobbyScene } from './scenes/LobbyScene';
 import { BattleScene } from './scenes/BattleScene';
@@ -112,6 +114,25 @@ declare global {
     // its render position to prove the (scrollFactor-fixed) hit area tracks the
     // render, not the world. Registered while the ring-storage overlay is open.
     __campHitTestRing?: (ringId: string) => { found: boolean; hit: boolean };
+    // #81 — talisman loadout snapshot (the GET /api/talisman-loadout payload).
+    // Published by CampScene (on ring-wall overlay open) and OverworldScene (on
+    // create) so E2E can assert the equipped necklace + remaining charges. null
+    // when the fetch has not yet resolved; the object form once loaded.
+    __talismanLoadout?: { necklaceId: string | null; necklaceCharges: number } | null;
+    // #83 — overworld NPC roster (the GET /api/overworld/npcs payload), published
+    // by OverworldScene/SwampScene on create. Each entry has the stable previewed
+    // stake element + world-pixel position. Cleared on scene shutdown.
+    __overworldNpcs?: Array<{
+      id: string;
+      personality: string;
+      x: number;
+      y: number;
+      element: number;
+    }>;
+    // #83 — the NPC currently within DETECTION_RADIUS (nearest), or null when none
+    // is in range. Published every update frame; drives the Approach [E] prompt and
+    // the E → duel launch. Cleared on scene shutdown.
+    __detectedNpc?: { id: string; personality: string } | null;
     // Teleport modal snapshot (set by CampScene.openTeleportModal before render).
     __teleportState?: {
       anchor: string;
@@ -195,8 +216,20 @@ const game = new Phaser.Game({
   // BootScene must stay first (it routes by auth state). LoginScene/CampScene
   // are the new auth flow; Encounter/Lobby/Battle are unchanged.
   // OverworldScene follows CampScene and does NOT auto-start (reached via the
-  // Sanctum exit door / scene.start). BootScene stays first (routes by auth).
-  scene: [BootScene, LoginScene, CampScene, OverworldScene, EncounterScene, LobbyScene, BattleScene],
+  // Sanctum exit door / scene.start). SwampScene + HiddenForestScene (8C.2, #82)
+  // are reached via the OverworldScene biome_exit / teleport and never auto-start.
+  // BootScene stays first (routes by auth).
+  scene: [
+    BootScene,
+    LoginScene,
+    CampScene,
+    OverworldScene,
+    SwampScene,
+    HiddenForestScene,
+    EncounterScene,
+    LobbyScene,
+    BattleScene,
+  ],
 });
 
 window.__game = game;
