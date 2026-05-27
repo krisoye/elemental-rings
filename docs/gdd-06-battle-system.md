@@ -33,6 +33,17 @@ Combat is an **active, reaction-timed** exchange — not a hidden simultaneous s
 
 **Phase-locked input:** Attack buttons (A1/A2) only register during the **attack phase**. Defense buttons (D1/D2) only register during the **defense phase**. Wrong-phase presses are silently ignored — protective, not punishing. The phase transition is the most visually prominent UI moment in a battle.
 
+**Combat hotkeys:** Two input layers are available simultaneously:
+
+| Slot | Absolute key | Phase-relative key |
+|---|---|---|
+| A1 | `1` | `Z` (attack phase) |
+| A2 | `2` | `C` (attack phase) |
+| D1 | `3` | `Z` (defense phase) |
+| D2 | `4` | `C` (defense phase) |
+
+`Z` always fires the slot-1 ring for the **current** phase (A1 when attacking, D1 when defending); `C` fires slot-2. This lets a player keep their left hand on WASD between turns and use Z/C in combat without moving to the number row. Wrong-phase presses are silently ignored under the phase-lock rule regardless of which key layer is used.
+
 Because the defender sees the incoming element before committing, there is no simultaneous hidden selection. Bluffing lives in the loadout, stake, and jewelry layers (§9), not in the turn itself.
 
 ### 6.4 Damage Rules
@@ -151,6 +162,20 @@ After losing a duel:
 1. The player's staked ring is forfeited to the opponent
 2. A monster opponent also steals one random ring from the player's full inventory (not just the loadout)
 3. An NPC opponent only takes the staked ring
+
+### 6.10 Ambush Initiative
+
+Normally the monster or NPC initiates overworld encounters (§6.9, §10.9), attacking first. A protagonist who **blinks** into a duel (see §10.3 and §12.8) can seize initiative instead.
+
+**Cost:** `AMBUSH_SPIRIT_COST` = 5 spirit, spent at the moment the duel room is joined.
+
+**Effect:** The initiating protagonist becomes the first attacker for that duel — they throw the first ring regardless of encounter type.
+
+**Validation:** The server (`BattleRoom.onJoin`) checks `spirit_current >= AMBUSH_SPIRIT_COST` before granting initiative. If the player cannot afford it, the duel begins with the normal (opponent-first) initiative and no spirit is spent. There is no partial refund or second-chance mechanic — afford it or don't attempt it.
+
+**Balance note:** Ambush is a meaningful but not decisive edge. The defender still has the full 900 ms telegraph window and can block or parry. The value is the first-throw flexibility, not a guaranteed advantage.
+
+---
 
 ### 6.9 Monster Encounters
 - Monsters always initiate encounters in the overworld

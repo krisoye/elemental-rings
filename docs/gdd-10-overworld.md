@@ -26,6 +26,8 @@ Environmental passives (e.g. Fire rings losing uses faster in snow) are flagged 
 - The player can always turn back and flee before formally agreeing — no penalty
 - Once formally agreed the duel begins and the battle hand management screen appears
 
+**Blink approach (ambush):** Instead of walking in and pressing E, the protagonist can **double-click an enemy within blink range** (`BLINK_MAX_RANGE` = 600 px) to blink directly into the duel. This spends spirit (see §12.7 for blink cost + §12.8 for ambush premium) and grants **first-attack initiative** — the protagonist attacks before the monster or NPC does. If the protagonist cannot afford the ambush premium at the moment of blinking, the duel starts with default (opponent-first) initiative; the blink still moves the player and the blink cost is still spent. Fleeing is still possible by walking away while only in detection range, before the duel is formally initiated.
+
 ### 10.4 NPC Categories
 
 | Category | Behavior | Stakes | Notes |
@@ -340,7 +342,7 @@ Phase 8 is the largest phase in the roadmap — it introduces a full tilemap wor
 
 **Known limitations (remaining after 8B.4):**
 - Anchorages and waystones still share one catalog (`shared/waystones.ts`); they are distinguished by the map object `name` and rendered differently, but a table-level separation (a dedicated `anchorages` table) is still future.
-- The teleport gate uses `aggregateXp >= threshold` instead of `spirit_current >= cost` (§10.8). The spirit_current gate correctly creates a preparation loop (sleep → restore spirit → teleport); the XP gate does not. Slated for a later pass.
+- The teleport gate uses `aggregateXp >= threshold` instead of `spirit_current >= cost` (§10.8). The spirit_current gate correctly creates a preparation loop (sleep → restore spirit → teleport); the XP gate does not. **Being corrected in #87** — `WaystoneDef` will gain a `spiritCost` field and the `/api/teleport` route will gate on `spirit_current`.
 - The server cannot verify the player physically stood on an Anchorage before auto-attuning (per-player overworld MVP). A future shared `WorldRoom` would verify proximity authoritatively.
 
 ---
@@ -368,5 +370,37 @@ Phase 8 is the largest phase in the roadmap — it introduces a full tilemap wor
 | Biome scenes | `SwampScene`/`HiddenForestScene` clone `OverworldScene` for MVP | A `BiomeScene` abstraction is deferred until a third biome justifies the refactor |
 | NPC duels | Reuse the `battle-ai` Colyseus room (`npcId` added to `BattleRoomOptions`) | No new duel endpoint; defeat recorded in `persistBattleResult` |
 | Multiplayer overworld | Still per-player | Shared `WorldRoom` remains deferred |
+
+---
+
+### 10.13 Short-range Blink
+
+The protagonist can **teleport short distances** in any spatial scene (overworld biomes and the Sanctum interior) by double-clicking an interaction zone.
+
+**Mechanics:**
+- Double-click an interaction zone within `BLINK_MAX_RANGE` (600 px) → the protagonist blinks onto it and activates it simultaneously (replaces walk + E as a single gesture)
+- Costs spirit proportional to distance (§12.7)
+- Only targets discrete interaction zones — never arbitrary terrain points
+- Suppressed while a modal overlay is open
+
+**Uses:**
+- Teleport directly into the Sanctum door rather than walking to it
+- Navigate quickly between ring-storage wall, meditation circle, bed, and campfire inside the sprawling Sanctum interior
+- Blink to a waystone to attune it without approaching on foot
+- Blink to an enemy to ambush (§10.3, §12.8) — enters the duel with first-attack initiative if spirit permits
+
+**Relationship to long-range teleportation (§10.8):** Short-range blink and Sanctum teleportation are distinct systems. Blink is point-to-point spatial movement within a scene; Sanctum teleportation folds space across biomes from the meditation circle. Both draw on `spirit_current`.
+
+---
+
+### 10.14 Overworld Battle-Hand Management
+
+The protagonist can review and reassign their battle hand (Thumb/A1/A2/D1/D2 slots) without returning to the Sanctum. This is a quality-of-life access to the existing battle-hand screen, available from any biome scene.
+
+**Key binding:** `Tab` toggles the overlay open/closed; `Esc` also closes it. While the overlay is open, player movement is suppressed and blink (§10.13) is disabled.
+
+**Available actions:** Same as the in-Sanctum battle-hand screen — reassign carried rings to battle slots (`PUT /api/loadout`), recharge individual rings or all rings (`POST /api/spirit/recharge`, consuming `spirit_current`). Sleep is NOT available in the field (§12.4).
+
+**GDD rule reference:** §6.8 ("After any battle, the player can freely reorganize their battle hand among their carried rings before the next encounter") and §12.3 ("Recharging a ring — anywhere"). Both explicitly allow field access; the Tab binding makes this convenient without requiring a Sanctum return.
 
 ---
