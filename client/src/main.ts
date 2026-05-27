@@ -238,6 +238,12 @@ declare global {
     // Published by ForestScene on create and cleared on shutdown so E2E can assert
     // which screen of the Forest region is live after an edge transition.
     __forestScreenId?: string;
+    // 8E (#107) — world centers of the current screen's interaction zones, keyed by
+    // zone name (anchorage/waystone ids, 'biome_exit', 'sanctum_return'). Published
+    // by BaseBiomeScene after loadWaystones builds every zone; cleared on shutdown.
+    // E2E reads it to find per-screen positions dynamically instead of hardcoding
+    // pixel coordinates that move between the generated Forest screens.
+    __zoneCenters?: Record<string, { x: number; y: number }>;
   }
 }
 

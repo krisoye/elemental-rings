@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test';
-import { seedAuthToken } from './helpers';
+import { seedAuthToken, enterForestScreen } from './helpers';
 import type { Page } from '@playwright/test';
 
 /**
@@ -10,9 +10,10 @@ import type { Page } from '@playwright/test';
  * assertions read real state — window.__waystones (the GET /api/waystones
  * payload the scene publishes) and direct server round-trips — never mocks.
  *
- * "Walking to a waystone" places the live player avatar at the marker center and
- * lets the per-frame overlap check register it in __sanctumZones, exactly as the
- * 8A overworld-transition spec does for the door / sanctum_return zones.
+ * 8E (#107) — the Forest is a multi-screen region with generated maps; the
+ * forest_glade Anchorage lives on the `forest_glade` screen (not the hub). Tests
+ * use enterForestScreen() to stand on the relevant screen and read zone positions
+ * from window.__zoneCenters dynamically instead of hardcoding pixel coordinates.
  */
 
 const URL = 'http://localhost:8090';
@@ -20,8 +21,12 @@ const API_URL = 'http://localhost:2568';
 
 /** Sanctum door zone center (client/public/assets/maps/sanctum.json). */
 const SANCTUM_DOOR = { x: 1088, y: 608 };
-/** Waystone marker centers (client/public/assets/maps/overworld.json). */
-const FOREST_GLADE = { x: 304, y: 336 };
+
+/** Read a named interaction zone's world center on the current screen (#107). */
+async function zoneCenter(page: Page, name: string): Promise<{ x: number; y: number }> {
+  await page.waitForFunction((n) => !!(window as any).__zoneCenters?.[n], name, { timeout: 8000 });
+  return page.evaluate((n) => (window as any).__zoneCenters[n] as { x: number; y: number }, name);
+}
 
 /**
  * The sanctum_return zone is built dynamically at the anchored waystone (8B.4.1),
@@ -76,12 +81,15 @@ test('waystones: walking onto Glade and pressing E attunes it (server round-trip
   await seedAuthToken(ctx);
   const page = await ctx.newPage();
   await loadSanctum(page);
-  await enterOverworld(page);
+  // 8E (#107): the Glade Anchorage lives on the forest_glade screen. Enter it.
+  await enterForestScreen(page, 'forest_glade');
 
   // Glade starts unattuned for a fresh user (only forest_entry is pre-attuned).
   expect((await readWaystone(page, 'forest_glade'))?.attuned).toBe(false);
 
-  await walkToZone(page, FOREST_GLADE, 'forest_glade');
+  // Walk onto the Anchorage center (read dynamically) and press E.
+  const glade = await zoneCenter(page, 'forest_glade');
+  await walkToZone(page, glade, 'forest_glade');
   await page.evaluate(() => (window as any).__sanctumInteract());
 
   // The POST round-trips and the scene republishes __waystones with attuned=true.
@@ -112,9 +120,10 @@ test('waystones: attunement survives a reload (server-backed, not localStorage)'
   await seedAuthToken(ctx);
   const page = await ctx.newPage();
   await loadSanctum(page);
-  await enterOverworld(page);
+  await enterForestScreen(page, 'forest_glade');
 
-  await walkToZone(page, FOREST_GLADE, 'forest_glade');
+  const glade = await zoneCenter(page, 'forest_glade');
+  await walkToZone(page, glade, 'forest_glade');
   await page.evaluate(() => (window as any).__sanctumInteract());
   await page.waitForFunction(
     () =>
@@ -123,11 +132,11 @@ test('waystones: attunement survives a reload (server-backed, not localStorage)'
     { timeout: 8000 },
   );
 
-  // Reload from scratch and re-enter the overworld; the fresh GET must report
+  // Reload from scratch and re-enter the Glade screen; the fresh GET must report
   // the attunement (it lives in the server DB, not browser storage).
   await page.reload();
   await loadSanctum(page);
-  await enterOverworld(page);
+  await enterForestScreen(page, 'forest_glade');
 
   expect((await readWaystone(page, 'forest_glade'))?.attuned).toBe(true);
   await ctx.close();

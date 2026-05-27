@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test';
-import { seedAuthToken } from './helpers';
+import { seedAuthToken, enterForestScreen } from './helpers';
 import type { Page } from '@playwright/test';
 
 /**
@@ -25,11 +25,15 @@ const API_URL = 'http://localhost:2568';
 
 /** Sanctum door zone center (client/public/assets/maps/sanctum.json). */
 const SANCTUM_DOOR = { x: 1088, y: 608 };
-/** Overworld SW biome_exit center (overworld.json: tile 2,24). */
-const FOREST_SWAMP_EXIT = { x: 80, y: 784 };
-/** Swamp object centers (swamp.json). */
+/** Swamp object centers (swamp.json — unchanged by 8E). */
 const SWAMP_ANCHOR_1 = { x: 272, y: 208 };
 const SWAMP_SECRET = { x: 912, y: 784 };
+
+/** Read a named interaction zone's world center on the current screen (#107). */
+async function zoneCenter(page: Page, name: string): Promise<{ x: number; y: number }> {
+  await page.waitForFunction((n) => !!(window as any).__zoneCenters?.[n], name, { timeout: 8000 });
+  return page.evaluate((n) => (window as any).__zoneCenters[n] as { x: number; y: number }, name);
+}
 
 async function loadSanctum(page: Page): Promise<void> {
   await page.goto(URL);
@@ -38,17 +42,6 @@ async function loadSanctum(page: Page): Promise<void> {
   await page.waitForFunction(() => typeof (window as any).__sanctumInteract === 'function', {
     timeout: 10000,
   });
-}
-
-/** Enter the Forest overworld via the Sanctum door and wait for its waystones. */
-async function enterOverworld(page: Page): Promise<void> {
-  await walkToZone(page, SANCTUM_DOOR, 'door');
-  await page.evaluate(() => (window as any).__sanctumInteract());
-  await page.waitForFunction(() => (window as any).__activeScene === 'ForestScene', {
-    timeout: 8000,
-  });
-  await page.waitForFunction(() => !!(window as any).__player, { timeout: 8000 });
-  await page.waitForFunction(() => !!(window as any).__waystones, { timeout: 8000 });
 }
 
 /** Place the live player at a point and wait for the named zone to register. */
@@ -139,22 +132,21 @@ test('swamp: SW biome_exit is barred until forest_sw_stone is attuned, then open
   await seedAuthToken(ctx); // fresh user → forest_sw_stone NOT attuned
   const page = await ctx.newPage();
   await loadSanctum(page);
-  await enterOverworld(page);
+  // 8E (#107): the SW biome_exit lives on the forest_swamp_gate screen.
+  await enterForestScreen(page, 'forest_swamp_gate');
 
   // Without attunement, pressing E at the biome_exit shows a barrier and stays.
-  await walkToZone(page, FOREST_SWAMP_EXIT, 'biome_exit');
+  await walkToZone(page, await zoneCenter(page, 'biome_exit'), 'biome_exit');
   await page.evaluate(() => (window as any).__sanctumInteract());
   await page.waitForTimeout(500);
   expect(await page.evaluate(() => (window as any).__activeScene)).toBe('ForestScene');
 
-  // Attune the SW stone server-side, then re-enter the overworld so the scene's
+  // Attune the SW stone server-side, then re-enter the screen so the scene's
   // cached payload reflects it (the gate reads window.__waystones).
   expect(await attune(page, 'forest_sw_stone')).toBe(200);
-  await page.reload();
-  await loadSanctum(page);
-  await enterOverworld(page);
+  await enterForestScreen(page, 'forest_swamp_gate');
 
-  await walkToZone(page, FOREST_SWAMP_EXIT, 'biome_exit');
+  await walkToZone(page, await zoneCenter(page, 'biome_exit'), 'biome_exit');
   await page.evaluate(() => (window as any).__sanctumInteract());
   await page.waitForFunction(() => (window as any).__activeScene === 'SwampScene', {
     timeout: 8000,
@@ -169,9 +161,9 @@ test('swamp: walking onto swamp_anchor_1 auto-attunes it (server round-trip)', a
   const page = await ctx.newPage();
   await loadSanctum(page);
   await attune(page, 'forest_sw_stone'); // unlock the Swamp transition
-  await enterOverworld(page);
+  await enterForestScreen(page, 'forest_swamp_gate');
 
-  await walkToZone(page, FOREST_SWAMP_EXIT, 'biome_exit');
+  await walkToZone(page, await zoneCenter(page, 'biome_exit'), 'biome_exit');
   await page.evaluate(() => (window as any).__sanctumInteract());
   await page.waitForFunction(() => (window as any).__activeScene === 'SwampScene', { timeout: 8000 });
   await page.waitForFunction(() => !!(window as any).__waystones, { timeout: 8000 });
@@ -199,9 +191,9 @@ test('swamp: pressing E at swamp_secret_forest reveals forest_hidden_anchor', as
   await loadSanctum(page);
   await seedAggregateXp(page, 800); // the Ironbark Rune sits at threshold 800
   await attune(page, 'forest_sw_stone');
-  await enterOverworld(page);
+  await enterForestScreen(page, 'forest_swamp_gate');
 
-  await walkToZone(page, FOREST_SWAMP_EXIT, 'biome_exit');
+  await walkToZone(page, await zoneCenter(page, 'biome_exit'), 'biome_exit');
   await page.evaluate(() => (window as any).__sanctumInteract());
   await page.waitForFunction(() => (window as any).__activeScene === 'SwampScene', { timeout: 8000 });
   await page.waitForFunction(() => !!(window as any).__waystones, { timeout: 8000 });

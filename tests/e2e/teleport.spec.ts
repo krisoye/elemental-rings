@@ -25,8 +25,6 @@ const API_URL = 'http://localhost:2568';
 const MEDITATION = { x: 992, y: 160 };
 /** Sanctum door zone center (client/public/assets/maps/sanctum.json). */
 const SANCTUM_DOOR = { x: 1088, y: 608 };
-/** Overworld forest_glade waystone marker center (overworld.json: x288,y320,32×32). */
-const FOREST_GLADE = { x: 304, y: 336 };
 
 async function loadSanctum(page: Page): Promise<void> {
   await page.goto(URL);
@@ -202,10 +200,15 @@ test('teleport: the anchored waystone drives where the overworld spawns the play
     timeout: 8000,
   });
 
-  // Leave via the Sanctum door → ForestScene, which spawns at the anchor.
+  // Leave via the Sanctum door → ForestScene. 8E (#107): the door routes to the
+  // screen whose Anchorage matches the anchor, so a forest_glade anchor opens the
+  // forest_glade screen, where the Sanctum is placed at the Glade Anchorage.
   await walkToZone(page, SANCTUM_DOOR, 'door');
   await page.evaluate(() => (window as any).__sanctumInteract());
   await page.waitForFunction(() => (window as any).__activeScene === 'ForestScene', {
+    timeout: 8000,
+  });
+  await page.waitForFunction(() => (window as any).__forestScreenId === 'forest_glade', {
     timeout: 8000,
   });
   await page.waitForFunction(() => !!(window as any).__waystones, { timeout: 8000 });
@@ -214,15 +217,20 @@ test('teleport: the anchored waystone drives where the overworld spawns the play
   // loadWaystones repositions the player AFTER building markers; wait for the
   // published Sanctum center, then assert the player spawned beside that door.
   await page.waitForFunction(() => !!(window as any).__sanctumReturnCenter, { timeout: 8000 });
+  await page.waitForFunction(() => !!(window as any).__zoneCenters?.forest_glade, { timeout: 8000 });
   const sanctum = await page.evaluate(
     () => (window as any).__sanctumReturnCenter as { x: number; y: number },
+  );
+  // The Glade Anchorage center on this screen (read dynamically, #107).
+  const gladeCenter = await page.evaluate(
+    () => (window as any).__zoneCenters.forest_glade as { x: number; y: number },
   );
 
   // The Sanctum is anchor-derived: with SANCTUM_OFFSET=0 its center sits AT the
   // anchored waystone (forest_glade) center — distance ≈ 0, well within ~40px.
-  expect(Math.hypot(sanctum.x - FOREST_GLADE.x, sanctum.y - FOREST_GLADE.y)).toBeLessThanOrEqual(
-    40,
-  );
+  expect(
+    Math.hypot(sanctum.x - gladeCenter.x, sanctum.y - gladeCenter.y),
+  ).toBeLessThanOrEqual(40);
 
   await page.waitForFunction(
     ([sx, sy]) => {

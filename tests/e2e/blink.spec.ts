@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test';
-import { seedAuthToken } from './helpers';
+import { seedAuthToken, enterForestScreen } from './helpers';
 import type { Page } from '@playwright/test';
 
 /**
@@ -22,12 +22,10 @@ import type { Page } from '@playwright/test';
 const URL = 'http://localhost:8090';
 const API_URL = 'http://localhost:2568';
 
-/** Sanctum door zone center (client/public/assets/maps/sanctum.json). */
-const SANCTUM_DOOR = { x: 1088, y: 608 };
-/** forest_glade Anchorage center (overworld.json: an InteractionZone named 'forest_glade'). */
-const FOREST_GLADE = { x: 304, y: 336 };
 /** AMBUSH_SPIRIT_COST mirrored from server/src/game/constants.ts. */
 const AMBUSH_SPIRIT_COST = 5;
+/** BLINK_MAX_RANGE mirrored from client/src/Constants.ts. */
+const BLINK_MAX_RANGE = 600;
 
 async function loadSanctum(page: Page): Promise<void> {
   await page.goto(URL);
@@ -38,24 +36,16 @@ async function loadSanctum(page: Page): Promise<void> {
   });
 }
 
-/** Place the live player at a point and wait for the named zone to register. */
-async function walkToZone(page: Page, p: { x: number; y: number }, zone: string): Promise<void> {
-  await page.evaluate(([zx, zy]) => (window as any).__player.setPosition(zx, zy), [p.x, p.y]);
-  await page.waitForFunction((z) => ((window as any).__sanctumZones ?? []).includes(z), zone, {
-    timeout: 5000,
-  });
-}
-
-/** Enter the Forest overworld via the Sanctum door and wait for the blink hook. */
-async function enterOverworld(page: Page): Promise<void> {
-  await walkToZone(page, SANCTUM_DOOR, 'door');
-  await page.evaluate(() => (window as any).__sanctumInteract());
-  await page.waitForFunction(() => (window as any).__activeScene === 'ForestScene', {
-    timeout: 8000,
-  });
-  await page.waitForFunction(() => !!(window as any).__player, { timeout: 8000 });
+/**
+ * 8E (#107) — enter the forest_glade screen and wait for the blink hook + the Glade
+ * Anchorage zone to be registered, then return its world center (the blink target).
+ * Replaces the old hardcoded overworld.json glade coordinate.
+ */
+async function enterGladeForBlink(page: Page): Promise<{ x: number; y: number }> {
+  await enterForestScreen(page, 'forest_glade');
   await page.waitForFunction(() => typeof (window as any).__blink === 'function', { timeout: 8000 });
-  await page.waitForFunction(() => !!(window as any).__waystones, { timeout: 8000 });
+  await page.waitForFunction(() => !!(window as any).__zoneCenters?.forest_glade, { timeout: 8000 });
+  return page.evaluate(() => (window as any).__zoneCenters.forest_glade as { x: number; y: number });
 }
 
 /** GET /api/me spirit_current straight from the server. */
@@ -90,12 +80,13 @@ test('blink: double-clicking an in-range zone snaps onto it and spends spirit', 
   await seedAuthToken(ctx); // fresh player → 50 spirit
   const page = await ctx.newPage();
   await loadSanctum(page);
-  await enterOverworld(page);
+  const glade = await enterGladeForBlink(page);
 
-  // Stand exactly 300px from forest_glade (304,336): cost = ceil(300/100) = 3.
+  // Stand exactly 300px west of the Glade Anchorage: cost = ceil(300/100) = 3. The
+  // west-exit dirt path is walkable floor, so the player won't drift off a wall.
   await page.evaluate(
     ([x, y]) => (window as any).__player.setPosition(x, y),
-    [FOREST_GLADE.x, FOREST_GLADE.y - 300] as const,
+    [glade.x - 300, glade.y] as const,
   );
   const spiritBefore = await serverSpirit(page);
 
@@ -108,7 +99,7 @@ test('blink: double-clicking an in-range zone snaps onto it and spends spirit', 
       const p = (window as any).__player;
       return !!p && Math.hypot(p.x - cx, p.y - cy) <= 8;
     },
-    [FOREST_GLADE.x, FOREST_GLADE.y] as const,
+    [glade.x, glade.y] as const,
     { timeout: 5000 },
   );
 
@@ -132,10 +123,10 @@ test('blink: an in-range blink with no spirit is rejected and does not move the 
   await seedAuthToken(ctx);
   const page = await ctx.newPage();
   await loadSanctum(page);
-  await enterOverworld(page);
+  const glade = await enterGladeForBlink(page);
   await drainSpirit(page);
 
-  const start = { x: FOREST_GLADE.x, y: FOREST_GLADE.y - 300 };
+  const start = { x: glade.x - 300, y: glade.y };
   await page.evaluate(([x, y]) => (window as any).__player.setPosition(x, y), [start.x, start.y]);
 
   const moved = await page.evaluate(() => (window as any).__blink('forest_glade'));
@@ -165,12 +156,13 @@ test('blink: a double-click beyond BLINK_MAX_RANGE is a no-op', async ({ browser
   await seedAuthToken(ctx);
   const page = await ctx.newPage();
   await loadSanctum(page);
-  await enterOverworld(page);
+  const glade = await enterGladeForBlink(page);
 
-  // Stand 700px south of forest_glade — beyond BLINK_MAX_RANGE (600) → no POST.
-  // Use +y (south) so the position stays within map bounds; -y puts the player
-  // above the map top edge and physics snaps them back into range.
-  const start = { x: FOREST_GLADE.x, y: FOREST_GLADE.y + 700 };
+  // A clear floor tile 621px from the Glade — beyond BLINK_MAX_RANGE (600) → no POST.
+  // (glade-512x, glade-352y) is on floor with no adjacent wall, so physics won't
+  // drift the player back into range before the synchronous blink distance check.
+  const start = { x: glade.x - 512, y: glade.y - 352 };
+  expect(Math.hypot(start.x - glade.x, start.y - glade.y)).toBeGreaterThan(BLINK_MAX_RANGE);
   await page.evaluate(([x, y]) => (window as any).__player.setPosition(x, y), [start.x, start.y]);
   const spiritBefore = await serverSpirit(page);
 

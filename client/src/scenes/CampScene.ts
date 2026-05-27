@@ -8,6 +8,7 @@ import { Player } from '../objects/world/Player';
 import { InteractionZone } from '../objects/world/InteractionZone';
 import { BlinkController } from '../objects/world/BlinkController';
 import { getTalisman } from '../../../shared/talismans';
+import { FOREST_SCREENS } from '../../../shared/world/forest';
 
 declare const __SERVER_URL__: string;
 
@@ -311,9 +312,11 @@ export class CampScene extends Phaser.Scene {
   /**
    * Resolve the scene key for the currently-anchored waystone and start it. The
    * Sanctum anchor (server authority) determines which biome the player exits
-   * into. For the Forest, the anchor also selects the SCREEN (8E): the hidden
-   * alcove anchor lands on `forest_hidden_alcove`, everything else on the hub.
-   * Defaults to ForestScene on any failure so the door always works.
+   * into. For the Forest, the anchor also selects the SCREEN (8E): the door opens
+   * on the Forest screen whose anchorage matches the anchor (the hub for
+   * forest_entry, the glade for forest_glade, the alcove for forest_hidden_anchor,
+   * …), falling back to the hub. Defaults to ForestScene on any failure so the
+   * door always works.
    */
   private async routeToBiome(): Promise<void> {
     let anchor = 'forest_entry';
@@ -340,13 +343,15 @@ export class CampScene extends Phaser.Scene {
   }
 
   /**
-   * For a Forest anchor, the screen the door should open on (8E). The hidden alcove
-   * anchor opens its screen; every other Forest anchor opens the hub. Returns
-   * undefined for non-Forest anchors (the scene picks its own default).
+   * For a Forest anchor, the screen the door should open on (8E). The anchor is an
+   * anchorage waystone id; the door opens on the FOREST_SCREENS screen that carries
+   * that anchorage (e.g. forest_glade → the forest_glade screen, forest_hidden_anchor
+   * → forest_hidden_alcove). forest_entry resolves to the hub. Returns undefined when
+   * no screen owns the anchor (e.g. a Swamp anchor), so the scene picks its default.
    */
   private static forestScreenForAnchor(anchorId: string): { screenId: string } | undefined {
-    if (anchorId.startsWith('forest_hidden')) return { screenId: 'forest_hidden_alcove' };
-    return undefined;
+    const screen = FOREST_SCREENS.find((s) => s.anchorage === anchorId);
+    return screen ? { screenId: screen.id } : undefined;
   }
 
   /**

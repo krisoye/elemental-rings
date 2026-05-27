@@ -5,15 +5,18 @@
 // Tiled 1.10 JSON map per screen to client/public/assets/maps/forest/<id>.json.
 // Pure, reproducible output: re-running produces no spurious diff (the only
 // randomness, grove placement on open screens, is seeded by a hash of the screen
-// id). Mirrors gen-overworld-map.mjs's tileset + layer structure.
+// id). Uses the shared forest tileset + a Tiled 1.10 ground/objects layer structure.
 //
 // Tile GIDs into the shared forest tileset (firstgid = 1, forest.png is 128×32 = 4
 // tiles wide): GID 1 = void (never placed), GID 2 = floor (walkable), GID 3 =
 // wall/tree (collides: true), GID 4 = accent/dirt path (walkable).
 //
-// The hub screen `forest_anchorage` retains the hand-authored overworld.json layout
-// at runtime (ForestScene loads overworld.json for it); its generated map here is a
-// structural placeholder for completeness/fallback and is not loaded by the scene.
+// Every screen — including the hub `forest_anchorage` — is generated here and loaded
+// by ForestScene uniformly (the legacy overworld.json exception was removed in #107).
+// Each screen with cardinal exits gets a 4-tile-wide OPEN GAP carved into its
+// perimeter wall at each exit's edge midpoint, so walking into that edge triggers the
+// BaseBiomeScene edge transition to the neighbouring screen. The hub is the `safe`
+// screen and is kept grove-free so the seeded NPC roster never lands inside a tree.
 //
 // Run from the client/ directory:  node scripts/gen-forest-screens.mjs
 // (or `npm run gen:forest-screens`).
@@ -94,8 +97,7 @@ function makeRng(seed) {
 
 /**
  * Draw a Bresenham line from (x0,y0) to (x1,y1), painting GID_ACCENT (dirt path)
- * with a 1-tile cross brush so the path reads ~3 tiles wide. Copied from
- * gen-overworld-map.mjs.
+ * with a 1-tile cross brush so the path reads ~3 tiles wide.
  */
 function bresenhamPath(data, w, h, x0, y0, x1, y1) {
   const at = (tx, ty) => ty * w + tx;
@@ -131,6 +133,11 @@ function bresenhamPath(data, w, h, x0, y0, x1, y1) {
       y += sy;
     }
   }
+}
+
+/** Clamp a tile index to the interior span [1, dim-2] (never a corner tile). */
+function clampTile(t, dim) {
+  return Math.max(1, Math.min(dim - 2, t));
 }
 
 /** Tile midpoint of a screen edge in the given direction. */
@@ -206,8 +213,10 @@ function buildGround(screen) {
         }
       }
     }
-  } else {
-    // Open screen: scatter 3–5 deterministic grove circles (radius 2–3).
+  } else if (!screen.safe) {
+    // Open screen: scatter 3–5 deterministic grove circles (radius 2–3). The hub
+    // (`safe`) screen is left grove-free so the seeded NPC roster — placed by tile
+    // index, not by map object — never spawns inside a tree.
     const rng = makeRng(hashSeed(screen.id));
     const groveCount = 3 + Math.floor(rng() * 3); // 3..5
     for (let i = 0; i < groveCount; i++) {
@@ -223,6 +232,20 @@ function buildGround(screen) {
           data[at(tx, ty)] = GID_WALL;
         }
       }
+    }
+  }
+
+  // Perimeter gaps: carve a 4-tile-wide (2*GAP_HALF) OPEN FLOOR span out of the
+  // perimeter wall at each exit's edge midpoint, so the player can walk into that
+  // edge and trigger the BaseBiomeScene edge transition. Without this the perimeter
+  // is solid and the manifest exits are unreachable on foot (the #107 hub bug).
+  for (const dir of dirs) {
+    const m = edgeMidpoint(dir, w, h);
+    for (let d = -GAP_HALF + 1; d <= GAP_HALF; d++) {
+      if (dir === 'north') data[at(clampTile(m.tx + d, w), 0)] = GID_FLOOR;
+      else if (dir === 'south') data[at(clampTile(m.tx + d, w), h - 1)] = GID_FLOOR;
+      else if (dir === 'west') data[at(0, clampTile(m.ty + d, h))] = GID_FLOOR;
+      else if (dir === 'east') data[at(w - 1, clampTile(m.ty + d, h))] = GID_FLOOR;
     }
   }
 
