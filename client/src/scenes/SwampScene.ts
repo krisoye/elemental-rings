@@ -31,6 +31,15 @@ export class SwampScene extends BaseBiomeScene {
     return 'swamp-tiles';
   }
 
+  /**
+   * B2 — swamp.json names its tileset `swamp` (not `swamp-tiles`), so the Tiled
+   * tileset name addTilesetImage matches on differs from the texture key. Override
+   * it here; without this addTilesetImage returns null and createLayer crashes.
+   */
+  protected tilesetName(): string {
+    return 'swamp';
+  }
+
   mapKeyForScreen(_id: string): string {
     return 'swamp';
   }
