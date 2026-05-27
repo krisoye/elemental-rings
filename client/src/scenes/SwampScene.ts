@@ -138,6 +138,16 @@ export class SwampScene extends Phaser.Scene {
     this.player = new Player(this, spawnX, spawnY);
     this.physics.add.collider(this.player, groundLayer);
 
+    // #88 — returning from an overworld NPC duel: restore the player to where they
+    // left (recorded in window.__duelOrigin before the duel) instead of the swamp
+    // entry. This scene was shut down on duel entry, so the position is carried
+    // out-of-band. Consume the global immediately so it never re-applies.
+    const origin = window.__duelOrigin;
+    if (origin && origin.scene === 'SwampScene' && typeof origin.x === 'number') {
+      this.player.setPosition(origin.x, origin.y);
+    }
+    window.__duelOrigin = null;
+
     this.physics.world.setBounds(0, 0, map.widthInPixels, map.heightInPixels);
     this.cameras.main.setBounds(0, 0, map.widthInPixels, map.heightInPixels);
     this.cameras.main.startFollow(this.player, true, 0.1, 0.1);
@@ -235,6 +245,15 @@ export class SwampScene extends Phaser.Scene {
     // #83 — a detected NPC takes priority: E approaches and launches the duel via
     // the EncounterScene NPC path (battle-ai room, scoped to this NPC's id).
     if (this.detectedNpc) {
+      // #88 — record the biome origin + player world position so BattleScene returns
+      // to the Swamp (not the hub) when the duel ends, and create() restores the
+      // player near where they left. Carried out-of-band: the scene is shut down on
+      // duel entry.
+      window.__duelOrigin = {
+        scene: 'SwampScene',
+        x: this.player.x,
+        y: this.player.y,
+      };
       this.scene.start('EncounterScene', {
         npcId: this.detectedNpc.id,
         personality: this.detectedNpc.personality as AIPersonality,

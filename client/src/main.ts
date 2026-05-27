@@ -139,6 +139,13 @@ declare global {
     // is in range. Published every update frame; drives the Approach [E] prompt and
     // the E → duel launch. Cleared on scene shutdown.
     __detectedNpc?: { id: string; personality: string } | null;
+    // #88 — post-duel return origin. An overworld NPC duel (OverworldScene/
+    // SwampScene) sets this to its biome scene key + the player's world position
+    // BEFORE launching the duel; BattleScene.checkEnded returns to that biome scene
+    // (instead of the EncounterScene hub) and the biome scene's create() restores
+    // the player near {x,y}, then clears it. null/unset for hub/marker duels (which
+    // return to the EncounterScene hub) and after consumption.
+    __duelOrigin?: { scene: 'OverworldScene' | 'SwampScene'; x: number; y: number } | null;
     // Teleport modal snapshot (set by CampScene.openTeleportModal before render).
     __teleportState?: {
       anchor: string;

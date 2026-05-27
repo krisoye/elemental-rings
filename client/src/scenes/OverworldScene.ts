@@ -109,6 +109,13 @@ export class OverworldScene extends Phaser.Scene {
   private detectedNpc: { id: string; personality: string; x: number; y: number } | null = null;
   /** Camera-pinned Approach [E] detection prompt; created lazily, reused/hidden. */
   private npcPrompt: Phaser.GameObjects.Text | null = null;
+  /**
+   * #88 — true when this create() restored the player from a post-duel
+   * window.__duelOrigin. Suppresses the anchor-derived Sanctum-door spawn in
+   * loadWaystones so the player stays where the duel left them (near the NPC)
+   * instead of snapping back to the Sanctum entrance.
+   */
+  private returnedFromDuel = false;
 
   constructor() {
     super({ key: 'OverworldScene' });
@@ -126,6 +133,8 @@ export class OverworldScene extends Phaser.Scene {
   create(): void {
     window.__scene = this;
     window.__activeScene = 'OverworldScene';
+    // The scene instance is reused across re-entries; reset per-create flags.
+    this.returnedFromDuel = false;
 
     const map = this.make.tilemap({ key: 'overworld' });
     const tileset = map.addTilesetImage('placeholder', 'tiles')!;
@@ -135,6 +144,18 @@ export class OverworldScene extends Phaser.Scene {
     const spawn = map.getObjectLayer('objects')?.objects.find((o) => o.name === 'spawn');
     this.player = new Player(this, spawn?.x ?? 64, spawn?.y ?? 64);
     this.physics.add.collider(this.player, groundLayer);
+
+    // #88 — returning from an overworld NPC duel: restore the player to where they
+    // left (recorded in window.__duelOrigin before the duel). This scene was shut
+    // down on duel entry, so the position is carried out-of-band. When set, suppress
+    // the anchor-derived Sanctum-door spawn (loadWaystones) so it doesn't override
+    // the restored position. Consume the global immediately so it never re-applies.
+    const origin = window.__duelOrigin;
+    if (origin && origin.scene === 'OverworldScene' && typeof origin.x === 'number') {
+      this.player.setPosition(origin.x, origin.y);
+      this.returnedFromDuel = true;
+    }
+    window.__duelOrigin = null;
 
     this.physics.world.setBounds(0, 0, map.widthInPixels, map.heightInPixels);
     this.cameras.main.setBounds(0, 0, map.widthInPixels, map.heightInPixels);
@@ -243,6 +264,15 @@ export class OverworldScene extends Phaser.Scene {
     // launches the duel via the EncounterScene NPC path (battle-ai room, scoped to
     // this NPC's id so a win records the defeat).
     if (this.detectedNpc) {
+      // #88 — record the biome origin + the player's world position so BattleScene
+      // returns here (not the Encounter hub) when the duel ends, and create() can
+      // restore the player near where they left. This scene is shut down on duel
+      // entry, so the position must be carried out-of-band via the window global.
+      window.__duelOrigin = {
+        scene: 'OverworldScene',
+        x: this.player.x,
+        y: this.player.y,
+      };
       this.scene.start('EncounterScene', {
         npcId: this.detectedNpc.id,
         personality: this.detectedNpc.personality as AIPersonality,
@@ -548,10 +578,15 @@ export class OverworldScene extends Phaser.Scene {
       this.drawSanctumExterior(sanctumX, sanctumY);
 
       // Spawn player just outside the Sanctum door, further along the dir vector.
-      this.player.setPosition(
-        sanctumX + dirX * SANCTUM_DOOR_OFFSET,
-        sanctumY + dirY * SANCTUM_DOOR_OFFSET,
-      );
+      // #88 — skip this when returning from an NPC duel: create() already restored
+      // the player to where the duel was launched, so the Sanctum-door spawn would
+      // wrongly teleport them back to the entrance.
+      if (!this.returnedFromDuel) {
+        this.player.setPosition(
+          sanctumX + dirX * SANCTUM_DOOR_OFFSET,
+          sanctumY + dirY * SANCTUM_DOOR_OFFSET,
+        );
+      }
 
       // Expose for E2E.
       window.__sanctumReturnCenter = { x: sanctumX, y: sanctumY };

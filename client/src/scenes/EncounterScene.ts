@@ -84,6 +84,13 @@ export class EncounterScene extends Phaser.Scene {
     // defeat server-side). The hub UI/hooks below are skipped on this path.
     if (this.npcDuel) {
       const { npcId, personality } = this.npcDuel;
+      // #88 — defensively consume the launch data so it can never be reused. Phaser
+      // retains settings.data across a no-data scene.start, so without this a later
+      // re-entry of EncounterScene (e.g. a hub return that forgot explicit `{}`)
+      // could see the stale { npcId, personality } and auto-relaunch this duel in a
+      // loop. Clearing it here means init() reads undefined → npcDuel=null → hub.
+      this.scene.settings.data = {};
+      this.npcDuel = null;
       void this.startAIDuel(personality, undefined, npcId);
       return;
     }
