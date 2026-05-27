@@ -566,3 +566,107 @@ The Forest is a **multi-screen region** — a graph of discrete maps connected b
 - **content:** A serene, impossibly still clearing accessible only by teleporting after attuning the Ironbark Rune in the Swamp. Both the Hidden Anchorage and the Hidden Glade Waystone sit here. A secret reward — quiet and beautiful, a deliberate contrast to the boss route.
 
 ---
+
+### 10.16 Phase 8D — Asset Art Pass
+
+Replaces placeholder generated tiles with real **Asset Alliance** pixel-art assets. Produces the reusable pipeline (decoder, tilesets, sprite system) and applies it to the Sanctum (permanent) + current Forest/Swamp maps (proof). Tilesets and the `Decoration.ts` sprite-placement system are inherited by Phase 8E.
+
+#### Biome → Asset Mapping
+
+| Screen / Scene | Ground tileset | Object sprites | Source pack |
+|---|---|---|---|
+| `forest_anchorage` hub | GreenForest grass + dirt path | GreenForest trees; Starter Village houses, fences, lamp posts | GreenForest + Starter Village 32×32 |
+| Forest corridor screens (`north_road`, `east_path`, `south_path`, `briar_pass`) | GreenForest grass + dirt | GreenForest trees dense on short axis | GreenForest |
+| `forest_glade` | GreenForest grass | GreenForest sparse trees, flowers | GreenForest |
+| `forest_mossy_fen` | GreenForest dark grass | GreenForest trees, rocks, pond blobs | GreenForest |
+| `forest_hollow` | Dark grass + mud patch | GreenForest trees, Cold Cave rocks | GreenForest + Cold Cave |
+| `forest_snow_gate` | Stone + frost | Cold Cave rocks + pine variants | Cold Cave |
+| `forest_swamp_gate` | Mud/dirt | Cold Cave alt rocks + GreenForest | Cold Cave + GreenForest |
+| `forest_crossroads`, `forest_ridge` | GreenForest grass + stone | GreenForest trees, rock clusters | GreenForest |
+| `forest_deepwood` | GreenForest dark grass | GreenForest dense trees, dark variants | GreenForest |
+| `forest_boss_clearing` | Stone circle | Rock pillars, minimal trees | GreenForest + Cold Cave |
+| `forest_hidden_alcove` | GreenForest grass (serene) | Single large tree, soft bush ring | GreenForest |
+| Swamp screens | Mud + water | Cold Cave alt rocks, reed sprites | Cold Cave + GreenForest |
+| **Sanctum interior** | Cozy Indoor wood + stone floors | Cozy Indoor furniture (bed, bookshelf, rug, hearth, door) | Cozy Indoor |
+
+#### Phase 8D Build Decomposition (EPIC [#92](https://github.com/krisoye/elemental-rings/issues/92))
+
+**Sub-issues (8D.1 + 8D.3 parallel; 8D.4 after 8D.2):**
+
+- [#93](https://github.com/krisoye/elemental-rings/issues/93) — **8D.1:** RPG Maker VX autotile decoder tool (`client/scripts/lib/rpgmaker-autotile.mjs`). Reads A2/A4 source sheets; outputs flat 48-variant Tiled-compatible tileset PNGs. Verified by Vitest. NOT wired into any map — tool only, consumed by 8E.
+- [#94](https://github.com/krisoye/elemental-rings/issues/94) — **8D.2:** Forest + Swamp ground tilesets. Generates `forest.png` (GreenForest grass/tree/dirt) and refreshes `swamp.png` (real mud/water). Splits the shared `placeholder.png` — OverworldScene + HiddenForestScene → `forest`; CampScene → `sanctum` (see 8D.3). GID contract unchanged (4-tile strip, GID3 `collides:true`).
+- [#95](https://github.com/krisoye/elemental-rings/issues/95) — **8D.3:** Sanctum interior. Generates `sanctum.png` (Cozy Indoor wood/stone floors). Adds furniture sprites at the five interaction zones (bed, meditation, ringwall, campfire, door). All E2E hooks and InteractionZones unchanged.
+- [#96](https://github.com/krisoye/elemental-rings/issues/96) — **8D.4:** Decoration sprite system. `client/src/objects/world/Decoration.ts` — `placeDecoration(scene, group, spec[])` helper usable by any biome scene. Generates `forest-decoration.png` (trees, rocks, bushes, ponds) and `structures.png` (Starter Village buildings). Minimal proof placement in current OverworldScene/ForestScene; full per-screen placement is 8E.5.
+
+**Confirmed implementation decisions (8D):**
+
+| Decision | Choice | Rationale |
+|---|---|---|
+| Orientation | **Orthogonal 32px** — unchanged | No engine changes; Asset Alliance ships 32×32 variants |
+| GID structure | 4-tile strip preserved (void/floor/wall/accent) | Drop-in swap; all map generators and collision unchanged |
+| Autotile transitions | Decoder built as a **tool**; NOT applied to maps in 8D | Maps re-indexed once in 8E, not twice |
+| Map application scope | Sanctum (permanent) + current Forest/Swamp (proof) | Tilesets + system are 100% reusable by 8E; current map decoration is throwaway |
+| Source art location | Read from absolute host paths at generation time; committed PNGs are the portable artifact | No repo bloat; regeneration is host-bound (acceptable) |
+| Tileset split | `forest.png` / `sanctum.png` / `swamp.png` | Sanctum must not inherit grass from the shared placeholder sheet |
+
+---
+
+### 10.17 Phase 8E — Forest Region Expansion
+
+Implements the §10.15 Forest region manifest as a **15-screen connected world** using a new biome class hierarchy. Inherits all tilesets, sprite catalogs, and the `Decoration.ts` system from Phase 8D.
+
+#### Architecture
+
+```
+BaseBiomeScene (abstract Phaser.Scene)
+│   Core mechanics — written once:
+│     tilemap load, Player, Arcade physics, camera, compass HUD,
+│     waystone attunement, NPC detection + duel launch, talisman,
+│     blink (§10.13), biome_exit, edge-transition system, E2E hooks
+│   Abstract contract:
+│     abstract tilesetKey(): string
+│     abstract mapKeyForScreen(screenId: string): string
+│   Optional overrides:
+│     biomeVisuals?()   ← fog, snow, tint
+│     onEnterScreen?()  ← per-screen decoration placement
+
+ForestScene extends BaseBiomeScene
+│   manifest: FOREST_SCREENS (shared/world/forest.ts — 15 screens)
+│   tilesetKey() → 'forest'
+│   Phaser key: 'ForestScene'; init({ screenId, spawnEdge })
+│   onEnterScreen() → calls Decoration.placeDecoration per screenId spec
+
+SwampScene extends BaseBiomeScene
+│   manifest: SWAMP_SCREENS (shared/world/swamp.ts — 1 screen, grows later)
+│   tilesetKey() → 'swamp-tiles'
+│   biomeVisuals() → fog overlay, reduced NPC detection radius
+
+[HiddenForestScene deleted — absorbed as forest_hidden_alcove screen in ForestScene]
+```
+
+**Edge-transition system:** when the player walks off a map edge that has an `exits` entry in `ScreenDef`, `BaseBiomeScene` fades (250 ms) and restarts the same scene class with the neighbor's `screenId`, spawning the player at the opposite edge midpoint. `biomeExit` edges still use the attunement-gated transition (existing `tryBiomeExit` pattern).
+
+#### Phase 8E Build Decomposition (EPIC [#97](https://github.com/krisoye/elemental-rings/issues/97))
+
+**DAG: `{8E.1, 8E.3}` parallel → `{8E.2, 8E.4}` after 8E.1 → `8E.5` after 8E.2 + 8D.4**
+
+- [#98](https://github.com/krisoye/elemental-rings/issues/98) — **8E.1:** `BaseBiomeScene` + `ForestScene` core. Extracts all shared logic from `OverworldScene` into `BaseBiomeScene`. Creates `ForestScene`, `shared/world/forest.ts` manifest, edge-transition system. Deletes `OverworldScene.ts` + `HiddenForestScene.ts`. Extends drift test for reciprocal exits + waystones.ts parity.
+- [#99](https://github.com/krisoye/elemental-rings/issues/99) — **8E.3:** Server NPC screen-awareness. Adds `screen: string` to `NpcSpawnDef`; expands `NPC_SPAWNS` for all Forest screens by danger tier; adds `?screen=` filter to `GET /api/overworld/npcs` (screen required when biome provided).
+- [#100](https://github.com/krisoye/elemental-rings/issues/100) — **8E.2:** Forest screen map generator. Single `gen-forest-screens.mjs` generates all 15 maps from `FOREST_SCREENS` manifest → `maps/forest/<id>.json`. Corridor maps auto-shaped; open maps get grove clusters; object layer derived from manifest fields. Deletes `gen-overworld-map.mjs`, `overworld.json`, `forest_hidden.json`.
+- [#101](https://github.com/krisoye/elemental-rings/issues/101) — **8E.4:** Migrate `SwampScene` to `BaseBiomeScene`. Removes ~250 lines of duplicated shared logic; keeps fog + detection-radius overrides; creates `shared/world/swamp.ts`.
+- [#102](https://github.com/krisoye/elemental-rings/issues/102) — **8E.5:** Forest decoration + hub structures placement. Art-directs all 15 Forest screens via `Decoration.ts` + `SCREEN_SPECS` constant in `ForestScene`. Hub gets Starter Village buildings; corridors get dense flanking trees; deep forest gets densest coverage; boss clearing kept open.
+
+**Confirmed implementation decisions (8E):**
+
+| Decision | Choice | Rationale |
+|---|---|---|
+| Biome architecture | `BaseBiomeScene` abstract + subclass per biome | Core mechanics once; biomes diverge via override hooks |
+| Scene key | One `'ForestScene'`, `init({ screenId })` | 15 screens as instances of one class |
+| HiddenForestScene | Deleted — `forest_hidden_alcove` manifest entry | Was an OverworldScene clone; manifest entry is the right abstraction |
+| SwampScene | Rewritten to `extend BaseBiomeScene` | Explicitly "clone for MVP" per §10.12; now migrated |
+| Manifest location | `shared/world/forest.ts` (TypeScript, typed) | Importable by generator + drift test + server; §10.15 is the human-readable mirror |
+| NPC placement | `screen` field server-side | Defeat-tracking and placement must share a source of truth |
+| Transition UX | Walk-off-edge → 250 ms fade → spawn at opposite edge | Classic LttP screen-transition; camera-bounds already pins overrun |
+| Map layout | `maps/forest/<screenId>.json` | Clean namespace; single generator; no name collisions |
+
+---
