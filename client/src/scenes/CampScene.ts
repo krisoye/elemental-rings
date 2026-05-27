@@ -273,13 +273,54 @@ export class CampScene extends Phaser.Scene {
   }
 
   /**
-   * Door zone → leave the Sanctum. Wired to OverworldScene in 8A.3; guarded so
-   * it is a safe no-op until that scene is registered.
+   * Door zone → leave the Sanctum into the biome containing the anchored waystone
+   * (#82). Wired to OverworldScene in 8A.3; 8C.2 makes it biome-aware: the Sanctum
+   * follows its anchor, so exiting near a Swamp anchor lands in the Swamp, and
+   * exiting after teleporting to the hidden Forest alcove lands there. Fetches the
+   * authoritative anchor, then routes; falls back to OverworldScene. Guarded so it
+   * is a safe no-op until the target scene is registered.
    */
   private onDoorInteract(): void {
-    if (this.scene.manager.keys['OverworldScene']) {
+    void this.routeToBiome();
+  }
+
+  /**
+   * Resolve the scene key for the currently-anchored waystone and start it. The
+   * Sanctum anchor (server authority) determines which biome the player exits
+   * into. Defaults to OverworldScene on any failure so the door always works.
+   */
+  private async routeToBiome(): Promise<void> {
+    let anchor = 'forest_entry';
+    const token = localStorage.getItem('er_token');
+    if (token) {
+      try {
+        const res = await fetch(`${API_BASE}/api/waystones`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (res.ok) {
+          anchor = ((await res.json()) as { anchor: string }).anchor ?? anchor;
+        }
+      } catch {
+        // Network error — fall through to the default Forest overworld.
+      }
+    }
+    const target = CampScene.biomeSceneForAnchor(anchor);
+    if (this.scene.manager.keys[target]) {
+      this.scene.start(target);
+    } else if (this.scene.manager.keys['OverworldScene']) {
       this.scene.start('OverworldScene');
     }
+  }
+
+  /**
+   * Map an anchor waystone id to the biome scene that contains it (#82). The
+   * hidden Forest alcove and the Swamp are distinct scenes from the Forest
+   * overworld; everything else is the Forest overworld.
+   */
+  private static biomeSceneForAnchor(anchorId: string): string {
+    if (anchorId.startsWith('forest_hidden')) return 'HiddenForestScene';
+    if (anchorId.startsWith('swamp')) return 'SwampScene';
+    return 'OverworldScene';
   }
 
   // ── Tiled object helpers ────────────────────────────────────────────────

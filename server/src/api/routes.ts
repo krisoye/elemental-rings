@@ -382,11 +382,19 @@ apiRouter.get('/api/waystones', requireAuth, (req: Request, res: Response): void
 apiRouter.post('/api/waystones/attune', requireAuth, (req: Request, res: Response): void => {
   const playerId = req.playerId as string;
   const { waystoneId } = req.body ?? {};
-  if (typeof waystoneId !== 'string' || !getWaystone(waystoneId)) {
+  const def = typeof waystoneId === 'string' ? getWaystone(waystoneId) : undefined;
+  if (!def) {
     res.status(400).json({ error: 'Unknown waystone' });
     return;
   }
   attuneWaystone(playerId, waystoneId);
+  // GDD §10.7 — revelation waystones unlock their targets on attune (8C.2, #82):
+  // attuning the Ironbark Rune also attunes the hidden Forest alcove Anchorage,
+  // which has no walking path and is otherwise unreachable. Each revealed id is
+  // validated against the catalog so a malformed `reveals` entry is a safe no-op.
+  for (const revealedId of def.reveals ?? []) {
+    if (getWaystone(revealedId)) attuneWaystone(playerId, revealedId);
+  }
   res.status(200).json(buildWaystonePayload(playerId));
 });
 

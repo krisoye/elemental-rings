@@ -63,6 +63,13 @@ const WAYSTONES = [
   { id: 'forest_sw_stone', tx: 5, ty: 24 },
 ];
 
+// #82 — Biome-exit zone to the Swamp at the SW edge. Reached on foot once
+// `forest_sw_stone` (Bogwood Sentinel) is attuned (the scene gates the transition
+// on attunement; an unattuned player hits a barrier message). The `target` scene
+// key is carried as an object property so the scene's biome_exit handler knows
+// where to go. Placed on a navigable mud-clearing tile, not a wall/grove.
+const BIOME_EXIT = { tx: 2, ty: 24, target: 'SwampScene' };
+
 // Tree groves (circle centre + radius in tiles) so the biome has organic
 // internal structure rather than rectangular boxes. Pre-verified clear of the
 // #71 spawn-on-enter positions; auto-cleared near key objects via isClearZone().
@@ -84,6 +91,7 @@ const KEY_TILES = [
   { tx: 10, ty: 6 }, // forest_entry (Anchorage)
   { tx: 9, ty: 10 }, // forest_glade (Anchorage)
   { tx: 33, ty: 24 }, // forest_depths (Anchorage)
+  { tx: 2, ty: 24 }, // biome_exit → Swamp (#82) — keep clear of trees
 ];
 
 function isClearZone(tx, ty) {
@@ -190,10 +198,24 @@ function buildGround() {
     }
   }
 
+  // 5b. Biome-exit clearing (#82) — 2-tile-radius floor circle so the SW Swamp
+  // exit is reachable on foot, clear of the SW grove.
+  for (let dy = -2; dy <= 2; dy++) {
+    for (let dx = -2; dx <= 2; dx++) {
+      if (dx * dx + dy * dy > 4) continue;
+      const tx = BIOME_EXIT.tx + dx,
+        ty = BIOME_EXIT.ty + dy;
+      if (tx <= 0 || ty <= 0 || tx >= WIDTH - 1 || ty >= HEIGHT - 1) continue;
+      data[at(tx, ty)] = GID_FLOOR;
+    }
+  }
+
   // 6. Dirt paths connecting key objects.
   bresenhamPath(data, 4, 4, 10, 6);
   bresenhamPath(data, 10, 6, 9, 10);
   bresenhamPath(data, 9, 10, 33, 24);
+  // Path from the SW waystone down to the Swamp biome exit (#82).
+  bresenhamPath(data, 5, 24, 2, 24);
 
   // 7. Accent tile beneath each Anchorage (walkable highlight under the marker).
   for (const a of ANCHORAGES) {
@@ -278,6 +300,22 @@ function buildObjects() {
     });
   }
 
+  // #82 — Biome-exit rectangle to the Swamp (SW edge). The scene gates the
+  // transition on forest_sw_stone attunement; the `target` property names the
+  // destination scene key.
+  objects.push({
+    id: nextId++,
+    name: 'biome_exit',
+    x: BIOME_EXIT.tx * TILE,
+    y: BIOME_EXIT.ty * TILE,
+    width: TILE,
+    height: TILE,
+    rotation: 0,
+    visible: true,
+    point: false,
+    properties: [{ name: 'target', type: 'string', value: BIOME_EXIT.target }],
+  });
+
   return objects;
 }
 
@@ -294,7 +332,8 @@ const map = {
   version: '1.10',
   tiledversion: '1.10.2',
   nextlayerid: 3,
-  nextobjectid: 3 + ANCHORAGES.length + WAYSTONES.length,
+  // +1 for the #82 biome_exit object.
+  nextobjectid: 3 + ANCHORAGES.length + WAYSTONES.length + 1,
   tilesets: [
     {
       firstgid: 1,

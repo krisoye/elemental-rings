@@ -11,7 +11,7 @@ import { defineConfig } from '@playwright/test';
 //   status-effects
 // Solo — single context (incl. driveAiDuel vs AI):
 //   auth, camp, carry, compass, fusion, overworld-transition, sanctum-movement,
-//   sanctum-zones, spirit, teleport, waystones
+//   sanctum-zones, spirit, swamp, talisman, teleport, waystones
 const PVP_SPECS = [
   'client-battle-flow.spec.ts',
   'client-connect.spec.ts',
@@ -30,6 +30,7 @@ const SOLO_SPECS = [
   'sanctum-movement.spec.ts',
   'sanctum-zones.spec.ts',
   'spirit.spec.ts',
+  'swamp.spec.ts',
   'talisman.spec.ts',
   'teleport.spec.ts',
   'waystones.spec.ts',
