@@ -64,8 +64,20 @@ export function placeDecoration(
 
   return {
     destroy() {
+      // Tear each sprite down the SAME way Phaser's Group.clear(true, true) does:
+      // first detach the group's auto-remove DESTROY listener, THEN destroy the
+      // sprite. We must NOT call group.remove(s, …) here — that path runs the
+      // StaticGroup's removeCallbackHandler → world.disableBody → World.remove,
+      // and during scene shutdown the Arcade World has already run World.shutdown()
+      // (it clears the body Sets + RBush trees and destroys its colliders). Touching
+      // those torn-down structures throws "Cannot read properties of undefined
+      // (reading 'has')", which aborts the rest of the scene's shutdown handler and
+      // breaks the outgoing scene.start() transition (e.g. OverworldScene →
+      // CampScene). Detaching the listener first means the plain s.destroy() never
+      // re-enters group.remove, so it stays shutdown-safe; the owning scene tears
+      // the static group itself down separately via group.destroy(true).
       for (const s of sprites) {
-        group.remove(s, true, true);
+        s.off(Phaser.GameObjects.Events.DESTROY, group.remove, group);
         s.destroy();
       }
     },
