@@ -24,6 +24,9 @@ export class BlinkController {
   private readonly scene: Phaser.Scene;
   private readonly player: Player;
   private readonly getModalOpen: () => boolean;
+  /** #112 — optional callback fired after a successful blink (spirit changed), so
+   * the host scene can refresh any spirit-dependent HUD. Undefined → no-op. */
+  private readonly onBlink?: () => void;
   /** Last pointerdown time (ms) per zone name, for double-click detection. */
   private readonly lastClick = new Map<string, number>();
   private zones: InteractionZone[] = [];
@@ -34,11 +37,19 @@ export class BlinkController {
    * @param player the top-down player avatar to snap on a successful blink
    * @param getModalOpen returns true while a modal overlay is open (blink is then
    *   suppressed); shared with Part D's Tab-overlay suppression flag
+   * @param onBlink #112 — optional callback fired after a successful blink so the
+   *   host scene can refresh spirit-dependent HUD; omit to disable.
    */
-  constructor(scene: Phaser.Scene, player: Player, getModalOpen: () => boolean) {
+  constructor(
+    scene: Phaser.Scene,
+    player: Player,
+    getModalOpen: () => boolean,
+    onBlink?: () => void,
+  ) {
     this.scene = scene;
     this.player = player;
     this.getModalOpen = getModalOpen;
+    this.onBlink = onBlink;
   }
 
   /**
@@ -117,6 +128,8 @@ export class BlinkController {
     this.player.halt();
     this.scene.cameras.main.flash(150, 180, 220, 255);
     zone.interact();
+    // #112 — spirit was just spent; let the host scene refresh its HUD.
+    this.onBlink?.();
     return true;
   }
 

@@ -57,14 +57,31 @@ export class EncounterScene extends Phaser.Scene {
   // directly against that NPC. null on the normal hub entry path. #87 Part C —
   // `ambush` is true when launched by a double-click on the NPC sprite: it pays
   // AMBUSH_SPIRIT_COST (server-side) to grant the player the opening attack.
-  private npcDuel: { npcId?: string; personality: AIPersonality; ambush: boolean } | null = null;
+  private npcDuel: {
+    npcId?: string;
+    personality: AIPersonality;
+    ambush: boolean;
+    // #111 — the overworld NPC's stable loadout seed (= hashNpcId), threaded into
+    // the battle-ai room so its staked element matches the overworld marker.
+    aiSeed?: number;
+  } | null = null;
 
-  init(data?: { npcId?: string; personality?: AIPersonality; ambush?: boolean }): void {
+  init(data?: {
+    npcId?: string;
+    personality?: AIPersonality;
+    ambush?: boolean;
+    aiSeed?: number;
+  }): void {
     this.busy = false;
     this.wonRingModal = null;
     this.npcDuel =
       data?.personality !== undefined
-        ? { npcId: data.npcId, personality: data.personality, ambush: data.ambush === true }
+        ? {
+            npcId: data.npcId,
+            personality: data.personality,
+            ambush: data.ambush === true,
+            aiSeed: data.aiSeed,
+          }
         : null;
   }
 
@@ -81,7 +98,7 @@ export class EncounterScene extends Phaser.Scene {
     // the duel against the detected NPC (scoped by npcId so a win records the
     // defeat server-side). The hub UI/hooks below are skipped on this path.
     if (this.npcDuel) {
-      const { npcId, personality, ambush } = this.npcDuel;
+      const { npcId, personality, ambush, aiSeed } = this.npcDuel;
       // #88 — defensively consume the launch data so it can never be reused. Phaser
       // retains settings.data across a no-data scene.start, so without this a later
       // re-entry of EncounterScene (e.g. a hub return that forgot explicit `{}`)
@@ -90,7 +107,7 @@ export class EncounterScene extends Phaser.Scene {
       this.scene.settings.data = {};
       this.npcDuel = null;
       // #87 Part C — a double-click NPC launch (ambush) pays for first strike.
-      void this.startAIDuel(personality, undefined, npcId, ambush);
+      void this.startAIDuel(personality, undefined, npcId, ambush, aiSeed);
       return;
     }
 
@@ -287,12 +304,16 @@ export class EncounterScene extends Phaser.Scene {
    * weakening or hardening the AI; production marker clicks never pass them.
    * `npcId` (#83) scopes the duel to an overworld NPC so a human win is recorded
    * as that NPC's defeat server-side; undefined on the encounter-hub marker path.
+   * `aiSeedOverride` (#111) is the overworld NPC's stable loadout seed; when given
+   * it forces the room to reproduce the element shown on the overworld marker.
+   * Undefined on the hub path, where the per-personality preview seed is used.
    */
   private async startAIDuel(
     personality: AIPersonality,
     aiOverrides?: { aiHearts?: number; aiUses?: number },
     npcId?: string,
     ambush?: boolean,
+    aiSeedOverride?: number,
   ): Promise<void> {
     const token = localStorage.getItem('er_token') ?? '';
     try {
@@ -305,7 +326,7 @@ export class EncounterScene extends Phaser.Scene {
       vsAI: true,
       personality,
       token,
-      aiSeed: this.aiSeeds.get(personality),
+      aiSeed: aiSeedOverride ?? this.aiSeeds.get(personality),
       npcId,
       // #87 Part C — ambush first-strike. The server spends AMBUSH_SPIRIT_COST and
       // grants the opening attack when affordable; ignored otherwise (server guard).
@@ -364,7 +385,35 @@ export class EncounterScene extends Phaser.Scene {
     if (carriedCount >= carryCap) {
       // Carry is full — skip the modal and route straight to Manage Battle Hand,
       // which renders the pending won ring and lets the player discard a carried
-      // ring to make room (then auto-carries the pending ring).
+      // ring to make room (then auto-carries the pending ring). #110 — the jump
+      // to the Manage screen is otherwise unexplained, so flash a banner naming
+      // the reason (carry full) and the required action (discard to make room).
+      const wonRing = rings.find((r) => r.id === ringId);
+      const wonRingEl = wonRing ? (ELEMENT_NAMES[wonRing.element] ?? '?') : 'won';
+      const notice = this.add
+        .text(
+          CANVAS_W / 2,
+          80,
+          `Carry full (${carriedCount}/${carryCap}) — discard a ring to make room for your ${wonRingEl} ring`,
+          {
+            fontSize: '15px',
+            color: '#ffcc44',
+            backgroundColor: '#000000bb',
+            padding: { x: 10, y: 6 },
+            align: 'center',
+            wordWrap: { width: CANVAS_W - 40 },
+          },
+        )
+        .setOrigin(0.5)
+        .setScrollFactor(0)
+        .setDepth(3000);
+      this.tweens.add({
+        targets: notice,
+        alpha: 0,
+        delay: 3000,
+        duration: 500,
+        onComplete: () => notice.destroy(),
+      });
       void this.openManageBattleHand();
       return;
     }
