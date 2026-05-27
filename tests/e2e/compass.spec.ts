@@ -5,7 +5,7 @@ import type { Page } from '@playwright/test';
 /**
  * Phase 8B.2 — Compass HUD.
  *
- * A camera-pinned arrow in OverworldScene pulls toward the nearest UNATTUNED
+ * A camera-pinned arrow in ForestScene pulls toward the nearest UNATTUNED
  * waystone within COMPASS_RANGE (400px), brightening/growing as the player
  * approaches, and hides when none is in range or all are attuned. All
  * assertions read real state via window.__compass (published every update
@@ -43,7 +43,7 @@ async function loadSanctum(page: Page): Promise<void> {
 async function enterOverworld(page: Page): Promise<void> {
   await walkToZone(page, { x: 1088, y: 608 }, 'door'); // Sanctum door center
   await page.evaluate(() => (window as any).__sanctumInteract());
-  await page.waitForFunction(() => (window as any).__activeScene === 'OverworldScene', {
+  await page.waitForFunction(() => (window as any).__activeScene === 'ForestScene', {
     timeout: 8000,
   });
   await page.waitForFunction(() => !!(window as any).__player, { timeout: 8000 });

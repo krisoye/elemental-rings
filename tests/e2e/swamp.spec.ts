@@ -11,7 +11,8 @@ import type { Page } from '@playwright/test';
  * (Ironbark Rune) Waystone — when attuned with E — REVEALS the hidden Forest
  * alcove Anchorage (`forest_hidden_anchor`), which has no walking path and is
  * reachable only by teleporting. The Sanctum door is biome-aware: after anchoring
- * at the hidden alcove, exiting lands in HiddenForestScene.
+ * at the hidden alcove, exiting lands in the unified ForestScene on the hidden
+ * alcove screen (8E folded the standalone hidden scene into a Forest region screen).
  *
  * Every assertion reads real state — window.__waystones (the GET /api/waystones
  * payload the scenes publish), window.__activeScene, and direct server
@@ -43,7 +44,7 @@ async function loadSanctum(page: Page): Promise<void> {
 async function enterOverworld(page: Page): Promise<void> {
   await walkToZone(page, SANCTUM_DOOR, 'door');
   await page.evaluate(() => (window as any).__sanctumInteract());
-  await page.waitForFunction(() => (window as any).__activeScene === 'OverworldScene', {
+  await page.waitForFunction(() => (window as any).__activeScene === 'ForestScene', {
     timeout: 8000,
   });
   await page.waitForFunction(() => !!(window as any).__player, { timeout: 8000 });
@@ -144,7 +145,7 @@ test('swamp: SW biome_exit is barred until forest_sw_stone is attuned, then open
   await walkToZone(page, FOREST_SWAMP_EXIT, 'biome_exit');
   await page.evaluate(() => (window as any).__sanctumInteract());
   await page.waitForTimeout(500);
-  expect(await page.evaluate(() => (window as any).__activeScene)).toBe('OverworldScene');
+  expect(await page.evaluate(() => (window as any).__activeScene)).toBe('ForestScene');
 
   // Attune the SW stone server-side, then re-enter the overworld so the scene's
   // cached payload reflects it (the gate reads window.__waystones).
@@ -224,8 +225,8 @@ test('swamp: pressing E at swamp_secret_forest reveals forest_hidden_anchor', as
   await ctx.close();
 });
 
-// ── Scenario 5: Teleport to the hidden alcove, then exit into HiddenForestScene ─
-test('swamp: teleporting to forest_hidden_anchor routes the Sanctum door to HiddenForestScene', async ({ browser }) => {
+// ── Scenario 5: Teleport to the hidden alcove, then exit into the hidden screen ─
+test('swamp: teleporting to forest_hidden_anchor routes the Sanctum door to the hidden Forest screen', async ({ browser }) => {
   const ctx = await browser.newContext();
   await seedAuthToken(ctx);
   const page = await ctx.newPage();
@@ -253,11 +254,17 @@ test('swamp: teleporting to forest_hidden_anchor routes the Sanctum door to Hidd
   expect(teleport.status).toBe(200);
   expect(teleport.body.anchor).toBe('forest_hidden_anchor');
 
-  // Exit the Sanctum via the (now biome-aware) door → lands in HiddenForestScene.
+  // Exit the Sanctum via the (now biome-aware) door → lands in the unified
+  // ForestScene on the hidden alcove screen (8E: the hidden Forest is now a Forest
+  // region screen, not its own scene).
   await walkToZone(page, SANCTUM_DOOR, 'door');
   await page.evaluate(() => (window as any).__sanctumInteract());
-  await page.waitForFunction(() => (window as any).__activeScene === 'HiddenForestScene', {
+  await page.waitForFunction(() => (window as any).__activeScene === 'ForestScene', {
     timeout: 8000,
   });
+  await page.waitForFunction(
+    () => (window as any).__forestScreenId === 'forest_hidden_alcove',
+    { timeout: 8000 },
+  );
   await ctx.close();
 });

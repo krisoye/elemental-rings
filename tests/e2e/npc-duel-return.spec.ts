@@ -48,7 +48,7 @@ async function walkToZone(page: Page, p: { x: number; y: number }, zone: string)
 async function enterOverworld(page: Page): Promise<void> {
   await walkToZone(page, SANCTUM_DOOR, 'door');
   await page.evaluate(() => (window as any).__sanctumInteract());
-  await page.waitForFunction(() => (window as any).__activeScene === 'OverworldScene', {
+  await page.waitForFunction(() => (window as any).__activeScene === 'ForestScene', {
     timeout: 8000,
   });
   await page.waitForFunction(() => !!(window as any).__player, { timeout: 8000 });
@@ -81,7 +81,7 @@ async function serverNpcs(page: Page, biome: string): Promise<{ id: string }[]> 
 
 /**
  * Walk onto an NPC's center, wait for detection, then press E to genuinely launch
- * the duel through OverworldScene.handleInteract — the real code path that records
+ * the duel through ForestScene.handleInteract — the real code path that records
  * window.__duelOrigin and starts EncounterScene's NPC path. Resolves once the
  * BattleScene is live (so the test exercises the true E-gated entry, not a direct
  * connectToRoom). The npcId is verified to be the detected one before E.
@@ -158,11 +158,11 @@ test('#88: losing an overworld NPC duel returns to the Forest with no relaunch',
     timeout: 5000,
   });
 
-  // E records __duelOrigin (the OverworldScene + player pos) and starts the duel.
+  // E records __duelOrigin (the ForestScene + player pos) and starts the duel.
   await page.evaluate(() => (window as any).__sanctumInteract());
   // __duelOrigin must be set to the biome before BattleScene mounts.
   const origin = await page.evaluate(() => (window as any).__duelOrigin);
-  expect(origin?.scene).toBe('OverworldScene');
+  expect(origin?.scene).toBe('ForestScene');
   expect(origin?.x).toBeCloseTo(FOREST_NPC_1.x, 0);
 
   await page.waitForFunction(() => (window as any).__scene?.constructor.name === 'BattleScene', {
@@ -179,7 +179,7 @@ test('#88: losing an overworld NPC duel returns to the Forest with no relaunch',
 
   // After the banner, BattleScene must return to the biome — NOT relaunch the duel
   // and NOT land in the Encounter hub.
-  await page.waitForFunction(() => (window as any).__activeScene === 'OverworldScene', {
+  await page.waitForFunction(() => (window as any).__activeScene === 'ForestScene', {
     timeout: E2E_FAST ? 8000 : 15000,
   });
 
@@ -188,7 +188,7 @@ test('#88: losing an overworld NPC duel returns to the Forest with no relaunch',
 
   // We are back in the biome, not BattleScene, and not the hub.
   const sceneName = await page.evaluate(() => (window as any).__scene?.constructor.name);
-  expect(sceneName).toBe('OverworldScene');
+  expect(sceneName).toBe('ForestScene');
   const encounterActive = await page.evaluate(() =>
     (window as any).__game?.scene?.isActive('EncounterScene'),
   );
@@ -202,7 +202,7 @@ test('#88: losing an overworld NPC duel returns to the Forest with no relaunch',
   // never a fresh ATTACK_SELECT battle. Give the loop (if it existed) a chance to
   // fire, then assert we are still in the biome with no live duel.
   await page.waitForTimeout(E2E_FAST ? 500 : 1500);
-  const stillBiome = await page.evaluate(() => (window as any).__activeScene === 'OverworldScene');
+  const stillBiome = await page.evaluate(() => (window as any).__activeScene === 'ForestScene');
   expect(stillBiome).toBe(true);
   const roomPhase = await page.evaluate(() => {
     const r = (window as any).__room;
@@ -243,7 +243,7 @@ test('#88: winning an overworld NPC duel returns to the Forest with the NPC remo
   // a guaranteed WIN duel scoped to this NPC (aiHearts:1) so the defeat is recorded
   // server-side. This drives the exact BattleScene return path under a win.
   await page.evaluate(([x, y]) => {
-    (window as any).__duelOrigin = { scene: 'OverworldScene', x, y };
+    (window as any).__duelOrigin = { scene: 'ForestScene', x, y };
   }, [FOREST_NPC_3.x, FOREST_NPC_3.y]);
   await page.evaluate(
     async ({ p, id }) => {
@@ -268,7 +268,7 @@ test('#88: winning an overworld NPC duel returns to the Forest with the NPC remo
   await driveToEnded(page);
 
   // Returns to the Forest (the recorded origin), not the hub.
-  await page.waitForFunction(() => (window as any).__activeScene === 'OverworldScene', {
+  await page.waitForFunction(() => (window as any).__activeScene === 'ForestScene', {
     timeout: E2E_FAST ? 8000 : 15000,
   });
   await page.waitForFunction(() => Array.isArray((window as any).__overworldNpcs), { timeout: 8000 });
@@ -280,7 +280,7 @@ test('#88: winning an overworld NPC duel returns to the Forest with the NPC remo
 
   // No relaunch: still in the biome.
   const sceneName = await page.evaluate(() => (window as any).__scene?.constructor.name);
-  expect(sceneName).toBe('OverworldScene');
+  expect(sceneName).toBe('ForestScene');
 
   await ctx.close();
 });
@@ -296,7 +296,7 @@ test('#88: entering the Encounter hub after an NPC duel shows markers, no auto-l
   // Complete one overworld NPC duel (real E-gated launch → BattleScene → return).
   await approachAndDuel(page, FOREST_NPC_1);
   await driveToEnded(page);
-  await page.waitForFunction(() => (window as any).__activeScene === 'OverworldScene', {
+  await page.waitForFunction(() => (window as any).__activeScene === 'ForestScene', {
     timeout: E2E_FAST ? 8000 : 15000,
   });
 

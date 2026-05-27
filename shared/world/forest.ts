@@ -1,0 +1,152 @@
+// Forest region screen manifest (GDD §10.15/§10.17, Phase 8E). The single source
+// of truth for the Forest biome's multi-screen layout: each ScreenDef declares a
+// screen's tile size, its cardinal exits to neighbouring screens, optional
+// safe/danger tagging, the anchorage/waystone catalog ids it carries, and any
+// biome-exit transition to an adjacent biome.
+//
+// This module is shared by:
+//   - ForestScene (client) — drives edge transitions + per-screen lookup,
+//   - the map generator (gen-forest-screens.mjs inlines a copy of the data),
+//   - the Vitest drift test (reciprocal exits + catalog parity).
+//
+// Anchorage / waystone ids MUST exist in shared/waystones.ts (catalog parity is
+// asserted by the drift test). Exits MUST be reciprocal (a north exit to X means
+// X has a south exit back).
+
+/** One Forest screen: its tile dimensions, exits, and catalog wiring. */
+export interface ScreenDef {
+  /** Stable screen id; also the Phaser map cache key suffix and spawn target. */
+  id: string;
+  /** [widthTiles, heightTiles] of this screen's tilemap. */
+  size: [number, number];
+  /** Cardinal exits → the neighbouring screen id. Reciprocal across screens. */
+  exits: Partial<Record<'north' | 'south' | 'east' | 'west', string>>;
+  /** A safe screen — no danger / no hostile spawns (the hub anchorage). */
+  safe?: true;
+  /** Danger tier (1–3) — drives ambient threat; presentation only. */
+  danger?: 1 | 2 | 3;
+  /** Anchorage waystone id placed on this screen — must exist in shared/waystones.ts. */
+  anchorage?: string;
+  /** Discovery waystone id placed on this screen — must exist in shared/waystones.ts. */
+  waystone?: string;
+  /** A transition to an adjacent biome (e.g. the Swamp) at a screen edge. */
+  biomeExit?: {
+    /** Edge the exit sits on. */
+    dir: 'north' | 'south' | 'east' | 'west';
+    /** Destination Phaser scene key, e.g. 'SwampScene'. */
+    target: string;
+    /** Optional attunement gate — a waystoneId that must be attuned to pass. */
+    gate?: string;
+  };
+}
+
+export const FOREST_SCREENS: ScreenDef[] = [
+  {
+    id: 'forest_anchorage',
+    size: [40, 30],
+    exits: {
+      north: 'forest_north_road',
+      east: 'forest_east_path',
+      south: 'forest_south_path',
+      west: 'forest_mossy_fen',
+    },
+    safe: true,
+    anchorage: 'forest_entry',
+  },
+  {
+    id: 'forest_north_road',
+    size: [16, 32],
+    exits: { south: 'forest_anchorage', north: 'forest_snow_gate' },
+    danger: 1,
+  },
+  {
+    id: 'forest_snow_gate',
+    size: [32, 20],
+    exits: { south: 'forest_north_road' },
+    danger: 2,
+    waystone: 'forest_north_stone',
+  },
+  {
+    id: 'forest_mossy_fen',
+    size: [32, 22],
+    exits: { east: 'forest_anchorage' },
+    danger: 1,
+  },
+  {
+    id: 'forest_east_path',
+    size: [24, 12],
+    exits: { west: 'forest_anchorage', east: 'forest_glade' },
+    danger: 1,
+  },
+  {
+    id: 'forest_glade',
+    size: [36, 28],
+    exits: { west: 'forest_east_path', north: 'forest_crossroads' },
+    danger: 1,
+    anchorage: 'forest_glade',
+  },
+  {
+    id: 'forest_crossroads',
+    size: [28, 22],
+    exits: { south: 'forest_glade', east: 'forest_briar_pass', north: 'forest_ridge' },
+    danger: 1,
+  },
+  {
+    id: 'forest_south_path',
+    size: [16, 28],
+    exits: { north: 'forest_anchorage', south: 'forest_hollow' },
+    danger: 1,
+  },
+  {
+    id: 'forest_hollow',
+    size: [36, 24],
+    exits: { north: 'forest_south_path', west: 'forest_swamp_gate' },
+    danger: 2,
+  },
+  {
+    id: 'forest_swamp_gate',
+    size: [28, 18],
+    exits: { east: 'forest_hollow' },
+    danger: 2,
+    waystone: 'forest_sw_stone',
+    biomeExit: { dir: 'south', target: 'SwampScene', gate: 'forest_sw_stone' },
+  },
+  {
+    id: 'forest_briar_pass',
+    size: [40, 16],
+    exits: { west: 'forest_crossroads', south: 'forest_boss_clearing' },
+    danger: 2,
+  },
+  {
+    id: 'forest_ridge',
+    size: [32, 22],
+    exits: { south: 'forest_crossroads', east: 'forest_deepwood' },
+    danger: 2,
+  },
+  {
+    id: 'forest_deepwood',
+    size: [40, 30],
+    exits: { west: 'forest_ridge', east: 'forest_boss_clearing' },
+    danger: 3,
+    anchorage: 'forest_depths',
+  },
+  {
+    id: 'forest_boss_clearing',
+    size: [28, 22],
+    exits: { north: 'forest_briar_pass', west: 'forest_deepwood' },
+    danger: 3,
+  },
+  {
+    id: 'forest_hidden_alcove',
+    size: [24, 18],
+    exits: {},
+    danger: 1,
+    anchorage: 'forest_hidden_anchor',
+    waystone: 'forest_hidden_glade',
+  },
+];
+
+/** Look up a Forest screen definition by id, or undefined if unknown. */
+export function getForestScreen(id: string): ScreenDef | undefined {
+  return FOREST_SCREENS.find((s) => s.id === id);
+}

@@ -15,7 +15,7 @@
 //   - An accent (dirt) tile beneath each Anchorage + discovery Waystone marker.
 //   - An `objects` layer with 2 Anchorages (name `anchorage`, `waystoneId`), 3
 //     discovery Waystones (name `waystone`, `waystoneId`), and a `biome_exit`
-//     rectangle at the NW edge that transitions back to the Forest (OverworldScene).
+//     rectangle at the NW edge that transitions back to the Forest (ForestScene).
 //
 // All Anchorage AND Waystone ids MUST match shared/waystones.ts (a Vitest drift
 // test enforces the combined id-set parity across all maps). Positions are owned
@@ -56,7 +56,7 @@ const WAYSTONES = [
 
 // Biome-exit zone back to the Forest. Placed near the NW edge on a navigable
 // (cleared) mud tile so the player can physically reach it.
-const BIOME_EXIT = { tx: 2, ty: 14, target: 'OverworldScene' };
+const BIOME_EXIT = { tx: 2, ty: 14, target: 'ForestScene' };
 
 // Reed/water clumps (circle centre + radius in tiles) for organic structure.
 // Auto-cleared near key objects via isClearZone().

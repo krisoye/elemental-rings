@@ -66,9 +66,10 @@ const WAYSTONES = [
 // #82 — Biome-exit zone to the Swamp at the SW edge. Reached on foot once
 // `forest_sw_stone` (Bogwood Sentinel) is attuned (the scene gates the transition
 // on attunement; an unattuned player hits a barrier message). The `target` scene
-// key is carried as an object property so the scene's biome_exit handler knows
-// where to go. Placed on a navigable mud-clearing tile, not a wall/grove.
-const BIOME_EXIT = { tx: 2, ty: 24, target: 'SwampScene' };
+// key + the `gate` waystoneId are carried as object properties so the scene's
+// biome_exit handler knows where to go and which attunement unlocks it. Placed on
+// a navigable mud-clearing tile, not a wall/grove.
+const BIOME_EXIT = { tx: 2, ty: 24, target: 'SwampScene', gate: 'forest_sw_stone' };
 
 // Tree groves (circle centre + radius in tiles) so the biome has organic
 // internal structure rather than rectangular boxes. Pre-verified clear of the
@@ -313,7 +314,10 @@ function buildObjects() {
     rotation: 0,
     visible: true,
     point: false,
-    properties: [{ name: 'target', type: 'string', value: BIOME_EXIT.target }],
+    properties: [
+      { name: 'target', type: 'string', value: BIOME_EXIT.target },
+      { name: 'gate', type: 'string', value: BIOME_EXIT.gate },
+    ],
   });
 
   return objects;

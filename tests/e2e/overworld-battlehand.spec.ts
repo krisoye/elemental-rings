@@ -5,7 +5,7 @@ import type { Page } from '@playwright/test';
 /**
  * #87 Parts D/E — overworld Tab battle-hand overlay + Z/C phase-relative hotkeys.
  *
- * Part D: in the OverworldScene, Tab toggles a standalone Manage Battle-Hand
+ * Part D: in the ForestScene, Tab toggles a standalone Manage Battle-Hand
  * overlay (extracted from EncounterScene into BattleHandOverlay). While it is open
  * the player is frozen (velocity 0) and blink is suppressed; Escape closes it and
  * movement resumes. Part E: in a duel, Z is "slot 1" and C is "slot 2" — each
@@ -41,7 +41,7 @@ async function walkToZone(page: Page, p: { x: number; y: number }, zone: string)
 async function enterOverworld(page: Page): Promise<void> {
   await walkToZone(page, SANCTUM_DOOR, 'door');
   await page.evaluate(() => (window as any).__sanctumInteract());
-  await page.waitForFunction(() => (window as any).__activeScene === 'OverworldScene', {
+  await page.waitForFunction(() => (window as any).__activeScene === 'ForestScene', {
     timeout: 8000,
   });
   await page.waitForFunction(() => !!(window as any).__player, { timeout: 8000 });

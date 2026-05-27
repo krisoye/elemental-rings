@@ -311,7 +311,9 @@ export class CampScene extends Phaser.Scene {
   /**
    * Resolve the scene key for the currently-anchored waystone and start it. The
    * Sanctum anchor (server authority) determines which biome the player exits
-   * into. Defaults to OverworldScene on any failure so the door always works.
+   * into. For the Forest, the anchor also selects the SCREEN (8E): the hidden
+   * alcove anchor lands on `forest_hidden_alcove`, everything else on the hub.
+   * Defaults to ForestScene on any failure so the door always works.
    */
   private async routeToBiome(): Promise<void> {
     let anchor = 'forest_entry';
@@ -329,22 +331,33 @@ export class CampScene extends Phaser.Scene {
       }
     }
     const target = CampScene.biomeSceneForAnchor(anchor);
+    const data = CampScene.forestScreenForAnchor(anchor);
     if (this.scene.manager.keys[target]) {
-      this.scene.start(target);
-    } else if (this.scene.manager.keys['OverworldScene']) {
-      this.scene.start('OverworldScene');
+      this.scene.start(target, data);
+    } else if (this.scene.manager.keys['ForestScene']) {
+      this.scene.start('ForestScene');
     }
   }
 
   /**
-   * Map an anchor waystone id to the biome scene that contains it (#82). The
-   * hidden Forest alcove and the Swamp are distinct scenes from the Forest
-   * overworld; everything else is the Forest overworld.
+   * For a Forest anchor, the screen the door should open on (8E). The hidden alcove
+   * anchor opens its screen; every other Forest anchor opens the hub. Returns
+   * undefined for non-Forest anchors (the scene picks its own default).
+   */
+  private static forestScreenForAnchor(anchorId: string): { screenId: string } | undefined {
+    if (anchorId.startsWith('forest_hidden')) return { screenId: 'forest_hidden_alcove' };
+    return undefined;
+  }
+
+  /**
+   * Map an anchor waystone id to the biome scene that contains it (#82, 8E). The
+   * Swamp is a distinct scene; every Forest anchor — including the hidden alcove
+   * (`forest_hidden_*`, now a Forest screen rather than its own scene) — routes to
+   * the unified ForestScene, which selects the matching screen.
    */
   private static biomeSceneForAnchor(anchorId: string): string {
-    if (anchorId.startsWith('forest_hidden')) return 'HiddenForestScene';
     if (anchorId.startsWith('swamp')) return 'SwampScene';
-    return 'OverworldScene';
+    return 'ForestScene';
   }
 
   // ── Tiled object helpers ────────────────────────────────────────────────
