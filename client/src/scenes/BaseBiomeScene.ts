@@ -619,11 +619,13 @@ export abstract class BaseBiomeScene extends Phaser.Scene {
       if (o.name === 'sanctum_return') continue;
       if (o.name === 'biome_exit') {
         const target = this.targetSceneOf(o) ?? 'SwampScene';
+        const targetScreen = this.stringPropOf(o, 'targetScreen');
+        const spawnEdge = this.stringPropOf(o, 'spawnEdge') as 'north'|'south'|'east'|'west'|undefined;
         // The attunement gate comes from the map object's `gate` property (the
         // hand-authored hub map) or the screen manifest's biomeExit.gate (the
         // generated screens). An ungated exit (e.g. the Swamp's return) always opens.
         const gate = this.gateOf(o) ?? this.screenDef?.biomeExit?.gate;
-        const zone = new InteractionZone(this, o, () => this.tryBiomeExit(target, gate));
+        const zone = new InteractionZone(this, o, () => this.tryBiomeExit(target, gate, targetScreen, spawnEdge));
         this.physics.add.overlap(this.player, zone.overlapZone);
         this.zones.push(zone);
         continue;
@@ -638,7 +640,12 @@ export abstract class BaseBiomeScene extends Phaser.Scene {
    * the cached server payload). An ungated exit (the Swamp's return) always opens;
    * Forest→Swamp is gated on forest_sw_stone.
    */
-  private tryBiomeExit(target: string, gate?: string): void {
+  private tryBiomeExit(
+    target: string,
+    gate?: string,
+    targetScreen?: string,
+    spawnEdge?: 'north' | 'south' | 'east' | 'west',
+  ): void {
     if (gate) {
       const stone = this.waystonePayload?.waystones?.find((w) => w.id === gate);
       if (!stone?.attuned) {
@@ -646,13 +653,21 @@ export abstract class BaseBiomeScene extends Phaser.Scene {
         return;
       }
     }
-    this.scene.start(target);
+    const data: Record<string, string> = {};
+    if (targetScreen) data.screenId = targetScreen;
+    if (spawnEdge) data.spawnEdge = spawnEdge;
+    this.scene.start(target, Object.keys(data).length ? data : undefined);
   }
 
   /** Read the `gate` (attunement waystoneId) custom property off a Tiled object. */
   private gateOf(obj: Phaser.Types.Tilemaps.TiledObject): string | undefined {
+    return this.stringPropOf(obj, 'gate');
+  }
+
+  /** Read any named string custom property off a Tiled object. */
+  private stringPropOf(obj: Phaser.Types.Tilemaps.TiledObject, name: string): string | undefined {
     const props = (obj.properties ?? []) as Array<{ name: string; value: unknown }>;
-    const prop = props.find((p) => p.name === 'gate');
+    const prop = props.find((p) => p.name === name);
     return typeof prop?.value === 'string' ? prop.value : undefined;
   }
 
