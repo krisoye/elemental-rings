@@ -209,7 +209,9 @@ export class BattleScene extends Phaser.Scene {
       if (toBiome) {
         // The biome scene reads __duelOrigin in its create() to restore the player
         // position, then clears it. Don't clear it here.
-        this.scene.start(toBiome);
+        // #102/B1 — pass the recorded screenId so the biome's init() reloads that
+        // exact screen (e.g. forest_deepwood), not the default forest_anchorage hub.
+        this.scene.start(toBiome, { screenId: origin?.screenId });
       } else {
         // Hub return — clear any stray origin and pass explicit empty data so
         // EncounterScene.init sees undefined personality → npcDuel=null → hub.

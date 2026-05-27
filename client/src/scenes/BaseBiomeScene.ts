@@ -154,6 +154,17 @@ export abstract class BaseBiomeScene extends Phaser.Scene {
   /** Phaser tilemap cache key for the given screen id. */
   abstract mapKeyForScreen(id: string): string;
 
+  /**
+   * The Tiled tileset NAME (the `name` field of the tileset object in the map JSON),
+   * which addTilesetImage's first arg must match. Defaults to tilesetKey() (the
+   * Forest's forest.json names its tileset `forest`, matching its texture key). The
+   * Swamp overrides it: its texture key is `swamp-tiles` but swamp.json names the
+   * tileset `swamp`, so a key-only lookup returns null and createLayer crashes (B2).
+   */
+  protected tilesetName(): string {
+    return this.tilesetKey();
+  }
+
   /** Optional biome-specific visuals (fog/snow/tint), called after the tilemap is built. */
   biomeVisuals?(): void;
   /** Optional per-screen decoration placement, called during create(). */
@@ -211,7 +222,7 @@ export abstract class BaseBiomeScene extends Phaser.Scene {
 
     const map = this.make.tilemap({ key: this.mapKeyForScreen(this.screenId) });
     this.map = map;
-    const tileset = map.addTilesetImage(this.tilesetKey(), this.tilesetKey())!;
+    const tileset = map.addTilesetImage(this.tilesetName(), this.tilesetKey())!;
     const groundLayer = map.createLayer('ground', tileset, 0, 0)!;
     groundLayer.setCollisionByProperty({ collides: true });
 
@@ -500,10 +511,13 @@ export abstract class BaseBiomeScene extends Phaser.Scene {
     if (this.detectedNpc) {
       // #88 — record the biome origin + the player's world position so BattleScene
       // returns to this scene when the duel ends, and create() restores the player.
+      // #102/B1 — also carry the screenId so the return lands on the same Forest
+      // screen the duel was launched from (not the default forest_anchorage hub).
       window.__duelOrigin = {
         scene: this.scene.key as 'ForestScene' | 'SwampScene',
         x: this.player.x,
         y: this.player.y,
+        screenId: this.screenId,
       };
       this.scene.start('EncounterScene', {
         npcId: this.detectedNpc.id,
@@ -1016,10 +1030,12 @@ export abstract class BaseBiomeScene extends Phaser.Scene {
     this.npcLastClick.set(npc.id, now);
     if (now - prev > DOUBLE_CLICK_MS) return; // first click of a potential double
     this.npcLastClick.delete(npc.id); // consume the gesture
+    // #102/B1 — carry the screenId so the post-duel return lands on this Forest screen.
     window.__duelOrigin = {
       scene: this.scene.key as 'ForestScene' | 'SwampScene',
       x: this.player.x,
       y: this.player.y,
+      screenId: this.screenId,
     };
     this.scene.start('EncounterScene', {
       npcId: npc.id,
