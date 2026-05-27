@@ -200,10 +200,10 @@ test('teleport: the anchored waystone drives where the overworld spawns the play
     () => (window as any).__sanctumReturnCenter as { x: number; y: number },
   );
 
-  // The Sanctum is anchor-derived: its center sits SANCTUM_OFFSET (96px) from the
-  // anchored waystone (forest_glade) toward the map center — well within ~120px.
+  // The Sanctum is anchor-derived: with SANCTUM_OFFSET=0 its center sits AT the
+  // anchored waystone (forest_glade) center — distance ≈ 0, well within ~40px.
   expect(Math.hypot(sanctum.x - FOREST_GLADE.x, sanctum.y - FOREST_GLADE.y)).toBeLessThanOrEqual(
-    120,
+    40,
   );
 
   await page.waitForFunction(

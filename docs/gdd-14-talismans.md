@@ -29,31 +29,31 @@ Talisman slots are independent of the ring carry cap. A player with 10 carried r
 ## 14.3 The Sanctum Stone
 
 ### What it does
-When activated at a **safe spot** in the overworld, the Sanctum Stone summons the player's Sanctum to that location for the duration of their rest. The player can then sleep (restoring spirit) and recharge rings before moving on.
+When activated at an **Anchorage** in the overworld, the Sanctum Stone **permanently transports** the player's Sanctum to that Anchorage. The Sanctum **physically moves** to that location and **remains there** — the player can then sleep (restoring spirit) and recharge rings, and the Sanctum stays anchored at that spot indefinitely.
 
-The Sanctum is not physically transported — the Stone opens a temporary connection between the safe spot and the Sanctum. Once the player leaves the spot, the connection closes.
+The Sanctum stays at its new Anchorage until the player either activates the Stone again at a different Anchorage (relocating it once more) or teleports away from within the Sanctum via the meditation circle. There is no temporary link that closes when the player walks off — the relocation is durable and persists across the expedition.
 
 ### Physical form
-A polished stone on a chain, worn as a necklace. It glows faintly when near a safe spot.
+A polished stone on a chain, worn as a necklace. It glows faintly when near an Anchorage.
 
 ### Stats
 | Property | Value |
 |---|---|
 | Slot | Necklace |
 | Charges | 3 |
-| Where usable | Designated safe spots only (see §10) |
+| Where usable | Anchorages only (see §10) |
 | Recharge | Automatically when player sleeps at the Sanctum |
 | Gold cost (from merchant) | TBD |
 
 ### Charge economy
 - Charges are pre-loaded before each expedition by sleeping at home.
-- Charges do **not** refill in the field — if you run out, you cannot rest at a safe spot.
+- Charges do **not** refill in the field — if you run out, you cannot relocate the Sanctum to an Anchorage.
 - Sleeping at the Sanctum (25 food) restores all charges at no extra cost.
 
 ### Abuse prevention
-- Only activatable at designated safe spots. The player cannot summon the Sanctum mid-battle, in a dungeon corridor, or anywhere arbitrary.
-- 3 charges per expedition creates a hard ceiling on how many times rest can be taken per outing.
-- Safe spots are fixed world objects placed intentionally by level design (often near boss approaches but not adjacent to them).
+- Only activatable at Anchorages. The player cannot relocate the Sanctum mid-battle, in a dungeon corridor, or anywhere arbitrary.
+- 3 charges per expedition creates a hard ceiling on how many times the Sanctum can be relocated per outing.
+- Anchorages are fixed world objects placed intentionally by level design (often near boss approaches but not adjacent to them).
 
 ### Acquisition
 - Purchased from merchants in towns.

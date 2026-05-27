@@ -1,7 +1,7 @@
 import Phaser from 'phaser';
 import { connectToRoom } from '../net/Connection';
 import type { AIPersonality } from '../../../shared/types';
-import { CANVAS_W, CANVAS_H, ELEMENT_COLORS, ELEMENT_NAMES } from '../Constants';
+import { CANVAS_W, CANVAS_H, ELEMENT_COLORS, ELEMENT_NAMES, THUMB_PASSIVE_INFO } from '../Constants';
 import type { RingData } from '../objects/InventoryGrid';
 
 const BATTLE_SLOTS = ['thumb', 'a1', 'a2', 'd1', 'd2'] as const;
@@ -602,6 +602,12 @@ export class EncounterScene extends Phaser.Scene {
       }
     });
 
+    // #78 ④ — Thumb passive reminder. Mirrors the Sanctum ring-storage overlay so
+    // the same staked-passive hint is visible while editing the battle hand before
+    // a duel. Derived from loadout.thumb: a base element (0–4) → its named passive;
+    // a fusion (5–14, no entry) → an explicit "no passive" note; no Thumb → blank.
+    this.renderManagePassive(container, slotY);
+
     // Carried rings row (selectable) — exclude rings already in a battle slot so
     // the player only sees spare carried rings available for assignment.
     const slottedIds = new Set(Object.values(this.manageLoadout).filter(Boolean) as string[]);
@@ -661,6 +667,40 @@ export class EncounterScene extends Phaser.Scene {
     container.add([rechargeBtn, rechargeAllBtn, this.manageStatusText]);
 
     this.manageModal = container;
+  }
+
+  /**
+   * Render the Thumb passive reminder beneath the Thumb battle slot (#78 ④),
+   * matching the Sanctum ring-storage overlay's strip. Reads the staked Thumb ring
+   * (loadout.thumb) and resolves its passive via THUMB_PASSIVE_INFO — display-only;
+   * the server owns the real passive resolution at duel start. The text is
+   * constrained to the Thumb slot's column width so it never overlaps the A1/A2/
+   * D1/D2 slots to its right. Added to `container` so the modal destroy reclaims it.
+   *
+   * @param container - the manage-modal container to parent the strip into
+   * @param slotY - the y-center of the battle-slots row (Thumb is the first slot)
+   */
+  private renderManagePassive(container: Phaser.GameObjects.Container, slotY: number): void {
+    // Thumb is BATTLE_SLOTS[0]; its slot center matches the slots-row layout
+    // (sx = CANVAS_W/2 - 240 + 0 * 120). The 92px-wide slot card bounds the strip.
+    const thumbX = CANVAS_W / 2 - 240;
+    const thumbRingId = this.manageLoadout.thumb ?? null;
+    const thumbRing = thumbRingId ? this.manageRings.find((r) => r.id === thumbRingId) : undefined;
+    if (!thumbRing) return; // no Thumb staked → no reminder
+    const info = THUMB_PASSIVE_INFO[thumbRing.element];
+    const text = info ? `${info.name}\n${info.effect}` : `No passive\nFused rings grant no passive`;
+    const strip = this.add
+      .text(thumbX, slotY + 46, text, {
+        fontSize: '9px',
+        color: '#ffcc88',
+        align: 'center',
+        wordWrap: { width: 100 },
+        maxLines: 6,
+        lineSpacing: 1,
+      })
+      .setOrigin(0.5, 0)
+      .setName('manage-staked-passive');
+    container.add(strip);
   }
 
   /**

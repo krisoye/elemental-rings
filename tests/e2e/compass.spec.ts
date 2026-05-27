@@ -184,12 +184,14 @@ test('compass: stops targeting a waystone once it is attuned', async ({ browser 
   await loadSanctum(page);
   await enterOverworld(page);
 
-  // Stand ~200px from the glade so it is the active compass target.
-  await walkToZone(page, FOREST_GLADE, 'forest_glade');
+  // Stand ~200px from the glade so it is the active compass target. (Do NOT step
+  // onto the glade center yet — Anchorage discovery is now automatic, so touching
+  // the center would auto-attune it before we can confirm it as the live target.)
   await moveTo(page, { x: FOREST_GLADE.x, y: FOREST_GLADE.y + 200 });
   expect((await readCompass(page)).targetId).toBe('forest_glade');
 
-  // Walk onto the glade and attune it (same E flow as 8B.1).
+  // Walk onto the glade and attune it (auto-attune fires on walk-in; the E flow
+  // is kept as a deterministic belt-and-suspenders trigger).
   await walkToZone(page, FOREST_GLADE, 'forest_glade');
   await page.evaluate(() => (window as any).__sanctumInteract());
   await page.waitForFunction(

@@ -315,7 +315,7 @@ Phase 8 is the largest phase in the roadmap — it introduces a full tilemap wor
 
 **What ships:** The 8A overworld *stub* becomes a real **Forest biome** — a generated Tiled map with 3 waystone markers (touch to attune, **server-persisted**), a compass HUD that pulls toward the nearest *unattuned* waystone, and teleportation from the Sanctum's meditation circle. Unlike 8A (client-only), **8B adds server state and routes** — attunement, the Sanctum anchor, and the teleport gate are game rules and are server-enforced (§2).
 
-> **Design note (v4.8 refinement):** The shipped 8B.1–8B.3 implementation was built against an earlier reading of §10.7 that conflated **Waystones** (discovery markers) with **Anchorages** (teleport destinations). The corrected design (§10.7, §10.7a, §10.8) distinguishes the two: waystones reveal distant regions; Anchorages are where the Sanctum anchors. The 8B implementation treated waystones as teleport destinations and used aggregate XP as the spirit gate — both of which deviate from the corrected design. The **8B.4 EPIC** (#70) addresses the immediate functional gaps (Sanctum exterior, visual foundation). A subsequent pass will introduce Anchorages as first-class world objects and replace the XP gate with `spirit_current` (§10.8). Until then, the 8B waystone system functions as a stand-in Anchorage system.
+> **Design note (v4.9 — 8B.4 shipped):** The 8B.4 EPIC (#70, PRs #77/#79 + the overworld-fixes follow-up) closed the visual foundation and a large part of the Waystone/Anchorage distinction. As shipped now: the three Forest locations render as **Anchorages** (campfire + ground ring, no standing stone) and **auto-attune on walk-in** (§10.7a); the Sanctum exterior sits **directly at the Anchorage center** (`SANCTUM_OFFSET = 0`) and materializes there; and two **first-class discovery waystones** now exist (standing stones, press-E attune) that reveal adjacent biomes. The one remaining deviation from §10.8 is the teleport gate: it still uses `aggregateXp >= threshold` rather than `spirit_current >= cost`. The data model still keeps Anchorages and waystones in one catalog (`shared/waystones.ts`), distinguished by the map object `name` — a full table-level separation remains a future pass.
 
 **Sub-issues shipped (8B.1–8B.3):**
 - [#61](https://github.com/krisoye/elemental-rings/issues/61) — 8B.1: Forest biome map + waystone attunement (`shared/waystones.ts` catalog, map generator, `waystone_attunements` table, `GET /api/waystones` + `POST /api/waystones/attune`, overworld markers)
@@ -328,29 +328,45 @@ Phase 8 is the largest phase in the roadmap — it introduces a full tilemap wor
 - [#73](https://github.com/krisoye/elemental-rings/issues/73) — 8B.4.3: Safe area ground treatment around waystones (campfire, worn ground)
 - [#74](https://github.com/krisoye/elemental-rings/issues/74) — 8B.4.4: Forest map terrain overhaul (trees, paths, clearings)
 
-**Waystone objects (Forest biome — these function as stand-in Anchorages until 8B.5+):**
+**Forest locations (as shipped — Anchorages and discovery waystones are now visually + behaviorally distinct):**
 
-| id | Name | Spirit gate (as shipped) | Role in corrected design |
-|---|---|---|---|
-| `forest_entry` | Forest Waystone | 0 (free) | Default Anchorage; pre-discovered at creation |
-| `forest_glade` | Glade Waystone | 100 aggregate XP (→ replace with spirit cost) | Waystone or mid-biome Anchorage TBD |
-| `forest_depths` | Deepwood Waystone | 300 aggregate XP (→ replace with spirit cost) | Waystone or deep-biome Anchorage TBD |
+| id | Name | Type | Gate | Notes |
+|---|---|---|---|---|
+| `forest_entry` | Forest Waystone | Anchorage | 0 (free) | Default Anchorage; pre-attuned at creation. Renders campfire + ground ring; auto-attunes on walk-in. |
+| `forest_glade` | Glade Waystone | Anchorage | 100 aggregate XP | Mid-biome Anchorage. Auto-attune; teleport destination. |
+| `forest_depths` | Deepwood Waystone | Anchorage | 300 aggregate XP | Deep-biome Anchorage. Auto-attune; teleport destination. |
+| `forest_north_stone` | Frost-Worn Stone | Waystone | 150 aggregate XP | Discovery marker (standing stone, press-E). Reveals the **Snow Fields** (future biome). |
+| `forest_sw_stone` | Bogwood Sentinel | Waystone | 250 aggregate XP | Discovery marker. Reveals the **Swamp** biome — gates the Forest→Swamp transition (8C.2). |
 
-**Known limitations (to be corrected in 8B.5+):**
-- Waystones and Anchorages are the same objects in the current data model. Separating them requires a `anchorages` table and client objects distinct from waystone markers.
-- The teleport gate uses `aggregateXp >= threshold` instead of `spirit_current >= cost`. The spirit_current gate correctly creates a preparation loop (sleep → restore spirit → teleport); the XP gate does not.
-- The server cannot verify the player physically stood on a waystone before attuning (per-player overworld MVP). A future shared `WorldRoom` (8C+) would verify proximity authoritatively.
+**Known limitations (remaining after 8B.4):**
+- Anchorages and waystones still share one catalog (`shared/waystones.ts`); they are distinguished by the map object `name` and rendered differently, but a table-level separation (a dedicated `anchorages` table) is still future.
+- The teleport gate uses `aggregateXp >= threshold` instead of `spirit_current >= cost` (§10.8). The spirit_current gate correctly creates a preparation loop (sleep → restore spirit → teleport); the XP gate does not. Slated for a later pass.
+- The server cannot verify the player physically stood on an Anchorage before auto-attuning (per-player overworld MVP). A future shared `WorldRoom` would verify proximity authoritatively.
 
 ---
 
-#### EPIC 8C — World Population (planned, no EPIC issue yet)
+#### EPIC 8C — World Population, Sanctum Stone & Swamp Biome (EPIC [#80](https://github.com/krisoye/elemental-rings/issues/80))
 
-**What ships:** NPCs and monsters in the biome, detection radius, duel initiation from overworld, shrines.
+**What ships:** A field tool for managing the Sanctum (Sanctum Stone talisman), a second navigable biome (Swamp) with a hidden-progression secret, and the first living inhabitants (NPCs + detection). Decomposed into three sub-issues that can largely proceed in parallel.
 
-- NPC/monster placement using the existing 4-personality AI (Aggressive/Defensive/Status-Hunter/Resilient)
-- Detection radius: proximity reveals opponent's element loadout; approach/flee before committing
-- Duel trigger: spatial proximity → agreement → BattleRoom (replaces EncounterScene for live play)
-- Shrines: one per fusion recipe; fusion UI entry point moves from Sanctum ring-wall to shrine interaction
-- Underground zone: Shadow ring drop location (Shadow combat use deferred to a later phase)
+**Sub-issues:**
+- [#81](https://github.com/krisoye/elemental-rings/issues/81) — 8C.1: Talisman equipment system + Sanctum Stone (necklace slot, `talisman_loadout` table, charge economy, field-anchor from any Anchorage)
+- [#82](https://github.com/krisoye/elemental-rings/issues/82) — 8C.2: Swamp biome + hidden Forest alcove (new map + tileset, `SwampScene`, gated Forest→Swamp transition, the Ironbark Rune revealing an unreachable Forest Anchorage)
+- [#83](https://github.com/krisoye/elemental-rings/issues/83) — 8C.3: NPC & monster world population + detection (per-biome spawn table, detection radius, duels via the existing `battle-ai` room, server-side defeat tracking)
+
+**Sanctum Stone (GDD §14.3):** A necklace talisman with 3 charges. Activated at any discovered Anchorage in the field, it **permanently transports** the Sanctum to that Anchorage (the Sanctum physically moves and stays there until summoned elsewhere or the player teleports from within the meditation circle). Charges refill on sleep. This is the inverse of the meditation-circle teleport: it lets the player relocate home from the field rather than from inside the Sanctum.
+
+**Swamp biome:** Dominant elements Mud/Water/Wood/Earth (§10.2). Reached from the Forest's southwest edge once the `forest_sw_stone` (Bogwood Sentinel) waystone is attuned. Contains the `swamp_secret_forest` (Ironbark Rune) waystone, whose revelation unlocks `forest_hidden_anchor` — an Anchorage inside a tiny Forest alcove reachable ONLY by teleporting there (no walking path from the Forest side). This closes a discovery loop: explore Swamp → find rune → unlock hidden Forest area.
+
+**World population:** NPC/monster placement using the existing 4-personality AI (Aggressive/Defensive/Status-Hunter/Resilient). Detection radius reveals an opponent's element; approach (E) launches the duel via the existing `battle-ai` room, flee = walk away. Defeats are recorded server-side (permanent NPCs stay beaten; daily NPCs respawn on the game-day tick). Shrines and the Underground/Shadow drop zone remain deferred to a later phase.
+
+**Confirmed implementation decisions (8C):**
+
+| Decision | Choice | Rationale |
+|---|---|---|
+| Anchorage data model | Anchorages remain entries in the `shared/waystones.ts` catalog (with `xpThreshold` gate) | First-class Anchorage/waystone separation is still a future pass; the map object `name` (`anchorage` vs `waystone`) already drives the visual + auto-attune split (shipped in the 8B.4 follow-up) |
+| Biome scenes | `SwampScene`/`HiddenForestScene` clone `OverworldScene` for MVP | A `BiomeScene` abstraction is deferred until a third biome justifies the refactor |
+| NPC duels | Reuse the `battle-ai` Colyseus room (`npcId` added to `BattleRoomOptions`) | No new duel endpoint; defeat recorded in `persistBattleResult` |
+| Multiplayer overworld | Still per-player | Shared `WorldRoom` remains deferred |
 
 ---

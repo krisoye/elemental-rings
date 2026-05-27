@@ -25,6 +25,8 @@ export const WAYSTONES: WaystoneDef[] = [
   { id: 'forest_entry', name: 'Forest Waystone', biome: 'forest', xpThreshold: 0 },
   { id: 'forest_glade', name: 'Glade Waystone', biome: 'forest', xpThreshold: 100 },
   { id: 'forest_depths', name: 'Deepwood Waystone', biome: 'forest', xpThreshold: 300 },
+  { id: 'forest_north_stone', name: 'Frost-Worn Stone', biome: 'forest', xpThreshold: 150 },
+  { id: 'forest_sw_stone', name: 'Bogwood Sentinel', biome: 'forest', xpThreshold: 250 },
 ];
 
 /** Look up a waystone definition by id, or undefined if the id is unknown. */
