@@ -488,6 +488,10 @@ apiRouter.post('/api/talisman/activate', requireAuth, (req: Request, res: Respon
     return;
   }
   const newCount = spendTalismanCharge(playerId);
+  if (newCount < 0) {
+    res.status(400).json({ error: 'No charges remaining' });
+    return;
+  }
   setAnchor(playerId, anchorageId);
   res.status(200).json({ anchor: anchorageId, necklaceCharges: newCount });
 });
