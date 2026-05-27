@@ -1,8 +1,8 @@
 // Waystone catalog (GDD §10.7) — the single source of truth for waystone
 // METADATA: id, display name, biome, the aggregate-XP attune threshold, and the
 // per-destination spirit teleport cost (§10.8, #87 Part B). Positions live in the
-// Tiled map (overworld.json), NOT here; the catalog and the map share only the
-// `id` strings. A Vitest drift test asserts the two id-sets stay in parity.
+// Tiled biome maps (the per-screen Forest maps + swamp.json), NOT here; the catalog
+// and the maps share only the `id` strings. A Vitest drift test asserts parity.
 //
 // This module is server-consumed (imported by routes.ts) and is the authority
 // for the teleport gate. The client never imports it at runtime — everything it

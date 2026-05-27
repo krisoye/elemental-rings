@@ -160,10 +160,10 @@ export abstract class BaseBiomeScene extends Phaser.Scene {
 
   /**
    * Whether walking into a screen edge fade-transitions to the neighbour. Defaults
-   * to true for the generated per-screen maps; a subclass returns false for a
-   * hand-authored hub screen whose tilemap has solid, walled perimeter edges (e.g.
-   * the Forest's `forest_anchorage`, which retains overworld.json) so a test-driven
-   * out-of-bounds setPosition never triggers a spurious transition.
+   * to true for the generated per-screen maps (all carry open perimeter gaps at
+   * their exits); a subclass may return false for a single-screen biome whose
+   * tilemap has solid, walled perimeter edges so a test-driven out-of-bounds
+   * setPosition never triggers a spurious transition.
    */
   protected edgeTransitionsEnabled(): boolean {
     return true;
@@ -294,6 +294,7 @@ export abstract class BaseBiomeScene extends Phaser.Scene {
       window.__overworldToggleBattleHand = undefined;
       window.__decorationCount = undefined;
       window.__forestScreenId = undefined;
+      window.__zoneCenters = undefined;
       this.decorHandle?.destroy();
       this.decorHandle = null;
       this.decorationGroup?.destroy(true);
@@ -778,6 +779,18 @@ export abstract class BaseBiomeScene extends Phaser.Scene {
 
       window.__sanctumReturnCenter = { x: sanctumX, y: sanctumY };
     }
+
+    // 8E (#107) — publish every interaction zone's world center so E2E can read
+    // positions dynamically per-screen (anchorages/waystones/biome_exit/sanctum_
+    // return) instead of hardcoding pixel coordinates that move between screens.
+    this.publishZoneCenters();
+  }
+
+  /** Mirror each interaction zone's center to window.__zoneCenters for E2E (#107). */
+  private publishZoneCenters(): void {
+    window.__zoneCenters = Object.fromEntries(
+      this.zones.map((z) => [z.name, { x: z.centerX, y: z.centerY }]),
+    );
   }
 
   /**

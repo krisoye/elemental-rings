@@ -22,8 +22,10 @@ const SANCTUM_DOOR = { x: 1088, y: 608 };
 /** Forest NPC world centers (tx*32+16, ty*32+16 from NpcSpawns). */
 const FOREST_NPC_1 = { id: 'forest_npc_1', x: 15 * 32 + 16, y: 12 * 32 + 16 }; // 496, 400
 const FOREST_NPC_3 = { id: 'forest_npc_3', x: 8 * 32 + 16, y: 22 * 32 + 16 }; // 272, 720
-/** A point far from every Forest NPC (top-left corner). */
-const FAR_FROM_NPCS = { x: 64, y: 64 };
+/** A point far from every Forest NPC, on a walkable hub tile (8E #107: the
+ * generated forest_anchorage map walls its perimeter, so tile (2,2)=(64,64) could
+ * be wall — (200,200) is safely inside the grove-free hub clearing). */
+const FAR_FROM_NPCS = { x: 200, y: 200 };
 
 interface NpcEntry {
   id: string;

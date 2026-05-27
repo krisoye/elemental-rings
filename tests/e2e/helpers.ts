@@ -47,6 +47,29 @@ export interface BattleHandles {
 }
 
 /**
+ * 8E (#107) — restart ForestScene on a specific Forest region screen and wait for it
+ * to fully load (the screen id is published + the waystone roster has been fetched).
+ * Lets a test stand on any of the 15 generated Forest screens directly instead of
+ * walking the hub, which after #107 no longer carries the per-screen catalog objects.
+ * The page must already be in a live spatial scene (CampScene or ForestScene) so the
+ * active-scene global is set; the helper stops it and starts ForestScene with the
+ * requested screenId.
+ */
+export async function enterForestScreen(page: Page, screenId: string): Promise<void> {
+  await page.evaluate((sid) => {
+    const active = (window as any).__activeScene;
+    if (active) (window as any).__game.scene.stop(active);
+    (window as any).__game.scene.start('ForestScene', { screenId: sid });
+  }, screenId);
+  await page.waitForFunction((sid) => (window as any).__forestScreenId === sid, screenId, {
+    timeout: 8000,
+  });
+  // loadWaystones publishes __waystones + __zoneCenters once the roster is fetched.
+  await page.waitForFunction(() => !!(window as any).__waystones, { timeout: 8000 });
+  await page.waitForFunction(() => !!(window as any).__zoneCenters, { timeout: 8000 });
+}
+
+/**
  * Provision a fresh player on the test server and inject the JWT into the context
  * via an init script. Call this BEFORE creating pages so BootScene routes to
  * CampScene instead of LoginScene. Phase 4+5 auth gate — required for any test
