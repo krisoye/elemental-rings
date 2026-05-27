@@ -594,16 +594,18 @@ export class SwampScene extends Phaser.Scene {
   }
 
   /**
-   * #83 — GET /api/overworld/npcs?biome=swamp, render each NPC as a colored
-   * ellipse (element hue) + a personality label, and publish window.__overworldNpcs
-   * for the E2E harness. Best-effort: a network/auth failure leaves the roster
-   * empty. The server is the authority on which NPCs are present.
+   * #83 / #99 — GET /api/overworld/npcs?biome=swamp&screen=swamp_entry, render
+   * each NPC as a colored ellipse (element hue) + a personality label, and publish
+   * window.__overworldNpcs for the E2E harness. The `screen` is required by the
+   * server (8E.3); the Swamp map is its entry screen. Best-effort: a network/auth
+   * failure leaves the roster empty. The server is the authority on which NPCs are
+   * present.
    */
   private async loadOverworldNpcs(): Promise<void> {
     const token = localStorage.getItem('er_token');
     if (!token) return;
     try {
-      const res = await fetch(`${API_BASE}/api/overworld/npcs?biome=swamp`, {
+      const res = await fetch(`${API_BASE}/api/overworld/npcs?biome=swamp&screen=swamp_entry`, {
         headers: { Authorization: `Bearer ${token}` },
       });
       if (!res.ok) return;

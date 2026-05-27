@@ -32,7 +32,7 @@ interface WaystonesPayload {
  * A minimal MVP clone of {@link OverworldScene}: tilemap → collision → Player →
  * camera follow, plus the Anchorage auto-attune + discovery-Waystone machinery so
  * the hidden Anchorage attunes on arrival and the hidden glade can be attuned. It
- * reuses the existing forest `tiles` (placeholder.png) texture. A `return_exit`
+ * reuses the shared `forest` tileset texture (forest.png). A `return_exit`
  * zone walks the player back to the Forest (OverworldScene).
  */
 export class HiddenForestScene extends Phaser.Scene {
@@ -53,10 +53,10 @@ export class HiddenForestScene extends Phaser.Scene {
   }
 
   preload(): void {
-    // Reuse the existing forest placeholder tileset (cached if the Forest loaded
-    // first; reload defensively for a direct teleport-in).
-    if (!this.textures.exists('tiles')) {
-      this.load.image('tiles', 'assets/tiles/placeholder.png');
+    // Reuse the shared forest tileset (cached if the Forest loaded first; reload
+    // defensively for a direct teleport-in).
+    if (!this.textures.exists('forest')) {
+      this.load.image('forest', 'assets/tiles/forest.png');
     }
     this.load.tilemapTiledJSON('forest_hidden', 'assets/maps/forest_hidden.json');
   }
@@ -66,7 +66,7 @@ export class HiddenForestScene extends Phaser.Scene {
     window.__activeScene = 'HiddenForestScene';
 
     const map = this.make.tilemap({ key: 'forest_hidden' });
-    const tileset = map.addTilesetImage('placeholder', 'tiles')!;
+    const tileset = map.addTilesetImage('forest', 'forest')!;
     const groundLayer = map.createLayer('ground', tileset, 0, 0)!;
     groundLayer.setCollisionByProperty({ collides: true });
 

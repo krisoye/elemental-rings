@@ -538,17 +538,29 @@ apiRouter.post('/api/talisman/activate', requireAuth, (req: Request, res: Respon
 });
 
 /**
- * GET /api/overworld/npcs?biome=<biome> — the NPCs currently present in the
- * requested biome for this player (#83, GDD §10.5). Hides any NPC the player has
- * already defeated when it is permanent (respawnDays === 0) or its respawn period
- * has not yet elapsed (game_day − defeated_day < respawnDays). Each visible NPC
- * reports its stable previewed stake element (so the overworld can color the
- * marker) and its tile center in world pixels (tx*32+16, ty*32+16). Requires auth.
+ * GET /api/overworld/npcs?biome=<biome>&screen=<screen> — the NPCs currently
+ * present on the requested Forest-region screen for this player (#83, #99,
+ * GDD §10.5 / §10.15). Hides any NPC the player has already defeated when it is
+ * permanent (respawnDays === 0) or its respawn period has not yet elapsed
+ * (game_day − defeated_day < respawnDays). Each visible NPC reports its stable
+ * previewed stake element (so the overworld can color the marker) and its tile
+ * center in world pixels (tx*32+16, ty*32+16). Requires auth.
+ *
+ * 8E.3 (#99) — `screen` scopes the roster to one screen of the multi-screen
+ * overworld, so the client only loads the NPCs on the screen it is rendering.
+ * `biome` without `screen` is a 400 (the multi-screen overworld must always name
+ * its current screen). `screen` alone (no biome) is permitted as a global lookup.
  */
 const TILE_SIZE = 32;
 apiRouter.get('/api/overworld/npcs', requireAuth, (req: Request, res: Response): void => {
   const playerId = req.playerId as string;
-  const biome = typeof req.query.biome === 'string' ? req.query.biome : '';
+  const biome = typeof req.query.biome === 'string' ? req.query.biome : undefined;
+  const screen = typeof req.query.screen === 'string' ? req.query.screen : undefined;
+
+  if (biome && !screen) {
+    res.status(400).json({ error: 'screen required' });
+    return;
+  }
 
   const player = getPlayerById(playerId);
   if (!player) {
@@ -557,7 +569,9 @@ apiRouter.get('/api/overworld/npcs', requireAuth, (req: Request, res: Response):
   }
   const defeated = getDefeatedNpcs(playerId);
 
-  const visible = NPC_SPAWNS.filter((npc) => npc.biome === biome).filter((npc) => {
+  const visible = NPC_SPAWNS.filter(
+    (npc) => (!biome || npc.biome === biome) && (!screen || npc.screen === screen),
+  ).filter((npc) => {
     const defeatedDay = defeated.get(npc.id);
     if (defeatedDay === undefined) return true; // never beaten → always present
     // Permanent NPC stays hidden; periodic NPC hidden until its respawn elapses.

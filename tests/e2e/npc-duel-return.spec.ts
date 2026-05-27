@@ -55,17 +55,27 @@ async function enterOverworld(page: Page): Promise<void> {
   await page.waitForFunction(() => Array.isArray((window as any).__overworldNpcs), { timeout: 8000 });
 }
 
-/** GET /api/overworld/npcs for a biome straight from the server. */
+/**
+ * GET /api/overworld/npcs for a biome's entry screen straight from the server.
+ * 8E.3 (#99) — the server requires a `screen` alongside `biome`; the existing
+ * roster lives on each biome's entry screen (forest → forest_anchorage,
+ * swamp → swamp_entry).
+ */
+const BIOME_ENTRY_SCREEN: Record<string, string> = {
+  forest: 'forest_anchorage',
+  swamp: 'swamp_entry',
+};
 async function serverNpcs(page: Page, biome: string): Promise<{ id: string }[]> {
+  const screen = BIOME_ENTRY_SCREEN[biome] ?? biome;
   return page.evaluate(
-    async ([api, b]) => {
+    async ([api, b, s]) => {
       const token = localStorage.getItem('er_token');
-      const res = await fetch(`${api}/api/overworld/npcs?biome=${b}`, {
+      const res = await fetch(`${api}/api/overworld/npcs?biome=${b}&screen=${s}`, {
         headers: { Authorization: `Bearer ${token}` },
       });
       return res.json();
     },
-    [API_URL, biome] as const,
+    [API_URL, biome, screen] as const,
   );
 }
 

@@ -6,6 +6,7 @@ import { Waystone } from '../objects/world/Waystone';
 import { Compass } from '../objects/world/Compass';
 import { BlinkController } from '../objects/world/BlinkController';
 import { BattleHandOverlay } from '../objects/BattleHandOverlay';
+import { placeDecoration, type DecorationHandle } from '../objects/world/Decoration';
 import {
   COMPASS_RANGE,
   SANCTUM_OFFSET,
@@ -131,18 +132,26 @@ export class OverworldScene extends Phaser.Scene {
   private overlayOpen = false;
   /** #87 Part C — last pointerdown time (ms) per NPC id, for double-click ambush. */
   private npcLastClick = new Map<string, number>();
+  /** 8D.4 — static physics group holding solid decorations (trees/rocks). */
+  private decorationGroup: Phaser.Physics.Arcade.StaticGroup | null = null;
+  /** 8D.4 — handle to the placed proof decorations, destroyed on shutdown. */
+  private decorHandle: DecorationHandle | null = null;
 
   constructor() {
     super({ key: 'OverworldScene' });
   }
 
   preload(): void {
-    // `tiles` is cached if the Sanctum loaded first, but reload defensively in
-    // case the overworld is the first spatial scene (e.g. a direct deep-link).
-    if (!this.textures.exists('tiles')) {
-      this.load.image('tiles', 'assets/tiles/placeholder.png');
+    // `forest` is cached if another Forest scene loaded first, but reload
+    // defensively in case the overworld is the first spatial scene (e.g. a
+    // direct deep-link).
+    if (!this.textures.exists('forest')) {
+      this.load.image('forest', 'assets/tiles/forest.png');
     }
     this.load.tilemapTiledJSON('overworld', 'assets/maps/overworld.json');
+    // 8D.4 — decoration + structure atlases (cropped from the source art packs).
+    this.load.image('forest-decoration', 'assets/sprites/forest-decoration.png');
+    this.load.image('structures', 'assets/sprites/structures.png');
   }
 
   create(): void {
@@ -152,7 +161,7 @@ export class OverworldScene extends Phaser.Scene {
     this.returnedFromDuel = false;
 
     const map = this.make.tilemap({ key: 'overworld' });
-    const tileset = map.addTilesetImage('placeholder', 'tiles')!;
+    const tileset = map.addTilesetImage('forest', 'forest')!;
     const groundLayer = map.createLayer('ground', tileset, 0, 0)!;
     groundLayer.setCollisionByProperty({ collides: true });
 
@@ -175,6 +184,19 @@ export class OverworldScene extends Phaser.Scene {
     this.physics.world.setBounds(0, 0, map.widthInPixels, map.heightInPixels);
     this.cameras.main.setBounds(0, 0, map.widthInPixels, map.heightInPixels);
     this.cameras.main.startFollow(this.player, true, 0.1, 0.1);
+
+    // 8D.4 — minimal proof placement of decorations over the ground layer. Two
+    // sprites in the Sanctum clearing (walkable floor): one solid (trunk-collision,
+    // inset body) and one non-solid (walk-through bush). The collider lets the
+    // player bump the solid one. window.__decorationCount lets E2E assert placement.
+    this.decorationGroup = this.physics.add.staticGroup();
+    const proofSpecs = [
+      { atlasKey: 'forest-decoration', x: 200, y: 200, solid: true, bodyInset: 8 },
+      { atlasKey: 'forest-decoration', x: 300, y: 200, solid: false },
+    ];
+    this.decorHandle = placeDecoration(this, this.decorationGroup, proofSpecs);
+    this.physics.add.collider(this.player, this.decorationGroup);
+    window.__decorationCount = proofSpecs.length;
 
     // Biome title (pinned to the camera).
     this.add
@@ -231,6 +253,11 @@ export class OverworldScene extends Phaser.Scene {
       window.__detectedNpc = undefined;
       window.__overworldBattleHandOpen = undefined;
       window.__overworldToggleBattleHand = undefined;
+      window.__decorationCount = undefined;
+      this.decorHandle?.destroy();
+      this.decorHandle = null;
+      this.decorationGroup?.destroy(true);
+      this.decorationGroup = null;
       this.blink?.destroy();
       this.blink = null;
       this.battleHand?.destroy();
@@ -854,17 +881,19 @@ export class OverworldScene extends Phaser.Scene {
   }
 
   /**
-   * #83 — GET /api/overworld/npcs?biome=forest, render each NPC as a colored
-   * ellipse (element hue) + a personality label, and publish window.__overworldNpcs
-   * for the E2E harness. Best-effort: a network/auth failure leaves the roster
-   * empty (no markers, no detection). The server is the authority on which NPCs are
-   * present (defeated/respawned NPCs are simply absent from the payload).
+   * #83 / #99 — GET /api/overworld/npcs?biome=forest&screen=forest_anchorage,
+   * render each NPC as a colored ellipse (element hue) + a personality label, and
+   * publish window.__overworldNpcs for the E2E harness. The `screen` is required
+   * by the server (8E.3); this single-map overworld is the Forest Anchorage hub.
+   * Best-effort: a network/auth failure leaves the roster empty (no markers, no
+   * detection). The server is the authority on which NPCs are present
+   * (defeated/respawned NPCs are simply absent from the payload).
    */
   private async loadOverworldNpcs(): Promise<void> {
     const token = localStorage.getItem('er_token');
     if (!token) return;
     try {
-      const res = await fetch(`${API_BASE}/api/overworld/npcs?biome=forest`, {
+      const res = await fetch(`${API_BASE}/api/overworld/npcs?biome=forest&screen=forest_anchorage`, {
         headers: { Authorization: `Bearer ${token}` },
       });
       if (!res.ok) return;

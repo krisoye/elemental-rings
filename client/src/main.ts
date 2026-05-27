@@ -232,6 +232,9 @@ declare global {
     __overworldBattleHandOpen?: boolean;
     // #87 Part D — toggle the OverworldScene battle-hand overlay (same path as Tab).
     __overworldToggleBattleHand?: () => void;
+    // 8D.4 — number of decorations placed by the OverworldScene proof pass. Lets
+    // E2E assert decorations were placed. Cleared on scene shutdown.
+    __decorationCount?: number;
   }
 }
 

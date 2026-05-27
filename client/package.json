@@ -7,11 +7,17 @@
     "build": "tsc && vite build",
     "typecheck": "tsc --noEmit",
     "gen:tiles": "node scripts/gen-placeholder-tiles.mjs",
-    "gen:overworld": "node scripts/gen-overworld-map.mjs",
+    "gen:decode-autotile": "node scripts/decode-autotile.mjs",
+    "gen:forest-tiles": "node scripts/gen-forest-tiles.mjs",
     "gen:swamp-tiles": "node scripts/gen-swamp-tiles.mjs",
+    "gen:sanctum-tiles": "node scripts/gen-sanctum-tiles.mjs",
+    "gen:forest-sprites": "node scripts/gen-forest-sprites.mjs",
+    "gen:structure-sprites": "node scripts/gen-structure-sprites.mjs",
+    "gen:sanctum-sprites": "node scripts/gen-sanctum-sprites.mjs",
+    "gen:overworld": "node scripts/gen-overworld-map.mjs",
     "gen:swamp": "node scripts/gen-swamp-map.mjs",
     "gen:hidden": "node scripts/gen-hidden-forest-map.mjs",
-    "gen:maps": "npm run gen:overworld && npm run gen:swamp-tiles && npm run gen:swamp && npm run gen:hidden"
+    "gen:maps": "npm run gen:forest-tiles && npm run gen:swamp-tiles && npm run gen:sanctum-tiles && npm run gen:forest-sprites && npm run gen:structure-sprites && npm run gen:sanctum-sprites && npm run gen:decode-autotile && npm run gen:overworld && npm run gen:swamp && npm run gen:hidden"
   },
   "dependencies": {
     "@colyseus/sdk": "^0.17.42",
