@@ -287,6 +287,11 @@ export class BattleHandOverlay {
     container.add([rechargeBtn, rechargeAllBtn, this.manageStatusText]);
 
     this.manageModal = container;
+
+    // #87 Part D — re-expose the discard hook the original inlined EncounterScene
+    // modal published (tests/e2e/carry.spec.ts calls window.__encounterDiscardRing).
+    // The lambda captures `this`, so it routes to this overlay's private discard.
+    window.__encounterDiscardRing = (ringId: string): void => void this.discardCarriedRing(ringId);
   }
 
   /**
@@ -380,6 +385,7 @@ export class BattleHandOverlay {
     }
     this.manageSelectedRingId = null;
     this.manageStatusText = null;
+    delete window.__encounterDiscardRing;
     const cb = this.onCloseCb;
     this.onCloseCb = undefined;
     cb?.();
@@ -565,5 +571,6 @@ export class BattleHandOverlay {
     }
     this.manageStatusText = null;
     this.onCloseCb = undefined;
+    delete window.__encounterDiscardRing;
   }
 }

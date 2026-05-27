@@ -69,6 +69,14 @@ export class EncounterScene extends Phaser.Scene {
   }
 
   create(): void {
+    // #87 Part D — own a battle-hand overlay instance (replaces the inlined modal).
+    // Constructed before the npcDuel early-return so checkPendingWonRing()'s
+    // this.battleHand.isOpen() never dereferences an unassigned field on the NPC
+    // path. The constructor is non-destructive (no scene objects), and its onStatus
+    // callback uses optional chaining on statusText (created later), so an early
+    // build is safe.
+    this.battleHand = new BattleHandOverlay(this, (msg) => this.statusText?.setText(msg));
+
     // #83 — overworld NPC path: bypass the marker hub entirely and go straight into
     // the duel against the detected NPC (scoped by npcId so a win records the
     // defeat server-side). The hub UI/hooks below are skipped on this path.
@@ -85,9 +93,6 @@ export class EncounterScene extends Phaser.Scene {
       void this.startAIDuel(personality, undefined, npcId, ambush);
       return;
     }
-
-    // #87 Part D — own a battle-hand overlay instance (replaces the inlined modal).
-    this.battleHand = new BattleHandOverlay(this, (msg) => this.statusText?.setText(msg));
 
     this.add
       .text(CANVAS_W / 2, 40, 'ENCOUNTER — choose an opponent', {

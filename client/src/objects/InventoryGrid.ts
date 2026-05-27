@@ -267,6 +267,11 @@ export class InventoryGrid extends Phaser.GameObjects.Container {
       COL_GAP + CARD_W + MASK_INSET * 2,
       rows * ROW_GAP + MASK_INSET * 2,
     );
+    // #85 W5 — destroy the prior GeometryMask wrapper before replacing it.
+    // createGeometryMask() allocates a fresh wrapper each call; setMask only swaps
+    // the reference, so without this the old wrapper leaks once per open/close cycle.
+    const prevMask = this.cardContainer.mask;
+    if (prevMask) prevMask.destroy();
     this.cardContainer.setMask(g.createGeometryMask());
   }
 

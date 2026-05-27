@@ -19,6 +19,7 @@ import {
   rechargeAllWithSpirit,
   getSpiritAndFood,
   spendSpirit,
+  spendSpiritAtomic,
   getSpiritStats,
   lockStake,
   unlockStake,
@@ -36,7 +37,7 @@ import {
 } from '../persistence/PlayerRepo';
 import { NPC_SPAWNS, hashNpcId } from '../persistence/NpcSpawns';
 import { FOOD_PER_SLEEP } from '../game/constants';
-import { WAYSTONES, getWaystone, canTeleport } from '../../../shared/waystones';
+import { WAYSTONES, getWaystone } from '../../../shared/waystones';
 import { getTalisman } from '../../../shared/talismans';
 import { blinkCost } from '../../../shared/blink';
 
@@ -286,12 +287,13 @@ apiRouter.post('/api/spirit/blink', requireAuth, (req: Request, res: Response): 
   const playerId = req.playerId as string;
   const { distance } = req.body ?? {};
   const cost = blinkCost(typeof distance === 'number' ? distance : 0);
-  const { spirit_current } = getSpiritAndFood(playerId);
-  if (spirit_current < cost) {
+  // Atomic check-and-spend (single guarded UPDATE) closes the read→check→spend
+  // race two concurrent blinks would otherwise share, which could push spirit
+  // negative. false → the balance was insufficient at deduct time.
+  if (!spendSpiritAtomic(playerId, cost)) {
     res.status(400).json({ error: 'insufficient spirit' });
     return;
   }
-  spendSpirit(playerId, cost);
   res.status(200).json({ spirit_current: getSpiritAndFood(playerId).spirit_current, cost });
 });
 
@@ -451,12 +453,14 @@ apiRouter.post('/api/teleport', requireAuth, (req: Request, res: Response): void
     return;
   }
   const def = getWaystone(waystoneId)!;
-  const { spirit_current } = getSpiritAndFood(playerId);
-  if (!canTeleport(spirit_current, waystoneId)) {
+  // Atomic check-and-spend: the guarded UPDATE both verifies affordability and
+  // deducts in one statement, so two concurrent teleports can't both spend past
+  // zero. A zero-cost destination is a no-op that still succeeds. (canTeleport is
+  // the pre-check the client mirrors; this is the authoritative deduction.)
+  if (!spendSpiritAtomic(playerId, def.spiritCost)) {
     res.status(400).json({ error: `requires ${def.spiritCost} spirit` });
     return;
   }
-  if (def.spiritCost > 0) spendSpirit(playerId, def.spiritCost);
   setAnchor(playerId, waystoneId);
   res.status(200).json({
     anchor: waystoneId,
