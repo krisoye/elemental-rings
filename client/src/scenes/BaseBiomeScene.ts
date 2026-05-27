@@ -35,7 +35,7 @@ const WS = __SERVER_URL__ || `ws://${window.location.hostname}:2567`;
 const API_BASE = WS.replace(/^ws/, 'http');
 
 /** px from a map edge at which an edge transition fires (8E.1). */
-const EDGE = 8;
+const EDGE = 24; // player body half-width is 10px; 8px is unreachable with world bounds
 /** px inset from the spawn edge at which the player materialises after a transition. */
 const SPAWN_INSET = 48;
 
