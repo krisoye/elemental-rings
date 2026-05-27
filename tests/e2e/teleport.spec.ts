@@ -202,10 +202,10 @@ test('teleport: the anchored waystone drives where the overworld spawns the play
     timeout: 8000,
   });
 
-  // Leave via the Sanctum door → OverworldScene, which spawns at the anchor.
+  // Leave via the Sanctum door → ForestScene, which spawns at the anchor.
   await walkToZone(page, SANCTUM_DOOR, 'door');
   await page.evaluate(() => (window as any).__sanctumInteract());
-  await page.waitForFunction(() => (window as any).__activeScene === 'OverworldScene', {
+  await page.waitForFunction(() => (window as any).__activeScene === 'ForestScene', {
     timeout: 8000,
   });
   await page.waitForFunction(() => !!(window as any).__waystones, { timeout: 8000 });

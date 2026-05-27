@@ -56,7 +56,7 @@ async function walkToZone(page: Page, p: { x: number; y: number }, zone: string)
 async function enterOverworld(page: Page): Promise<void> {
   await walkToZone(page, SANCTUM_DOOR, 'door');
   await page.evaluate(() => (window as any).__sanctumInteract());
-  await page.waitForFunction(() => (window as any).__activeScene === 'OverworldScene', {
+  await page.waitForFunction(() => (window as any).__activeScene === 'ForestScene', {
     timeout: 8000,
   });
   await page.waitForFunction(() => !!(window as any).__player, { timeout: 8000 });
@@ -91,7 +91,7 @@ async function serverNpcs(page: Page, biome: string): Promise<NpcEntry[]> {
  * Drive a vsAI duel against the given NPC to a guaranteed human WIN, mirroring
  * helpers.driveAiDuel but routing through connectToRoom('battle-ai', …) with the
  * npcId in the room options (so a win records the defeat) plus aiHearts:1 to force
- * the win. The page must already be in OverworldScene (or any scene where
+ * the win. The page must already be in ForestScene (or any scene where
  * connectToRoom is exposed). Resolves once the duel ENDS with the human winner.
  */
 async function driveNpcWin(page: Page, npcId: string, personality: string): Promise<void> {
@@ -173,7 +173,7 @@ test('npc: GET /api/overworld/npcs?biome=forest returns 3 well-formed NPCs', asy
 });
 
 // ── Scenario 2: the scene renders the roster at expected world coords ─────────
-test('npc: OverworldScene publishes 3 NPCs with forest_npc_1 at its tile center', async ({ browser }) => {
+test('npc: ForestScene publishes 3 NPCs with forest_npc_1 at its tile center', async ({ browser }) => {
   const ctx = await browser.newContext();
   await seedAuthToken(ctx);
   const page = await ctx.newPage();

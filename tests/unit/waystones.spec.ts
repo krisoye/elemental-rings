@@ -1,7 +1,8 @@
 import fs from 'fs';
 import path from 'path';
-import { describe, test, expect } from 'vitest';
+import { describe, test, it, expect } from 'vitest';
 import { WAYSTONES, getWaystone, canTeleport } from '../../shared/waystones';
+import { FOREST_SCREENS } from '../../shared/world/forest';
 
 // ---------------------------------------------------------------------------
 // getWaystone — catalog lookup
@@ -70,41 +71,51 @@ describe('waystone spiritCost', () => {
 // Drift test — catalog ids must equal the COMBINED catalog-backed object ids
 // across every biome map
 // ---------------------------------------------------------------------------
-// Catalog-backed locations carry a `waystoneId` property on the map. After the
-// visual split (#79) they come in two flavours: `anchorage` objects (home base /
-// teleport destinations, rendered as campfire + ground ring) and `waystone`
-// objects (discovery standing-stones that reveal adjacent biomes). As of 8C.2
-// (#82) the catalog spans THREE maps — the Forest overworld, the Swamp, and the
-// hidden Forest alcove. The union of all `waystoneId`s across all three maps must
-// equal the catalog id-set (no map ships a waystone the catalog lacks, and no
-// catalog entry is unplaced). `biome_exit` / `return_exit` objects carry a
-// `target` (scene key) — NOT a `waystoneId` — so they are excluded.
+// Catalog-backed locations carry a `waystoneId` property on a map. They come in
+// two flavours: `anchorage` objects (home base / teleport destinations) and
+// `waystone` objects (discovery standing-stones). As of 8E the Forest's catalog
+// objects are placed across the per-screen maps generated into
+// client/public/assets/maps/forest/ (one .json per FOREST_SCREENS entry); the
+// Swamp ships its catalog objects in swamp.json. The union of all `waystoneId`s
+// across every Forest screen + the Swamp map must equal the catalog id-set (no map
+// ships a waystone the catalog lacks, and no catalog entry is unplaced).
+// `biome_exit` objects carry a `target` (scene key) — NOT a `waystoneId` — so they
+// are excluded.
 
 interface MapObject {
   name?: string;
   properties?: Array<{ name: string; value: unknown }>;
 }
 
-const BIOME_MAPS = ['overworld.json', 'swamp.json', 'forest_hidden.json'] as const;
+const MAPS_DIR = path.resolve(__dirname, '../../client/public/assets/maps');
 
-function loadObjectLayer(mapFile: string): MapObject[] {
-  const mapPath = path.resolve(__dirname, '../../client/public/assets/maps', mapFile);
-  const map = JSON.parse(fs.readFileSync(mapPath, 'utf8')) as {
+function loadObjectLayerAt(absMapPath: string): MapObject[] {
+  const map = JSON.parse(fs.readFileSync(absMapPath, 'utf8')) as {
     layers: Array<{ name: string; type: string; objects?: MapObject[] }>;
   };
   const objectLayer = map.layers.find((l) => l.type === 'objectgroup');
-  expect(objectLayer, `${mapFile} has an objectgroup layer`).toBeDefined();
+  expect(objectLayer, `${absMapPath} has an objectgroup layer`).toBeDefined();
   return objectLayer?.objects ?? [];
+}
+
+/** Every biome map file: the Forest per-screen maps + the Swamp map. */
+function biomeMapPaths(): string[] {
+  const forestDir = path.join(MAPS_DIR, 'forest');
+  const forestMaps = fs
+    .readdirSync(forestDir)
+    .filter((f) => f.endsWith('.json'))
+    .map((f) => path.join(forestDir, f));
+  return [...forestMaps, path.join(MAPS_DIR, 'swamp.json')];
 }
 
 /** Collect every `waystoneId` from the anchorage/waystone objects across all maps. */
 function collectMapWaystoneIds(): Set<string> {
   const ids = new Set<string>();
-  for (const mapFile of BIOME_MAPS) {
-    for (const obj of loadObjectLayer(mapFile)) {
+  for (const mapPath of biomeMapPaths()) {
+    for (const obj of loadObjectLayerAt(mapPath)) {
       if (obj.name !== 'anchorage' && obj.name !== 'waystone') continue;
       const prop = (obj.properties ?? []).find((p) => p.name === 'waystoneId');
-      expect(typeof prop?.value, `${mapFile} ${obj.name} has a string waystoneId`).toBe('string');
+      expect(typeof prop?.value, `${mapPath} ${obj.name} has a string waystoneId`).toBe('string');
       ids.add(prop!.value as string);
     }
   }
@@ -118,38 +129,65 @@ describe('waystone catalog ↔ map drift', () => {
     expect([...mapIds].sort()).toEqual([...catalogIds].sort());
   });
 
-  test('combined catalog spans 12 waystones (5 Forest + 5 Swamp + 2 hidden Forest)', () => {
-    // 5 Forest (8B), 5 Swamp + 2 hidden-Forest (8C.2). Guards against silent
+  test('combined catalog spans 12 waystones (7 Forest + 5 Swamp)', () => {
+    // 7 Forest (incl. the 2 hidden alcove ids) + 5 Swamp. Guards against silent
     // catalog regressions; bump deliberately when a biome is added.
     expect(WAYSTONES.length).toBeGreaterThanOrEqual(12);
     expect(collectMapWaystoneIds().size).toBe(WAYSTONES.length);
   });
 
-  test('overworld ships 3 anchorages + 2 discovery waystones; swamp ships 2 + 3; hidden 1 + 1', () => {
-    const count = (mapFile: string, name: string): number =>
-      loadObjectLayer(mapFile).filter((o) => o.name === name).length;
-    expect(count('overworld.json', 'anchorage')).toBe(3);
-    expect(count('overworld.json', 'waystone')).toBe(2);
-    expect(count('swamp.json', 'anchorage')).toBe(2);
-    expect(count('swamp.json', 'waystone')).toBe(3);
-    expect(count('forest_hidden.json', 'anchorage')).toBe(1);
-    expect(count('forest_hidden.json', 'waystone')).toBe(1);
+  test('the Swamp map ships its biome-exit back to the Forest with a target', () => {
+    const swampExit = loadObjectLayerAt(path.join(MAPS_DIR, 'swamp.json')).find(
+      (o) => o.name === 'biome_exit',
+    );
+    expect(swampExit).toBeDefined();
+    const prop = (swampExit!.properties ?? []).find((p) => p.name === 'target');
+    expect(prop?.value).toBe('ForestScene');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// FOREST_SCREENS drift — the 8E Forest screen manifest must be internally
+// consistent (reciprocal exits) and reference only real catalog waystone ids.
+// ---------------------------------------------------------------------------
+
+const OPPOSITE: Record<string, string> = {
+  north: 'south',
+  south: 'north',
+  east: 'west',
+  west: 'east',
+};
+
+describe('FOREST_SCREENS drift', () => {
+  it('all exits are reciprocal', () => {
+    for (const screen of FOREST_SCREENS) {
+      for (const [dir, neighborId] of Object.entries(screen.exits)) {
+        const neighbor = FOREST_SCREENS.find((s) => s.id === neighborId);
+        expect(neighbor, `${screen.id}.${dir} → ${neighborId} has no matching ScreenDef`).toBeTruthy();
+        const oppositeDir = OPPOSITE[dir];
+        expect(
+          (neighbor!.exits as Record<string, string>)[oppositeDir],
+          `${neighborId}.${oppositeDir} should point back to ${screen.id}`,
+        ).toBe(screen.id);
+      }
+    }
   });
 
-  test('Forest→Swamp and return transitions ship as biome-exit objects with a target', () => {
-    // The Forest overworld exits SW to the Swamp; the Swamp exits NW back to the
-    // Forest; the hidden alcove returns to the Forest. Each carries a `target`.
-    const overworldExit = loadObjectLayer('overworld.json').find((o) => o.name === 'biome_exit');
-    const swampExit = loadObjectLayer('swamp.json').find((o) => o.name === 'biome_exit');
-    const hiddenReturn = loadObjectLayer('forest_hidden.json').find((o) => o.name === 'return_exit');
-    for (const [obj, target] of [
-      [overworldExit, 'SwampScene'],
-      [swampExit, 'OverworldScene'],
-      [hiddenReturn, 'OverworldScene'],
-    ] as const) {
-      expect(obj).toBeDefined();
-      const prop = (obj!.properties ?? []).find((p) => p.name === 'target');
-      expect(prop?.value).toBe(target);
+  it('all anchorage/waystone ids exist in WAYSTONES catalog', () => {
+    const waystoneIds = new Set(WAYSTONES.map((w) => w.id));
+    for (const screen of FOREST_SCREENS) {
+      if (screen.anchorage) {
+        expect(
+          waystoneIds.has(screen.anchorage),
+          `${screen.id}.anchorage '${screen.anchorage}' not in catalog`,
+        ).toBe(true);
+      }
+      if (screen.waystone) {
+        expect(
+          waystoneIds.has(screen.waystone),
+          `${screen.id}.waystone '${screen.waystone}' not in catalog`,
+        ).toBe(true);
+      }
     }
   });
 });

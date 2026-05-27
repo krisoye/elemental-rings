@@ -7,7 +7,7 @@ const URL = 'http://localhost:8090';
 /**
  * Phase 8A.3 — Overworld stub + scene transition.
  *
- * The Sanctum's exit door transitions into OverworldScene; a sanctum_return zone
+ * The Sanctum's exit door transitions into ForestScene; a sanctum_return zone
  * walks back to CampScene. The dev "Set Out →" shortcut still routes to
  * EncounterScene. All assertions read real game state via page.evaluate (no
  * mocks). "Walking to a zone" places the live player avatar at the zone center
@@ -46,7 +46,7 @@ async function walkToZone(page: Page, p: { x: number; y: number }, zone: string)
 }
 
 // ── Scenario 1: Sanctum → Overworld ──────────────────────────────────────────
-test('overworld: Sanctum door transitions into OverworldScene at spawn', async ({ browser }) => {
+test('overworld: Sanctum door transitions into ForestScene at spawn', async ({ browser }) => {
   const ctx = await browser.newContext();
   await seedAuthToken(ctx);
   const page = await ctx.newPage();
@@ -55,7 +55,7 @@ test('overworld: Sanctum door transitions into OverworldScene at spawn', async (
   await walkToZone(page, SANCTUM_DOOR, 'door');
   await page.evaluate(() => (window as any).__sanctumInteract());
 
-  await page.waitForFunction(() => (window as any).__activeScene === 'OverworldScene', {
+  await page.waitForFunction(() => (window as any).__activeScene === 'ForestScene', {
     timeout: 8000,
   });
   await page.waitForFunction(() => !!(window as any).__player, { timeout: 8000 });
@@ -81,7 +81,7 @@ test('overworld: player moves right on ArrowRight', async ({ browser }) => {
 
   await walkToZone(page, SANCTUM_DOOR, 'door');
   await page.evaluate(() => (window as any).__sanctumInteract());
-  await page.waitForFunction(() => (window as any).__activeScene === 'OverworldScene', {
+  await page.waitForFunction(() => (window as any).__activeScene === 'ForestScene', {
     timeout: 8000,
   });
 
@@ -103,7 +103,7 @@ test('overworld: player collides with the west perimeter wall', async ({ browser
 
   await walkToZone(page, SANCTUM_DOOR, 'door');
   await page.evaluate(() => (window as any).__sanctumInteract());
-  await page.waitForFunction(() => (window as any).__activeScene === 'OverworldScene', {
+  await page.waitForFunction(() => (window as any).__activeScene === 'ForestScene', {
     timeout: 8000,
   });
 
@@ -133,7 +133,7 @@ test('overworld: sanctum_return transitions back to CampScene with reloaded stat
 
   await walkToZone(page, SANCTUM_DOOR, 'door');
   await page.evaluate(() => (window as any).__sanctumInteract());
-  await page.waitForFunction(() => (window as any).__activeScene === 'OverworldScene', {
+  await page.waitForFunction(() => (window as any).__activeScene === 'ForestScene', {
     timeout: 8000,
   });
   // Wait for anchor-derived spawn to finish before repositioning.

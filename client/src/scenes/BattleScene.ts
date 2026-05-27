@@ -164,7 +164,7 @@ export class BattleScene extends Phaser.Scene {
    * to Sanctum". Guarded so it fires once.
    *
    * #88 — destination routing:
-   *   - Overworld NPC duels (launched from OverworldScene/SwampScene) record their
+   *   - Overworld NPC duels (launched from ForestScene/SwampScene) record their
    *     origin biome + the player's world position in window.__duelOrigin. On END
    *     we return to that biome scene (which restores the player near {x,y}), and
    *     clear __duelOrigin so it is never reused.
@@ -198,7 +198,7 @@ export class BattleScene extends Phaser.Scene {
     // with explicit empty data so no stale NPC-duel data is retained.
     const origin = window.__duelOrigin;
     const toBiome =
-      origin && (origin.scene === 'OverworldScene' || origin.scene === 'SwampScene')
+      origin && (origin.scene === 'ForestScene' || origin.scene === 'SwampScene')
         ? origin.scene
         : null;
 

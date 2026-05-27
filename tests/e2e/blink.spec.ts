@@ -50,7 +50,7 @@ async function walkToZone(page: Page, p: { x: number; y: number }, zone: string)
 async function enterOverworld(page: Page): Promise<void> {
   await walkToZone(page, SANCTUM_DOOR, 'door');
   await page.evaluate(() => (window as any).__sanctumInteract());
-  await page.waitForFunction(() => (window as any).__activeScene === 'OverworldScene', {
+  await page.waitForFunction(() => (window as any).__activeScene === 'ForestScene', {
     timeout: 8000,
   });
   await page.waitForFunction(() => !!(window as any).__player, { timeout: 8000 });

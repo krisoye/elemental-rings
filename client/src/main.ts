@@ -2,9 +2,8 @@ import Phaser from 'phaser';
 import { BootScene } from './scenes/BootScene';
 import { LoginScene } from './scenes/LoginScene';
 import { CampScene } from './scenes/CampScene';
-import { OverworldScene } from './scenes/OverworldScene';
+import { ForestScene } from './scenes/ForestScene';
 import { SwampScene } from './scenes/SwampScene';
-import { HiddenForestScene } from './scenes/HiddenForestScene';
 import { EncounterScene } from './scenes/EncounterScene';
 import { LobbyScene } from './scenes/LobbyScene';
 import { BattleScene } from './scenes/BattleScene';
@@ -149,7 +148,7 @@ declare global {
     // (instead of the EncounterScene hub) and the biome scene's create() restores
     // the player near {x,y}, then clears it. null/unset for hub/marker duels (which
     // return to the EncounterScene hub) and after consumption.
-    __duelOrigin?: { scene: 'OverworldScene' | 'SwampScene'; x: number; y: number } | null;
+    __duelOrigin?: { scene: 'ForestScene' | 'SwampScene'; x: number; y: number } | null;
     // Teleport modal snapshot (set by CampScene.openTeleportModal before render).
     __teleportState?: {
       anchor: string;
@@ -235,6 +234,10 @@ declare global {
     // 8D.4 — number of decorations placed by the OverworldScene proof pass. Lets
     // E2E assert decorations were placed. Cleared on scene shutdown.
     __decorationCount?: number;
+    // 8E.1 — the current Forest screen id (BaseBiomeScene multi-screen layout).
+    // Published by ForestScene on create and cleared on shutdown so E2E can assert
+    // which screen of the Forest region is live after an edge transition.
+    __forestScreenId?: string;
   }
 }
 
@@ -263,17 +266,17 @@ const game = new Phaser.Game({
   physics: { default: 'arcade', arcade: { gravity: { x: 0, y: 0 }, debug: false } },
   // BootScene must stay first (it routes by auth state). LoginScene/CampScene
   // are the new auth flow; Encounter/Lobby/Battle are unchanged.
-  // OverworldScene follows CampScene and does NOT auto-start (reached via the
-  // Sanctum exit door / scene.start). SwampScene + HiddenForestScene (8C.2, #82)
-  // are reached via the OverworldScene biome_exit / teleport and never auto-start.
-  // BootScene stays first (routes by auth).
+  // ForestScene (8E.1, the BaseBiomeScene-driven multi-screen Forest region,
+  // formerly OverworldScene + HiddenForestScene) follows CampScene and does NOT
+  // auto-start (reached via the Sanctum exit door / scene.start). SwampScene
+  // (8E.4) is also a BaseBiomeScene subclass, reached via the Forest biome_exit /
+  // teleport, and never auto-starts. BootScene stays first (routes by auth).
   scene: [
     BootScene,
     LoginScene,
     CampScene,
-    OverworldScene,
+    ForestScene,
     SwampScene,
-    HiddenForestScene,
     EncounterScene,
     LobbyScene,
     BattleScene,
