@@ -112,6 +112,11 @@ declare global {
     // its render position to prove the (scrollFactor-fixed) hit area tracks the
     // render, not the world. Registered while the ring-storage overlay is open.
     __campHitTestRing?: (ringId: string) => { found: boolean; hit: boolean };
+    // #81 — talisman loadout snapshot (the GET /api/talisman-loadout payload).
+    // Published by CampScene (on ring-wall overlay open) and OverworldScene (on
+    // create) so E2E can assert the equipped necklace + remaining charges. null
+    // when the fetch has not yet resolved; the object form once loaded.
+    __talismanLoadout?: { necklaceId: string | null; necklaceCharges: number } | null;
     // Teleport modal snapshot (set by CampScene.openTeleportModal before render).
     __teleportState?: {
       anchor: string;

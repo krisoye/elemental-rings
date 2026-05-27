@@ -30,6 +30,7 @@ const SOLO_SPECS = [
   'sanctum-movement.spec.ts',
   'sanctum-zones.spec.ts',
   'spirit.spec.ts',
+  'talisman.spec.ts',
   'teleport.spec.ts',
   'waystones.spec.ts',
 ];

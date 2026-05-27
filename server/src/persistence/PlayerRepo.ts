@@ -2,6 +2,7 @@ import { v4 as uuidv4 } from 'uuid';
 import { db } from './db';
 import { ElementEnum } from '../../../shared/types';
 import { fusionOf } from '../game/Fusions';
+import { getTalisman } from '../../../shared/talismans';
 import {
   SPIRIT_PER_RING_USE,
   SPIRIT_BASE,
@@ -85,6 +86,25 @@ const insertAttunement = db.prepare(
 const selectAttunements = db.prepare(
   `SELECT waystone_id FROM waystone_attunements WHERE player_id = ?`,
 );
+// #81 — talisman loadout. Seeded empty at createPlayer; equip UPSERTs so it works
+// whether or not a row already exists; spend/recharge mutate the charge count.
+const insertTalismanLoadout = db.prepare(
+  `INSERT INTO talisman_loadout (player_id, necklace_id, necklace_charges)
+   VALUES (@player_id, @necklace_id, @necklace_charges)`,
+);
+const selectTalismanLoadout = db.prepare(
+  `SELECT necklace_id, necklace_charges FROM talisman_loadout WHERE player_id = ?`,
+);
+const upsertTalismanNecklace = db.prepare(
+  `INSERT INTO talisman_loadout (player_id, necklace_id, necklace_charges)
+   VALUES (@player_id, @necklace_id, @necklace_charges)
+   ON CONFLICT(player_id) DO UPDATE SET
+     necklace_id = excluded.necklace_id,
+     necklace_charges = excluded.necklace_charges`,
+);
+const updateTalismanCharges = db.prepare(
+  `UPDATE talisman_loadout SET necklace_charges = ? WHERE player_id = ?`,
+);
 // #63 — Sanctum anchor (the waystone the overworld spawns the player beside).
 const selectAnchor = db.prepare(
   `SELECT anchored_waystone FROM players WHERE id = ?`,
@@ -151,6 +171,10 @@ export const createPlayer = db.transaction(
     // #61 — every new player starts attuned to the Forest entry waystone so the
     // overworld's first teleport destination is available immediately (GDD §10.7).
     insertAttunement.run(playerId, 'forest_entry', Date.now());
+
+    // #81 — seed an empty talisman loadout (no necklace, 0 charges). Starting
+    // players do not own a Sanctum Stone (GDD §14.3 — it is a mid-game upgrade).
+    insertTalismanLoadout.run({ player_id: playerId, necklace_id: null, necklace_charges: 0 });
 
     return playerId;
   },
@@ -707,6 +731,72 @@ export function getAnchor(playerId: string): string {
  */
 export function setAnchor(playerId: string, waystoneId: string): void {
   updateAnchor.run(waystoneId, playerId);
+}
+
+// ---------------------------------------------------------------------------
+// #81 — Talisman loadout (Phase 8C.1, GDD §14.2/§14.3)
+// ---------------------------------------------------------------------------
+
+/**
+ * The player's equipped necklace talisman and its remaining charges. Returns the
+ * "nothing equipped" baseline ({ necklaceId: null, necklaceCharges: 0 }) when no
+ * row exists (defensive — createPlayer seeds one for every new player).
+ */
+export function getTalismanLoadout(playerId: string): {
+  necklaceId: string | null;
+  necklaceCharges: number;
+} {
+  const row = selectTalismanLoadout.get(playerId) as
+    | { necklace_id: string | null; necklace_charges: number }
+    | undefined;
+  if (!row) return { necklaceId: null, necklaceCharges: 0 };
+  return { necklaceId: row.necklace_id, necklaceCharges: row.necklace_charges };
+}
+
+/**
+ * Equip a talisman to the necklace slot, resetting its charges to the catalog's
+ * maxCharges. UPSERTs so it works whether or not a loadout row already exists.
+ * Caller validates that `talismanlId` is a known necklace talisman before
+ * calling. (The param name carries the issue contract's exact spelling.)
+ */
+export function equipTalisman(
+  playerId: string,
+  talismanlId: string,
+  _slot: 'necklace',
+): { necklaceId: string; necklaceCharges: number } {
+  const def = getTalisman(talismanlId);
+  const charges = def?.maxCharges ?? 0;
+  upsertTalismanNecklace.run({
+    player_id: playerId,
+    necklace_id: talismanlId,
+    necklace_charges: charges,
+  });
+  return { necklaceId: talismanlId, necklaceCharges: charges };
+}
+
+/**
+ * Spend one necklace charge. Returns the new charge count, or -1 when the
+ * necklace is already at 0 charges (no charge spent). Bare persistence write —
+ * the route validates the necklace is equipped and the action is legal first.
+ */
+export function spendTalismanCharge(playerId: string): number {
+  const { necklaceCharges } = getTalismanLoadout(playerId);
+  if (necklaceCharges <= 0) return -1;
+  const next = necklaceCharges - 1;
+  updateTalismanCharges.run(next, playerId);
+  return next;
+}
+
+/**
+ * Restore the equipped necklace to its catalog maxCharges (the sleep refill,
+ * GDD §14.3). No-op when no necklace is equipped or its id is unknown.
+ */
+export function rechargeNecklace(playerId: string): void {
+  const { necklaceId } = getTalismanLoadout(playerId);
+  if (!necklaceId) return;
+  const def = getTalisman(necklaceId);
+  if (!def) return;
+  updateTalismanCharges.run(def.maxCharges, playerId);
 }
 
 /**

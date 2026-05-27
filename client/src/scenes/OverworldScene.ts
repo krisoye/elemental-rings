@@ -75,6 +75,15 @@ export class OverworldScene extends Phaser.Scene {
   private anchorageRings: Map<string, Phaser.GameObjects.Graphics> = new Map();
   private anchorageFires: Map<string, { gfx: Phaser.GameObjects.Graphics; x: number; y: number }> =
     new Map();
+  /**
+   * #81 — the player's equipped necklace talisman + remaining charges, fetched on
+   * create. Drives Sanctum Stone activation: while standing in an Anchorage zone
+   * with the Stone equipped and charges > 0, E relocates the Sanctum. null until
+   * the GET resolves (or on auth failure).
+   */
+  private talismanLoadout: { necklaceId: string | null; necklaceCharges: number } | null = null;
+  /** The Anchorage zone (by waystone id) the player currently overlaps, or null. */
+  private currentAnchorageId: string | null = null;
 
   constructor() {
     super({ key: 'OverworldScene' });
@@ -122,8 +131,8 @@ export class OverworldScene extends Phaser.Scene {
     // Input.
     this.cursors = this.input.keyboard!.createCursorKeys();
     this.wasd = this.input.keyboard!.addKeys('W,A,S,D') as typeof this.wasd;
-    this.input.keyboard!.on('keydown-E', () => this.activeZone?.interact());
-    window.__sanctumInteract = (): void => this.activeZone?.interact();
+    this.input.keyboard!.on('keydown-E', () => this.handleInteract());
+    window.__sanctumInteract = (): void => this.handleInteract();
 
     window.__player = this.player;
     this.events.once('shutdown', () => {
@@ -134,6 +143,7 @@ export class OverworldScene extends Phaser.Scene {
       window.__waystones = undefined;
       window.__compass = undefined;
       window.__sanctumReturnCenter = undefined;
+      window.__talismanLoadout = undefined;
       this.zones.forEach((z) => z.destroy());
       this.waystones.forEach((w) => w.destroy());
       this.compass.destroy();
@@ -153,6 +163,9 @@ export class OverworldScene extends Phaser.Scene {
 
     // Load waystone state from the authoritative server and render the markers.
     void this.loadWaystones(map);
+    // #81 — fetch the talisman loadout so E knows whether the Sanctum Stone is
+    // equipped (and how many charges remain) when standing on an Anchorage.
+    void this.loadTalismanLoadout();
   }
 
   update(): void {
@@ -160,6 +173,49 @@ export class OverworldScene extends Phaser.Scene {
     this.updateActiveZone();
     this.updateCompass();
     this.checkAnchorageAutoAttune();
+    this.updateCurrentAnchorage();
+  }
+
+  /**
+   * #81 — per-frame: record which Anchorage zone (if any) the player currently
+   * stands inside, so E can activate the Sanctum Stone there. Uses the same
+   * ANCHORAGE_GROUND_RADIUS proximity the auto-attune check uses, so "inside the
+   * Anchorage" is consistent between discovery and Stone activation.
+   */
+  private updateCurrentAnchorage(): void {
+    const px = this.player.x;
+    const py = this.player.y;
+    let inside: string | null = null;
+    for (const [id, anchorage] of this.anchorageMarkers) {
+      const { x, y } = anchorage.center;
+      if (Phaser.Math.Distance.Between(px, py, x, y) <= ANCHORAGE_GROUND_RADIUS) {
+        inside = id;
+        break;
+      }
+    }
+    this.currentAnchorageId = inside;
+  }
+
+  /**
+   * #81 — E / interact dispatcher. When the player stands in an Anchorage with the
+   * Sanctum Stone equipped and charges remaining, E activates the Stone (relocate
+   * the Sanctum, POST /api/talisman/activate). Otherwise it falls through to the
+   * default active-zone interaction (waystone attune / sanctum return), preserving
+   * existing E behavior. Charges = 0 suppresses activation (and its prompt) so the
+   * default behavior still runs.
+   */
+  private handleInteract(): void {
+    const tl = this.talismanLoadout;
+    if (
+      this.currentAnchorageId &&
+      tl &&
+      tl.necklaceId === 'sanctum_stone' &&
+      tl.necklaceCharges > 0
+    ) {
+      void this.activateSanctumStone(this.currentAnchorageId);
+      return;
+    }
+    this.activeZone?.interact();
   }
 
   /**
@@ -522,6 +578,56 @@ export class OverworldScene extends Phaser.Scene {
     } catch {
       // Network error — leave the marker unchanged; the next GET will reconcile.
     }
+  }
+
+  /**
+   * #81 — GET /api/talisman-loadout and cache it (also published to
+   * window.__talismanLoadout for E2E). Best-effort: a network/auth failure leaves
+   * the loadout null, which simply disables Sanctum Stone activation.
+   */
+  private async loadTalismanLoadout(): Promise<void> {
+    const token = localStorage.getItem('er_token');
+    if (!token) return;
+    try {
+      const res = await fetch(`${API_BASE}/api/talisman-loadout`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!res.ok) return;
+      const payload = (await res.json()) as { necklaceId: string | null; necklaceCharges: number };
+      this.talismanLoadout = payload;
+      window.__talismanLoadout = payload;
+    } catch {
+      // Leave the loadout null — activation stays disabled.
+    }
+  }
+
+  /**
+   * #81 — activate the Sanctum Stone at the given Anchorage (GDD §14.3): POST
+   * /api/talisman/activate. On success the server spends a charge and re-anchors
+   * the Sanctum; the cached loadout is refreshed and the scene transitions into
+   * the (now-relocated) Sanctum (CampScene). A 400 (no charges / not attuned /
+   * not equipped) is left silent — the cached state is the authority for the
+   * prompt and the next GET reconciles.
+   */
+  private async activateSanctumStone(anchorageId: string): Promise<void> {
+    const token = localStorage.getItem('er_token');
+    if (!token) return;
+    let res: Response;
+    try {
+      res = await fetch(`${API_BASE}/api/talisman/activate`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ talismanlId: 'sanctum_stone', anchorageId }),
+      });
+    } catch {
+      return;
+    }
+    if (!res.ok) return;
+    const body = (await res.json()) as { anchor: string; necklaceCharges: number };
+    const updated = { necklaceId: 'sanctum_stone', necklaceCharges: body.necklaceCharges };
+    this.talismanLoadout = updated;
+    window.__talismanLoadout = updated;
+    this.scene.start('CampScene');
   }
 
   /** Store the latest payload and mirror it to window.__waystones for E2E. */

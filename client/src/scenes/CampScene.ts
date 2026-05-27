@@ -6,6 +6,7 @@ import { FusionPanel } from '../objects/FusionPanel';
 import { ELEMENT_NAMES, CANVAS_W, CANVAS_H, THUMB_PASSIVE_INFO } from '../Constants';
 import { Player } from '../objects/world/Player';
 import { InteractionZone } from '../objects/world/InteractionZone';
+import { getTalisman } from '../../../shared/talismans';
 
 declare const __SERVER_URL__: string;
 
@@ -456,6 +457,16 @@ export class CampScene extends Phaser.Scene {
     // closed, so draw from the cached snapshot here.
     this.renderPassiveStrip();
 
+    // #81 — necklace-slot display near the stake panel. Fetch the loadout and
+    // render the equipped talisman + remaining charges (filled/empty dots). No
+    // equip UI here — equipping happens via /api/talisman/equip elsewhere.
+    const necklaceLabel = this.add
+      .text(580, 470, 'Necklace: —', { fontSize: '12px', color: '#cfe3ff' })
+      .setScrollFactor(0)
+      .setName('necklace-slot');
+    c.add(necklaceLabel);
+    void this.loadTalismanLoadout(necklaceLabel);
+
     // #78 ① — hit-test probe. Scrolls the camera past a card's half-size, then
     // hit-tests the card's bg at its (scroll-independent) render position. With
     // the scrollFactor(0) fix applied the hit area tracks the render, so the test
@@ -493,6 +504,41 @@ export class CampScene extends Phaser.Scene {
       cam.startFollow(this.player, true, 0.1, 0.1);
       return { found: true, hit: out.indexOf(bg) !== -1 };
     };
+  }
+
+  /**
+   * #81 — fetch GET /api/talisman-loadout, publish it to window.__talismanLoadout
+   * for E2E, and render the equipped necklace talisman + remaining charges into
+   * the given label (e.g. "Sanctum Stone ●●○"). When nothing is equipped the label
+   * shows "Necklace: (empty)". Display-only — no equip UI. Best-effort: a network
+   * or auth failure leaves the placeholder label as-is.
+   */
+  private async loadTalismanLoadout(label: Phaser.GameObjects.Text): Promise<void> {
+    const token = localStorage.getItem('er_token');
+    if (!token) return;
+    let payload: { necklaceId: string | null; necklaceCharges: number };
+    try {
+      const res = await fetch(`${API_BASE}/api/talisman-loadout`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!res.ok) return;
+      payload = await res.json();
+    } catch {
+      return;
+    }
+    window.__talismanLoadout = payload;
+    // The label may have been destroyed if the overlay closed mid-fetch.
+    if (!label.active) return;
+    if (!payload.necklaceId) {
+      label.setText('Necklace: (empty)');
+      return;
+    }
+    const def = getTalisman(payload.necklaceId);
+    const name = def?.name ?? payload.necklaceId;
+    const max = def?.maxCharges ?? payload.necklaceCharges;
+    const filled = '●'.repeat(payload.necklaceCharges);
+    const empty = '○'.repeat(Math.max(0, max - payload.necklaceCharges));
+    label.setText(`${name} ${filled}${empty}`);
   }
 
   /**

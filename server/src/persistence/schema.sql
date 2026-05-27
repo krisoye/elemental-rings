@@ -36,3 +36,11 @@ CREATE TABLE IF NOT EXISTS waystone_attunements (
   attuned_at  INTEGER NOT NULL,
   PRIMARY KEY (player_id, waystone_id)
 );
+-- #81 — Phase 8C.1 talisman loadout (GDD §14.2/§14.3). One row per player holds
+-- the equipped necklace talisman id and its remaining charges. A null necklace_id
+-- with 0 charges is the "nothing equipped" baseline (seeded at createPlayer).
+CREATE TABLE IF NOT EXISTS talisman_loadout (
+  player_id        TEXT PRIMARY KEY REFERENCES players(id),
+  necklace_id      TEXT,
+  necklace_charges INTEGER NOT NULL DEFAULT 0
+);

@@ -28,9 +28,14 @@ import {
   attuneWaystone,
   getAnchor,
   setAnchor,
+  getTalismanLoadout,
+  equipTalisman,
+  spendTalismanCharge,
+  rechargeNecklace,
 } from '../persistence/PlayerRepo';
 import { FOOD_PER_SLEEP } from '../game/constants';
 import { WAYSTONES, getWaystone, canTeleport } from '../../../shared/waystones';
+import { getTalisman } from '../../../shared/talismans';
 
 /**
  * Build the /api/waystones payload for a player: the catalog joined with the
@@ -167,6 +172,9 @@ apiRouter.post('/api/camp/sleep', requireAuth, (req: Request, res: Response): vo
   spendFood(playerId, FOOD_PER_SLEEP);
   restoreSpirit(playerId);
   sleepRecharge(playerId);
+  // #81 — sleeping at the Sanctum refills the equipped necklace talisman's
+  // charges (GDD §14.3). No-op when no necklace is equipped.
+  rechargeNecklace(playerId);
   res.status(200).json({
     player: getPlayerById(playerId),
     rings: getRingsByOwner(playerId),
@@ -408,6 +416,70 @@ apiRouter.post('/api/teleport', requireAuth, (req: Request, res: Response): void
   }
   setAnchor(playerId, waystoneId);
   res.status(200).json({ anchor: waystoneId });
+});
+
+/**
+ * GET /api/talisman-loadout — the player's equipped necklace talisman id and its
+ * remaining charges (#81, GDD §14.2/§14.3). A fresh player reports
+ * { necklaceId: null, necklaceCharges: 0 }. Requires auth.
+ */
+apiRouter.get('/api/talisman-loadout', requireAuth, (req: Request, res: Response): void => {
+  const playerId = req.playerId as string;
+  res.status(200).json(getTalismanLoadout(playerId));
+});
+
+/**
+ * POST /api/talisman/equip — equip a talisman to the necklace slot, resetting its
+ * charges to the catalog max (#81). Body: { talismanlId, slot }. 400 on an unknown
+ * talisman id or a talisman whose slot does not match the requested slot. Returns
+ * { necklaceId, necklaceCharges }. Requires auth.
+ */
+apiRouter.post('/api/talisman/equip', requireAuth, (req: Request, res: Response): void => {
+  const playerId = req.playerId as string;
+  const { talismanlId, slot } = req.body ?? {};
+  if (typeof talismanlId !== 'string' || slot !== 'necklace') {
+    res.status(400).json({ error: 'talismanlId (string) and slot="necklace" are required' });
+    return;
+  }
+  const def = getTalisman(talismanlId);
+  if (!def || def.slot !== 'necklace') {
+    res.status(400).json({ error: 'Unknown necklace talisman' });
+    return;
+  }
+  res.status(200).json(equipTalisman(playerId, talismanlId, 'necklace'));
+});
+
+/**
+ * POST /api/talisman/activate — activate the equipped Sanctum Stone at an attuned
+ * Anchorage (#81, GDD §14.3). Body: { talismanlId: 'sanctum_stone', anchorageId }.
+ * Validates the necklace is equipped (matches talismanlId), has charges left, and
+ * that anchorageId is attuned. On success spends one charge and re-anchors the
+ * Sanctum. Returns { anchor, necklaceCharges }. 400 on no charges / not equipped /
+ * not attuned. Requires auth.
+ */
+apiRouter.post('/api/talisman/activate', requireAuth, (req: Request, res: Response): void => {
+  const playerId = req.playerId as string;
+  const { talismanlId, anchorageId } = req.body ?? {};
+  if (typeof talismanlId !== 'string' || typeof anchorageId !== 'string' || !anchorageId) {
+    res.status(400).json({ error: 'talismanlId and anchorageId are required' });
+    return;
+  }
+  const { necklaceId, necklaceCharges } = getTalismanLoadout(playerId);
+  if (necklaceId !== talismanlId) {
+    res.status(400).json({ error: 'Talisman not equipped' });
+    return;
+  }
+  if (necklaceCharges <= 0) {
+    res.status(400).json({ error: 'No charges remaining' });
+    return;
+  }
+  if (!getAttunements(playerId).includes(anchorageId)) {
+    res.status(400).json({ error: 'Anchorage not attuned' });
+    return;
+  }
+  const newCount = spendTalismanCharge(playerId);
+  setAnchor(playerId, anchorageId);
+  res.status(200).json({ anchor: anchorageId, necklaceCharges: newCount });
 });
 
 // ───────────────────────────────────────────────────────────────────────────
