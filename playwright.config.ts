@@ -26,6 +26,7 @@ const SOLO_SPECS = [
   'carry.spec.ts',
   'compass.spec.ts',
   'fusion.spec.ts',
+  'npc-population.spec.ts',
   'overworld-transition.spec.ts',
   'sanctum-movement.spec.ts',
   'sanctum-zones.spec.ts',

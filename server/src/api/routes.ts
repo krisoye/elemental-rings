@@ -32,7 +32,9 @@ import {
   equipTalisman,
   spendTalismanCharge,
   rechargeNecklace,
+  getDefeatedNpcs,
 } from '../persistence/PlayerRepo';
+import { NPC_SPAWNS, hashNpcId } from '../persistence/NpcSpawns';
 import { FOOD_PER_SLEEP } from '../game/constants';
 import { WAYSTONES, getWaystone, canTeleport } from '../../../shared/waystones';
 import { getTalisman } from '../../../shared/talismans';
@@ -488,6 +490,50 @@ apiRouter.post('/api/talisman/activate', requireAuth, (req: Request, res: Respon
   const newCount = spendTalismanCharge(playerId);
   setAnchor(playerId, anchorageId);
   res.status(200).json({ anchor: anchorageId, necklaceCharges: newCount });
+});
+
+/**
+ * GET /api/overworld/npcs?biome=<biome> — the NPCs currently present in the
+ * requested biome for this player (#83, GDD §10.5). Hides any NPC the player has
+ * already defeated when it is permanent (respawnDays === 0) or its respawn period
+ * has not yet elapsed (game_day − defeated_day < respawnDays). Each visible NPC
+ * reports its stable previewed stake element (so the overworld can color the
+ * marker) and its tile center in world pixels (tx*32+16, ty*32+16). Requires auth.
+ */
+const TILE_SIZE = 32;
+apiRouter.get('/api/overworld/npcs', requireAuth, (req: Request, res: Response): void => {
+  const playerId = req.playerId as string;
+  const biome = typeof req.query.biome === 'string' ? req.query.biome : '';
+
+  const player = getPlayerById(playerId);
+  if (!player) {
+    res.status(404).json({ error: 'Player not found' });
+    return;
+  }
+  const defeated = getDefeatedNpcs(playerId);
+
+  const visible = NPC_SPAWNS.filter((npc) => npc.biome === biome).filter((npc) => {
+    const defeatedDay = defeated.get(npc.id);
+    if (defeatedDay === undefined) return true; // never beaten → always present
+    // Permanent NPC stays hidden; periodic NPC hidden until its respawn elapses.
+    if (npc.respawnDays === 0) return false;
+    return player.game_day - defeatedDay >= npc.respawnDays;
+  });
+
+  // Element is derived from a STABLE per-id RNG seed so the same NPC always shows
+  // the same staked element across requests (the seed never depends on time).
+  const npcs = visible.map((npc) => {
+    const { element } = previewOpponent(npc.personality, makeRng(hashNpcId(npc.id)));
+    return {
+      id: npc.id,
+      personality: npc.personality,
+      x: npc.tx * TILE_SIZE + TILE_SIZE / 2,
+      y: npc.ty * TILE_SIZE + TILE_SIZE / 2,
+      element,
+    };
+  });
+
+  res.status(200).json(npcs);
 });
 
 // ───────────────────────────────────────────────────────────────────────────

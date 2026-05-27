@@ -1,9 +1,25 @@
 import Phaser from 'phaser';
+import type { AIPersonality } from '../../../shared/types';
 import { Player } from '../objects/world/Player';
 import { InteractionZone } from '../objects/world/InteractionZone';
 import { Waystone } from '../objects/world/Waystone';
 import { Compass } from '../objects/world/Compass';
-import { COMPASS_RANGE, ANCHORAGE_GROUND_RADIUS } from '../Constants';
+import {
+  COMPASS_RANGE,
+  ANCHORAGE_GROUND_RADIUS,
+  DETECTION_RADIUS,
+  ELEMENT_COLORS,
+  ELEMENT_NAMES,
+} from '../Constants';
+
+/** One entry of the GET /api/overworld/npcs payload (server is the authority). */
+interface NpcInfo {
+  id: string;
+  personality: string;
+  x: number;
+  y: number;
+  element: number;
+}
 
 declare const __SERVER_URL__: string;
 
@@ -74,6 +90,18 @@ export class SwampScene extends Phaser.Scene {
   private talismanLoadout: { necklaceId: string | null; necklaceCharges: number } | null = null;
   /** The Anchorage zone (by waystone id) the player currently overlaps, or null. */
   private currentAnchorageId: string | null = null;
+  /**
+   * #83 — the Swamp NPC roster from GET /api/overworld/npcs?biome=swamp, fetched on
+   * create. Drives the colored ellipse markers + the detection check. Empty until
+   * the GET resolves (or on auth failure).
+   */
+  private overworldNpcs: NpcInfo[] = [];
+  /** NPC marker graphics (ellipse + label), tracked for shutdown removal. */
+  private npcGraphics: Phaser.GameObjects.GameObject[] = [];
+  /** The NPC currently within DETECTION_RADIUS (nearest), or null when none. */
+  private detectedNpc: { id: string; personality: string; x: number; y: number } | null = null;
+  /** Camera-pinned Approach [E] detection prompt; created lazily, reused/hidden. */
+  private npcPrompt: Phaser.GameObjects.Text | null = null;
 
   constructor() {
     super({ key: 'SwampScene' });
@@ -142,6 +170,12 @@ export class SwampScene extends Phaser.Scene {
       window.__waystones = undefined;
       window.__compass = undefined;
       window.__talismanLoadout = undefined;
+      window.__overworldNpcs = undefined;
+      window.__detectedNpc = undefined;
+      this.npcGraphics.forEach((g) => g.destroy());
+      this.npcGraphics = [];
+      this.npcPrompt?.destroy();
+      this.npcPrompt = null;
       this.zones.forEach((z) => z.destroy());
       this.waystones.forEach((w) => w.destroy());
       this.compass.destroy();
@@ -160,6 +194,8 @@ export class SwampScene extends Phaser.Scene {
     // #81 — fetch the talisman loadout so E knows whether the Sanctum Stone is
     // equipped (and how many charges remain) when standing on a Swamp Anchorage.
     void this.loadTalismanLoadout();
+    // #83 — fetch the Swamp NPC roster + render the markers.
+    void this.loadOverworldNpcs();
   }
 
   update(): void {
@@ -168,6 +204,7 @@ export class SwampScene extends Phaser.Scene {
     this.updateCompass();
     this.checkAnchorageAutoAttune();
     this.updateCurrentAnchorage();
+    this.checkNpcDetection();
   }
 
   /**
@@ -195,6 +232,15 @@ export class SwampScene extends Phaser.Scene {
    * biome exit), preserving existing E behavior.
    */
   private handleInteract(): void {
+    // #83 — a detected NPC takes priority: E approaches and launches the duel via
+    // the EncounterScene NPC path (battle-ai room, scoped to this NPC's id).
+    if (this.detectedNpc) {
+      this.scene.start('EncounterScene', {
+        npcId: this.detectedNpc.id,
+        personality: this.detectedNpc.personality as AIPersonality,
+      });
+      return;
+    }
     const tl = this.talismanLoadout;
     if (
       this.currentAnchorageId &&
@@ -522,6 +568,101 @@ export class SwampScene extends Phaser.Scene {
     this.talismanLoadout = updated;
     window.__talismanLoadout = updated;
     this.scene.start('CampScene');
+  }
+
+  /**
+   * #83 — GET /api/overworld/npcs?biome=swamp, render each NPC as a colored
+   * ellipse (element hue) + a personality label, and publish window.__overworldNpcs
+   * for the E2E harness. Best-effort: a network/auth failure leaves the roster
+   * empty. The server is the authority on which NPCs are present.
+   */
+  private async loadOverworldNpcs(): Promise<void> {
+    const token = localStorage.getItem('er_token');
+    if (!token) return;
+    try {
+      const res = await fetch(`${API_BASE}/api/overworld/npcs?biome=swamp`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!res.ok) return;
+      this.overworldNpcs = (await res.json()) as NpcInfo[];
+    } catch {
+      return; // leave the roster empty
+    }
+    this.renderNpcs();
+    window.__overworldNpcs = this.overworldNpcs;
+  }
+
+  /**
+   * Render an ellipse + label for each NPC (depth 6). Clears prior markers first
+   * so a re-render never stacks. Colored by the NPC's previewed stake element.
+   */
+  private renderNpcs(): void {
+    this.npcGraphics.forEach((g) => g.destroy());
+    this.npcGraphics = [];
+    for (const npc of this.overworldNpcs) {
+      const color = ELEMENT_COLORS[npc.element] ?? 0x888888;
+      const body = this.add.ellipse(npc.x, npc.y, 28, 40, color).setDepth(6);
+      const label = this.add
+        .text(npc.x, npc.y - 28, ELEMENT_NAMES[npc.element] ?? '?', {
+          fontSize: '10px',
+          color: '#ffffff',
+        })
+        .setOrigin(0.5)
+        .setDepth(6);
+      this.npcGraphics.push(body, label);
+    }
+  }
+
+  /**
+   * #83 — per-frame detection (GDD §10.3). Find the nearest NPC within
+   * DETECTION_RADIUS; set this.detectedNpc to it (or null when none is in range).
+   * Show/hide a camera-pinned Approach [E] prompt and publish window.__detectedNpc.
+   */
+  private checkNpcDetection(): void {
+    const px = this.player.x;
+    const py = this.player.y;
+    let nearest: NpcInfo | null = null;
+    let bestDist = Infinity;
+    for (const npc of this.overworldNpcs) {
+      const d = Phaser.Math.Distance.Between(px, py, npc.x, npc.y);
+      if (d <= DETECTION_RADIUS && d < bestDist) {
+        bestDist = d;
+        nearest = npc;
+      }
+    }
+
+    if (nearest) {
+      this.detectedNpc = { id: nearest.id, personality: nearest.personality, x: nearest.x, y: nearest.y };
+      const elementName = ELEMENT_NAMES[nearest.element] ?? '?';
+      this.showNpcPrompt(`${elementName} duelist — Approach [E]`);
+      window.__detectedNpc = { id: nearest.id, personality: nearest.personality };
+    } else {
+      this.detectedNpc = null;
+      this.hideNpcPrompt();
+      window.__detectedNpc = null;
+    }
+  }
+
+  /** Show (or update) the camera-pinned detection prompt. Created lazily. */
+  private showNpcPrompt(text: string): void {
+    if (!this.npcPrompt) {
+      this.npcPrompt = this.add
+        .text(this.cameras.main.width / 2, 80, '', {
+          fontSize: '14px',
+          color: '#ffeeaa',
+          backgroundColor: '#000000aa',
+          padding: { x: 8, y: 4 },
+        })
+        .setOrigin(0.5, 0)
+        .setScrollFactor(0)
+        .setDepth(1000);
+    }
+    this.npcPrompt.setText(text).setVisible(true);
+  }
+
+  /** Hide the detection prompt without destroying it (reused next detection). */
+  private hideNpcPrompt(): void {
+    this.npcPrompt?.setVisible(false);
   }
 
   /** Store the latest payload and mirror it to window.__waystones for E2E. */

@@ -105,6 +105,17 @@ const upsertTalismanNecklace = db.prepare(
 const updateTalismanCharges = db.prepare(
   `UPDATE talisman_loadout SET necklace_charges = ? WHERE player_id = ?`,
 );
+// #83 — NPC defeat tracking. The UPSERT records (or refreshes) the defeat day so
+// a periodic NPC's respawn clock restarts from the most recent win.
+const upsertNpcDefeat = db.prepare(
+  `INSERT INTO npc_defeats (player_id, npc_id, defeated_at_day)
+   VALUES (@player_id, @npc_id, @defeated_at_day)
+   ON CONFLICT(player_id, npc_id) DO UPDATE SET
+     defeated_at_day = excluded.defeated_at_day`,
+);
+const selectNpcDefeats = db.prepare(
+  `SELECT npc_id, defeated_at_day FROM npc_defeats WHERE player_id = ?`,
+);
 // #63 — Sanctum anchor (the waystone the overworld spawns the player beside).
 const selectAnchor = db.prepare(
   `SELECT anchored_waystone FROM players WHERE id = ?`,
@@ -915,3 +926,34 @@ export const rechargeAllWithSpirit = db.transaction(
     return spirit;
   },
 );
+
+// ---------------------------------------------------------------------------
+// #83 — NPC defeat tracking (Phase 8C.3, GDD §10.5)
+// ---------------------------------------------------------------------------
+
+/**
+ * Record that the player defeated the given NPC. Stamps the defeat with the
+ * player's CURRENT game_day (read via getPlayerById), so periodic NPCs respawn
+ * relative to the day they were last beaten. UPSERT: a repeat win for an already
+ * defeated NPC refreshes the day (restarting its respawn clock). No-op for an
+ * unknown player (getPlayerById returns undefined → game_day falls back to 0).
+ */
+export function recordNpcDefeat(playerId: string, npcId: string): void {
+  const player = getPlayerById(playerId);
+  const day = player?.game_day ?? 0;
+  upsertNpcDefeat.run({ player_id: playerId, npc_id: npcId, defeated_at_day: day });
+}
+
+/**
+ * Every NPC the player has defeated, mapped npc_id → defeated_at_day (the
+ * game_day the win was recorded). The overworld NPC route joins this with the
+ * spawn table's respawnDays + the player's current game_day to decide which
+ * NPCs are currently hidden.
+ */
+export function getDefeatedNpcs(playerId: string): Map<string, number> {
+  const rows = selectNpcDefeats.all(playerId) as Array<{
+    npc_id: string;
+    defeated_at_day: number;
+  }>;
+  return new Map(rows.map((r) => [r.npc_id, r.defeated_at_day]));
+}

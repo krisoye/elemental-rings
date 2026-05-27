@@ -126,6 +126,12 @@ export const SANCTUM_ZONE_HALF = 32; // px — half-width/height of the sanctum_
 // each waystone stone marking the gathering area. Tunable presentation only.
 export const ANCHORAGE_GROUND_RADIUS = 80; // px — tunable gathering-area radius
 
+// #83 — Phase 8C.3 NPC detection (GDD §10.3). The radius within which an overworld
+// NPC is "detected": the scene reveals the opponent's element + shows an Approach
+// [E] prompt, and E launches the duel. Pure presentation — the NPC roster and its
+// stake elements come from the server (GET /api/overworld/npcs).
+export const DETECTION_RADIUS = 160; // px — sensing radius for overworld NPCs
+
 // Layout
 export const CANVAS_W = 1024;
 export const CANVAS_H = 576;

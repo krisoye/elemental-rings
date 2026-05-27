@@ -62,14 +62,32 @@ export class EncounterScene extends Phaser.Scene {
     super({ key: 'EncounterScene' });
   }
 
-  init(): void {
+  // #83 — when entered from an overworld NPC (OverworldScene/SwampScene start this
+  // scene with { npcId, personality }), skip the marker hub and launch the duel
+  // directly against that NPC. null on the normal hub entry path.
+  private npcDuel: { npcId?: string; personality: AIPersonality } | null = null;
+
+  init(data?: { npcId?: string; personality?: AIPersonality }): void {
     this.busy = false;
     this.manageModal = null;
     this.manageSelectedRingId = null;
     this.wonRingModal = null;
+    this.npcDuel =
+      data?.personality !== undefined
+        ? { npcId: data.npcId, personality: data.personality }
+        : null;
   }
 
   create(): void {
+    // #83 — overworld NPC path: bypass the marker hub entirely and go straight into
+    // the duel against the detected NPC (scoped by npcId so a win records the
+    // defeat server-side). The hub UI/hooks below are skipped on this path.
+    if (this.npcDuel) {
+      const { npcId, personality } = this.npcDuel;
+      void this.startAIDuel(personality, undefined, npcId);
+      return;
+    }
+
     this.add
       .text(CANVAS_W / 2, 40, 'ENCOUNTER — choose an opponent', {
         fontSize: '24px',
@@ -253,10 +271,13 @@ export class EncounterScene extends Phaser.Scene {
    * Connect to a fresh vsAI room, then hand off to the BattleScene. `aiOverrides`
    * (deterministic E2E only — see BattleRoomOptions) forces the duel's outcome by
    * weakening or hardening the AI; production marker clicks never pass them.
+   * `npcId` (#83) scopes the duel to an overworld NPC so a human win is recorded
+   * as that NPC's defeat server-side; undefined on the encounter-hub marker path.
    */
   private async startAIDuel(
     personality: AIPersonality,
     aiOverrides?: { aiHearts?: number; aiUses?: number },
+    npcId?: string,
   ): Promise<void> {
     const token = localStorage.getItem('er_token') ?? '';
     try {
@@ -270,6 +291,7 @@ export class EncounterScene extends Phaser.Scene {
       personality,
       token,
       aiSeed: this.aiSeeds.get(personality),
+      npcId,
       ...aiOverrides,
     });
 

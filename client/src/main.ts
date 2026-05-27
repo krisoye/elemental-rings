@@ -119,6 +119,20 @@ declare global {
     // create) so E2E can assert the equipped necklace + remaining charges. null
     // when the fetch has not yet resolved; the object form once loaded.
     __talismanLoadout?: { necklaceId: string | null; necklaceCharges: number } | null;
+    // #83 — overworld NPC roster (the GET /api/overworld/npcs payload), published
+    // by OverworldScene/SwampScene on create. Each entry has the stable previewed
+    // stake element + world-pixel position. Cleared on scene shutdown.
+    __overworldNpcs?: Array<{
+      id: string;
+      personality: string;
+      x: number;
+      y: number;
+      element: number;
+    }>;
+    // #83 — the NPC currently within DETECTION_RADIUS (nearest), or null when none
+    // is in range. Published every update frame; drives the Approach [E] prompt and
+    // the E → duel launch. Cleared on scene shutdown.
+    __detectedNpc?: { id: string; personality: string } | null;
     // Teleport modal snapshot (set by CampScene.openTeleportModal before render).
     __teleportState?: {
       anchor: string;
