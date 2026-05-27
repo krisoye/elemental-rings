@@ -404,3 +404,160 @@ The protagonist can review and reassign their battle hand (Thumb/A1/A2/D1/D2 slo
 **GDD rule reference:** §6.8 ("After any battle, the player can freely reorganize their battle hand among their carried rings before the next encounter") and §12.3 ("Recharging a ring — anywhere"). Both explicitly allow field access; the Tab binding makes this convenient without requiring a Sanctum return.
 
 ---
+
+### 10.15 Forest Region Screens
+
+The Forest is a **multi-screen region** — a graph of discrete maps connected by road edges. Walking off a screen edge transitions (brief fade) to the neighbor, spawning the player at the opposite edge. Each screen is one Tiled map file generated from this manifest.
+
+**Schema conventions:**
+- `size` is width × height in tiles (32 px/tile). Narrow dimensions imply a corridor — the generator flanks the short axis with trees/rocks, leaving only the road open.
+- `exits` are always reciprocal and validated by a Vitest drift test. `north`/`south` and `east`/`west` are the only valid directions.
+- `anchorage` and `waystone` ids must exist in `shared/waystones.ts`.
+- `danger` (1–3) controls NPC tier and density. Omit for safe screens.
+- `biome_exit` marks a transition to a different biome scene, gated by attunement of the named waystone.
+- Add a new screen here first; the drift test will catch any broken exits or unknown ids before implementation.
+
+**Region topology:**
+```
+            [snow_gate]
+                 │ N/S
+            [north_road]
+                 │ N/S
+[mossy_fen]──W/E─[anchorage]─E/W──[east_path]──E/W──[glade]──N/S──[crossroads]──E/W──[briar_pass]
+                      │ N/S                                               │ N/S              │ N/S
+               [south_path]                                         [ridge]──E/W──[deepwood]──E/W──[boss_clearing]
+                      │ N/S                                                                          │ N/S
+               [hollow]──W/E──[swamp_gate]──→ SwampScene                                      [briar_pass] (loop)
+
+[hidden_alcove]  ← teleport-only, no walking exits
+```
+
+---
+
+#### `forest_anchorage` — Forest Anchorage (hub)
+- **size:** 40×30
+- **exits:** north → `forest_north_road`, east → `forest_east_path`, south → `forest_south_path`, west → `forest_mossy_fen`
+- **safe:** true
+- **anchorage:** `forest_entry`
+- **content:** The safe community hub. Open clearing with the central campfire ring. Wandering NPCs, friendly duels, and the Merchant (when visiting). The Sanctum anchors here by default. Dirt paths radiate toward all four exits.
+
+---
+
+#### `forest_north_road` — North Road
+- **size:** 16×32
+- **exits:** south → `forest_anchorage`, north → `forest_snow_gate`
+- **danger:** 1
+- **content:** A narrow north corridor — trees press in on both sides, the dirt path bisects the center. Pines gradually take on frost tips toward the north edge. One or two early-zone roamers patrol the length.
+
+---
+
+#### `forest_snow_gate` — Snow Gate
+- **size:** 32×20
+- **exits:** south → `forest_north_road`
+- **danger:** 2
+- **waystone:** `forest_north_stone`
+- **content:** A widening clearing at the forest's northern fringe. The Frost-Worn Stone stands here guarded by a mid-tier mini-boss. Attuning it reveals the Snow Fields. Dead end — the northern edge is a wall of frost-touched firs with no path forward.
+
+---
+
+#### `forest_mossy_fen` — Mossy Fen
+- **size:** 32×22
+- **exits:** east → `forest_anchorage`
+- **danger:** 1
+- **content:** A quiet, slightly boggy clearing west of town. Mossy ground, scattered mushroom clusters, low-hanging branches. The richest early foraging spot. A solitary passive Villager wanders here. Dead end — the western edge is impassable undergrowth.
+
+---
+
+#### `forest_east_path` — East Path
+- **size:** 24×12
+- **exits:** west → `forest_anchorage`, east → `forest_glade`
+- **danger:** 1
+- **content:** A short east-west connector. Trees close in from north and south; a single dirt road runs the length. One roamer patrols the midpoint. Feels like stepping out of the safety of town for the first time.
+
+---
+
+#### `forest_glade` — The Glade
+- **size:** 36×28
+- **exits:** west → `forest_east_path`, north → `forest_crossroads`
+- **anchorage:** `forest_glade`
+- **danger:** 1
+- **content:** A sunlit open meadow — the second Anchorage and the first natural rest stop beyond the hub. Tall grass at the edges, a worn campfire ring at center. Several Duelist NPCs wander between here and the Crossroads.
+
+---
+
+#### `forest_crossroads` — The Crossroads
+- **size:** 28×22
+- **exits:** south → `forest_glade`, east → `forest_briar_pass`, north → `forest_ridge`
+- **danger:** 1
+- **content:** A three-way junction where the road forks into increasingly dangerous territory. Two to three mid-tier duelists patrol. The choice of east (Briar Pass loop) or north (Ridge descent) gives the player a meaningful direction decision.
+
+---
+
+#### `forest_south_path` — South Path
+- **size:** 16×28
+- **exits:** north → `forest_anchorage`, south → `forest_hollow`
+- **danger:** 1
+- **content:** A narrow portrait corridor south of town. The dirt path narrows and the canopy closes overhead. Mushrooms crowd the verges. A gentle danger ramp between the hub and the Hollow.
+
+---
+
+#### `forest_hollow` — The Hollow
+- **size:** 36×24
+- **exits:** north → `forest_south_path`, west → `forest_swamp_gate`
+- **danger:** 2
+- **content:** A wide, sunken clearing with darker palette and muddy ground patches. The best foraging density in the Forest — mushroom clusters, roots, berry tangles. Two to three tougher NPCs. The western path carries a faint smell of peat; the Swamp Gate is close.
+
+---
+
+#### `forest_swamp_gate` — Swamp Gate
+- **size:** 28×18
+- **exits:** east → `forest_hollow`
+- **danger:** 2
+- **waystone:** `forest_sw_stone`
+- **biome_exit:** south → `SwampScene` *(gated by attunement of `forest_sw_stone`)*
+- **content:** The southwestern fringe. Ground shifts from dirt to mud; standing water pools near the edge. The Bogwood Sentinel stands here guarded by a mid-tier boss. Attuning it reveals the Swamp and opens the southern biome exit. Until then the south edge is impassable.
+
+---
+
+#### `forest_briar_pass` — Briar Pass
+- **size:** 40×16
+- **exits:** west → `forest_crossroads`, south → `forest_boss_clearing`
+- **danger:** 2
+- **content:** A wide, low east-west corridor choked with thorns on both sides — the road is barely a lane. Danger 2 roamers feel more menacing because of the tight sightlines. The path south opens suddenly into the Boss Clearing.
+
+---
+
+#### `forest_ridge` — The Ridge
+- **size:** 32×22
+- **exits:** south → `forest_crossroads`, east → `forest_deepwood`
+- **danger:** 2
+- **content:** Rocky elevated ground; implied hillside looking south over the canopy. Sparse trees, more open sky. Danger 2 duelists patrol the exposed rock. The eastern descent drops into the darkest part of the forest.
+
+---
+
+#### `forest_deepwood` — The Deepwood
+- **size:** 40×30
+- **exits:** west → `forest_ridge`, east → `forest_boss_clearing`
+- **anchorage:** `forest_depths`
+- **danger:** 3
+- **content:** The oldest, darkest part of the forest — ancient gnarled trees, almost no light reaching the floor. The forest_depths Anchorage sits in a rare clearing, a hard-earned rest point. Danger 3 duelists. The eastern path descends toward the Boss Clearing, creating a loop with Briar Pass.
+
+---
+
+#### `forest_boss_clearing` — The Boss Clearing
+- **size:** 28×22
+- **exits:** north → `forest_briar_pass`, west → `forest_deepwood`
+- **danger:** 3
+- **content:** A circular clearing, unnaturally still and quiet. The Forest biome boss resides here and guards the waystone or unique item that closes the Forest chapter. Reachable from two directions — Briar Pass from the north, Deepwood from the west — rewarding thorough exploration with the loop.
+
+---
+
+#### `forest_hidden_alcove` — Hidden Alcove
+- **size:** 24×18
+- **exits:** *(none — teleport-only via `forest_hidden_anchor`)*
+- **anchorage:** `forest_hidden_anchor`
+- **waystone:** `forest_hidden_glade`
+- **danger:** 1
+- **content:** A serene, impossibly still clearing accessible only by teleporting after attuning the Ironbark Rune in the Swamp. Both the Hidden Anchorage and the Hidden Glade Waystone sit here. A secret reward — quiet and beautiful, a deliberate contrast to the boss route.
+
+---
