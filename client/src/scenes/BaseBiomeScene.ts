@@ -7,7 +7,7 @@ import { Waystone } from '../objects/world/Waystone';
 import { Compass } from '../objects/world/Compass';
 import { BlinkController } from '../objects/world/BlinkController';
 import { BattleHandOverlay } from '../objects/BattleHandOverlay';
-import { placeDecoration, type DecorationHandle } from '../objects/world/Decoration';
+import { type DecorationHandle } from '../objects/world/Decoration';
 import {
   COMPASS_RANGE,
   SANCTUM_OFFSET,
@@ -135,10 +135,15 @@ export abstract class BaseBiomeScene extends Phaser.Scene {
   private overlayOpen = false;
   /** #87 Part C — last pointerdown time (ms) per NPC id, for double-click ambush. */
   private npcLastClick = new Map<string, number>();
-  /** 8D.4 — static physics group holding solid decorations (trees/rocks). */
-  private decorationGroup: Phaser.Physics.Arcade.StaticGroup | null = null;
-  /** 8D.4 — handle to the placed proof decorations, destroyed on shutdown. */
-  private decorHandle: DecorationHandle | null = null;
+  /**
+   * 8D.4/8E.5 — static physics group holding solid decorations (trees/rocks).
+   * `protected` so subclasses can place their per-screen decorations into it from
+   * `onEnterScreen()`. Created in create() before onEnterScreen?.() runs, with the
+   * player↔group collider already wired, and torn down in the shutdown handler.
+   */
+  protected decorationGroup: Phaser.Physics.Arcade.StaticGroup | null = null;
+  /** 8E.5 — handle to the per-screen decorations, destroyed on shutdown. */
+  protected decorHandle: DecorationHandle | null = null;
   /** 8E.1 — guards a screen edge transition so it fires once per departure. */
   private isTransitioning = false;
 
@@ -172,13 +177,26 @@ export abstract class BaseBiomeScene extends Phaser.Scene {
   /**
    * Load the shared decoration/structure atlases used across biomes. Subclasses
    * call this from their own preload() alongside the biome tileset + map JSON.
+   *
+   * Both are loaded as 32×32 SPRITESHEETS (not flat images) so per-screen specs
+   * can address individual frames (8E.5): forest-decoration.png is a 192×32 strip
+   * of 6 frames (0 tree-a, 1 tree-b, 2 tree-c/rock, 3 rock/bush, 4 bush, 5 clearing
+   * blob — see gen-forest-sprites.mjs) and structures.png is a 128×32 strip of 4
+   * frames (0 house-wall, 1 house-roof, 2 fence, 3 post — see gen-structure-sprites.mjs).
+   * A frame-less placeDecoration spec defaults to frame 0, so legacy callers still work.
    */
   protected loadCommonAssets(): void {
     if (!this.textures.exists('forest-decoration')) {
-      this.load.image('forest-decoration', 'assets/sprites/forest-decoration.png');
+      this.load.spritesheet('forest-decoration', 'assets/sprites/forest-decoration.png', {
+        frameWidth: 32,
+        frameHeight: 32,
+      });
     }
     if (!this.textures.exists('structures')) {
-      this.load.image('structures', 'assets/sprites/structures.png');
+      this.load.spritesheet('structures', 'assets/sprites/structures.png', {
+        frameWidth: 32,
+        frameHeight: 32,
+      });
     }
   }
 
@@ -227,18 +245,15 @@ export abstract class BaseBiomeScene extends Phaser.Scene {
       this.returnedFromDuel = true; // suppress the anchor-derived Sanctum-door spawn
     }
 
-    // 8D.4 — minimal proof placement of decorations over the ground layer. Two
-    // sprites in the clearing (walkable floor): one solid (trunk-collision, inset
-    // body) and one non-solid (walk-through bush). The collider lets the player bump
-    // the solid one. window.__decorationCount lets E2E assert placement.
+    // 8E.5 — decoration substrate. The static physics group holds solid decorations
+    // (trees / rocks / pillars); the player↔group collider lets them bump those, and
+    // walk through non-solid sprites (bushes / ponds / flowers). The group + collider
+    // are wired here, BEFORE onEnterScreen?.(); subclasses place their per-screen
+    // decorations into it from that hook. window.__decorationCount is published from
+    // the group's actual length after the hook runs (see below).
     this.decorationGroup = this.physics.add.staticGroup();
-    const proofSpecs = [
-      { atlasKey: 'forest-decoration', x: 200, y: 200, solid: true, bodyInset: 8 },
-      { atlasKey: 'forest-decoration', x: 300, y: 200, solid: false },
-    ];
-    this.decorHandle = placeDecoration(this, this.decorationGroup, proofSpecs);
     this.physics.add.collider(this.player, this.decorationGroup);
-    window.__decorationCount = proofSpecs.length;
+    window.__decorationCount = 0;
 
     // Biome title (pinned to the camera).
     this.add
