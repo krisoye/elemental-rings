@@ -79,6 +79,22 @@ async function seedAggregateXp(page: Page, amount: number): Promise<void> {
   expect(status).toBe(200);
 }
 
+/** Drain the player's spirit to 0 via the test route (so a teleport is unaffordable). */
+async function drainSpirit(page: Page): Promise<void> {
+  const status = await page.evaluate(
+    async ([api]) => {
+      const token = localStorage.getItem('er_token');
+      const res = await fetch(`${api}/api/test/drain-spirit`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      return res.status;
+    },
+    [API_URL] as const,
+  );
+  expect(status).toBe(200);
+}
+
 /** Attune a waystone directly via the server (no walking required). */
 async function attune(page: Page, waystoneId: string): Promise<void> {
   const status = await page.evaluate(
@@ -108,28 +124,30 @@ async function serverAnchor(page: Page): Promise<string> {
   }, [API_URL] as const);
 }
 
-// ── Scenario 1: Locked destination shows a gate, no Travel ───────────────────
-test('teleport: an XP-locked waystone shows its gate and is not travelable', async ({ browser }) => {
+// ── Scenario 1: Spirit-locked destination shows a gate, no Travel (#87 Part B) ─
+test('teleport: a spirit-locked waystone shows its gate and is not travelable', async ({ browser }) => {
   const ctx = await browser.newContext();
-  await seedAuthToken(ctx); // fresh user → 0 aggregate XP
+  await seedAuthToken(ctx); // fresh user → SPIRIT_BASE spirit
   const page = await ctx.newPage();
   await loadSanctum(page);
-  // forest_depths is attuned-agnostic here; the gate is XP. Attune it so the
-  // row is discovered, then assert it is still locked (threshold 300 > 0 XP).
-  await attune(page, 'forest_depths');
+  // §10.8 (#87 Part B): the teleport gate is current spirit, not aggregate XP.
+  // Attune forest_glade (so the row is discovered), then drain spirit to 0 so
+  // its spiritCost (3) is unaffordable → meetsThreshold false, no Travel button.
+  await attune(page, 'forest_glade');
+  await drainSpirit(page);
   await openTeleportModal(page);
 
-  const depths = await page.evaluate(
-    () => (window as any).__teleportState.rows.find((r: any) => r.id === 'forest_depths') ?? null,
+  const glade = await page.evaluate(
+    () => (window as any).__teleportState.rows.find((r: any) => r.id === 'forest_glade') ?? null,
   );
-  expect(depths).not.toBeNull();
-  expect(depths.meetsThreshold).toBe(false);
-  expect(depths.xpThreshold).toBe(300);
+  expect(glade).not.toBeNull();
+  expect(glade.meetsThreshold).toBe(false);
+  expect(glade.spiritCost).toBeGreaterThan(0);
 
-  // No active Travel button for a locked row (assert via DOM-free scene lookup).
+  // No active Travel button for a spirit-locked row (DOM-free scene lookup).
   const hasTravel = await page.evaluate(() => {
     const scene = (window as any).__scene as { children: { getByName: (n: string) => any } };
-    return !!scene.children.getByName('travel-forest_depths');
+    return !!scene.children.getByName('travel-forest_glade');
   });
   expect(hasTravel).toBe(false);
   await ctx.close();
@@ -141,11 +159,11 @@ test('teleport: traveling to an unlocked waystone re-anchors (server round-trip)
   await seedAuthToken(ctx);
   const page = await ctx.newPage();
   await loadSanctum(page);
-  await seedAggregateXp(page, 100); // meets forest_glade's threshold (100)
+  // §10.8 (#87 Part B): a fresh player's SPIRIT_BASE spirit affords forest_glade.
   await attune(page, 'forest_glade');
   await openTeleportModal(page);
 
-  // The glade row is now attuned + unlocked.
+  // The glade row is now attuned + affordable (spirit ≥ spiritCost).
   const glade = await page.evaluate(
     () => (window as any).__teleportState.rows.find((r: any) => r.id === 'forest_glade'),
   );
@@ -257,23 +275,25 @@ test('teleport: POST to an unattuned waystone is rejected (HTTP 400, anchor unch
   await ctx.close();
 });
 
-// ── Scenario 5: Teleport below the XP threshold is rejected ───────────────────
-test('teleport: traveling below the XP threshold surfaces an error and leaves the anchor', async ({ browser }) => {
+// ── Scenario 5: Teleport with insufficient spirit is rejected (#87 Part B) ─────
+test('teleport: traveling with insufficient spirit surfaces an error and leaves the anchor', async ({ browser }) => {
   const ctx = await browser.newContext();
-  await seedAuthToken(ctx); // fresh user → 0 aggregate XP
+  await seedAuthToken(ctx);
   const page = await ctx.newPage();
   await loadSanctum(page);
-  await attune(page, 'forest_depths'); // attuned, but threshold 300 > 0 XP
+  await attune(page, 'forest_glade'); // attuned, but spirit drained below cost
+  await drainSpirit(page);
   await openTeleportModal(page);
 
-  // forest_depths has no Travel button, so drive the rejection via the hook.
-  await page.evaluate(() => (window as any).__campTeleport('forest_depths'));
-  // The modal surfaces the server's gate error inline.
+  // With 0 spirit forest_glade has no Travel button, so drive the rejection via
+  // the hook; the server gate is now §10.8 spirit, not aggregate XP.
+  await page.evaluate(() => (window as any).__campTeleport('forest_glade'));
+  // The modal surfaces the server's spirit-gate error inline.
   await page.waitForFunction(
     () => {
       const scene = (window as any).__scene as { children: { getByName: (n: string) => any } };
       const err = scene.children.getByName('teleport-error');
-      return !!err && /aggregate XP/i.test(err.text ?? '');
+      return !!err && /spirit/i.test(err.text ?? '');
     },
     { timeout: 8000 },
   );

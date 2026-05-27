@@ -158,11 +158,20 @@ export class BattleScene extends Phaser.Scene {
   }
 
   /**
-   * On phase ENDED, show a brief winner banner then return to EncounterScene
-   * (the hub where the player chose their opponent). The er_pending_ring
-   * localStorage key (if set by Connection.ts on a win) is picked up the next
-   * time the player returns to CampScene via "Return to Sanctum". Guarded so
-   * it fires once.
+   * On phase ENDED, show a brief winner banner then return to the post-duel
+   * destination. The er_pending_ring localStorage key (if set by Connection.ts on
+   * a win) is picked up the next time the player returns to CampScene via "Return
+   * to Sanctum". Guarded so it fires once.
+   *
+   * #88 — destination routing:
+   *   - Overworld NPC duels (launched from OverworldScene/SwampScene) record their
+   *     origin biome + the player's world position in window.__duelOrigin. On END
+   *     we return to that biome scene (which restores the player near {x,y}), and
+   *     clear __duelOrigin so it is never reused.
+   *   - Hub/marker duels leave __duelOrigin unset → return to the EncounterScene
+   *     hub. We pass an EXPLICIT `{}` so Phaser overwrites settings.data (a no-data
+   *     scene.start leaves the previous { npcId, personality } in place, which made
+   *     EncounterScene re-launch the duel in an infinite loop — see #88 root cause).
    */
   private checkEnded(state: any, myId: string): void {
     if (state.phase !== 'ENDED' || this.returning) return;
@@ -184,10 +193,30 @@ export class BattleScene extends Phaser.Scene {
     this.bannerShown = true;
     this.renderBattleSummary();
 
+    // #88 — resolve the post-duel destination. A biome origin returns to that
+    // biome scene; anything else (unset, or 'EncounterScene') returns to the hub
+    // with explicit empty data so no stale NPC-duel data is retained.
+    const origin = window.__duelOrigin;
+    const toBiome =
+      origin && (origin.scene === 'OverworldScene' || origin.scene === 'SwampScene')
+        ? origin.scene
+        : null;
+
     // Under E2E fast mode the 2s winner banner is pure dead time; collapse it to
-    // ~0ms so vsAI duels return to EncounterScene immediately (#68).
+    // ~0ms so duels return immediately (#68).
     const bannerMs = __E2E_FAST__ ? 0 : 2000;
-    this.time.delayedCall(bannerMs, () => this.scene.start('EncounterScene'));
+    this.time.delayedCall(bannerMs, () => {
+      if (toBiome) {
+        // The biome scene reads __duelOrigin in its create() to restore the player
+        // position, then clears it. Don't clear it here.
+        this.scene.start(toBiome);
+      } else {
+        // Hub return — clear any stray origin and pass explicit empty data so
+        // EncounterScene.init sees undefined personality → npcDuel=null → hub.
+        window.__duelOrigin = null;
+        this.scene.start('EncounterScene', {});
+      }
+    });
   }
 
   /**

@@ -42,11 +42,15 @@ declare global {
     // state. Cleared on scene shutdown.
     __waystones?: {
       aggregateXp: number;
+      // #87 Part B — current spirit (the §10.8 teleport gate is spirit, not XP).
+      spiritCurrent?: number;
       anchor: string;
       waystones: Array<{
         id: string;
         name: string;
         xpThreshold: number;
+        // #87 Part B — spirit spent to teleport here; meetsThreshold = can afford.
+        spiritCost?: number;
         attuned: boolean;
         meetsThreshold: boolean;
       }>;
@@ -114,6 +118,12 @@ declare global {
     // its render position to prove the (scrollFactor-fixed) hit area tracks the
     // render, not the world. Registered while the ring-storage overlay is open.
     __campHitTestRing?: (ringId: string) => { found: boolean; hit: boolean };
+    // #85 Fix 2A — scroll a Ring Storage inventory grid by `delta` rows (positive
+    // = down), clamped to the valid range. Registered only while the ring-storage
+    // overlay is open; cleared in overlayOnClose. Same code path as the ▲/▼
+    // buttons and the mouse wheel.
+    __campSanctumScroll?: (delta: number) => void;
+    __campLoadoutScroll?: (delta: number) => void;
     // #81 — talisman loadout snapshot (the GET /api/talisman-loadout payload).
     // Published by CampScene (on ring-wall overlay open) and OverworldScene (on
     // create) so E2E can assert the equipped necklace + remaining charges. null
@@ -133,15 +143,26 @@ declare global {
     // is in range. Published every update frame; drives the Approach [E] prompt and
     // the E → duel launch. Cleared on scene shutdown.
     __detectedNpc?: { id: string; personality: string } | null;
+    // #88 — post-duel return origin. An overworld NPC duel (OverworldScene/
+    // SwampScene) sets this to its biome scene key + the player's world position
+    // BEFORE launching the duel; BattleScene.checkEnded returns to that biome scene
+    // (instead of the EncounterScene hub) and the biome scene's create() restores
+    // the player near {x,y}, then clears it. null/unset for hub/marker duels (which
+    // return to the EncounterScene hub) and after consumption.
+    __duelOrigin?: { scene: 'OverworldScene' | 'SwampScene'; x: number; y: number } | null;
     // Teleport modal snapshot (set by CampScene.openTeleportModal before render).
     __teleportState?: {
       anchor: string;
+      // #87 Part B — current spirit, so E2E can assert affordability gating.
+      spiritCurrent?: number;
       rows: Array<{
         id: string;
         name: string;
         attuned: boolean;
         meetsThreshold: boolean;
         xpThreshold: number;
+        // #87 Part B — spirit spent to teleport to this destination.
+        spiritCost?: number;
       }>;
     };
     // Fusion modal availability snapshot (set by FusionPanel.open).
@@ -173,6 +194,17 @@ declare global {
       // element yields { name, effect }; a fusion yields { name: null, effect: '…
       // no passive' }.
       staked_passive?: { name: string | null; effect: string } | null;
+      // #85 Fix 2A — Ring Storage inventory grid scroll state, mirrored from the
+      // live InventoryGrids only while the ring-storage overlay is open. Each grid
+      // exposes its current top row, total rows, and visible-row cap so E2E can
+      // assert scroll position before/after a scroll. Absent (undefined) when the
+      // overlay is closed or the grids are not masked.
+      sanctumScrollRow?: number;
+      sanctumTotalRows?: number;
+      sanctumVisibleRows?: number;
+      loadoutScrollRow?: number;
+      loadoutTotalRows?: number;
+      loadoutVisibleRows?: number;
     };
     // #40 encounter modal hooks.
     __encounterManageBattleHand?: () => void;
@@ -187,6 +219,19 @@ declare global {
     __encounterState?: {
       pendingWonRing: { ringId: string; element: number } | null;
     };
+    // #87 Part A — deterministic blink hook. Calling __blink(zoneName) runs the
+    // exact same code path as a double-click on that interaction zone: POST
+    // /api/spirit/blink, then (on 200) snap the player onto the zone + fire its
+    // interact(). Registered by BlinkController while a spatial scene is live;
+    // resolves to true when the blink succeeded, false on no-op / insufficient
+    // spirit. Cleared on scene shutdown.
+    __blink?: (zoneName: string) => Promise<boolean>;
+    // #87 Part D — true while the OverworldScene Tab battle-hand overlay is open.
+    // Read by E2E to assert the overlay opened (Tab) and closed (Escape). Also the
+    // movement-suppression flag BlinkController's getModalOpen lambda reads.
+    __overworldBattleHandOpen?: boolean;
+    // #87 Part D — toggle the OverworldScene battle-hand overlay (same path as Tab).
+    __overworldToggleBattleHand?: () => void;
   }
 }
 

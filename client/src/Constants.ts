@@ -78,6 +78,13 @@ export const THUMB_PASSIVE_INFO: Record<number, { name: string; effect: string }
   4: { name: 'Deep Roots', effect: 'A lost heart is redirected — Thumb loses a use instead' },
 };
 
+// #85 Fix 1 — width (px) of the Thumb staked-passive reminder strip in the Ring
+// Storage overlay (CampScene) and Manage Battle Hand modal. Wider than the 70px
+// Thumb stake card (STAKE_CARD_WIDTH) so the longest base passive — WATER's
+// "A successful block refunds the defending ring's use (Thumb pays)" — wraps to a
+// readable number of lines instead of one word per line clipped at maxLines.
+export const PASSIVE_STRIP_WIDTH = 88;
+
 // Triangle element indices for the 3-gauge HUD (FIRE/WATER/WOOD).
 export const GAUGE_ELEMENTS = [0, 1, 4];
 export const GAUGE_KEYS = ['fireGauge', 'waterGauge', 'woodGauge'];
@@ -131,6 +138,15 @@ export const ANCHORAGE_GROUND_RADIUS = 80; // px — tunable gathering-area radi
 // [E] prompt, and E launches the duel. Pure presentation — the NPC roster and its
 // stake elements come from the server (GET /api/overworld/npcs).
 export const DETECTION_RADIUS = 160; // px — sensing radius for overworld NPCs
+
+// #87 Part A — short-range blink. Double-clicking an interaction zone (two
+// pointerdowns on the same zone within DOUBLE_CLICK_MS) within BLINK_MAX_RANGE
+// spends spirit (server-computed, cost ∝ distance) to snap the player onto the
+// zone and fire its interact(). DOUBLE_CLICK_MS bounds the double-click gesture;
+// BLINK_MAX_RANGE caps how far a single blink can reach. Pure input/layout — the
+// authoritative cost and spirit guard live on the server (POST /api/spirit/blink).
+export const DOUBLE_CLICK_MS = 300; // ms — max gap between the two clicks of a double-click
+export const BLINK_MAX_RANGE = 600; // px — farthest a blink may reach; beyond this, no-op
 
 // Layout
 export const CANVAS_W = 1024;

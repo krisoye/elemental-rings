@@ -29,6 +29,7 @@ import {
   XP_THUMB_MID,
   XP_THUMB_ABSORB,
   GAUGE_SOFT_CAP,
+  AMBUSH_SPIRIT_COST,
 } from '../game/constants';
 import {
   ElementEnum,
@@ -99,6 +100,13 @@ export class BattleRoom extends Room<{ state: BattleState }> {
    * persistBattleResult records the defeat so the NPC respawns per its cadence.
    */
   private npcId: string | undefined;
+
+  /**
+   * #87 Part C — the sessionId that paid AMBUSH_SPIRIT_COST to ambush this duel.
+   * When set, it overrides the default ids[0] opening attacker so the ambusher
+   * strikes first. null in normal duels (no first-strike purchase).
+   */
+  private firstStrikeId: string | null = null;
 
   /** Maps Colyseus sessionId → DB player id (only present for authenticated humans). */
   private sessionToPlayerId = new Map<string, string>();
@@ -270,6 +278,19 @@ export class BattleRoom extends Room<{ state: BattleState }> {
       if (ringIds.thumb) {
         PlayerRepo.setEscrowed(ringIds.thumb, true);
       }
+
+      // #87 Part C — ambush first-strike. When the join requested firstStrike and
+      // the (authenticated) player can afford AMBUSH_SPIRIT_COST, spend it and
+      // grant this session the opening attack. If unaffordable the flag is
+      // silently ignored and the duel proceeds with default initiative — the
+      // server is the sole guard for the spirit balance.
+      if (options.firstStrike) {
+        const { spirit_current } = PlayerRepo.getSpiritAndFood(playerId);
+        if (spirit_current >= AMBUSH_SPIRIT_COST) {
+          PlayerRepo.spendSpirit(playerId, AMBUSH_SPIRIT_COST);
+          this.firstStrikeId = sessionId;
+        }
+      }
     } else {
       // No/invalid token: seat with default loadout (backward-compat for E2E / integration tests).
       const buffed = this.seatPlayer(sessionId, '');
@@ -282,7 +303,10 @@ export class BattleRoom extends Room<{ state: BattleState }> {
 
     if (this.state.players.size === 2) {
       const ids = Array.from(this.state.players.keys());
-      this.state.currentAttackerId = ids[0];
+      // #87 Part C — an ambusher who paid AMBUSH_SPIRIT_COST opens the duel;
+      // otherwise the first-seated session attacks first (default initiative).
+      this.state.currentAttackerId =
+        this.firstStrikeId && ids.includes(this.firstStrikeId) ? this.firstStrikeId : ids[0];
       this.state.phase = 'ATTACK_SELECT';
       if (this.applyAttackerTurnStart()) {
         this.notifyAI();

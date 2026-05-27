@@ -8,6 +8,7 @@ import {
   COMPASS_RANGE,
   ANCHORAGE_GROUND_RADIUS,
   DETECTION_RADIUS,
+  DOUBLE_CLICK_MS,
   ELEMENT_COLORS,
   ELEMENT_NAMES,
 } from '../Constants';
@@ -102,6 +103,8 @@ export class SwampScene extends Phaser.Scene {
   private detectedNpc: { id: string; personality: string; x: number; y: number } | null = null;
   /** Camera-pinned Approach [E] detection prompt; created lazily, reused/hidden. */
   private npcPrompt: Phaser.GameObjects.Text | null = null;
+  /** #87 Part C — last pointerdown time (ms) per NPC id, for double-click ambush. */
+  private npcLastClick = new Map<string, number>();
 
   constructor() {
     super({ key: 'SwampScene' });
@@ -138,6 +141,16 @@ export class SwampScene extends Phaser.Scene {
     this.player = new Player(this, spawnX, spawnY);
     this.physics.add.collider(this.player, groundLayer);
 
+    // #88 — returning from an overworld NPC duel: restore the player to where they
+    // left (recorded in window.__duelOrigin before the duel) instead of the swamp
+    // entry. This scene was shut down on duel entry, so the position is carried
+    // out-of-band. Consume the global immediately so it never re-applies.
+    const origin = window.__duelOrigin;
+    if (origin && origin.scene === 'SwampScene' && typeof origin.x === 'number') {
+      this.player.setPosition(origin.x, origin.y);
+    }
+    window.__duelOrigin = null;
+
     this.physics.world.setBounds(0, 0, map.widthInPixels, map.heightInPixels);
     this.cameras.main.setBounds(0, 0, map.widthInPixels, map.heightInPixels);
     this.cameras.main.startFollow(this.player, true, 0.1, 0.1);
@@ -172,6 +185,7 @@ export class SwampScene extends Phaser.Scene {
       window.__talismanLoadout = undefined;
       window.__overworldNpcs = undefined;
       window.__detectedNpc = undefined;
+      this.npcLastClick.clear();
       this.npcGraphics.forEach((g) => g.destroy());
       this.npcGraphics = [];
       this.npcPrompt?.destroy();
@@ -235,6 +249,15 @@ export class SwampScene extends Phaser.Scene {
     // #83 — a detected NPC takes priority: E approaches and launches the duel via
     // the EncounterScene NPC path (battle-ai room, scoped to this NPC's id).
     if (this.detectedNpc) {
+      // #88 — record the biome origin + player world position so BattleScene returns
+      // to the Swamp (not the hub) when the duel ends, and create() restores the
+      // player near where they left. Carried out-of-band: the scene is shut down on
+      // duel entry.
+      window.__duelOrigin = {
+        scene: 'SwampScene',
+        x: this.player.x,
+        y: this.player.y,
+      };
       this.scene.start('EncounterScene', {
         npcId: this.detectedNpc.id,
         personality: this.detectedNpc.personality as AIPersonality,
@@ -601,7 +624,13 @@ export class SwampScene extends Phaser.Scene {
     this.npcGraphics = [];
     for (const npc of this.overworldNpcs) {
       const color = ELEMENT_COLORS[npc.element] ?? 0x888888;
-      const body = this.add.ellipse(npc.x, npc.y, 28, 40, color).setDepth(6);
+      const body = this.add
+        .ellipse(npc.x, npc.y, 28, 40, color)
+        .setDepth(6)
+        // #87 Part C — double-click → ambush duel (pays AMBUSH_SPIRIT_COST for the
+        // opening attack, server-side). Single click is a no-op; E-key still works.
+        .setInteractive({ useHandCursor: true })
+        .on('pointerdown', () => this.onNpcClick(npc));
       const label = this.add
         .text(npc.x, npc.y - 28, ELEMENT_NAMES[npc.element] ?? '?', {
           fontSize: '10px',
@@ -611,6 +640,31 @@ export class SwampScene extends Phaser.Scene {
         .setDepth(6);
       this.npcGraphics.push(body, label);
     }
+  }
+
+  /**
+   * #87 Part C — NPC sprite pointerdown. Two clicks on the same NPC within
+   * DOUBLE_CLICK_MS launch an ambush duel: record the Swamp duel origin (so
+   * BattleScene returns here, mirroring the E-key path) and start EncounterScene
+   * with ambush:true, which sets firstStrike on the room join. A single click is a
+   * no-op (the existing E-key approach still works).
+   */
+  private onNpcClick(npc: NpcInfo): void {
+    const now = this.time.now;
+    const prev = this.npcLastClick.get(npc.id) ?? -Infinity;
+    this.npcLastClick.set(npc.id, now);
+    if (now - prev > DOUBLE_CLICK_MS) return; // first click of a potential double
+    this.npcLastClick.delete(npc.id); // consume the gesture
+    window.__duelOrigin = {
+      scene: 'SwampScene',
+      x: this.player.x,
+      y: this.player.y,
+    };
+    this.scene.start('EncounterScene', {
+      npcId: npc.id,
+      personality: npc.personality as AIPersonality,
+      ambush: true,
+    });
   }
 
   /**

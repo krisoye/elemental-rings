@@ -81,11 +81,25 @@ The protagonist cannot sleep or restore spirit in the open overworld. The Sanctu
 
 ### 12.5 Teleportation Cost
 
-Teleporting the Sanctum to a distant waystone also draws on spiritual reserves — specifically, the protagonist's **aggregate ring XP** sets a threshold for each destination, not the spirit gauge itself.
+Teleporting the Sanctum to a distant waystone **spends current spirit** (8D, #87 — GDD §10.8). Each destination carries a `spiritCost` (`shared/waystones.ts`) that scales with spiritual distance: nearby/familiar Anchorages are cheap (0–5), distant or newly discovered ones cost more (8–15). The protagonist must hold at least `spiritCost`; on teleport that spirit is deducted.
 
-- **Spirit gauge** = daily recharge resource (depleted by ring recharging; restored by sleep)
-- **Aggregate ring XP** = the permanent spiritual level that unlocks higher-threshold destinations
-- These are separate: a high-XP protagonist with an empty spirit gauge can still teleport — they just can't recharge rings until they sleep
+- **Spirit gauge (`spirit_current`)** = the resource teleporting now spends, alongside ring recharging; restored to `spirit_max` by sleeping (25 food)
+- **Aggregate ring XP** = the permanent level that raises `spirit_max` (the reserve ceiling) and gates *attunement* (whether a destination is reachable at all)
+- This creates the intended **preparation loop**: explore → return → sleep to restore spirit → teleport. A depleted protagonist must rest before a long trip even if their `spirit_max` is large.
+
+> **Earlier model (superseded):** Through 8B–8C the teleport gate used `aggregate_xp >= threshold` (no spend). 8D (#87) replaced it with the `spirit_current >= spiritCost` spend model described above, per §10.8.
+
+### 12.5a Short-Range Blink (the first non-recharge spirit sink)
+
+**Blink** (8D, #87) lets the protagonist double-click a discrete interaction zone (Anchorage, waystone, Sanctum door) within `BLINK_MAX_RANGE` to snap onto it instantly, replacing walk-then-E for in-range points of interest.
+
+- **Cost ∝ distance:** `blinkCost(distance) = max(BLINK_MIN_COST, ceil(distance / BLINK_PX_PER_SPIRIT))` (`shared/blink.ts`; `BLINK_PX_PER_SPIRIT = 100`, `BLINK_MIN_COST = 1`). A 300 px blink costs 3 spirit.
+- **Server-authoritative:** `POST /api/spirit/blink { distance }` recomputes the cost, guards `spirit_current >= cost`, spends it, and returns the new balance. A 400 (insufficient spirit) leaves the protagonist in place.
+- **Same gesture, full interaction:** on success the protagonist snaps onto the zone center, flashes, and fires the zone's interact() (attune / Sanctum return) in one motion.
+
+### 12.5b Ambush First-Strike (a flat premium)
+
+**Ambush** (8D, #87 — GDD §10.3/§10.9) spends a flat `AMBUSH_SPIRIT_COST` (5, `server/src/game/constants.ts`) to blink into a duel and seize the **opening attack**. Triggered by double-clicking an overworld enemy. The server (`BattleRoom.onJoin`) spends the spirit and grants initiative only when the player can afford it; otherwise the flag is ignored and the duel proceeds with default initiative. This is a flat, high-value sink (initiative can decide a duel) distinct from blink's distance-scaled cost.
 
 ### 12.6 Strategic Implications
 

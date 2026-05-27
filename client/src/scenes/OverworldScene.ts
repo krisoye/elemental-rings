@@ -4,6 +4,8 @@ import { Player } from '../objects/world/Player';
 import { InteractionZone } from '../objects/world/InteractionZone';
 import { Waystone } from '../objects/world/Waystone';
 import { Compass } from '../objects/world/Compass';
+import { BlinkController } from '../objects/world/BlinkController';
+import { BattleHandOverlay } from '../objects/BattleHandOverlay';
 import {
   COMPASS_RANGE,
   SANCTUM_OFFSET,
@@ -11,6 +13,7 @@ import {
   SANCTUM_ZONE_HALF,
   ANCHORAGE_GROUND_RADIUS,
   DETECTION_RADIUS,
+  DOUBLE_CLICK_MS,
   ELEMENT_COLORS,
   ELEMENT_NAMES,
 } from '../Constants';
@@ -109,6 +112,25 @@ export class OverworldScene extends Phaser.Scene {
   private detectedNpc: { id: string; personality: string; x: number; y: number } | null = null;
   /** Camera-pinned Approach [E] detection prompt; created lazily, reused/hidden. */
   private npcPrompt: Phaser.GameObjects.Text | null = null;
+  /**
+   * #88 — true when this create() restored the player from a post-duel
+   * window.__duelOrigin. Suppresses the anchor-derived Sanctum-door spawn in
+   * loadWaystones so the player stays where the duel left them (near the NPC)
+   * instead of snapping back to the Sanctum entrance.
+   */
+  private returnedFromDuel = false;
+  /** #87 Part A — double-click-to-blink controller (onto interaction zones). */
+  private blink: BlinkController | null = null;
+  /** #87 Part D — Tab-opened battle-hand overlay (standalone in the overworld). */
+  private battleHand: BattleHandOverlay | null = null;
+  /**
+   * #87 Part D — true while the Tab battle-hand overlay is open. Halts player
+   * movement each frame and is the modal-suppression flag BlinkController reads
+   * (its getModalOpen lambda) so a blink can't fire behind an open overlay.
+   */
+  private overlayOpen = false;
+  /** #87 Part C — last pointerdown time (ms) per NPC id, for double-click ambush. */
+  private npcLastClick = new Map<string, number>();
 
   constructor() {
     super({ key: 'OverworldScene' });
@@ -126,6 +148,8 @@ export class OverworldScene extends Phaser.Scene {
   create(): void {
     window.__scene = this;
     window.__activeScene = 'OverworldScene';
+    // The scene instance is reused across re-entries; reset per-create flags.
+    this.returnedFromDuel = false;
 
     const map = this.make.tilemap({ key: 'overworld' });
     const tileset = map.addTilesetImage('placeholder', 'tiles')!;
@@ -135,6 +159,18 @@ export class OverworldScene extends Phaser.Scene {
     const spawn = map.getObjectLayer('objects')?.objects.find((o) => o.name === 'spawn');
     this.player = new Player(this, spawn?.x ?? 64, spawn?.y ?? 64);
     this.physics.add.collider(this.player, groundLayer);
+
+    // #88 — returning from an overworld NPC duel: restore the player to where they
+    // left (recorded in window.__duelOrigin before the duel). This scene was shut
+    // down on duel entry, so the position is carried out-of-band. When set, suppress
+    // the anchor-derived Sanctum-door spawn (loadWaystones) so it doesn't override
+    // the restored position. Consume the global immediately so it never re-applies.
+    const origin = window.__duelOrigin;
+    if (origin && origin.scene === 'OverworldScene' && typeof origin.x === 'number') {
+      this.player.setPosition(origin.x, origin.y);
+      this.returnedFromDuel = true;
+    }
+    window.__duelOrigin = null;
 
     this.physics.world.setBounds(0, 0, map.widthInPixels, map.heightInPixels);
     this.cameras.main.setBounds(0, 0, map.widthInPixels, map.heightInPixels);
@@ -159,6 +195,28 @@ export class OverworldScene extends Phaser.Scene {
     this.input.keyboard!.on('keydown-E', () => this.handleInteract());
     window.__sanctumInteract = (): void => this.handleInteract();
 
+    // #87 Part D — Tab toggles the battle-hand overlay; Escape closes it. Escape
+    // only acts when the overlay is open so it never suppresses any global ESC
+    // behavior while closed. Tab's default focus-cycling is prevented by Phaser's
+    // keyboard capture (keydown-TAB binding) so it doesn't blur the canvas.
+    this.battleHand = new BattleHandOverlay(this);
+    this.input.keyboard!.on('keydown-TAB', (e: KeyboardEvent) => {
+      e?.preventDefault?.();
+      this.toggleBattleHand();
+    });
+    this.input.keyboard!.on('keydown-ESC', () => {
+      if (this.overlayOpen) this.closeBattleHand();
+    });
+    window.__overworldBattleHandOpen = false;
+    window.__overworldToggleBattleHand = (): void => this.toggleBattleHand();
+
+    // #87 Part A — double-click an interaction zone within range to blink onto it.
+    // Suppressed while the Tab overlay is open (shared overlayOpen flag). Zones are
+    // the live this.zones array — waystone/anchorage zones pushed by loadWaystones
+    // become blink-targetable as soon as they're added.
+    this.blink = new BlinkController(this, this.player, () => this.overlayOpen);
+    this.blink.register(this.zones);
+
     window.__player = this.player;
     this.events.once('shutdown', () => {
       window.__player = null;
@@ -171,6 +229,14 @@ export class OverworldScene extends Phaser.Scene {
       window.__talismanLoadout = undefined;
       window.__overworldNpcs = undefined;
       window.__detectedNpc = undefined;
+      window.__overworldBattleHandOpen = undefined;
+      window.__overworldToggleBattleHand = undefined;
+      this.blink?.destroy();
+      this.blink = null;
+      this.battleHand?.destroy();
+      this.battleHand = null;
+      this.overlayOpen = false;
+      this.npcLastClick.clear();
       this.npcGraphics.forEach((g) => g.destroy());
       this.npcGraphics = [];
       this.npcPrompt?.destroy();
@@ -202,12 +268,49 @@ export class OverworldScene extends Phaser.Scene {
   }
 
   update(): void {
+    // #87 Part D — while the Tab battle-hand overlay is open, freeze the player and
+    // skip the rest of the update so movement/detection don't run behind the modal.
+    if (this.overlayOpen) {
+      this.player.halt();
+      return;
+    }
     this.player.update(this.cursors, this.wasd);
     this.updateActiveZone();
     this.updateCompass();
     this.checkAnchorageAutoAttune();
     this.updateCurrentAnchorage();
     this.checkNpcDetection();
+  }
+
+  /** #87 Part D — toggle the battle-hand overlay open/closed (Tab / E2E hook). */
+  private toggleBattleHand(): void {
+    if (this.overlayOpen) {
+      this.closeBattleHand();
+    } else {
+      this.openBattleHand();
+    }
+  }
+
+  /** Open the battle-hand overlay, halt the player, and set the suppression flag. */
+  private openBattleHand(): void {
+    if (this.overlayOpen || !this.battleHand) return;
+    this.overlayOpen = true;
+    window.__overworldBattleHandOpen = true;
+    this.player.halt();
+    // When the overlay closes (via its ✕ button), clear the flag so movement and
+    // blink resume — mirrors the Tab/Escape close path.
+    void this.battleHand.open(() => {
+      this.overlayOpen = false;
+      window.__overworldBattleHandOpen = false;
+    });
+  }
+
+  /** Close the battle-hand overlay and resume movement / blink. */
+  private closeBattleHand(): void {
+    if (!this.battleHand) return;
+    this.battleHand.close();
+    this.overlayOpen = false;
+    window.__overworldBattleHandOpen = false;
   }
 
   /**
@@ -243,6 +346,15 @@ export class OverworldScene extends Phaser.Scene {
     // launches the duel via the EncounterScene NPC path (battle-ai room, scoped to
     // this NPC's id so a win records the defeat).
     if (this.detectedNpc) {
+      // #88 — record the biome origin + the player's world position so BattleScene
+      // returns here (not the Encounter hub) when the duel ends, and create() can
+      // restore the player near where they left. This scene is shut down on duel
+      // entry, so the position must be carried out-of-band via the window global.
+      window.__duelOrigin = {
+        scene: 'OverworldScene',
+        x: this.player.x,
+        y: this.player.y,
+      };
       this.scene.start('EncounterScene', {
         npcId: this.detectedNpc.id,
         personality: this.detectedNpc.personality as AIPersonality,
@@ -548,10 +660,15 @@ export class OverworldScene extends Phaser.Scene {
       this.drawSanctumExterior(sanctumX, sanctumY);
 
       // Spawn player just outside the Sanctum door, further along the dir vector.
-      this.player.setPosition(
-        sanctumX + dirX * SANCTUM_DOOR_OFFSET,
-        sanctumY + dirY * SANCTUM_DOOR_OFFSET,
-      );
+      // #88 — skip this when returning from an NPC duel: create() already restored
+      // the player to where the duel was launched, so the Sanctum-door spawn would
+      // wrongly teleport them back to the entrance.
+      if (!this.returnedFromDuel) {
+        this.player.setPosition(
+          sanctumX + dirX * SANCTUM_DOOR_OFFSET,
+          sanctumY + dirY * SANCTUM_DOOR_OFFSET,
+        );
+      }
 
       // Expose for E2E.
       window.__sanctumReturnCenter = { x: sanctumX, y: sanctumY };
@@ -769,7 +886,15 @@ export class OverworldScene extends Phaser.Scene {
     this.npcGraphics = [];
     for (const npc of this.overworldNpcs) {
       const color = ELEMENT_COLORS[npc.element] ?? 0x888888;
-      const body = this.add.ellipse(npc.x, npc.y, 28, 40, color).setDepth(6);
+      const body = this.add
+        .ellipse(npc.x, npc.y, 28, 40, color)
+        .setDepth(6)
+        // #87 Part C — double-clicking an NPC sprite launches an AMBUSH duel (the
+        // player pays AMBUSH_SPIRIT_COST server-side for the opening attack). This
+        // is a distinct path from a single-click and from a zone double-click
+        // (BlinkController only fires inside interaction-zone rects, never on NPCs).
+        .setInteractive({ useHandCursor: true })
+        .on('pointerdown', () => this.onNpcClick(npc));
       const label = this.add
         .text(npc.x, npc.y - 28, ELEMENT_NAMES[npc.element] ?? '?', {
           fontSize: '10px',
@@ -779,6 +904,32 @@ export class OverworldScene extends Phaser.Scene {
         .setDepth(6);
       this.npcGraphics.push(body, label);
     }
+  }
+
+  /**
+   * #87 Part C — NPC sprite pointerdown. Two clicks on the same NPC within
+   * DOUBLE_CLICK_MS launch an ambush duel: record the duel origin (so BattleScene
+   * returns here, as the E-key path does) and start EncounterScene with ambush:true,
+   * which sets firstStrike on the room join. Suppressed while the Tab overlay is
+   * open. A single click is a no-op (the existing E-key approach still works).
+   */
+  private onNpcClick(npc: NpcInfo): void {
+    if (this.overlayOpen) return;
+    const now = this.time.now;
+    const prev = this.npcLastClick.get(npc.id) ?? -Infinity;
+    this.npcLastClick.set(npc.id, now);
+    if (now - prev > DOUBLE_CLICK_MS) return; // first click of a potential double
+    this.npcLastClick.delete(npc.id); // consume the gesture
+    window.__duelOrigin = {
+      scene: 'OverworldScene',
+      x: this.player.x,
+      y: this.player.y,
+    };
+    this.scene.start('EncounterScene', {
+      npcId: npc.id,
+      personality: npc.personality as AIPersonality,
+      ambush: true,
+    });
   }
 
   /**

@@ -249,6 +249,11 @@ const selectSpiritFood = db.prepare(
 const updateSpiritDeduct = db.prepare(
   `UPDATE players SET spirit_current = spirit_current - ? WHERE id = ?`,
 );
+// Atomic check-and-spend: the WHERE clause guards affordability in the same
+// statement, so two concurrent requests can never both deduct past zero.
+const updateSpiritDeductGuarded = db.prepare(
+  `UPDATE players SET spirit_current = spirit_current - ? WHERE id = ? AND spirit_current >= ?`,
+);
 // spirit_max is XP-derived (SPIRIT_BASE + floor(SUM(ring xp) / XP_SCALER)), so
 // restoring sets spirit_current to the freshly computed max, not the column.
 const selectAggregateRingXp = db.prepare(
@@ -685,6 +690,20 @@ export function spendSpirit(playerId: string, amount: number): void {
   const { spirit_current } = getSpiritAndFood(playerId);
   if (spirit_current < amount) throw new Error('insufficient spirit');
   updateSpiritDeduct.run(amount, playerId);
+}
+
+/**
+ * Atomic check-and-spend in a single SQLite statement. Deducts `cost` only if the
+ * player currently holds at least that much spirit, via a guarded UPDATE. Returns
+ * true when one row was affected (deducted), false when the balance was
+ * insufficient — closing the read→check→spend TOCTOU window two concurrent
+ * blink/teleport requests would otherwise share. A zero/negative cost is a no-op
+ * that still reports success.
+ */
+export function spendSpiritAtomic(playerId: string, cost: number): boolean {
+  if (cost <= 0) return true;
+  const info = updateSpiritDeductGuarded.run(cost, playerId, cost);
+  return info.changes === 1;
 }
 
 /**

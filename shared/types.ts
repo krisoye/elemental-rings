@@ -56,6 +56,12 @@ export interface BattleRoomOptions {
   // spawn-table cadence. Only set on overworld-launched NPC duels (EncounterScene
   // NPC path); the encounter-hub markers and PvP rooms leave it undefined.
   npcId?: string;
+  // #87 Part C — ambush first-strike. When set on a vsAI join with a valid token
+  // and the player can afford AMBUSH_SPIRIT_COST, the server spends the spirit and
+  // grants the joining human the opening attack (currentAttackerId) instead of the
+  // default ids[0]. If unaffordable the flag is silently ignored (server is the
+  // guard) and the duel proceeds with default initiative.
+  firstStrike?: boolean;
 }
 
 export interface SelectAttackPayload {

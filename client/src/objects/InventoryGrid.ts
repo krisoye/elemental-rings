@@ -20,10 +20,27 @@ const ROW_GAP = 92; // card height + 4px gap
 const DESELECTED_STROKE = 0x888888;
 const SELECTED_STROKE = 0xffff00;
 
+// #85 Fix 2A — scroll UI geometry. The ▲/▼ buttons sit just right of the second
+// column at the visible window's top/bottom. A small inset keeps the clip mask
+// from cropping the 3px selection stroke on edge cards.
+const ARROW_X = COL_GAP + CARD_W + 12;
+const MASK_INSET = 3;
+
+export const GRID_CARD_W = CARD_W;
+export const GRID_COL_GAP = COL_GAP;
+export const GRID_ROW_GAP = ROW_GAP;
+
 /**
  * A 2-column grid of ring cards rendered from plain REST API ring data.
  * Clicking a card selects it (or deselects if already selected). Escrowed
  * rings are dimmed and not interactive. Fires `onSelect` on every change.
+ *
+ * #85 Fix 2A — when many rings overflow the panel's modal column the grid is made
+ * scrollable: cards live in an inner `cardContainer` clipped by a GeometryMask so
+ * only `visibleRows` are shown, with ▲/▼ buttons (on the grid itself, NOT the
+ * scrolled container) advancing one row at a time. setVisibleRows(0) restores the
+ * pre-#85 unbounded behavior. Hit-testing of cards inside the visible window is
+ * preserved because the mask clips render only — the bg hit areas are unaffected.
  */
 export class InventoryGrid extends Phaser.GameObjects.Container {
   private selected: RingData | null = null;
@@ -33,6 +50,16 @@ export class InventoryGrid extends Phaser.GameObjects.Container {
   private readonly cardBgs: Map<string, Phaser.GameObjects.Rectangle> = new Map();
   private readonly onSelect: (ring: RingData | null) => void;
 
+  // #85 Fix 2A — scroll state. Cards render into cardContainer (scrolled by row);
+  // the arrows and the clip mask live on `this` so they never scroll themselves.
+  private readonly cardContainer: Phaser.GameObjects.Container;
+  private upArrow: Phaser.GameObjects.Text | null = null;
+  private downArrow: Phaser.GameObjects.Text | null = null;
+  private maskGraphics: Phaser.GameObjects.Graphics | null = null;
+  private visibleRows = 0; // 0 → masking/scroll disabled (unbounded grid)
+  private totalRows = 0;
+  private scrollRow = 0;
+
   constructor(
     scene: Phaser.Scene,
     x: number,
@@ -41,12 +68,14 @@ export class InventoryGrid extends Phaser.GameObjects.Container {
   ) {
     super(scene, x, y);
     this.onSelect = onSelect;
+    this.cardContainer = scene.add.container(0, 0);
+    this.add(this.cardContainer);
     scene.add.existing(this);
   }
 
   /**
    * Clear and re-render all ring cards. Sort by element then id for stable
-   * ordering across refreshes.
+   * ordering across refreshes. Resets scroll to row 0 (#85 Fix 2A).
    */
   populate(rings: RingData[]): void {
     // Destroy previous card game objects.
@@ -101,10 +130,17 @@ export class InventoryGrid extends Phaser.GameObjects.Container {
         bg.on('pointerdown', () => this.handleClick(ring, bg));
       }
 
-      this.add(container);
+      // Cards go into the scrolled inner container, not directly on the grid, so
+      // setScrollRow can offset them while the arrows/mask stay put (#85 Fix 2A).
+      this.cardContainer.add(container);
       this.cards.set(ring.id, container);
       this.cardBgs.set(ring.id, bg);
     });
+
+    this.totalRows = Math.ceil(sorted.length / 2);
+    this.scrollRow = 0;
+    this.cardContainer.y = 0;
+    this.updateScrollUI();
   }
 
   private handleClick(ring: RingData, bg: Phaser.GameObjects.Rectangle): void {
@@ -139,5 +175,153 @@ export class InventoryGrid extends Phaser.GameObjects.Container {
       this.selected = null;
       this.onSelect(null);
     }
+  }
+
+  // ── Scroll API (#85 Fix 2A) ───────────────────────────────────────────────
+
+  /**
+   * Enable masking + scroll arrows clipped to `rows` visible rows from the grid
+   * origin; pass 0 to disable (unbounded grid, the pre-#85 behavior). The clip
+   * region is (COL_GAP + CARD_W) wide × (rows * ROW_GAP) tall, inset slightly so
+   * selection strokes on edge cards are not cropped. Idempotent.
+   */
+  setVisibleRows(rows: number): void {
+    this.visibleRows = rows;
+    if (rows > 0) {
+      this.applyMask(rows);
+      this.ensureArrows(rows);
+    } else {
+      this.removeMask();
+      this.removeArrows();
+    }
+    // Re-clamp the current scroll to the new window and refresh arrow visibility.
+    this.setScrollRow(this.scrollRow);
+    this.updateScrollUI();
+  }
+
+  /** Scroll by a number of rows (positive = down), clamped to the valid range. */
+  scrollBy(delta: number): void {
+    this.setScrollRow(this.scrollRow + delta);
+  }
+
+  /**
+   * Set the top visible row, clamped to [0, totalRows - visibleRows]. Offsets the
+   * inner cardContainer (cardContainer.y = -row * ROW_GAP) so the arrows and mask
+   * stay anchored to the grid. No-op semantics when not scrollable (clamps to 0).
+   */
+  setScrollRow(row: number): void {
+    const maxRow = Math.max(0, this.totalRows - this.visibleRows);
+    const clamped = Phaser.Math.Clamp(row, 0, this.visibleRows > 0 ? maxRow : 0);
+    this.scrollRow = clamped;
+    this.cardContainer.y = -clamped * ROW_GAP;
+    this.updateScrollUI();
+  }
+
+  /** Whether the grid currently overflows its visible window (scroll is active). */
+  isScrollable(): boolean {
+    return this.visibleRows > 0 && this.totalRows > this.visibleRows;
+  }
+
+  /** Local-space clip dimensions used for the mask AND wheel hit-testing (#85). */
+  getMaskSize(): { width: number; height: number } {
+    const rows = this.visibleRows > 0 ? this.visibleRows : this.totalRows;
+    return { width: COL_GAP + CARD_W, height: Math.max(0, rows * ROW_GAP) };
+  }
+
+  /** E2E read accessors for the scroll state (#85 Fix 2A). */
+  getScrollRow(): number {
+    return this.scrollRow;
+  }
+  getTotalRows(): number {
+    return this.totalRows;
+  }
+  getVisibleRows(): number {
+    return this.visibleRows;
+  }
+  /** The inner scrolled container — used by E2E to assert local y offset. */
+  getCardContainer(): Phaser.GameObjects.Container {
+    return this.cardContainer;
+  }
+
+  // ── Scroll internals ──────────────────────────────────────────────────────
+
+  /** Build/refresh the GeometryMask clipping the visible `rows`-row window. */
+  private applyMask(rows: number): void {
+    if (!this.maskGraphics) {
+      this.maskGraphics = this.scene.make.graphics({}, false);
+      // The masked cardContainer is camera-pinned (scrollFactor 0); pin the mask
+      // graphics to match so a GeometryMask drawn in screen space stays aligned
+      // with the cards even if the follow camera lerps after the overlay opens.
+      this.maskGraphics.setScrollFactor(0);
+    }
+    const g = this.maskGraphics;
+    g.clear();
+    g.fillStyle(0xffffff);
+    // The grid lives inside the camera-pinned overlay container, so its world
+    // transform tx/ty is its top-left in screen space. The clip rect is the
+    // visible 2-column × `rows`-row window, inset so selection strokes survive.
+    const m = this.getWorldTransformMatrix();
+    g.fillRect(
+      m.tx - MASK_INSET,
+      m.ty - MASK_INSET,
+      COL_GAP + CARD_W + MASK_INSET * 2,
+      rows * ROW_GAP + MASK_INSET * 2,
+    );
+    // #85 W5 — destroy the prior GeometryMask wrapper before replacing it.
+    // createGeometryMask() allocates a fresh wrapper each call; setMask only swaps
+    // the reference, so without this the old wrapper leaks once per open/close cycle.
+    const prevMask = this.cardContainer.mask;
+    if (prevMask) prevMask.destroy();
+    this.cardContainer.setMask(g.createGeometryMask());
+  }
+
+  private removeMask(): void {
+    this.cardContainer.clearMask(true);
+    this.maskGraphics?.destroy();
+    this.maskGraphics = null;
+  }
+
+  /** Lazily create the ▲/▼ scroll buttons on the grid (not the cardContainer). */
+  private ensureArrows(rows: number): void {
+    if (!this.upArrow) {
+      this.upArrow = this.scene.add
+        .text(ARROW_X, ROW_GAP / 2 - 8, '▲', { fontSize: '20px', color: '#cfe3ff' })
+        .setOrigin(0.5)
+        .setScrollFactor(0)
+        .setName('grid-scroll-up')
+        .setInteractive({ useHandCursor: true })
+        .on('pointerdown', () => this.scrollBy(-1));
+      this.add(this.upArrow);
+    }
+    if (!this.downArrow) {
+      this.downArrow = this.scene.add
+        .text(ARROW_X, 0, '▼', { fontSize: '20px', color: '#cfe3ff' })
+        .setOrigin(0.5)
+        .setScrollFactor(0)
+        .setName('grid-scroll-down')
+        .setInteractive({ useHandCursor: true })
+        .on('pointerdown', () => this.scrollBy(1));
+      this.add(this.downArrow);
+    }
+    this.downArrow.setY(rows * ROW_GAP - 16);
+  }
+
+  private removeArrows(): void {
+    this.upArrow?.destroy();
+    this.downArrow?.destroy();
+    this.upArrow = null;
+    this.downArrow = null;
+  }
+
+  /**
+   * Show each arrow only when scrollable AND there is room to move in its
+   * direction; hide both at the edges or when the grid fits the window.
+   */
+  private updateScrollUI(): void {
+    const canScroll = this.isScrollable();
+    this.upArrow?.setVisible(canScroll && this.scrollRow > 0);
+    this.downArrow?.setVisible(
+      canScroll && this.scrollRow < this.totalRows - this.visibleRows,
+    );
   }
 }
