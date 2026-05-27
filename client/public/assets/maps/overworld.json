@@ -1348,7 +1348,14 @@
           "height": 32,
           "rotation": 0,
           "visible": true,
-          "point": false
+          "point": false,
+          "properties": [
+            {
+              "name": "waystoneId",
+              "type": "string",
+              "value": "forest_north_stone"
+            }
+          ]
         },
         {
           "id": 7,
@@ -1359,7 +1366,14 @@
           "height": 32,
           "rotation": 0,
           "visible": true,
-          "point": false
+          "point": false,
+          "properties": [
+            {
+              "name": "waystoneId",
+              "type": "string",
+              "value": "forest_sw_stone"
+            }
+          ]
         }
       ]
     }

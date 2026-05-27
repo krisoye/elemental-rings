@@ -53,11 +53,13 @@ describe('canTeleport — aggregate XP vs. waystone threshold', () => {
 });
 
 // ---------------------------------------------------------------------------
-// Drift test — catalog ids must equal the map's Anchorage object ids
+// Drift test — catalog ids must equal the map's catalog-backed object ids
 // ---------------------------------------------------------------------------
-// Catalog-backed locations (teleport destinations) are `anchorage` objects with
-// a `waystoneId` property. Pure `waystone` objects are visual-only standing-stone
-// markers — they carry NO `waystoneId` and have no catalog/server record.
+// Catalog-backed locations carry a `waystoneId` property on the map. After the
+// visual split (#79) they come in two flavours: `anchorage` objects (home base /
+// teleport destinations, rendered as campfire + ground ring) and `waystone`
+// objects (discovery standing-stones that reveal adjacent biomes). BOTH kinds
+// carry a `waystoneId`, and the union of their ids must equal the catalog.
 
 describe('waystone catalog ↔ map drift', () => {
   function loadObjectLayer(): Array<{
@@ -77,10 +79,10 @@ describe('waystone catalog ↔ map drift', () => {
     return objectLayer?.objects ?? [];
   }
 
-  test('every map Anchorage object id matches a catalog id, and vice versa', () => {
+  test('every catalog id appears on a map object (anchorage or waystone), and vice versa', () => {
     const mapIds = new Set<string>();
     for (const obj of loadObjectLayer()) {
-      if (obj.name !== 'anchorage') continue;
+      if (obj.name !== 'anchorage' && obj.name !== 'waystone') continue;
       const prop = (obj.properties ?? []).find((p) => p.name === 'waystoneId');
       expect(typeof prop?.value).toBe('string');
       mapIds.add(prop!.value as string);
@@ -90,13 +92,16 @@ describe('waystone catalog ↔ map drift', () => {
     expect([...mapIds].sort()).toEqual([...catalogIds].sort());
   });
 
-  test('pure waystone markers are visual-only (no waystoneId, no catalog record)', () => {
-    const waystones = loadObjectLayer().filter((o) => o.name === 'waystone');
-    // The map ships at least one discoverable standing-stone marker.
-    expect(waystones.length).toBeGreaterThan(0);
-    for (const obj of waystones) {
+  test('map ships both anchorage and discovery-waystone object kinds, each catalog-backed', () => {
+    const objs = loadObjectLayer();
+    const anchorages = objs.filter((o) => o.name === 'anchorage');
+    const waystones = objs.filter((o) => o.name === 'waystone');
+    // 3 anchorages (forest_entry/glade/depths) + 2 discovery waystones.
+    expect(anchorages.length).toBe(3);
+    expect(waystones.length).toBe(2);
+    for (const obj of [...anchorages, ...waystones]) {
       const prop = (obj.properties ?? []).find((p) => p.name === 'waystoneId');
-      expect(prop).toBeUndefined();
+      expect(typeof prop?.value).toBe('string');
     }
   });
 });

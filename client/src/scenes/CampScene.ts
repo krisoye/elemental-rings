@@ -14,6 +14,12 @@ const API_BASE = WS.replace(/^ws/, 'http');
 
 const BATTLE_SLOTS = ['thumb', 'a1', 'a2', 'd1', 'd2'] as const;
 
+// #78 ④ — the rendered width of the StakePanel Thumb card bg (StakePanel.CARD_W).
+// The passive-reminder strip is constrained to this width so it wraps within the
+// Thumb column (adopted at x=580) and never overlaps the LoadoutPanel battle
+// slots that begin at x=670 to its right.
+const STAKE_CARD_WIDTH = 70;
+
 // The off-screen holding origin for the reusable panel instances. The panels are
 // created once and parked here while the spatial room is shown; 8A.2 re-parents
 // them into modal overlay containers on demand. Far off the visible canvas.
@@ -899,14 +905,19 @@ export class CampScene extends Phaser.Scene {
       ? `${this.stakedPassive.name}\n${this.stakedPassive.effect}`
       : `No passive\n${this.stakedPassive.effect}`;
     if (!this.passiveLabel) {
-      // Beneath the stake card (adopted at x=580, y=120; card is ~90px tall).
+      // Beneath the stake card (adopted at x=580, y=120; the StakePanel card bg is
+      // 70px wide → spans x≈580–650, then the LoadoutPanel battle slots begin at
+      // x=670). Constrain the strip to the 70px-wide Thumb column so it wraps within
+      // that column and never overlaps the defensive/attack ring slots to its right.
       this.passiveLabel = this.add
         .text(580, 230, text, {
-          fontSize: '11px',
+          fontSize: '10px',
           color: '#ffcc88',
-          wordWrap: { width: 200 },
+          wordWrap: { width: STAKE_CARD_WIDTH },
+          maxLines: 6,
           lineSpacing: 2,
         })
+        .setFixedSize(STAKE_CARD_WIDTH, 0)
         .setScrollFactor(0)
         .setDepth(4001) // above the overlay container (depth 4000)
         .setName('staked-passive-strip');

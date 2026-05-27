@@ -118,7 +118,7 @@ export const COMPASS_ARROW_SIZE = 24; // px — half-length of the arrow triangl
 // than the map's static sanctum_return rectangle, so the player always spawns
 // beside a visible building they can walk back into. Pure presentation — the
 // anchor waystone id comes from the server (window.__waystones.anchor).
-export const SANCTUM_OFFSET = 96; // px — Sanctum body center is this far from the Anchorage, toward map center
+export const SANCTUM_OFFSET = 0; // px — Sanctum body center sits AT the Anchorage center (offset toward map center)
 export const SANCTUM_DOOR_OFFSET = 44; // px — player spawns this far past the Sanctum center (outside the door)
 export const SANCTUM_ZONE_HALF = 32; // px — half-width/height of the sanctum_return interaction zone
 

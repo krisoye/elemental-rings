@@ -57,6 +57,13 @@ export class OverworldScene extends Phaser.Scene {
   private waystones: Map<string, Waystone> = new Map();
   /** Centers of Anchorage locations (keyed by waystoneId), for compass + spawn logic. */
   private anchorageMarkers: Map<string, { center: { x: number; y: number } }> = new Map();
+  /**
+   * Anchorage ids that have already auto-attuned (or were attuned on load), so the
+   * per-frame walk-in check fires onAttune at most once per Anchorage (GDD §10.7:
+   * "Discovery is automatic … the protagonist immediately and permanently attunes
+   * to the Anchorage the moment they enter it").
+   */
+  private anchorageAutoAttuned: Set<string> = new Set();
   /** Latest GET /api/waystones payload (mirrored to window.__waystones). */
   private waystonePayload: WaystonesPayload | null = null;
   /** Camera-pinned compass HUD (8B.2) pulling toward unattuned waystones. */
@@ -141,6 +148,7 @@ export class OverworldScene extends Phaser.Scene {
       this.zones = [];
       this.waystones.clear();
       this.anchorageMarkers.clear();
+      this.anchorageAutoAttuned.clear();
     });
 
     // Load waystone state from the authoritative server and render the markers.
@@ -151,20 +159,53 @@ export class OverworldScene extends Phaser.Scene {
     this.player.update(this.cursors, this.wasd);
     this.updateActiveZone();
     this.updateCompass();
+    this.checkAnchorageAutoAttune();
   }
 
   /**
-   * Per-frame compass pull (8B.2). Finds the nearest UNATTUNED waystone (from the
-   * cached server payload joined with the instantiated markers' positions). When
-   * one is within COMPASS_RANGE the compass points at it with intensity rising as
-   * distance shrinks; otherwise it hides. Publishes window.__compass each frame.
+   * Per-frame Anchorage auto-attune (GDD §10.7). Discovery is automatic: the
+   * moment the player walks within ANCHORAGE_GROUND_RADIUS of an unattuned
+   * Anchorage center, it permanently attunes (server POST). The guard set ensures
+   * onAttune fires at most once per Anchorage; the E-press zone remains as a
+   * harmless fallback. No-op until the markers (anchorageMarkers) exist.
+   */
+  private checkAnchorageAutoAttune(): void {
+    const px = this.player.x;
+    const py = this.player.y;
+    for (const [id, anchorage] of this.anchorageMarkers) {
+      if (this.anchorageAutoAttuned.has(id)) continue;
+      const { x, y } = anchorage.center;
+      if (Phaser.Math.Distance.Between(px, py, x, y) <= ANCHORAGE_GROUND_RADIUS) {
+        this.anchorageAutoAttuned.add(id); // prevent repeated POSTs
+        void this.onAttune(id);
+      }
+    }
+  }
+
+  /**
+   * Per-frame compass pull (8B.2). Finds the nearest eligible UNATTUNED waystone
+   * (from the cached server payload joined with the instantiated markers'
+   * positions). When one is within COMPASS_RANGE the compass points at it with
+   * intensity rising as distance shrinks; otherwise it hides. Publishes
+   * window.__compass each frame.
+   *
+   * Eligibility: Anchorages (home base / teleport destinations, tracked in
+   * anchorageMarkers) always pull while unattuned. Discovery Waystones — the
+   * standing stones that reveal adjacent biomes (#79) — only pull once the player
+   * meets their aggregate-XP threshold (GDD §10.7), so the compass doesn't drag a
+   * fresh player toward a region they aren't ready for.
    */
   private updateCompass(): void {
     const px = this.player.x;
     const py = this.player.y;
 
-    // Unattuned waystone ids that have a live marker (and thus a position).
-    const unattuned = (this.waystonePayload?.waystones ?? []).filter((w) => !w.attuned);
+    // Eligible-unattuned ids: unattuned, and (for non-Anchorage discovery
+    // waystones) XP-threshold-met. Anchorages always qualify while unattuned.
+    const unattuned = (this.waystonePayload?.waystones ?? []).filter((w) => {
+      if (w.attuned) return false;
+      const isAnchorage = this.anchorageMarkers.has(w.id);
+      return isAnchorage || w.meetsThreshold;
+    });
 
     let targetId: string | null = null;
     let bestDist = Infinity;
@@ -221,6 +262,12 @@ export class OverworldScene extends Phaser.Scene {
     const payload = await this.fetchWaystones();
     if (!payload) return; // unauthenticated → already routed to LoginScene
     this.cachePayload(payload);
+
+    // Seed the auto-attune guard with already-attuned ids so walking back over an
+    // Anchorage the player has already discovered doesn't re-POST an attune.
+    for (const info of payload.waystones) {
+      if (info.attuned) this.anchorageAutoAttuned.add(info.id);
+    }
 
     const byId = new Map(payload.waystones.map((w) => [w.id, w]));
     const objs = map.getObjectLayer('objects')?.objects ?? [];
@@ -493,9 +540,15 @@ export class OverworldScene extends Phaser.Scene {
     const px = this.player.x;
     const py = this.player.y;
     const overlapping = this.zones.filter((z) => z.contains(px, py));
-    let nearest: InteractionZone | null = null;
-    let best = Infinity;
+    // With SANCTUM_OFFSET=0 the sanctum_return door is co-located with its anchor
+    // Anchorage zone (identical center → equal distance). The return door is the
+    // actionable E target there (Anchorage discovery is automatic via auto-attune),
+    // so it always wins selection when the player overlaps it.
+    const ret = overlapping.find((z) => z.name === 'sanctum_return');
+    let nearest: InteractionZone | null = ret ?? null;
+    let best = ret ? -Infinity : Infinity;
     for (const z of overlapping) {
+      if (z === ret) continue;
       const d = z.distanceSqTo(px, py);
       if (d < best) {
         best = d;

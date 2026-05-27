@@ -16,11 +16,12 @@
 //   - An `objects` layer that PRESERVES 8A's `spawn` point (128,128) and
 //     `sanctum_return` rectangle (center 224,224) so overworld-transition.spec.ts
 //     stays green, and ADDS three Anchorage objects (name `anchorage`, custom
-//     property `waystoneId`) plus two pure Waystone markers (name `waystone`,
-//     visual-only, no `waystoneId`) spread across the map.
+//     property `waystoneId`) plus two discovery Waystone markers (name `waystone`,
+//     each with a `waystoneId`) spread across the map.
 //
-// Anchorage ids MUST match shared/waystones.ts (a Vitest drift test enforces the
-// id-set parity). Positions are owned here, not in the catalog.
+// Both Anchorage AND Waystone ids MUST match shared/waystones.ts (a Vitest drift
+// test enforces the id-set parity across all 5 ids). Positions are owned here,
+// not in the catalog.
 //
 // Run from the client/ directory:  node scripts/gen-overworld-map.mjs
 // (or `npm run gen:maps`).
@@ -52,12 +53,14 @@ const ANCHORAGES = [
 ];
 
 // Pure Waystone placements (discoverable standing-stone markers scattered in
-// the world, NO campfire). Visual-only — no `waystoneId`, no server record, so
-// they render the stone but do not attune. Positions are pre-verified clear of
-// the GROVES circles (see the grove-clearance check in the dev brief).
+// the world, NO campfire). These are real discovery waystones that reveal
+// adjacent biomes (Snow Fields, Swamps) when attuned — each carries a
+// `waystoneId` linking it to the server catalog (shared/waystones.ts). Positions
+// are pre-verified clear of the GROVES circles (see the grove-clearance check in
+// the dev brief). The drift test enforces id-set parity with the catalog.
 const WAYSTONES = [
-  { tx: 20, ty: 8 },
-  { tx: 5, ty: 24 },
+  { id: 'forest_north_stone', tx: 20, ty: 8 },
+  { id: 'forest_sw_stone', tx: 5, ty: 24 },
 ];
 
 // Tree groves (circle centre + radius in tiles) so the biome has organic
@@ -208,8 +211,9 @@ function buildGround() {
 
 /**
  * Build the `objects` layer: spawn + sanctum_return (8A), 3 Anchorages (campfire
- * + ground ring destinations, name `anchorage`, with `waystoneId`), and 2 pure
- * Waystones (visual standing-stone markers, name `waystone`, no `waystoneId`).
+ * + ground ring destinations, name `anchorage`, with `waystoneId`), and 2
+ * discovery Waystones (standing-stone markers, name `waystone`, each with a
+ * `waystoneId`).
  */
 function buildObjects() {
   const objects = [
@@ -256,8 +260,9 @@ function buildObjects() {
     });
   }
 
-  // Pure Waystone objects: visual-only standing-stone markers. No `waystoneId`
-  // property → the scene renders the stone but does not register an attune zone.
+  // Pure Waystone objects: discoverable standing-stone markers. Each carries a
+  // `waystoneId` property linking it to the server catalog, so the scene renders
+  // the stone AND registers an attune zone (revealing adjacent biomes on attune).
   for (const w of WAYSTONES) {
     objects.push({
       id: nextId++,
@@ -269,6 +274,7 @@ function buildObjects() {
       rotation: 0,
       visible: true,
       point: false,
+      properties: [{ name: 'waystoneId', type: 'string', value: w.id }],
     });
   }
 
