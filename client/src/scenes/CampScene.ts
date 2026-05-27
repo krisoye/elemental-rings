@@ -98,8 +98,13 @@ export class CampScene extends Phaser.Scene {
   }
 
   preload(): void {
-    this.load.image('tiles', 'assets/tiles/placeholder.png');
+    this.load.image('sanctum', 'assets/tiles/sanctum.png');
     this.load.tilemapTiledJSON('sanctum', 'assets/maps/sanctum.json');
+    // 8D.3 — Cozy Indoor furniture atlas (32px frames) for the zone markers.
+    this.load.spritesheet('sanctum-furniture', 'assets/sprites/sanctum-furniture.png', {
+      frameWidth: 32,
+      frameHeight: 32,
+    });
   }
 
   create(): void {
@@ -108,7 +113,7 @@ export class CampScene extends Phaser.Scene {
 
     // ── Build the Sanctum room from the Tiled map ─────────────────────────
     const map = this.make.tilemap({ key: 'sanctum' });
-    const tileset = map.addTilesetImage('placeholder', 'tiles')!;
+    const tileset = map.addTilesetImage('sanctum', 'sanctum')!;
     this.groundLayer = map.createLayer('ground', tileset, 0, 0)!;
     this.groundLayer.setCollisionByProperty({ collides: true });
 
@@ -353,29 +358,31 @@ export class CampScene extends Phaser.Scene {
   }
 
   /**
-   * Draw a labelled accent marker over each zone rectangle so the room's points
-   * of interest are visible. In 8A.1 these are non-interactive (8A.2 attaches
-   * InteractionZones at the same coordinates).
+   * Draw a labelled furniture sprite over each zone rectangle so the room's
+   * points of interest are visible (8D.3). The sprite frame index maps to the
+   * sanctum-furniture atlas layout (gen-sanctum-sprites.mjs); the text labels and
+   * the InteractionZones (built separately in buildZones) are unchanged.
    */
   private renderZoneMarkers(map: Phaser.Tilemaps.Tilemap): void {
-    const labels: Record<string, string> = {
-      bed: 'Bed',
-      meditation: 'Meditation',
-      campfire: 'Campfire',
-      ringwall: 'Ring Storage',
-      door: 'Exit',
+    // name → [display label, sanctum-furniture atlas frame index].
+    const ZONE_FURNITURE: Record<string, { label: string; frame: number }> = {
+      bed: { label: 'Bed', frame: 0 },
+      meditation: { label: 'Meditation', frame: 1 },
+      ringwall: { label: 'Ring Storage', frame: 2 },
+      campfire: { label: 'Campfire', frame: 3 },
+      door: { label: 'Exit', frame: 4 },
     };
     const objs = map.getObjectLayer('objects')?.objects ?? [];
     for (const o of objs) {
-      if (o.name === 'spawn' || !labels[o.name]) continue;
+      const entry = ZONE_FURNITURE[o.name];
+      if (o.name === 'spawn' || !entry) continue;
       const cx = (o.x ?? 0) + (o.width ?? 0) / 2;
       const cy = (o.y ?? 0) + (o.height ?? 0) / 2;
       this.add
-        .rectangle(cx, cy, o.width ?? 32, o.height ?? 32, 0x3c4e60, 0.35)
-        .setStrokeStyle(1, 0x6082aa)
+        .image(cx, cy, 'sanctum-furniture', entry.frame)
         .setName(`zone-marker-${o.name}`);
       this.add
-        .text(cx, cy - (o.height ?? 32) / 2 - 12, labels[o.name], {
+        .text(cx, cy - (o.height ?? 32) / 2 - 12, entry.label, {
           fontSize: '11px',
           color: '#cfe3ff',
         })

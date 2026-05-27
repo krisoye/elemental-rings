@@ -137,8 +137,8 @@ const map = {
   tilesets: [
     {
       firstgid: 1,
-      name: 'placeholder',
-      image: '../tiles/placeholder.png',
+      name: 'forest',
+      image: '../tiles/forest.png',
       imagewidth: 128,
       imageheight: 32,
       tilewidth: 32,
