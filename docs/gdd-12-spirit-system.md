@@ -113,3 +113,49 @@ High-XP rings provide stronger Thumb passives (§9.4). Staking a high-XP ring ri
 If an opponent stakes a high-XP ring for a strong passive and you stake a Tier 1 ring, you fight at a passive disadvantage. The meta settles at a middle ground — not your crown jewel, but not your weakest ring either.
 
 ---
+
+### 12.7 Short-range Blink
+
+The first non-recharge use of the spirit gauge. The protagonist can teleport short distances to **interaction zones** (waystones, Anchorage campfires, Sanctum room zones) by double-clicking them.
+
+**Targets:** Discrete interaction zones only — never arbitrary map points. Blinking replaces the walk-up-and-press-E interaction in one gesture: the protagonist blinks onto the zone and activates it simultaneously.
+
+**Cost formula:**
+```
+blinkCost(distance) = max(BLINK_MIN_COST, ceil(distance / BLINK_PX_PER_SPIRIT))
+```
+
+| Constant | Value | Notes |
+|---|---|---|
+| `BLINK_PX_PER_SPIRIT` | 100 | Pixels per spirit unit; tune for feel |
+| `BLINK_MIN_COST` | 1 | Floor cost even for short hops |
+| `BLINK_MAX_RANGE` | 600 px | Client-side input gate; beyond this a double-click is ignored |
+
+**Reference costs:**
+| Hop | Distance | Cost |
+|---|---|---|
+| Adjacent zone | ~100 px | 1 spirit |
+| Cross-room Sanctum | ~400–500 px | 4–5 spirit |
+| Maximum range | 600 px | 6 spirit |
+
+**Spirit is the natural range limiter.** There is no separate hard range rule beyond `BLINK_MAX_RANGE` — a player with full spirit can blink across a room freely; a depleted player must walk or recharge first. Blink competes with ring recharge for the same gauge (§12.3), which is the intended balance lever.
+
+**Suppression:** Blink is unavailable while a modal overlay is open (inventory panel, sleep confirm, etc.) — the player must close the overlay first.
+
+**Server authority:** The cost formula lives in a shared module (`shared/blink.ts`). The client reports the distance; the server validates balance and applies the deduction. Full proximity verification is deferred to a future shared WorldRoom.
+
+---
+
+### 12.8 Ambush Premium
+
+A second non-recharge spirit expenditure: paying `AMBUSH_SPIRIT_COST` (5 spirit) when entering a duel grants the initiating player **first-attack initiative** (§6.10).
+
+| Constant | Value |
+|---|---|
+| `AMBUSH_SPIRIT_COST` | 5 |
+
+**Interaction with the spirit gauge:** The ambush cost is independent of the blink cost. A player who blinks to an enemy and ambushes them pays the **blink cost + ambush cost** (separate deductions). A player who approaches on foot and ambushes pays only the ambush premium.
+
+**Validation:** Server-enforced at `BattleRoom.onJoin`. Insufficient spirit → initiative defaults to normal; no spirit is spent.
+
+---

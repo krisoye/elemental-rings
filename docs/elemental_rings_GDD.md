@@ -1,5 +1,5 @@
 # Elemental Rings — Game Design Document
-**Version 4.7 | Stack: Phaser.js + Colyseus | Multiplayer-first**
+**Version 5.0 | Stack: Phaser.js + Colyseus | Multiplayer-first**
 
 ---
 
@@ -14,13 +14,13 @@ Each section lives in its own file. Read only what you need.
 | 3 | Element System | [gdd-03-element-system.md](gdd-03-element-system.md) | Triangle (Fire/Water/Wood), Wind/Earth asymmetry, fusions |
 | 4 | Ring System | [gdd-04-ring-system.md](gdd-04-ring-system.md) | Tiers, uses, XP, recharge |
 | 5 | Fusion System | [gdd-05-fusion-system.md](gdd-05-fusion-system.md) | Recipes, shrine mechanic, costs |
-| 6 | Battle System | [gdd-06-battle-system.md](gdd-06-battle-system.md) | **Block Resolution Table, timing, rally** — read for any combat work |
+| 6 | Battle System | [gdd-06-battle-system.md](gdd-06-battle-system.md) | **Block Resolution Table, timing, rally** — read for any combat work; §6.3 Z/C hotkeys; §6.10 ambush initiative |
 | 7 | Status Effects | [gdd-07-status-effects.md](gdd-07-status-effects.md) | Gauge mechanics, statuses, Shadow curse |
 | 8 | Player Progression | [gdd-08-player-progression.md](gdd-08-player-progression.md) | Player XP, world gating, inventory |
 | 9 | Staking Economy | [gdd-09-staking-economy.md](gdd-09-staking-economy.md) | Stake rules, jewelry positions, self-regulation |
-| 10 | Overworld | [gdd-10-overworld.md](gdd-10-overworld.md) | Biomes, detection, NPC types, locations |
+| 10 | Overworld | [gdd-10-overworld.md](gdd-10-overworld.md) | Biomes, detection, NPC types, locations; §10.13 short-range blink; §10.14 overworld battle-hand (Tab) |
 | 11 | UI and Information Display | [gdd-11-ui.md](gdd-11-ui.md) | HUD, ring reveal, status display |
-| 12 | Spirit System | [gdd-12-spirit-system.md](gdd-12-spirit-system.md) | Spirit gauge, carry capacity, ring recharge, food/sleep |
+| 12 | Spirit System | [gdd-12-spirit-system.md](gdd-12-spirit-system.md) | Spirit gauge, carry capacity, ring recharge, food/sleep; §12.7 short-range blink cost; §12.8 ambush premium |
 | 13 | Open Questions | [gdd-13-open-questions.md](gdd-13-open-questions.md) | Unresolved design decisions |
 | 14 | Talisman System | [gdd-14-talismans.md](gdd-14-talismans.md) | Sanctum Stone, necklace/bracelet slots, future talismans |
 | — | Build Sequence (Phases 1–9) | [GitHub Issue #14](https://github.com/krisoye/elemental-rings/issues/14) | Project management — not game design |
@@ -33,10 +33,15 @@ Each section lives in its own file. Read only what you need.
 **Block Resolution Table:** see [§6.4](gdd-06-battle-system.md)  
 **Timing windows:** PARRY ±175 ms · BLOCK ±200 ms · Telegraph 900 ms  
 **Hearts per duel:** 3 · **Starting uses per ring:** 3 · **Gauge threshold:** 4  
+**Combat hotkeys:** `1/2/3/4` = A1/A2/D1/D2 (absolute) · `Z` = slot-1-of-phase (A1 or D1) · `C` = slot-2-of-phase (A2 or D2)  
+**Blink cost:** `max(1, ceil(distance / 100))` spirit · `Tab` = overworld battle-hand overlay · `AMBUSH_SPIRIT_COST` = 5  
 
 ---
 
 ## Changelog
+
+*Document version 5.0 — Updated May 2026*
+*v5.0 changes: Spirit gauge becomes the universal teleportation + initiative currency. **§12.7 Short-range Blink** (new) — double-clicking an interaction zone blinks the protagonist onto it and activates it; cost = `max(1, ceil(distance/100))` spirit (BLINK_PX_PER_SPIRIT=100, BLINK_MIN_COST=1, BLINK_MAX_RANGE=600 px); first non-recharge spirit expenditure. **§12.8 Ambush Premium** (new) — spending 5 spirit at duel entry grants first-attack initiative (AMBUSH_SPIRIT_COST=5). **§6.3 Combat hotkeys** updated — Z/C phase-relative aliases added alongside 1/2/3/4 (Z = A1/D1, C = A2/D2). **§6.10 Ambush Initiative** (new) — server-validated at BattleRoom.onJoin; insufficient spirit → default initiative, no spirit spent. **§10.3 Blink approach** added — double-click enemy within range to ambush-initiate a duel. **§10.13 Short-range Blink** (new) — overworld + Sanctum blink mechanics. **§10.14 Overworld Battle-Hand Management** (new) — Tab to open battle-hand overlay from any biome, Esc to close, movement suppressed while open. §10.8 spirit-gate status updated: XP shortcut correction queued in #87. Navigation hub and Quick Reference updated. Implementation tracked in #87.*
 
 *Document version 4.9 — Updated May 2026*
 *v4.9 changes: §10.12 updated to reflect 8B.4 shipped (PRs #77/#79 + overworld-fixes) and Phase 8C decomposed (EPIC #80 → #81 Sanctum Stone, #82 Swamp biome, #83 NPC population). 8B.4 outcomes: the three Forest locations are now first-class **Anchorages** (campfire + ground ring, auto-attune on walk-in, no standing stone); the Sanctum exterior sits directly at the Anchorage center (`SANCTUM_OFFSET = 0`); two **discovery waystones** (`forest_north_stone` → Snow Fields, `forest_sw_stone` → Swamp) now exist as standing stones. §14.3 Sanctum Stone corrected: it **permanently transports** the Sanctum to the current Anchorage (physically moves and remains until re-summoned or teleported from within) — the prior "temporary connection" language was wrong. Remaining deviation from §10.8: teleport still gated on aggregate XP, not `spirit_current`.*
