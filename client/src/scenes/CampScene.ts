@@ -104,11 +104,6 @@ export class CampScene extends Phaser.Scene {
     this.load.image('cozy-floor', 'assets/tiles/spr_tile_cozy_indoor_floor_auto_2x2.png');
     this.load.image('cozy-wallfloor', 'assets/tiles/spr_tile_cozy_indoor_wall_floor.png');
     this.load.tilemapTiledJSON('sanctum', 'assets/maps/sanctum.json');
-    // 8D.3 — Cozy Indoor furniture atlas (32px frames) for the zone markers.
-    this.load.spritesheet('sanctum-furniture', 'assets/sprites/sanctum-furniture.png', {
-      frameWidth: 32,
-      frameHeight: 32,
-    });
   }
 
   create(): void {
@@ -136,9 +131,6 @@ export class CampScene extends Phaser.Scene {
     this.cameras.main.setZoom(4);
     this.cameras.main.setBounds(0, 0, map.widthInPixels, map.heightInPixels);
     this.cameras.main.startFollow(this.player, true, 0.1, 0.1);
-
-    // ── Zone markers + labels ─────────────────────────────────────────────
-    this.renderZoneMarkers(map);
 
     // ── Dev/test shortcut: "Set Out →" HUD button → EncounterScene ────────
     // Survives the spatial transform per the 8A.3 product decision; pinned to
@@ -382,40 +374,6 @@ export class CampScene extends Phaser.Scene {
     name: string,
   ): Phaser.Types.Tilemaps.TiledObject | undefined {
     return map.getObjectLayer('objects')?.objects.find((o) => o.name === name);
-  }
-
-  /**
-   * Draw a labelled furniture sprite over each zone rectangle so the room's
-   * points of interest are visible (8D.3). The sprite frame index maps to the
-   * sanctum-furniture atlas layout (gen-sanctum-sprites.mjs); the text labels and
-   * the InteractionZones (built separately in buildZones) are unchanged.
-   */
-  private renderZoneMarkers(map: Phaser.Tilemaps.Tilemap): void {
-    // name → [display label, sanctum-furniture atlas frame index].
-    const ZONE_FURNITURE: Record<string, { label: string; frame: number }> = {
-      bed: { label: 'Bed', frame: 0 },
-      meditation: { label: 'Meditation', frame: 1 },
-      ringwall: { label: 'Ring Storage', frame: 2 },
-      campfire: { label: 'Campfire', frame: 3 },
-      door: { label: 'Exit', frame: 4 },
-    };
-    const objs = map.getObjectLayer('objects')?.objects ?? [];
-    for (const o of objs) {
-      const entry = ZONE_FURNITURE[o.name];
-      if (o.name === 'spawn' || !entry) continue;
-      const cx = (o.x ?? 0) + (o.width ?? 0) / 2;
-      const cy = (o.y ?? 0) + (o.height ?? 0) / 2;
-      this.add
-        .image(cx, cy, 'sanctum-furniture', entry.frame)
-        .setName(`zone-marker-${o.name}`);
-      this.add
-        .text(cx, cy - (o.height ?? 32) / 2 - 12, entry.label, {
-          fontSize: '11px',
-          color: '#cfe3ff',
-        })
-        .setOrigin(0.5)
-        .setName(`zone-label-${o.name}`);
-    }
   }
 
   // ── Modal overlays (8A.2) ─────────────────────────────────────────────────
