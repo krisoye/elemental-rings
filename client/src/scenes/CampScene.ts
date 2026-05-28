@@ -99,7 +99,10 @@ export class CampScene extends Phaser.Scene {
   }
 
   preload(): void {
-    this.load.image('sanctum', 'assets/tiles/sanctum.png');
+    this.load.image('cozy-furniture', 'assets/tiles/spr_tile_cozy_indoor_furniture.png');
+    this.load.image('cozy-ceiling', 'assets/tiles/spr_tile_cozy_indoor_ceiling_auto_3x3.png');
+    this.load.image('cozy-floor', 'assets/tiles/spr_tile_cozy_indoor_floor_auto_2x2.png');
+    this.load.image('cozy-wallfloor', 'assets/tiles/spr_tile_cozy_indoor_wall_floor.png');
     this.load.tilemapTiledJSON('sanctum', 'assets/maps/sanctum.json');
     // 8D.3 — Cozy Indoor furniture atlas (32px frames) for the zone markers.
     this.load.spritesheet('sanctum-furniture', 'assets/sprites/sanctum-furniture.png', {
@@ -114,17 +117,23 @@ export class CampScene extends Phaser.Scene {
 
     // ── Build the Sanctum room from the Tiled map ─────────────────────────
     const map = this.make.tilemap({ key: 'sanctum' });
-    const tileset = map.addTilesetImage('sanctum', 'sanctum')!;
-    this.groundLayer = map.createLayer('ground', tileset, 0, 0)!;
-    this.groundLayer.setCollisionByProperty({ collides: true });
+    const tsFurniture = map.addTilesetImage('spr_tile_cozy_indoor_furniture', 'cozy-furniture')!;
+    const tsCeiling = map.addTilesetImage('spr_tile_cozy_indoor_ceiling_auto_3x3', 'cozy-ceiling')!;
+    const tsFloor = map.addTilesetImage('spr_tile_cozy_indoor_floor_auto_2x2', 'cozy-floor')!;
+    const tsWallFloor = map.addTilesetImage('spr_tile_cozy_indoor_wall_floor', 'cozy-wallfloor')!;
+    const allTilesets = [tsFurniture, tsCeiling, tsFloor, tsWallFloor];
+
+    this.groundLayer = map.createLayer('Floor', allTilesets, 0, 0)!;
+    map.createLayer('Furniture', allTilesets, 0, 0);
+    map.createLayer('Ceiling', allTilesets, 0, 0)!.setDepth(10);
 
     // ── Spawn the player at the `spawn` object ────────────────────────────
     const spawn = this.findObject(map, 'spawn');
     this.player = new Player(this, spawn?.x ?? map.widthInPixels / 2, spawn?.y ?? map.heightInPixels / 2);
-    this.physics.add.collider(this.player, this.groundLayer);
 
     // ── Camera follows the player, clamped to map bounds ──────────────────
     this.physics.world.setBounds(0, 0, map.widthInPixels, map.heightInPixels);
+    this.cameras.main.setZoom(4);
     this.cameras.main.setBounds(0, 0, map.widthInPixels, map.heightInPixels);
     this.cameras.main.startFollow(this.player, true, 0.1, 0.1);
 
