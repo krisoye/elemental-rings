@@ -128,7 +128,7 @@ export class CampScene extends Phaser.Scene {
 
     // ── Camera follows the player, clamped to map bounds ──────────────────
     this.physics.world.setBounds(0, 0, map.widthInPixels, map.heightInPixels);
-    this.cameras.main.setZoom(4);
+    // this.cameras.main.setZoom(4);
     this.cameras.main.setBounds(0, 0, map.widthInPixels, map.heightInPixels);
     this.cameras.main.startFollow(this.player, true, 0.1, 0.1);
 
