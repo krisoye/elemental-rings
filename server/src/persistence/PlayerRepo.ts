@@ -262,10 +262,12 @@ const updateSpiritDeduct = db.prepare(
 const updateSpiritDeductGuarded = db.prepare(
   `UPDATE players SET spirit_current = spirit_current - ? WHERE id = ? AND spirit_current >= ?`,
 );
-// spirit_max is XP-derived (SPIRIT_BASE + floor(SUM(ring xp) / XP_SCALER)), so
+// spirit_max is XP-derived (SPIRIT_BASE + floor(aggregate_xp / XP_SCALER)), so
 // restoring sets spirit_current to the freshly computed max, not the column.
+// Only Reliquary rings (in_carry = 0) count toward aggregate_xp — carried rings
+// are excluded. Must match the boot-time recompute filter in db.ts.
 const selectAggregateRingXp = db.prepare(
-  `SELECT COALESCE(SUM(xp), 0) AS xp_sum FROM rings WHERE owner_id = ?`,
+  `SELECT COALESCE(SUM(xp), 0) AS xp_sum FROM rings WHERE owner_id = ? AND in_carry = 0`,
 );
 const updateSpiritCurrent = db.prepare(
   `UPDATE players SET spirit_current = ? WHERE id = ?`,
@@ -783,7 +785,7 @@ export function spendSpiritAtomic(playerId: string, cost: number): boolean {
  * Single query returning both the raw aggregate ring XP and the derived
  * spirit_max. Use this wherever both values are needed to avoid a second
  * DB round-trip.
- *   aggregate_xp = SUM(rings.xp)
+ *   aggregate_xp = SUM(xp) WHERE in_carry = 0   -- Reliquary rings only
  *   spirit_max   = SPIRIT_BASE + floor(aggregate_xp / XP_SCALER)
  */
 export function getSpiritStats(playerId: string): { aggregateXp: number; spiritMax: number } {

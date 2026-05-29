@@ -63,14 +63,16 @@ if (!hasPlayerCol('anchored_waystone')) {
 }
 
 // Recompute spirit_max on every boot using the same formula as computeSpiritMax()
-// in PlayerRepo: SPIRIT_BASE + floor(aggregate_ring_xp / XP_SCALER). Template
-// literals embed the constants so this stays in sync when either value changes.
+// in PlayerRepo: SPIRIT_BASE + floor(aggregate_xp / XP_SCALER). Only Reliquary
+// rings (in_carry = 0) count toward aggregate_xp — must match the filter in
+// selectAggregateRingXp (PlayerRepo.ts). Template literals embed the constants
+// so the formula stays in sync when either value changes.
 // Then cap spirit_current to the new max (fixes overflow when XP was lost/zeroed),
 // and raise any player below SPIRIT_BASE up to the base floor.
 db.exec(
   `UPDATE players
      SET spirit_max = ${SPIRIT_BASE} + CAST(
-       COALESCE((SELECT SUM(xp) FROM rings WHERE owner_id = players.id), 0) / ${XP_SCALER}
+       COALESCE((SELECT SUM(xp) FROM rings WHERE owner_id = players.id AND in_carry = 0), 0) / ${XP_SCALER}
      AS INTEGER)`,
 );
 db.exec('UPDATE players SET spirit_current = MIN(spirit_current, spirit_max)');

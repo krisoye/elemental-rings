@@ -12,6 +12,7 @@ interface Ring {
   max_uses: number;
   current_uses: number;
   in_carry: number;
+  xp: number;
 }
 
 async function register(): Promise<{ token: string }> {
@@ -275,5 +276,50 @@ test('spirit: recharge-all returns remaining spirit and never goes negative', as
   const { spirit_current: spirit2 } = await res2.json();
   expect(spirit2).toBeGreaterThanOrEqual(0);
   expect(spirit2).toBe(spirit_current); // nothing left to recharge → no change
+  await ctx.close();
+}, 60000);
+
+// ── aggregate_xp counts only Reliquary rings (in_carry = 0) ──────────────────
+// Regression for #155: getSpiritStats was summing all ring XP regardless of
+// carry state. This asserts that XP earned in battle (on carried rings) does NOT
+// raise aggregate_xp, and only does so after those rings are moved to the
+// Reliquary (in_carry = 0).
+test('spirit: aggregate_xp counts only Reliquary rings, not carried rings', async ({ browser }) => {
+  const { token } = await register();
+  const ctx = await browser.newContext();
+  await ctx.addInitScript(`localStorage.setItem('er_token', ${JSON.stringify(token)})`);
+  const page = await ctx.newPage();
+  await page.goto(URL);
+
+  // Drive a winning duel so carried rings earn XP.
+  await driveAiDuel(page, { personality: 'AGGRESSIVE' });
+  await page.waitForFunction(
+    () => (window as any).__game?.scene?.isActive('EncounterScene'),
+    undefined,
+    { timeout: 15000 },
+  );
+
+  const { player: afterBattle, rings } = await me(token);
+  const carriedXp = rings
+    .filter((r) => r.in_carry === 1)
+    .reduce((sum, r) => sum + r.xp, 0);
+  test.skip(carriedXp === 0, 'No XP earned this duel — cannot assert Reliquary exclusion');
+
+  // All XP is on carried rings → aggregate_xp must be 0, spirit_max unchanged.
+  expect(afterBattle.aggregate_xp).toBe(0);
+  const spiritMaxBefore = afterBattle.spirit_max;
+
+  // Move all rings to the Reliquary by clearing the carry set.
+  const carry = await fetch(`${API_URL}/api/carry`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+    body: JSON.stringify({ ringIds: [] }),
+  });
+  expect(carry.status).toBe(200);
+
+  // Reliquary now holds all XP — aggregate_xp must reflect it, spirit_max must rise.
+  const { player: afterRetire } = await me(token);
+  expect(afterRetire.aggregate_xp).toBe(carriedXp);
+  expect(afterRetire.spirit_max).toBeGreaterThan(spiritMaxBefore);
   await ctx.close();
 }, 60000);
