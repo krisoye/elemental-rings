@@ -16,6 +16,10 @@ export enum ElementEnum {
   THORNADO = 12, // Wood + Wind
   BLOOM = 13, // Wood + Earth   (GDD "Nature/Bloom")
   DUST = 14, // Wind + Earth
+  // Shadow (§3.5) sits OUTSIDE the pentagon: a rare overworld drop, not craftable
+  // from base rings. Indexed after DUST so no existing element index shifts. Its
+  // 5 dark-variant fusions (Eclipse/Void/Abyss/Wraith/Plague) are deferred.
+  SHADOW = 15,
 }
 
 /** Every named loadout slot on the dominant hand (GDD §6.1). */
@@ -67,6 +71,11 @@ export interface BattleRoomOptions {
 export interface SelectAttackPayload {
   slot: AttackSlot;
 }
+// GDD §6.3 — recharge one of the attacker's two attack rings, spending spirit
+// (1 per use restored) up to the ring's deficit.
+export interface RechargePayload {
+  slot: AttackSlot;
+}
 // pressTime is retained for future client-side lag compensation, but the server
 // IGNORES it for timing authority — it timestamps on message arrival instead.
 export interface SubmitDefensePayload {
@@ -90,9 +99,6 @@ export interface ExchangeResultPayload {
   defenderHeartLost: boolean;
   rallyContinues: boolean;
   volleyedElement: number;
-  // Triangle elements (FIRE/WATER/WOOD) whose defender gauge should increment.
-  // Empty for a fully-caught attack; one or two entries for landed components.
-  gaugeElements: number[];
 }
 
 /**
@@ -115,9 +121,23 @@ export interface BlockResult {
   attackerHeartLost: boolean;
   rallyContinues: boolean;
   volleyedElement: number;
-  // Triangle element(s) whose defender gauge fills this exchange. A base triangle
-  // uncontested hit → [thatElement]; a fusion uncontested hit → its triangle
-  // components; a caught attack → []; a partially-caught fusion → only the landed
-  // component's triangle element(s). Wind/Earth components contribute nothing.
-  gaugeElements: number[];
+  // Four-case gauge model (GDD §7.1). The defender's gauges move as follows:
+  //
+  // hitGaugeElements — triangle element(s) whose DEFENDER gauge fills on an
+  //   uncontested hit. A base triangle uncontested hit → [thatElement]; a fusion
+  //   uncontested hit → its triangle components; a caught attack → []; a
+  //   partially-caught fusion → only the landed component's triangle element(s).
+  //   Wind/Earth/Shadow-non-triangle components contribute via element index too
+  //   (Shadow is added by #134). Wind/Earth contribute nothing.
+  hitGaugeElements: number[];
+  // blockGaugeElement — the DEFENDING ring's own gauge-bearing element index that
+  //   gains +1 on any block/parry (case 2). null when the defense did not catch or
+  //   the defending element carries no gauge (Wind/Earth/fusion).
+  blockGaugeElement: number | null;
+  // blockedGaugeElement — gauge element index(es) to DECREMENT on a strong block
+  //   (case 3): the beaten gauge(s). Empty when the catch was not a strong block.
+  blockedGaugeElement: number[];
+  // clearAllGauges — true on a STRONG parry (case 4): the defender's tracked
+  //   gauges all reset to 0.
+  clearAllGauges: boolean;
 }

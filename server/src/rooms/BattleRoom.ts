@@ -29,12 +29,16 @@ import {
   XP_THUMB_MID,
   XP_THUMB_ABSORB,
   GAUGE_SOFT_CAP,
+  SHADOW_GAUGE_CAP,
   AMBUSH_SPIRIT_COST,
+  SPIRIT_PER_RING_USE,
+  GOLD_FORFEIT_PENALTY,
 } from '../game/constants';
 import {
   ElementEnum,
   SelectAttackPayload,
   SubmitDefensePayload,
+  RechargePayload,
   ExchangeResultPayload,
   BattleRoomOptions,
   SlotKey,
@@ -58,6 +62,7 @@ interface TestSetStatePayload {
   fireGauge?: number;
   waterGauge?: number;
   woodGauge?: number;
+  shadowGauge?: number;
   /** Per-slot currentUses overrides; sets isExtinguished accordingly. */
   uses?: Partial<Record<SlotKey, number>>;
   /** Per-slot element overrides (so a test can give a defense slot WATER, etc.). */
@@ -121,6 +126,13 @@ export class BattleRoom extends Room<{ state: BattleState }> {
   /** Guard: persistBattleResult() runs exactly once per room lifetime. */
   private ended = false;
 
+  /**
+   * The sessionId that forfeited the duel (GDD §6.3), or null for a normal KO.
+   * When set, persistBattleResult deducts GOLD_FORFEIT_PENALTY (floored at 0)
+   * from this session's player on top of the standard loser thumb-transfer.
+   */
+  private forfeiterId: string | null = null;
+
   /** Server's real impact time for the current exchange (read by the AI). */
   get currentImpactTime(): number {
     return this.impactTime;
@@ -136,6 +148,13 @@ export class BattleRoom extends Room<{ state: BattleState }> {
     this.onMessage('submitDefense', (client, payload: SubmitDefensePayload) =>
       this.handleSubmitDefense(client.sessionId, payload),
     );
+    // GDD §6.3 — the attacker's two alternative turn actions. Recharge spends
+    // spirit to restore an attack ring; forfeit concedes the duel (loses the
+    // staked ring + a gold penalty). Both are phase-/turn-locked in their handlers.
+    this.onMessage('recharge', (client, payload: RechargePayload) =>
+      this.handleRecharge(client.sessionId, payload),
+    );
+    this.onMessage('forfeit', (client) => this.handleForfeit(client.sessionId));
 
     // Test-only state-setter. Mounted ONLY when E2E_TEST_ROUTES=1 (set by the
     // Playwright webServer env), never in production. Lets E2E status-effect
@@ -312,7 +331,9 @@ export class BattleRoom extends Room<{ state: BattleState }> {
         this.notifyAI();
         return;
       }
-      this.checkAttackForfeit();
+      // GDD §6.6 (PR #120): ring exhaustion no longer auto-loses. A player who
+      // begins their turn with both attack rings extinguished simply has no
+      // `attack` action — they must `recharge` or `forfeit`.
       this.notifyAI();
     }
   }
@@ -373,15 +394,15 @@ export class BattleRoom extends Room<{ state: BattleState }> {
   }
 
   /**
-   * GDD §7 start-of-turn status tick for the current attacker. Runs at every
-   * ATTACK_SELECT entry BEFORE checkAttackForfeit (Burning is lethal — design
-   * decision #46). Applies:
+   * GDD §7 start-of-turn status tick for the current attacker, run at every
+   * ATTACK_SELECT entry (Burning is lethal — design decision #46). Applies:
    *   - Burning: −1 heart. If it KOs the attacker, ends the duel (opponent wins).
-   *   - Entangled: the attacker's highest-use battle ring loses 1 use.
+   *   - Drowning: the attacker's highest-capacity attack ring loses 1 use.
+   *   - Entangled: the attacker's highest-capacity defense ring loses 1 use.
    *
-   * Returns true if the duel ended here (Burning KO) — the caller must then skip
-   * checkAttackForfeit and return after notifyAI(). Does NOT notify the AI itself
-   * (the caller owns the single notifyAI() per transition, like checkAttackForfeit).
+   * Returns true if the duel ended here (Burning KO) — the caller must then
+   * return after notifyAI(). Does NOT notify the AI itself (the caller owns the
+   * single notifyAI() per transition).
    */
   private applyAttackerTurnStart(): boolean {
     const state = this.state;
@@ -398,28 +419,6 @@ export class BattleRoom extends Room<{ state: BattleState }> {
       return true;
     }
     return false;
-  }
-
-  /**
-   * GDD §6.6 forfeit: if the current attacker begins their turn with both A1 and
-   * A2 extinguished, they immediately forfeit and the opponent wins. Spending all
-   * attack-ring uses is a loss condition even with hearts remaining. Call at the
-   * top of every ATTACK_SELECT entry (whoever is the current attacker forfeits).
-   *
-   * Does NOT notify the AI itself: every call site fires this.notifyAI()
-   * unconditionally on the next line, which broadcasts the resulting phase
-   * (ENDED or ATTACK_SELECT) exactly once.
-   */
-  private checkAttackForfeit(): void {
-    const state = this.state;
-    const attackerId = state.currentAttackerId;
-    const ids = Array.from(state.players.keys());
-    const defenderId = ids.find((id) => id !== attackerId)!;
-    if (!this.hasUsableAttack(state.players.get(attackerId)!)) {
-      state.winnerId = defenderId;
-      state.phase = 'ENDED';
-      this.finalizeEnded();
-    }
   }
 
   /**
@@ -480,16 +479,28 @@ export class BattleRoom extends Room<{ state: BattleState }> {
       let wonRingId: string | undefined;
       let wonRingElement: number | undefined;
 
+      // GDD §6.3 forfeit gold penalty: when THIS loss was a forfeit (the loser is
+      // the forfeiter), the loser also pays GOLD_FORFEIT_PENALTY (floored at 0).
+      // It is bundled into the SAME transaction as the staked-ring loss so the two
+      // can never desync. A KO loss (forfeiterId null) pays no penalty.
+      const forfeiterIsLoser =
+        this.forfeiterId !== null && loserId !== undefined && this.forfeiterId === loserId;
+      const goldPenalty = forfeiterIsLoser ? GOLD_FORFEIT_PENALTY : 0;
+
       if (loserPlayerId && loserThumbRingId) {
         if (winnerPlayerId) {
-          const loserThumb = this.sessionToRingIds.get(loserId!)?.thumb;
           const loserPs = loserId ? this.state.players.get(loserId) : undefined;
-          wonRingId = PlayerRepo.transferRing(loserThumbRingId, loserPlayerId, winnerPlayerId);
+          // Atomic: ring transfer + (any) forfeit gold penalty in one transaction.
+          wonRingId = PlayerRepo.transferRingWithGoldPenalty(
+            loserThumbRingId,
+            loserPlayerId,
+            winnerPlayerId,
+            goldPenalty,
+          );
           wonRingElement = loserPs?.thumb.element;
-          void loserThumb;
         } else {
-          // vsAI: winner has no DB record — just delete the ring.
-          PlayerRepo.forfeitRing(loserThumbRingId, loserPlayerId);
+          // vsAI: winner has no DB record — delete the ring (+ penalty), atomically.
+          PlayerRepo.forfeitRingWithGoldPenalty(loserThumbRingId, loserPlayerId, goldPenalty);
         }
       } else if (!loserPlayerId && winnerPlayerId && loserId) {
         // vsAI win: AI has no DB ring to transfer, so grant the winner a new
@@ -503,6 +514,13 @@ export class BattleRoom extends Room<{ state: BattleState }> {
         // #83 — this was a win over an overworld NPC: record the defeat so the
         // NPC respawns per its spawn-table cadence (permanent NPCs stay beaten).
         if (this.npcId) PlayerRepo.recordNpcDefeat(winnerPlayerId, this.npcId);
+      }
+
+      // Forfeit gold penalty fallback: if the forfeiting loser had NO staked thumb
+      // ring (so the combined ring+penalty transaction above didn't run), still
+      // apply the floored penalty here. The common path already bundled it.
+      if (goldPenalty > 0 && !(loserPlayerId && loserThumbRingId) && loserPlayerId) {
+        PlayerRepo.deductGoldFloored(loserPlayerId, goldPenalty);
       }
 
       // Recompute each human player's XP-derived spirit_max now that XP has been
@@ -569,24 +587,15 @@ export class BattleRoom extends Room<{ state: BattleState }> {
     const ring = attacker.getSlot(payload.slot);
     if (ring.isExtinguished) return;
 
-    // Drowning (GDD §7.2): while the attacker's waterGauge ≥ threshold, every
-    // attack throw costs +1 use. The penalty hits the attack ring itself even
-    // when Tailwind covers the base throw cost.
-    const drowningCost = StatusEffects.isDrowning(attacker) ? 1 : 0;
-
-    // Tailwind passive: Wind thumb pays the BASE use cost instead of the attack
-    // ring. The Drowning surcharge always falls on the attack ring.
+    // Tailwind passive: Wind thumb pays the throw's use cost instead of the attack
+    // ring. (Drowning is no longer a per-throw surcharge — it drains an attack
+    // ring at turn start; see StatusEffects.applyTurnStart.)
     const usePaidByStake = StakeResolver.applyTailwind(attacker, ring);
     if (!usePaidByStake) {
-      ring.currentUses = Math.max(0, ring.currentUses - 1 - drowningCost);
+      ring.currentUses = Math.max(0, ring.currentUses - 1);
       ring.isExtinguished = ring.currentUses === 0;
     } else {
-      // Tailwind fired: thumb pays the base throw; Drowning still surcharges the ring.
-      if (drowningCost > 0) {
-        ring.currentUses = Math.max(0, ring.currentUses - drowningCost);
-        ring.isExtinguished = ring.currentUses === 0;
-      }
-      // Award the attacker's thumb mid-tier XP.
+      // Tailwind fired: thumb pays the throw. Award the attacker's thumb mid-tier XP.
       this.addXp(id, 'thumb', XP_THUMB_MID);
     }
 
@@ -618,6 +627,95 @@ export class BattleRoom extends Room<{ state: BattleState }> {
   }
 
   /**
+   * GDD §6.3 recharge: the attacker spends spirit to restore uses to one of their
+   * attack rings, consuming the turn. Phase-/turn-locked; wrong-phase or
+   * wrong-sender messages are silently ignored.
+   *
+   * cost = maxUses − currentUses. affordable = min(cost, spirit). The affordable
+   * uses are restored on both the live PlayerState ring and the persisted ring
+   * row, and the affordable spirit is spent. A full ring (cost 0) is a no-op that
+   * still consumes the turn. The turn then advances to the opponent.
+   */
+  private handleRecharge(id: string, payload: RechargePayload): void {
+    const state = this.state;
+    if (state.phase !== 'ATTACK_SELECT') return;
+    if (id !== state.currentAttackerId) return;
+    if (!ATTACK_SLOTS.has(payload.slot)) return;
+
+    const attacker = state.players.get(id)!;
+    const ring = attacker.getSlot(payload.slot);
+    const cost = Math.max(0, ring.maxUses - ring.currentUses);
+
+    if (cost > 0) {
+      // Spirit is a DB-backed resource; humans (token sessions) have a balance,
+      // the AI / no-token sessions recharge "for free" (no DB row to read).
+      const playerId = this.sessionToPlayerId.get(id);
+      let affordable = cost;
+      if (playerId) {
+        const { spirit_current } = PlayerRepo.getSpiritAndFood(playerId);
+        // Affordable in USES: spirit covers SPIRIT_PER_RING_USE per restored use.
+        affordable = Math.min(cost, Math.floor(Math.max(0, spirit_current) / SPIRIT_PER_RING_USE));
+        if (affordable > 0) {
+          const ringId = this.sessionToRingIds.get(id)?.[payload.slot];
+          // Atomic: spend (affordable × SPIRIT_PER_RING_USE) spirit AND restore the
+          // uses in one transaction so a crash can't desync spirit and uses.
+          if (ringId) PlayerRepo.rechargeRingInBattle(playerId, ringId, affordable);
+          else PlayerRepo.spendSpirit(playerId, affordable * SPIRIT_PER_RING_USE);
+        }
+      }
+      if (affordable > 0) {
+        ring.currentUses = Math.min(ring.maxUses, ring.currentUses + affordable);
+        ring.isExtinguished = ring.currentUses === 0;
+      }
+    }
+
+    // Recharge consumes the turn → swap to the opponent and run the turn-start tick.
+    this.advanceTurn();
+  }
+
+  /**
+   * GDD §6.3 forfeit: the attacker concedes — the opponent wins, the forfeiter
+   * loses their staked ring (existing persist path) and a flat gold penalty.
+   * Phase-/turn-locked; wrong-phase or wrong-sender messages are silently ignored.
+   */
+  handleForfeit(id: string): void {
+    const state = this.state;
+    if (state.phase !== 'ATTACK_SELECT') return;
+    if (id !== state.currentAttackerId) return;
+
+    const ids = Array.from(state.players.keys());
+    const opponentId = ids.find((pid) => pid !== id)!;
+    this.forfeiterId = id;
+    state.winnerId = opponentId;
+    state.phase = 'ENDED';
+    this.finalizeEnded();
+    this.notifyAI();
+  }
+
+  /**
+   * Swap the turn to the opponent and enter ATTACK_SELECT, running the §7
+   * turn-start status tick. Shared by recharge (and any future turn-consuming
+   * action). A Burning KO during the tick ends the duel. Owns its single
+   * notifyAI() per transition.
+   */
+  private advanceTurn(): void {
+    const state = this.state;
+    const ids = Array.from(state.players.keys());
+    const opponentId = ids.find((pid) => pid !== state.currentAttackerId)!;
+    state.currentAttackerId = opponentId;
+    state.attackerSlot = '';
+    state.defenderSlot = '';
+    state.rallyActive = false;
+    state.volleyedElement = 0;
+    state.phase = 'ATTACK_SELECT';
+    if (this.applyAttackerTurnStart()) {
+      this.notifyAI();
+      return;
+    }
+    this.notifyAI();
+  }
+
+  /**
    * Test-only state-setter (E2E_TEST_ROUTES gate — handler is registered only in
    * that mode). Writes an exact gauge/hearts/uses configuration onto a player so
    * status-effect E2E specs are deterministic. Does NOT advance phase or trigger
@@ -641,6 +739,7 @@ export class BattleRoom extends Room<{ state: BattleState }> {
     if (payload.fireGauge !== undefined) ps.fireGauge = Math.max(0, payload.fireGauge);
     if (payload.waterGauge !== undefined) ps.waterGauge = Math.max(0, payload.waterGauge);
     if (payload.woodGauge !== undefined) ps.woodGauge = Math.max(0, payload.woodGauge);
+    if (payload.shadowGauge !== undefined) ps.shadowGauge = Math.max(0, payload.shadowGauge);
 
     if (payload.uses) {
       for (const key of Object.keys(payload.uses) as SlotKey[]) {
@@ -664,6 +763,29 @@ export class BattleRoom extends Room<{ state: BattleState }> {
         if (parents) ring.fusionParents.push(parents[0], parents[1]);
       }
     }
+  }
+
+  /**
+   * Adjust a single tracked gauge on a player by `delta`. Maps the gauge element
+   * index to its field and clamps: the triangle gauges to [0, GAUGE_SOFT_CAP], the
+   * shadow gauge to [0, SHADOW_GAUGE_CAP] (the hard cap of 5, GDD §7.1). Unknown
+   * elements are ignored.
+   */
+  private adjustGauge(ps: PlayerState, el: number, delta: number): void {
+    const clampTo = (cap: number, v: number): number => Math.max(0, Math.min(cap, v));
+    if (el === ElementEnum.FIRE) ps.fireGauge = clampTo(GAUGE_SOFT_CAP, ps.fireGauge + delta);
+    else if (el === ElementEnum.WATER) ps.waterGauge = clampTo(GAUGE_SOFT_CAP, ps.waterGauge + delta);
+    else if (el === ElementEnum.WOOD) ps.woodGauge = clampTo(GAUGE_SOFT_CAP, ps.woodGauge + delta);
+    else if (el === ElementEnum.SHADOW)
+      ps.shadowGauge = clampTo(SHADOW_GAUGE_CAP, ps.shadowGauge + delta);
+  }
+
+  /** Reset ALL tracked gauges to 0 (case 4, strong parry) — triangle + shadow. */
+  private clearAllGauges(ps: PlayerState): void {
+    ps.fireGauge = 0;
+    ps.waterGauge = 0;
+    ps.woodGauge = 0;
+    ps.shadowGauge = 0;
   }
 
   private _resolveExchange(): void {
@@ -725,20 +847,21 @@ export class BattleRoom extends Room<{ state: BattleState }> {
       }
     }
 
-    // Increment the defender's matching triangle gauges (FIRE/WATER/WOOD), capped
-    // at GAUGE_SOFT_CAP (2x the GDD §7.1 threshold). Fusions can fill two gauges.
-    for (const el of result.gaugeElements) {
-      if (el === ElementEnum.FIRE) defenderPlayer.fireGauge = Math.min(GAUGE_SOFT_CAP, defenderPlayer.fireGauge + 1);
-      else if (el === ElementEnum.WATER) defenderPlayer.waterGauge = Math.min(GAUGE_SOFT_CAP, defenderPlayer.waterGauge + 1);
-      else if (el === ElementEnum.WOOD) defenderPlayer.woodGauge = Math.min(GAUGE_SOFT_CAP, defenderPlayer.woodGauge + 1);
-    }
-
-    // Gauge cleanse (GDD §7.2): a successful catch (BLOCK/PARRY) with a triangle
-    // ring reduces the gauge that element counters — Water catch −fireGauge, Wood
-    // catch −waterGauge, Fire catch −woodGauge. Non-triangle defenses cleanse
-    // nothing. Independent of whether the catch was safe or a weak catch.
-    if ((timing === 'BLOCK' || timing === 'PARRY') && defenderRing) {
-      StatusEffects.applyGaugeCleanse(defenderPlayer, defenderRing.element);
+    // Four-case gauge model (GDD §7.1). Apply the resolver's gauge directives to
+    // the DEFENDER, capped at GAUGE_SOFT_CAP / floored at 0. A strong parry (case
+    // 4) zeroes every tracked gauge and is TERMINAL — no +1/−1 directives apply on
+    // top of it (the parry's net effect is a full reset, per §7.1 scenario 3).
+    if (result.clearAllGauges) {
+      this.clearAllGauges(defenderPlayer);
+    } else {
+      //   hitGaugeElements — uncontested-hit components +1 each (case 1)
+      //   blockGaugeElement — the defending ring's own gauge +1 (case 2)
+      //   blockedGaugeElement — strong-block beaten gauge(s) −1 (case 3)
+      for (const el of result.hitGaugeElements) this.adjustGauge(defenderPlayer, el, +1);
+      if (result.blockGaugeElement !== null) {
+        this.adjustGauge(defenderPlayer, result.blockGaugeElement, +1);
+      }
+      for (const el of result.blockedGaugeElement) this.adjustGauge(defenderPlayer, el, -1);
     }
 
     if (defenderRing && this.defenseSlotKey) {
@@ -758,7 +881,6 @@ export class BattleRoom extends Room<{ state: BattleState }> {
       defenderHeartLost: result.defenderHeartLost,
       rallyContinues: result.rallyContinues,
       volleyedElement: result.volleyedElement,
-      gaugeElements: result.gaugeElements,
     };
     this.broadcast('exchangeResult', exchangeResult);
 
@@ -792,8 +914,9 @@ export class BattleRoom extends Room<{ state: BattleState }> {
       this.impactTime = Date.now() + TELEGRAPH_MS;
       state.phase = 'DEFEND_WINDOW';
       this.windowTimer = setTimeout(() => this._resolveExchange(), DEFEND_WINDOW_MS);
-      // Rally stays in DEFEND_WINDOW — checkAttackForfeit fires at the
-      // ATTACK_SELECT entry after this rally resolves, never mid-rally.
+      // Rally stays in DEFEND_WINDOW. Ring exhaustion no longer auto-forfeits
+      // (#124, GDD §6.6): once the rally resolves to the next ATTACK_SELECT, an
+      // attacker with no usable attack ring must recharge or forfeit voluntarily.
       this.notifyAI();
     } else {
       // Normal: swap roles, go to ATTACK_SELECT.
@@ -803,13 +926,13 @@ export class BattleRoom extends Room<{ state: BattleState }> {
       state.rallyActive = false;
       state.volleyedElement = 0;
       state.phase = 'ATTACK_SELECT';
-      // GDD §7 turn-start status tick (Burning/Entangled) runs before the §6.6
-      // attack-ring forfeit check. A Burning KO ends the duel here.
+      // GDD §7 turn-start status tick (Burning/Drowning/Entangled). A Burning KO
+      // ends the duel here. Ring exhaustion no longer auto-forfeits (GDD §6.6, PR
+      // #120) — the new attacker recharges or forfeits if both attack rings are out.
       if (this.applyAttackerTurnStart()) {
         this.notifyAI();
         return;
       }
-      this.checkAttackForfeit();
       this.notifyAI();
     }
   }

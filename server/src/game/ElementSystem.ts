@@ -3,7 +3,7 @@ import { TRIANGLE, NEUTRAL } from './Fusions';
 
 export { isFusion, fusionParents, componentsOf, triangleComponentsOf } from './Fusions';
 
-const { FIRE, WATER, EARTH, WIND, WOOD } = ElementEnum;
+const { FIRE, WATER, EARTH, WIND, WOOD, SHADOW } = ElementEnum;
 
 export type Relationship = 'STRONG' | 'NEUTRAL' | 'WEAK';
 
@@ -22,6 +22,40 @@ function triangleBeats(a: number, b: number): boolean {
   return BEATS[a] === b;
 }
 
+// Shadow's asymmetric matchup (GDD §3.5), independent of the triangle:
+//   Shadow BEATS Wood; Shadow LOSES TO Fire; Shadow is NEUTRAL vs Water/Earth/Wind
+//   and vs Shadow (mirror). SHADOW_BEATS[x] = what x defeats (Shadow→Wood, Fire→Shadow).
+const SHADOW_BEATS: Record<number, number> = {
+  [SHADOW]: WOOD,
+  [FIRE]: SHADOW,
+};
+
+/**
+ * Shadow matchup resolver. Returns the relationship from the perspective of
+ * `role` when Shadow is involved on either side, or null when no Shadow rule
+ * applies (the caller falls through to the triangle/neutral logic).
+ */
+function shadowRelationship(
+  attackerEl: number,
+  defenderEl: number,
+  role: 'attack' | 'defense',
+): Relationship | null {
+  if (attackerEl !== SHADOW && defenderEl !== SHADOW) return null;
+
+  // Determine the raw advantage along the Shadow axis (attacker-vs-defender).
+  let advantage: Relationship;
+  if (SHADOW_BEATS[attackerEl] === defenderEl) advantage = 'STRONG'; // attacker overpowers
+  else if (SHADOW_BEATS[defenderEl] === attackerEl) advantage = 'WEAK'; // attacker loses
+  else advantage = 'NEUTRAL'; // Shadow vs Water/Earth/Wind/Shadow, either direction
+
+  // resolve() reports the named side's standing. The attacker's standing is the
+  // raw advantage; the defender's is its mirror (STRONG↔WEAK).
+  if (role === 'attack') return advantage;
+  if (advantage === 'STRONG') return 'WEAK';
+  if (advantage === 'WEAK') return 'STRONG';
+  return 'NEUTRAL';
+}
+
 /**
  * Role-aware element relationship.
  *
@@ -34,6 +68,11 @@ function triangleBeats(a: number, b: number): boolean {
  * @param role whose standing to report ('attack' or 'defense')
  */
 export function resolve(attackerEl: number, defenderEl: number, role: 'attack' | 'defense'): Relationship {
+  // Shadow (§3.5) sits outside the triangle/neutral sets; resolve its asymmetric
+  // matchup first when either side is Shadow, then fall through otherwise.
+  const shadow = shadowRelationship(attackerEl, defenderEl, role);
+  if (shadow !== null) return shadow;
+
   if (role === 'defense') {
     // Defender's standing — the Block Resolution Table input.
     if (defenderEl === WIND) return 'WEAK'; // Wind defense always loses the heart

@@ -356,6 +356,44 @@ export function addGold(playerId: string, amount: number): void {
   updatePlayerGold.run(amount, playerId);
 }
 
+/**
+ * Deduct gold floored at 0: the balance never goes negative. Reads the current
+ * balance and subtracts only as much as the player can afford. Used by the
+ * forfeit penalty (GDD §6.3). No-op for an unknown player.
+ */
+export function deductGoldFloored(playerId: string, amount: number): void {
+  const player = getPlayerById(playerId);
+  if (!player) return;
+  const toDeduct = Math.min(Math.max(0, amount), player.gold);
+  if (toDeduct > 0) updatePlayerGold.run(-toDeduct, playerId);
+}
+
+/**
+ * Restore `n` uses to a ring (clamped to its max_uses). Used by the in-duel
+ * recharge action (GDD §6.3) to persist the ring row alongside the live
+ * PlayerState mutation. A non-positive `n` is a no-op.
+ */
+export function addRingUses(ringId: string, n: number): void {
+  if (n <= 0) return;
+  updateRingUsesAdd.run(n, ringId);
+}
+
+/**
+ * Atomic in-duel recharge persistence (#124): spend `affordableUses *
+ * SPIRIT_PER_RING_USE` spirit AND restore `affordableUses` uses to the ring in a
+ * single transaction, so a crash between the two writes can never leave spirit
+ * spent without uses restored (or vice versa). The affordability is computed by
+ * the caller against the live PlayerState; a non-positive `affordableUses` is a
+ * no-op. Mirrors the spirit-per-use coupling of the camp recharge path.
+ */
+export const rechargeRingInBattle = db.transaction(
+  (playerId: string, ringId: string, affordableUses: number): void => {
+    if (affordableUses <= 0) return;
+    updateSpiritDeduct.run(affordableUses * SPIRIT_PER_RING_USE, playerId);
+    updateRingUsesAdd.run(affordableUses, ringId);
+  },
+);
+
 /** Set or clear the escrowed flag on a ring (true → 1, false → 0). */
 export function setEscrowed(ringId: string, escrowed: boolean): void {
   updateRingEscrowed.run(escrowed ? 1 : 0, ringId);
@@ -459,6 +497,33 @@ export const forfeitRing = db.transaction(
       }
     }
     deleteRing.run(ringId, fromPlayerId);
+  },
+);
+
+/**
+ * Atomic forfeit settlement (#124): transfer the forfeiter's staked thumb ring to
+ * the winner AND deduct the gold penalty (floored at 0) in a SINGLE transaction,
+ * so a crash can't leave the ring transferred without the penalty applied (or
+ * vice versa). Returns the transferred ring id. Both inner ops nest under one
+ * better-sqlite3 transaction (savepoint). Used when the loser is a human and the
+ * winner is a human.
+ */
+export const transferRingWithGoldPenalty = db.transaction(
+  (ringId: string, fromPlayerId: string, toPlayerId: string, penalty: number): string => {
+    const id = transferRing(ringId, fromPlayerId, toPlayerId);
+    deductGoldFloored(fromPlayerId, penalty);
+    return id;
+  },
+);
+
+/**
+ * Atomic forfeit settlement vs an AI/no-DB winner (#124): delete the forfeiter's
+ * staked thumb ring AND deduct the gold penalty (floored at 0) in one transaction.
+ */
+export const forfeitRingWithGoldPenalty = db.transaction(
+  (ringId: string, fromPlayerId: string, penalty: number): void => {
+    forfeitRing(ringId, fromPlayerId);
+    deductGoldFloored(fromPlayerId, penalty);
   },
 );
 
@@ -860,6 +925,15 @@ export function refreshSpiritMax(playerId: string): number {
 /** Restore the spirit gauge to its (XP-derived) maximum (resting effect). */
 export function restoreSpirit(playerId: string): void {
   updateSpiritCurrent.run(computeSpiritMax(playerId), playerId);
+}
+
+/**
+ * Set the spirit gauge to an exact value (clamped at ≥ 0). Used only by the E2E
+ * test route to seed a precise partial-spirit recharge scenario; never wired into
+ * normal gameplay.
+ */
+export function setSpiritCurrent(playerId: string, value: number): void {
+  updateSpiritCurrent.run(Math.max(0, value), playerId);
 }
 
 /** Add food units to the player's larder. */

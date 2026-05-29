@@ -19,7 +19,7 @@ import { BattleRoom } from '../../server/src/rooms/BattleRoom';
 import { TELEGRAPH_MS, BLOCK_WINDOW_MS } from '../../server/src/game/constants';
 import { ElementEnum } from '../../shared/types';
 
-const { FIRE, WATER, WOOD } = ElementEnum;
+const { FIRE, WATER, WOOD, SHADOW } = ElementEnum;
 
 const RESOLVE_BUFFER_MS = 250;
 
@@ -313,5 +313,204 @@ describe('Scenario 12: phase-lock (protective, not punishing)', () => {
     await waitForResolve();
     expect(room.state.phase).toBe('ATTACK_SELECT');
     expect(room.state.players.get(defender.sessionId).hearts).toBe(2); // took the hit
+  });
+});
+
+// #123 — four-case gauge model at the room level. The strong-block decrement and
+// the strong-parry clear-all are timing-precise, so they are pinned here (the
+// @colyseus/testing path controls the defense offset exactly via pressDefenseAt),
+// not in the browser E2E where BLOCK-vs-PARRY is jittery.
+describe('Scenario 13: four-case gauge model (§7.1)', () => {
+  test('strong BLOCK (WATER blocks FIRE): water +1 (case 2), fire −1 (case 3)', async () => {
+    const { room, c1, c2 } = await joinBattle();
+    const attacker = attackerClient(room, c1, c2);
+    const defender = defenderClient(room, c1, c2);
+    const defenderId = defender.sessionId;
+
+    // Give the defender a WATER ring on d1 and seed a high fireGauge so the −1 is
+    // visible. (Default d1 = WOOD.)
+    const d = room.state.players.get(defenderId);
+    d.d1.element = WATER;
+    d.fireGauge = 3;
+    d.waterGauge = 0;
+
+    attacker.send('selectAttack', { slot: 'a1' }); // FIRE
+    await room.waitForNextPatch();
+    // offset +190ms → BLOCK band (>175 PARRY, ≤200 BLOCK): a STRONG BLOCK, not a parry.
+    await pressDefenseAt(room, defender, 'd1', 190);
+
+    const after = room.state.players.get(defenderId);
+    expect(after.hearts).toBe(3); // strong catch — no heart
+    expect(after.waterGauge).toBe(1); // defending WATER ring fills its gauge (case 2)
+    expect(after.fireGauge).toBe(2); // beaten fire gauge 3 → 2 (case 3)
+    expect(room.state.rallyActive).toBe(false); // BLOCK never rallies
+  });
+
+  test('Fire strong BLOCK vs WOOD: fire +1 (case 2), wood −1 (case 3)', async () => {
+    const { room, c1, c2 } = await joinBattle();
+    const attacker = attackerClient(room, c1, c2);
+    const defender = defenderClient(room, c1, c2);
+
+    // Attacker throws WOOD (override a1=WOOD); defender Fire-blocks on d1.
+    room.state.players.get(attacker.sessionId).a1.element = WOOD;
+    const d = room.state.players.get(defender.sessionId);
+    d.d1.element = FIRE;
+    d.woodGauge = 2;
+    d.fireGauge = 0;
+
+    attacker.send('selectAttack', { slot: 'a1' }); // WOOD
+    await room.waitForNextPatch();
+    await pressDefenseAt(room, defender, 'd1', 190); // FIRE strong BLOCK vs WOOD
+
+    const after = room.state.players.get(defender.sessionId);
+    expect(after.hearts).toBe(3);
+    expect(after.fireGauge).toBe(1); // case 2
+    expect(after.woodGauge).toBe(1); // case 3: 2 → 1
+  });
+
+  test('strong PARRY (WATER parries FIRE): clears ALL triangle gauges (case 4)', async () => {
+    const { room, c1, c2 } = await joinBattle();
+    const attacker = attackerClient(room, c1, c2);
+    const defender = defenderClient(room, c1, c2);
+    const defenderId = defender.sessionId;
+
+    const d = room.state.players.get(defenderId);
+    d.d1.element = WATER;
+    d.fireGauge = 3;
+    d.waterGauge = 2;
+    d.woodGauge = 1;
+
+    attacker.send('selectAttack', { slot: 'a1' }); // FIRE
+    await room.waitForNextPatch();
+    await pressDefenseAt(room, defender, 'd1', 0); // WATER STRONG parry vs FIRE → rally + clear
+
+    expect(room.state.rallyActive).toBe(true);
+    const after = room.state.players.get(defenderId);
+    // A parry is terminal — all four(/three) gauges reset to 0, NOT +1 for the
+    // catching ring.
+    expect(after.fireGauge).toBe(0);
+    expect(after.waterGauge).toBe(0);
+    expect(after.woodGauge).toBe(0);
+  });
+
+  test('NEUTRAL block (FIRE blocks FIRE): block gauge +1, no decrement, no clear', async () => {
+    const { room, c1, c2 } = await joinBattle();
+    const attacker = attackerClient(room, c1, c2);
+    const defender = defenderClient(room, c1, c2);
+    const defenderId = defender.sessionId;
+
+    const d = room.state.players.get(defenderId);
+    d.d1.element = FIRE;
+    d.fireGauge = 0;
+
+    attacker.send('selectAttack', { slot: 'a1' }); // FIRE
+    await room.waitForNextPatch();
+    await pressDefenseAt(room, defender, 'd1', 0); // FIRE vs FIRE NEUTRAL
+
+    const after = room.state.players.get(defenderId);
+    expect(after.fireGauge).toBe(1); // case 2 fills the defending element's gauge
+    expect(room.state.rallyActive).toBe(false);
+  });
+
+  test('EARTH (non-triangle) block adds no gauge (case 2 skipped)', async () => {
+    const { room, c1, c2 } = await joinBattle();
+    const attacker = attackerClient(room, c1, c2);
+    const defender = defenderClient(room, c1, c2);
+    const defenderId = defender.sessionId;
+
+    // Default d2 = EARTH. Block FIRE with EARTH — safe, but no gauge.
+    attacker.send('selectAttack', { slot: 'a1' }); // FIRE
+    await room.waitForNextPatch();
+    await pressDefenseAt(room, defender, 'd2', 0); // EARTH NEUTRAL
+
+    const after = room.state.players.get(defenderId);
+    expect(after.fireGauge).toBe(0);
+    expect(after.waterGauge).toBe(0);
+    expect(after.woodGauge).toBe(0);
+  });
+});
+
+// #134 — Shadow gauge + Blinded extend the four-case model with a 4th gauge.
+describe('Scenario 14: shadow gauge (§7.1 / §3.5)', () => {
+  test('uncontested SHADOW hit → defender shadowGauge +1', async () => {
+    const { room, c1, c2 } = await joinBattle();
+    const attacker = attackerClient(room, c1, c2);
+    const defender = defenderClient(room, c1, c2);
+    const defenderId = defender.sessionId;
+
+    room.state.players.get(attacker.sessionId).a1.element = SHADOW;
+    attacker.send('selectAttack', { slot: 'a1' }); // SHADOW
+    await room.waitForNextPatch();
+    await waitForResolve(); // no block → uncontested hit
+
+    const after = room.state.players.get(defenderId);
+    expect(after.shadowGauge).toBe(1);
+    expect(after.hearts).toBe(2); // the hit also cost a heart
+  });
+
+  test('Fire strong BLOCK vs SHADOW → fire +1, decrements BOTH wood and shadow', async () => {
+    const { room, c1, c2 } = await joinBattle();
+    const attacker = attackerClient(room, c1, c2);
+    const defender = defenderClient(room, c1, c2);
+    const defenderId = defender.sessionId;
+
+    room.state.players.get(attacker.sessionId).a1.element = SHADOW;
+    const d = room.state.players.get(defenderId);
+    d.d1.element = FIRE;
+    d.woodGauge = 2;
+    d.shadowGauge = 2;
+    d.fireGauge = 0;
+
+    attacker.send('selectAttack', { slot: 'a1' }); // SHADOW
+    await room.waitForNextPatch();
+    await pressDefenseAt(room, defender, 'd1', 190); // FIRE strong BLOCK vs SHADOW
+
+    const after = room.state.players.get(defenderId);
+    expect(after.hearts).toBe(3); // strong catch — no heart
+    expect(after.fireGauge).toBe(1); // case 2
+    expect(after.woodGauge).toBe(1); // 2 → 1
+    expect(after.shadowGauge).toBe(1); // 2 → 1 (Fire dispels Shadow too)
+  });
+
+  test('strong PARRY clears ALL FOUR gauges (fire/water/wood/shadow)', async () => {
+    const { room, c1, c2 } = await joinBattle();
+    const attacker = attackerClient(room, c1, c2);
+    const defender = defenderClient(room, c1, c2);
+    const defenderId = defender.sessionId;
+
+    const d = room.state.players.get(defenderId);
+    d.d1.element = WATER;
+    d.fireGauge = 3;
+    d.waterGauge = 2;
+    d.woodGauge = 1;
+    d.shadowGauge = 2;
+
+    attacker.send('selectAttack', { slot: 'a1' }); // FIRE
+    await room.waitForNextPatch();
+    await pressDefenseAt(room, defender, 'd1', 0); // WATER STRONG parry vs FIRE → clear
+
+    expect(room.state.rallyActive).toBe(true);
+    const after = room.state.players.get(defenderId);
+    expect(after.fireGauge).toBe(0);
+    expect(after.waterGauge).toBe(0);
+    expect(after.woodGauge).toBe(0);
+    expect(after.shadowGauge).toBe(0);
+  });
+
+  test('shadowGauge clamps at 5', async () => {
+    const { room, c1, c2 } = await joinBattle();
+    const attacker = attackerClient(room, c1, c2);
+    const defender = defenderClient(room, c1, c2);
+    const defenderId = defender.sessionId;
+
+    room.state.players.get(attacker.sessionId).a1.element = SHADOW;
+    room.state.players.get(defenderId).shadowGauge = 5; // already at cap
+
+    attacker.send('selectAttack', { slot: 'a1' }); // SHADOW
+    await room.waitForNextPatch();
+    await waitForResolve(); // uncontested SHADOW hit would push the gauge → +1
+
+    const after = room.state.players.get(defenderId);
+    expect(after.shadowGauge).toBe(5); // clamped, not 6
   });
 });

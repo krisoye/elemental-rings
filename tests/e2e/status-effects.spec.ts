@@ -6,6 +6,7 @@ import {
   readMe,
   closeBattle,
   DEFEND_BLOCK_WAIT_MS,
+  DEFEND_PARRY_WAIT_MS,
   type SlotKey,
 } from './helpers';
 
@@ -14,12 +15,12 @@ import {
 // never a mock. Precise gauge values are seeded via the server's test-only
 // `__testSetState` message (gated by E2E_TEST_ROUTES, set in playwright.config)
 // — engineering an exact gauge through timed play is impractical, but every
-// EFFECT (Burning damage, Drowning surcharge, Entangled drain, gauge cleanse)
-// still runs through the authoritative server resolution paths.
+// EFFECT (Burning damage, Drowning/Entangled turn-start drain, strong-parry
+// clear) still runs through the authoritative server resolution paths.
 //
 // Default loadout (BattleRoom DEFAULT_LOADOUT): thumb=FIRE, a1=FIRE, a2=WATER,
 // d1=WOOD, d2=EARTH. EARTH defense (D2='4') is always a NEUTRAL catch — it
-// passes the turn safely without losing a heart and cleanses no gauge, so it is
+// passes the turn safely without losing a heart and fills no gauge, so it is
 // used to hand the turn over cleanly.
 
 // Browser-path defend-window calibration (see client-battle-flow.spec.ts and
@@ -53,15 +54,6 @@ async function isAttacker(page: Page): Promise<boolean> {
   return page.evaluate(
     () => (window as any).__room.sessionId === (window as any).__room.state.currentAttackerId,
   );
-}
-
-/** Read a single gauge/heart/use value off the local player's broadcast state. */
-async function readMyField(page: Page, key: string): Promise<number> {
-  return page.evaluate((k) => {
-    const room = (window as any).__room;
-    const me = room.state.players.get(room.sessionId);
-    return me?.[k] ?? 0;
-  }, key);
 }
 
 /**
@@ -135,137 +127,138 @@ test('Burning: KOs an afflicted player at 1 heart; opponent wins', async ({ brow
   await closeBattle(h);
 });
 
-// ── Scenario 3: Drowning costs an extra use per attack ──────────────────────
-test('Drowning: waterGauge>=4 makes an attack throw cost 2 uses', async ({ browser }) => {
-  const h = await setupBattle(browser);
-  const { attacker } = await attackerDefender(h.p1, h.p2);
-
-  // The current attacker is Drowning. Their A1 (FIRE) starts at 3 uses.
-  await setState(attacker, { waterGauge: 4, uses: { a1: 3 } });
-
-  const before = await readMyField(attacker, 'fireGauge'); // unused but reads real state
-  expect(before).toBe(0);
-
-  // Throw A1 — Drowning makes it cost 1 (base) + 1 (Drowning) = 2 uses.
-  await attacker.keyboard.press('1');
-  await waitForPhase(attacker, 'DEFEND_WINDOW');
-
-  await attacker.waitForFunction(() => {
-    const room = (window as any).__room;
-    const me = room.state.players.get(room.sessionId);
-    return me.a1.currentUses === 1;
-  }, { timeout: 4000 });
-
-  const me = await readMe(attacker);
-  expect(me.a1.currentUses).toBe(1); // 3 → 1 (two uses spent, not one)
-
-  await closeBattle(h);
-});
-
-// ── Scenario 4: Entangled drains the highest-use battle ring at turn start ──
-test('Entangled: woodGauge>=4 drains the highest-use battle ring at turn start', async ({
+// ── Scenario 3: Drowning drains the highest-capacity attack ring at turn start
+test('Drowning: waterGauge>=4 drains the highest-capacity attack ring at turn start', async ({
   browser,
 }) => {
   const h = await setupBattle(browser);
   const { attacker, defender } = await attackerDefender(h.p1, h.p2);
 
-  // Defender becomes attacker next turn. Give a clear highest-use ring: a2=5,
-  // everything else lower, so Entangled must drain a2 (5 → 4).
-  await setState(defender, {
-    woodGauge: 4,
-    uses: { a1: 2, a2: 5, d1: 2, d2: 3 },
-  });
+  // Defender becomes attacker next turn. Default a1=FIRE, a2=WATER (equal max →
+  // tie resolves to a1). Seed Drowning and equal uses; v2 Drowning is a
+  // turn-start ATTACK-ring drain, NOT a per-throw surcharge.
+  await setState(defender, { waterGauge: 4, uses: { a1: 3, a2: 3 } });
 
   await passTurnViaSafeCatch(attacker, defender);
 
   await defender.waitForFunction(() => {
     const room = (window as any).__room;
     const me = room.state.players.get(room.sessionId);
-    return room.state.phase === 'ATTACK_SELECT' && me.a2.currentUses === 4;
+    return room.state.phase === 'ATTACK_SELECT' && me.a1.currentUses === 2;
   }, { timeout: 6000 });
 
   const me = await readMe(defender);
-  expect(me.a2.currentUses).toBe(4); // highest-use ring drained by 1
-  expect(me.a1.currentUses).toBe(2); // a non-highest ring is NOT drained by Entangled
-  // NOTE: d2 is intentionally NOT asserted — the turn-passing exchange has the
-  // defender catch with D2, which spends a defense use unrelated to Entangled.
+  expect(me.a1.currentUses).toBe(2); // capacity tie → a1 drained 3 → 2
+  expect(me.a2.currentUses).toBe(3); // a2 untouched
 
   await closeBattle(h);
 });
 
-// ── Scenario 5: Water catch cleanses one fire-gauge counter ─────────────────
-test('Cleanse: catching FIRE with a WATER ring decrements fireGauge', async ({ browser }) => {
-  const h = await setupBattle(browser);
-  const { attacker, defender } = await attackerDefender(h.p1, h.p2);
-
-  // Give the defender a WATER defense ring (D2) and seed fireGauge=5 on them.
-  await setState(defender, { fireGauge: 5, elements: { d2: 1 /* WATER */ } });
-
-  // Attacker throws FIRE (A1); defender catches with WATER (D2). The catch is a
-  // STRONG/PARRY-or-BLOCK against FIRE and cleanses one fireGauge counter.
-  await attacker.keyboard.press('1');
-  await waitForPhase(defender, 'DEFEND_WINDOW');
-  await defender.waitForTimeout(DEFEND_BLOCK_WAIT_MS);
-  await defender.keyboard.press('4'); // D2 = WATER (overridden)
-
-  await waitForExchangeResult(defender);
-  const result = await defender.evaluate(() => (window as any).__lastExchangeResult);
-  expect(CAUGHT).toContain(result.timing); // a genuine catch occurred
-
-  await defender.waitForFunction(() => {
-    const room = (window as any).__room;
-    const me = room.state.players.get(room.sessionId);
-    return me.fireGauge === 4;
-  }, { timeout: 4000 });
-
-  const me = await readMe(defender);
-  expect(me.fireGauge).toBe(4); // 5 → 4 (one counter cleansed)
-
-  await closeBattle(h);
-});
-
-// ── Scenario 6: a cleanse below the threshold lifts Burning next turn ────────
-test('Cleanse below threshold lifts Burning: fireGauge 4→3 ends the status', async ({
+// ── Scenario 4: Entangled drains the highest-capacity defense ring at turn start
+test('Entangled: woodGauge>=4 drains the highest-capacity defense ring at turn start', async ({
   browser,
 }) => {
   const h = await setupBattle(browser);
   const { attacker, defender } = await attackerDefender(h.p1, h.p2);
 
-  // Defender at fireGauge=4 (Burning) with a WATER defense ring (D2). Record
-  // their hearts so we can prove Burning did NOT tick after the cleanse.
-  await setState(defender, { fireGauge: 4, hearts: 3, elements: { d2: 1 /* WATER */ } });
+  // Defender becomes attacker next turn. Default d1=WOOD, d2=EARTH (equal max →
+  // tie resolves to d1). v2 Entangled drains a DEFENSE ring at turn start. Seed
+  // attack-ring uses too (the Fire thumb's Kindling buffs the FIRE a1) so the
+  // "attack rings untouched" assertion is exact.
+  await setState(defender, { woodGauge: 4, uses: { a1: 3, a2: 3, d1: 3, d2: 3 } });
 
-  // The cleanse depends only on the DEFENDER's element (applyGaugeCleanse reads
-  // defenderRing.element, not the attacker's), so we have the attacker throw
-  // WATER (A2='2') and the defender catch with WATER (D2). WATER-vs-WATER is a
-  // NEUTRAL catch — no heart loss and, crucially, NO rally (only a triangle
-  // STRONG parry rallies). That guarantees the turn swaps straight to
-  // ATTACK_SELECT, while the WATER defend still cleanses fireGauge 4 → 3.
-  await attacker.keyboard.press('2'); // A2 = WATER
-  await waitForPhase(defender, 'DEFEND_WINDOW');
-  await defender.waitForTimeout(DEFEND_BLOCK_WAIT_MS);
-  await defender.keyboard.press('4'); // D2 = WATER → NEUTRAL catch, cleanses fire
+  await passTurnViaSafeCatch(attacker, defender);
 
-  await waitForExchangeResult(defender);
   await defender.waitForFunction(() => {
     const room = (window as any).__room;
     const me = room.state.players.get(room.sessionId);
-    return me.fireGauge === 3;
-  }, { timeout: 4000 });
-
-  // The former defender now becomes the attacker at a turn start (no rally).
-  // Burning is inactive (gauge 3 < 4), so the turn-start tick must NOT remove a
-  // heart.
-  await defender.waitForFunction(
-    () =>
-      (window as any).__room?.state?.phase === 'ATTACK_SELECT' &&
-      (window as any).__room.sessionId === (window as any).__room.state.currentAttackerId,
-    { timeout: 10000 },
-  );
+    // The turn-passing catch spent d2 (EARTH) 3 → 2; Entangled then drains the
+    // highest-capacity still-usable defense ring (d1, the tie winner) 3 → 2.
+    return room.state.phase === 'ATTACK_SELECT' && me.d1.currentUses === 2;
+  }, { timeout: 6000 });
 
   const me = await readMe(defender);
-  expect(me.fireGauge).toBe(3); // cleansed below threshold
-  expect(me.hearts).toBe(3); // Burning did NOT fire — status was lifted
+  expect(me.d1.currentUses).toBe(2); // Entangled drained the defense ring
+  // Attack rings are never touched by Entangled.
+  expect(me.a1.currentUses).toBe(3);
+  expect(me.a2.currentUses).toBe(3);
+
+  await closeBattle(h);
+});
+
+// ── Scenario 5: a strong parry clears the triangle gauges ────────────────────
+test('Parry clears gauges: a strong WATER parry of FIRE resets all triangle gauges to 0', async ({
+  browser,
+}) => {
+  const h = await setupBattle(browser);
+  const { attacker, defender } = await attackerDefender(h.p1, h.p2);
+
+  // Defender holds a WATER defense ring (D2) with all three gauges seeded. A WATER
+  // PARRY of FIRE is STRONG → rally + clear-all (case 4): every gauge → 0.
+  await setState(attacker, { elements: { a1: 0 /* FIRE */ } });
+  await setState(defender, {
+    elements: { d2: 1 /* WATER */ },
+    fireGauge: 3,
+    waterGauge: 2,
+    woodGauge: 1,
+  });
+
+  await attacker.keyboard.press('1'); // FIRE
+  await waitForPhase(defender, 'DEFEND_WINDOW');
+  await defender.waitForTimeout(DEFEND_PARRY_WAIT_MS);
+  await defender.keyboard.press('4'); // D2 = WATER → STRONG parry vs FIRE
+
+  await waitForExchangeResult(defender);
+  const result = await defender.evaluate(() => (window as any).__lastExchangeResult);
+  expect(result.timing).toBe('PARRY');
+  expect(result.rallyContinues).toBe(true);
+
+  await defender.waitForFunction(() => {
+    const room = (window as any).__room;
+    const me = room.state.players.get(room.sessionId);
+    return me.fireGauge === 0 && me.waterGauge === 0 && me.woodGauge === 0;
+  }, { timeout: 4000 });
+
+  const me = await readMe(defender);
+  expect(me.fireGauge).toBe(0);
+  expect(me.waterGauge).toBe(0);
+  expect(me.woodGauge).toBe(0);
+
+  await closeBattle(h);
+});
+
+// ── Scenario 6: clearing fire below threshold lifts Burning ──────────────────
+test('Parry-clear lifts Burning: a Burning defender who parries drops below threshold', async ({
+  browser,
+}) => {
+  const h = await setupBattle(browser);
+  const { attacker, defender } = await attackerDefender(h.p1, h.p2);
+
+  // Defender at fireGauge=4 (Burning) with a WATER defense ring (D2). A WATER PARRY
+  // of FIRE clears all gauges (case 4) → fireGauge 0, lifting Burning (gauge <
+  // threshold). The observable: Burning is no longer active (fireGauge below the
+  // STATUS_THRESHOLD of 4) and the parry cost no heart.
+  await setState(attacker, { elements: { a1: 0 /* FIRE */ } });
+  await setState(defender, { fireGauge: 4, hearts: 3, elements: { d2: 1 /* WATER */ } });
+
+  await attacker.keyboard.press('1'); // A1 = FIRE
+  await waitForPhase(defender, 'DEFEND_WINDOW');
+  await defender.waitForTimeout(DEFEND_PARRY_WAIT_MS);
+  await defender.keyboard.press('4'); // D2 = WATER → STRONG parry of FIRE
+
+  await waitForExchangeResult(defender);
+  const result = await defender.evaluate(() => (window as any).__lastExchangeResult);
+  expect(result.timing).toBe('PARRY');
+
+  await defender.waitForFunction(() => {
+    const room = (window as any).__room;
+    const me = room.state.players.get(room.sessionId);
+    return me.fireGauge === 0;
+  }, { timeout: 4000 });
+
+  const me = await readMe(defender);
+  expect(me.fireGauge).toBe(0); // cleared below the threshold → Burning lifted
+  expect(me.hearts).toBe(3); // the parry cost no heart
 
   await closeBattle(h);
 });

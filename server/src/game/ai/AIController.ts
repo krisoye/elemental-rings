@@ -24,6 +24,7 @@ export interface AIRoomHandle {
   readonly currentImpactTime: number;
   handleSelectAttack(id: string, payload: SelectAttackPayload): void;
   handleSubmitDefense(id: string, payload: SubmitDefensePayload): void;
+  handleForfeit(id: string): void;
 }
 
 /**
@@ -122,6 +123,20 @@ export class AIController {
 
   private scheduleAttack(): void {
     const view = this.readBoard();
+
+    // GDD §6.3/§6.6 (PR #120): ring exhaustion no longer auto-loses. When the AI
+    // has no usable attack ring it must take a non-attack turn action. The AI has
+    // no spirit-recharge policy yet, so it forfeits — concluding the duel exactly
+    // where the old auto-forfeit did, but now via the explicit forfeit path.
+    if (view.attackSlots.every((s) => s.ring.isExtinguished || s.ring.currentUses <= 0)) {
+      const delay = process.env.E2E_FAST === '1' ? 20 : 300;
+      this.pending = setTimeout(() => {
+        this.pending = null;
+        this.room.handleForfeit(this.aiId);
+      }, delay);
+      return;
+    }
+
     // E2E_FAST collapses AI think time so vsAI duels complete within the
     // driveAiDuel timeout (10 s) despite parallel-worker CPU contention.
     // Normal think delays (300–1500 ms) would push a 3-heart duel past 10 s

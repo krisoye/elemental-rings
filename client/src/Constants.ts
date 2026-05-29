@@ -21,6 +21,7 @@ export const ELEMENT_COLORS: number[] = [
   0x66cc66, // THORNADO (12) — Wood+Wind
   0x668822, // BLOOM    (13) — Wood+Earth
   0xaab488, // DUST     (14) — Wind+Earth
+  0x2a1a3a, // SHADOW   (15) — dark purple/black (rare overworld drop, §3.5)
 ];
 
 export const ELEMENT_NAMES: string[] = [
@@ -39,6 +40,7 @@ export const ELEMENT_NAMES: string[] = [
   'THORNADO',
   'BLOOM',
   'DUST',
+  'SHADOW',
 ];
 
 // #47 — The 10 Tier 2 fusion recipes (GDD §5.2), one per distinct base-element

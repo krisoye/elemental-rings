@@ -5,12 +5,16 @@ const URL = 'http://localhost:8090';
 // Phase 4+5 auth API runs on the same port as Colyseus in tests.
 const API_URL = 'http://localhost:2568';
 
-// E2E fast mode (#68). The Playwright test PROCESS reads E2E_FAST from its env
-// (the npm `test:e2e` script sets it, matching the SERVER/CLIENT webServer env).
-// When set, the server's TELEGRAPH_MS drops 900 → 150 (impact lands ~150ms after
-// the defend window opens instead of 900ms), so all wall-clock-relative defense
-// timings here are scaled to keep presses inside the catch band.
-export const E2E_FAST = process.env.E2E_FAST === '1';
+// E2E fast mode (#68). The webServer that Playwright boots is HARD-PINNED to fast
+// mode in playwright.config.ts (SERVER env E2E_FAST='1' → TELEGRAPH_MS=150, and
+// CLIENT env VITE_E2E_FAST='1'), so the suite ALWAYS runs against a fast server
+// regardless of how the runner is invoked. The runner's wall-clock defense waits
+// MUST therefore also default to fast — otherwise `npx playwright test` without
+// E2E_FAST in the ambient env would use the slow ~700ms waits against the fast
+// ~350ms window, landing every timed catch AFTER it closes → spurious NO_BLOCK.
+// (Set E2E_FAST=0 explicitly only if the webServer config is also switched to
+// slow mode — they must always agree.)
+export const E2E_FAST = process.env.E2E_FAST !== '0';
 
 // Server timing (mirrors server/src/game/constants.ts): the defend window opens,
 // impact lands TELEGRAPH_MS later (900ms normal / 150ms fast), and a defense
@@ -265,6 +269,7 @@ export async function readMe(page: Page): Promise<any> {
       fireGauge: me.fireGauge ?? 0,
       waterGauge: me.waterGauge ?? 0,
       woodGauge: me.woodGauge ?? 0,
+      shadowGauge: me.shadowGauge ?? 0,
       thumb: slot('thumb'),
       a1: slot('a1'),
       a2: slot('a2'),
@@ -328,11 +333,18 @@ export async function driveAiDuel(
         room?.state?.currentAttackerId === room?.sessionId
       ) {
         // Fall back to a2 when a1 is extinguished so forced-loss duels (aiHearts:99)
-        // progress through both attack rings → checkAttackForfeit fires → ENDED.
-        // Without this, rejected a1 sends deadlock the duel indefinitely.
+        // progress through both attack rings. When BOTH are extinguished, ring
+        // exhaustion no longer auto-loses (#124) — the protagonist must `forfeit`
+        // explicitly to end the duel (the §6.3 escape hatch). Without this, the
+        // deadlocked turn would never resolve.
         const me = room.state.players.get(room.sessionId);
-        const slot = me?.a1?.isExtinguished ? 'a2' : 'a1';
-        room.send('selectAttack', { slot });
+        const a1Dead = !!me?.a1?.isExtinguished;
+        const a2Dead = !!me?.a2?.isExtinguished;
+        if (a1Dead && a2Dead) {
+          room.send('forfeit');
+        } else {
+          room.send('selectAttack', { slot: a1Dead ? 'a2' : 'a1' });
+        }
       } else if (
         room?.state?.phase === 'DEFEND_WINDOW' &&
         room?.state?.currentAttackerId !== room?.sessionId

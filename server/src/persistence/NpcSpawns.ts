@@ -83,7 +83,22 @@ export const NPC_SPAWNS: NpcSpawnDef[] = [
   // ── Swamp ─────────────────────────────────────────────────────────────────────
   { id: 'swamp_npc_1', biome: 'swamp', screen: 'swamp_entry', personality: 'AGGRESSIVE',    type: 'monster', element: WATER, spriteFrame: 1, tx: 10, ty: 10, respawnDays: 1 },
   { id: 'swamp_npc_2', biome: 'swamp', screen: 'swamp_entry', personality: 'STATUS_HUNTER', type: 'monster', element: EARTH, spriteFrame: 2, tx: 20, ty: 15, respawnDays: 1 },
+
+  // ── Underground / cave (Shadow) ─────────────────────────────────────────────
+  // #133 — Shadow (ElementEnum.SHADOW=15) is a rare drop ONLY from dark
+  // underground areas (GDD §3.5). The cave/underground biome + its screens and a
+  // SHADOW-element monster sprite (the overworld atlas only has frames 0–11, none
+  // for Shadow) are not built yet, so no Shadow spawn entry exists here YET.
+  // TODO(#132 cave biome): add a `biome: 'cave'` Shadow monster once the
+  // underground biome + sprite land — beating it grants a Shadow ring via the
+  // existing winner-thumb-grant path (PlayerRepo.grantRing already accepts any
+  // element, so Shadow rings flow end-to-end). Until then Shadow is grantable via
+  // the test/admin path so Shadow-2 (#134) and Shadow-3 (#135) can be exercised.
 ];
+
+// #133 — the element a future cave/underground Shadow monster drops. Exported so
+// the cave spawn entry (and any admin grant) references one source of truth.
+export const SHADOW_DROP_ELEMENT = 15; // ElementEnum.SHADOW
 
 /**
  * Stable string hash (djb2). Returns a non-negative 32-bit integer so the same
