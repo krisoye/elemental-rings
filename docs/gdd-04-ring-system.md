@@ -2,20 +2,21 @@
 
 ### 4.1 Inventory and Carry
 
-**Inventory** is the player's full ring collection, managed freely at camp.
+**The Reliquary** is the protagonist's full ring collection, housed in the Sanctum. Rings in the Reliquary are not carried — they rest on the Sanctum walls. The aggregate XP of all Reliquary rings (`aggregate_xp`) determines the protagonist's spirit gauge maximum (`spirit_max`). See §10.6 and §10.8.
 
-**Loadout (carry)** is the subset of rings the player takes on an expedition — chosen at camp before setting out. Only carried rings are accessible in the overworld and during battle.
+**Loadout (carry)** is the subset of rings the player takes on an expedition — chosen at camp before setting out. Only carried rings are accessible in the overworld and during battle. Carried rings are **not** part of `aggregate_xp`.
 
 | Concept | Description | Default cap | Expandable |
 |---|---|---|---|
-| Inventory | All owned rings; managed at camp | 99 | No hard limit |
-| Loadout (carry) | Rings taken on expedition | 10 | Yes — via merchant |
+| Reliquary | All rings stored in the Sanctum; not in carry loadout; sum of their XP = `aggregate_xp` | No hard limit | No |
+| Loadout (carry) | Rings taken on expedition; excluded from `aggregate_xp` | 10 | Yes — via merchant |
 | Battle hand | 5 named slots (Thumb/A1/A2/D1/D2) used in combat | 5 (fixed) | No |
 | Spare | Carried rings not assigned to battle slots; swappable between encounters | up to carry cap − 5 | Via carry cap |
 
-- **Inventory expansion:** buying more carry capacity from a merchant (see §10.7)
-- Rings left at camp recharge on the game day timer
+- **Carry cap expansion:** buying more carry capacity from a merchant (see §10.7)
+- Rings in the Reliquary recharge uses on the game day timer
 - Rings on your person do **not** recharge in the field — only at camp (sleep or paid recharge)
+- Rings in the Reliquary do **not** earn XP — battle use is the only XP source (see §4.4)
 
 ### 4.2 Ring Tiers and Stats
 
@@ -35,10 +36,11 @@
 - Rings left at camp recharge passively on the game day timer even while the player is in the field
 
 ### 4.4 Ring XP
-- Rings earn XP through use in battle — more uses in a duel = more XP for that ring
+- **Battle use is the only source of XP.** A ring earns XP only when the protagonist uses it in a duel — more uses in a duel = more XP for that ring
+- Rings in the Reliquary, spare carry slots, or any resting state earn no XP
 - XP is permanent and carries through fusion
 - Losing a ring via staking means losing all XP associated with it
-- The staked ring earns passive XP through the use-per-battle cost of its buff (see Section 9)
+- *Exception:* a staked ring earns passive XP through the use-per-battle cost of its buff while staked (see §9) — this is the only passive XP path
 
 ### 4.5 Ring Abilities
 - Rings unlock passive and active abilities as they accumulate XP
