@@ -85,6 +85,16 @@ ws start elemental-rings <feature-slug>
 
 ---
 
+## Tiled Map Workflow Skill
+
+Covers the three-layer convention (`ground`/`behind`/`in-front`), tileset rules, how to import a map export, auto-fix logic for common errors, and the `ForestScene` hook API. Read this before editing any Tiled map or wiring a new layer:
+
+```bash
+cat .claude/skills/tiled-map-workflow/SKILL.md
+```
+
+---
+
 ## Colyseus Skill
 
 A hand-written Colyseus 0.17 skill covering `@Schema`, Room lifecycle, `ArraySchema`/`MapSchema`, message handlers, timers, client connection, and the Phase 1 Playwright test-harness pattern:
