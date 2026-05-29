@@ -49,6 +49,14 @@ export class MerchantModal {
   private readonly onHudRefresh: () => void;
   /** Fired when the modal closes (host re-enables movement). */
   private readonly onClose: () => void;
+  /**
+   * #137 — optional hook fired with the modal container right after it is built,
+   * so a dual-camera host (BaseBiomeScene under 2× zoom) can
+   * `cameras.main.ignore(container)` and render the shop UI at 1:1 through its UI
+   * camera. The container is created once per open (renderTabContent re-uses it),
+   * so this fires once per open.
+   */
+  private readonly onRender?: (container: Phaser.GameObjects.Container) => void;
 
   private container: Phaser.GameObjects.Container | null = null;
   private activeTab: Tab = 'buy';
@@ -61,10 +69,16 @@ export class MerchantModal {
   private goldText: Phaser.GameObjects.Text | null = null;
   private statusText: Phaser.GameObjects.Text | null = null;
 
-  constructor(scene: Phaser.Scene, onHudRefresh: () => void, onClose: () => void) {
+  constructor(
+    scene: Phaser.Scene,
+    onHudRefresh: () => void,
+    onClose: () => void,
+    onRender?: (container: Phaser.GameObjects.Container) => void,
+  ) {
     this.scene = scene;
     this.onHudRefresh = onHudRefresh;
     this.onClose = onClose;
+    this.onRender = onRender;
   }
 
   /** True while the modal is visible. */
@@ -158,6 +172,10 @@ export class MerchantModal {
 
     c.add([backdrop, panel, title, this.goldText, closeBtn, buyTabBtn, sellTabBtn, this.statusText]);
     this.container = c;
+    // #137 — let a zoomed dual-camera host route this container to its UI camera
+    // (cameras.main.ignore) so the shop renders at 1:1. Ignoring a container
+    // cascades to children added later by renderTabContent.
+    this.onRender?.(c);
 
     this.renderTabContent();
   }

@@ -60,6 +60,15 @@ export class Compass {
     this.container.setVisible(false);
   }
 
+  /**
+   * The camera-pinned container backing the compass. Returned so the owning scene
+   * can re-parent it into `uiRoot` (#137), rendering it at 1:1 through the UI
+   * camera rather than the zoomed world camera.
+   */
+  getContainer(): Phaser.GameObjects.Container {
+    return this.container;
+  }
+
   /** Destroy the owned container (on scene shutdown). */
   destroy(): void {
     this.container.destroy();

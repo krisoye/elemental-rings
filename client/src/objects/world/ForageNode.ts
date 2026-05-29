@@ -81,6 +81,16 @@ export class ForageNode {
   }
 
   /**
+   * The world-space display objects owned by this forage node (the bush/tree
+   * sprite) plus the wrapped InteractionZone's display objects. Returned so the
+   * owning scene can tell the UI camera to ignore them (#137) — ForageNode is a
+   * WORLD object that must zoom with the main camera, not the 1:1 UI camera.
+   */
+  get displayObjects(): Phaser.GameObjects.GameObject[] {
+    return [this.sprite, ...this.zone.displayObjects];
+  }
+
+  /**
    * Set the available / depleted visual state (called on scene load from
    * GET /api/overworld/forage-status, and after a successful forage POST).
    */

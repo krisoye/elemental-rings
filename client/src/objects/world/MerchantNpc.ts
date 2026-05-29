@@ -68,6 +68,17 @@ export class MerchantNpc {
     return this.zone;
   }
 
+  /**
+   * The world-space display objects owned by this merchant (the body rect + name
+   * label) plus the wrapped InteractionZone's display objects. Returned so the
+   * owning scene can tell the UI camera to ignore them (#137) — the MerchantNpc
+   * sprite is a WORLD object (it zooms with the main camera). The MerchantModal
+   * shop UI it opens is handled separately via cameras.main.ignore(container).
+   */
+  get displayObjects(): Phaser.GameObjects.GameObject[] {
+    return [this.body, this.label, ...this.zone.displayObjects];
+  }
+
   /** Destroy owned game objects + the wrapped zone (on scene shutdown). */
   destroy(): void {
     this.zone.destroy();

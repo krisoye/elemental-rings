@@ -20,6 +20,8 @@ import {
   DETECTION_RADIUS,
   DOUBLE_CLICK_MS,
   ELEMENT_NAMES,
+  CANVAS_W,
+  CANVAS_H,
 } from '../Constants';
 
 /** One entry of the GET /api/overworld/npcs payload (server is the authority). */
@@ -158,6 +160,21 @@ export abstract class BaseBiomeScene extends Phaser.Scene {
   private merchantNpcs: MerchantNpc[] = [];
   /** #131 — shop modal (singleton per scene; opens on merchant E press). */
   private merchantModal: MerchantModal | null = null;
+  /**
+   * #137 — UI camera for the dual-camera split. Full-viewport, zoom 1, no follow,
+   * added AFTER cameras.main so it draws on top. cameras.main ignores `uiRoot`
+   * (+ modal containers) so the world can zoom (2× on forest_anchorage) while the
+   * HUD/overlays stay 1:1. Same pattern as #118 (CampScene).
+   */
+  private uiCam!: Phaser.Cameras.Scene2D.Camera;
+  /**
+   * #137 — container for all persistent HUD (resource HUD, compass). cameras.main
+   * ignores it once; uiCam renders it at 1:1. Modal-style overlays (BattleHand,
+   * MerchantModal, barrier/toast) stay at the scene root and are excluded from
+   * cameras.main per-container so single-level E2E flatMap traversal still reaches
+   * their children.
+   */
+  private uiRoot!: Phaser.GameObjects.Container;
 
   // ── Subclass contract ───────────────────────────────────────────────────────
 
@@ -254,6 +271,20 @@ export abstract class BaseBiomeScene extends Phaser.Scene {
     this.cameras.main.setBounds(0, 0, map.widthInPixels, map.heightInPixels);
     this.cameras.main.startFollow(this.player, true, 0.1, 0.1);
 
+    // ── Dual-camera split (#137) ───────────────────────────────────────────
+    // uiCam: full-viewport, zoom 1, no follow. cameras.main ignores uiRoot (the
+    // persistent HUD + compass) once; modal overlays (BattleHand, MerchantModal,
+    // toasts) are ignored per-container so they stay at the scene root for E2E
+    // single-level flatMap traversal. uiCam is added AFTER main so it draws on top.
+    // The per-screen zoom is applied by the subclass (ForestScene.applyScreenZoom);
+    // the UI stays 1:1 here regardless of the world zoom.
+    this.uiRoot = this.add.container(0, 0).setDepth(4000);
+    this.cameras.main.ignore(this.uiRoot);
+    this.uiCam = this.cameras.add(0, 0, CANVAS_W, CANVAS_H);
+    // uiCam ignores world objects; the synchronous ones are collected after
+    // buildZones() below, and the async ones (waystones, NPCs) are routed as they
+    // are created (loadWaystones / renderNpcs call ignoreWorldObjects).
+
     // 8E.1 — edge-transition spawn: when this create() follows an edge transition
     // (init data carries a spawnEdge), drop the player just inside the arrival edge.
     // Done before loadWaystones so the anchor-derived spawn (forest_anchorage) only
@@ -277,18 +308,21 @@ export abstract class BaseBiomeScene extends Phaser.Scene {
     this.physics.add.collider(this.player, this.decorationGroup);
     window.__decorationCount = proofSpecs.length;
 
-    // Biome title (pinned to the camera).
-    this.add
+    // Biome title (pinned to the camera). #137 — parented into uiRoot so it
+    // renders at 1:1 through uiCam, not the zoomed world camera.
+    const biomeTitle = this.add
       .text(16, 16, this.scene.key === 'SwampScene' ? 'SWAMP' : 'FOREST', {
         fontSize: '16px',
         color: '#cfe3ff',
       })
       .setScrollFactor(0)
       .setDepth(500);
+    this.uiRoot.add(biomeTitle);
 
     // #112 — persistent resource HUD pinned to the top-right corner. Sits below
     // the compass (depth 500) and above the world; right-aligned 12px from the
     // edge. Populated immediately and refreshed on every relevant server event.
+    // #137 — parented into uiRoot so it renders at 1:1 through uiCam.
     this.hudText = this.add
       .text(this.scale.width - 12, 10, '', {
         fontSize: '13px',
@@ -299,14 +333,34 @@ export abstract class BaseBiomeScene extends Phaser.Scene {
       .setOrigin(1, 0)
       .setScrollFactor(0)
       .setDepth(490);
+    this.uiRoot.add(this.hudText);
     void this.refreshHud();
 
     // Compass HUD (8B.2) — hidden until the first update() finds a target.
+    // #137 — re-parent its container into uiRoot so it renders at 1:1 through uiCam.
     this.compass = new Compass(this);
+    this.uiRoot.add(this.compass.getContainer());
     window.__compass = { visible: false, targetId: null, angle: null, intensity: null };
 
-    // Interaction zones: sanctum_return / biome_exit.
+    // Interaction zones: sanctum_return / biome_exit / forage_node / merchant.
     this.buildZones(map);
+
+    // ── Route the synchronous world objects to uiCam.ignore (#137) ─────────
+    // After buildZones, every zone built so far (biome_exit, forage_node, merchant)
+    // is in this.zones, and the ForageNode/MerchantNpc sprites are placed. Collect
+    // the ground layer, player, decorations, and all zone/forage/merchant display
+    // objects so they render only through the world (main) camera. Waystones and
+    // NPCs load async and are routed as they are created (loadWaystones/renderNpcs).
+    {
+      const worldObjects: Phaser.GameObjects.GameObject[] = [groundLayer, this.player];
+      this.zones.forEach((z) => worldObjects.push(...z.displayObjects));
+      this.forageNodes.forEach((n) => worldObjects.push(...n.displayObjects));
+      this.merchantNpcs.forEach((m) => worldObjects.push(...m.displayObjects));
+      // Decoration sprites live in the static physics group (DecorationHandle only
+      // exposes destroy()), so collect them from the group's child list.
+      if (this.decorationGroup) worldObjects.push(...this.decorationGroup.getChildren());
+      this.ignoreWorldObjects(worldObjects);
+    }
 
     // Input.
     this.cursors = this.input.keyboard!.createCursorKeys();
@@ -315,7 +369,11 @@ export abstract class BaseBiomeScene extends Phaser.Scene {
     window.__sanctumInteract = (): void => this.handleInteract();
 
     // #87 Part D — Tab toggles the battle-hand overlay; Escape closes it.
-    this.battleHand = new BattleHandOverlay(this);
+    // #137 — the overlay's modal container is built lazily on open; route it to the
+    // 1:1 UI camera (cameras.main.ignore) each time it renders so it never zooms.
+    this.battleHand = new BattleHandOverlay(this, undefined, (container) =>
+      this.cameras.main.ignore(container),
+    );
     this.input.keyboard!.on('keydown-TAB', (e: KeyboardEvent) => {
       e?.preventDefault?.();
       this.toggleBattleHand();
@@ -683,6 +741,9 @@ export abstract class BaseBiomeScene extends Phaser.Scene {
             this,
             () => void this.refreshHud(),
             () => { this.overlayOpen = false; },
+            // #137 — route the shop container to the 1:1 UI camera (NOT uiRoot, so
+            // E2E single-level flatMap traversal still reaches its children).
+            (container) => this.cameras.main.ignore(container),
           );
         }
         const modal = this.merchantModal;
@@ -739,9 +800,12 @@ export abstract class BaseBiomeScene extends Phaser.Scene {
   /** Show a brief, camera-pinned barrier message that fades out. */
   private showBarrierMessage(text: string): void {
     const existing = this.children.getByName('biome-barrier') as Phaser.GameObjects.Text | null;
-    existing?.destroy();
+    if (existing) {
+      this.unignoreMain(existing);
+      existing.destroy();
+    }
     const msg = this.add
-      .text(this.cameras.main.width / 2, this.cameras.main.height - 80, text, {
+      .text(CANVAS_W / 2, CANVAS_H - 80, text, {
         fontSize: '14px',
         color: '#ffdddd',
         backgroundColor: '#000000aa',
@@ -751,12 +815,18 @@ export abstract class BaseBiomeScene extends Phaser.Scene {
       .setScrollFactor(0)
       .setDepth(1000)
       .setName('biome-barrier');
+    // #137 — render at 1:1 through uiCam, not the zoomed world camera. Kept at the
+    // scene root (not uiRoot) so single-level E2E flatMap traversal still reaches it.
+    this.cameras.main.ignore(msg);
     this.tweens.add({
       targets: msg,
       alpha: { from: 1, to: 0 },
       delay: 1200,
       duration: 600,
-      onComplete: () => msg.destroy(),
+      onComplete: () => {
+        this.unignoreMain(msg);
+        msg.destroy();
+      },
     });
   }
 
@@ -768,9 +838,12 @@ export abstract class BaseBiomeScene extends Phaser.Scene {
    */
   private showToast(text: string, color = '#ffffff'): void {
     const existing = this.children.getByName('biome-toast') as Phaser.GameObjects.Text | null;
-    existing?.destroy();
+    if (existing) {
+      this.unignoreMain(existing);
+      existing.destroy();
+    }
     const msg = this.add
-      .text(this.cameras.main.width / 2, this.cameras.main.height - 110, text, {
+      .text(CANVAS_W / 2, CANVAS_H - 110, text, {
         fontSize: '14px',
         color,
         backgroundColor: '#000000aa',
@@ -780,13 +853,40 @@ export abstract class BaseBiomeScene extends Phaser.Scene {
       .setScrollFactor(0)
       .setDepth(1000)
       .setName('biome-toast');
+    // #137 — render at 1:1 through uiCam (kept at scene root for E2E traversal).
+    this.cameras.main.ignore(msg);
     this.tweens.add({
       targets: msg,
       alpha: { from: 1, to: 0 },
       delay: 1200,
       duration: 600,
-      onComplete: () => msg.destroy(),
+      onComplete: () => {
+        this.unignoreMain(msg);
+        msg.destroy();
+      },
     });
+  }
+
+  /**
+   * #137 — tell the UI camera to ignore world objects so they render only through
+   * the world (main) camera (which zooms). uiCam keeps zoom 1; without this every
+   * world object would double-render (once per camera). Guards against a null
+   * uiCam (defensive — camera setup runs before any caller in create()).
+   */
+  private ignoreWorldObjects(objs: Phaser.GameObjects.GameObject[]): void {
+    if (!this.uiCam || objs.length === 0) return;
+    this.uiCam.ignore(objs);
+  }
+
+  /**
+   * #137 — inverse of `cameras.main.ignore(obj)`. Phaser 4.1's `ignore()` only sets
+   * `obj.cameraFilter |= camera.id` (a bit flag on the object; the camera keeps no
+   * collection), so the clean undo is to clear that bit. Called on transient UI
+   * (barrier/toast) just before destroy so no stale main-camera filter survives.
+   * Mirrors the #118 CampScene helper verbatim.
+   */
+  private unignoreMain(obj: Phaser.GameObjects.GameObject): void {
+    obj.cameraFilter &= ~this.cameras.main.id;
   }
 
   /** Read the `target` (destination scene key) custom property off a Tiled object. */
@@ -895,6 +995,20 @@ export abstract class BaseBiomeScene extends Phaser.Scene {
       }
 
       window.__sanctumReturnCenter = { x: sanctumX, y: sanctumY };
+    }
+
+    // #137 — these waystone/anchorage/sanctum world objects were created async
+    // (after the synchronous create() collection), so route them to uiCam.ignore
+    // now: every Waystone marker's display objects, every InteractionZone built in
+    // this method (anchorage zones + the sanctum_return zone are all in this.zones),
+    // and the Sanctum exterior sprite. Re-ignoring an object already ignored is a
+    // harmless no-op (it just re-sets the same cameraFilter bit).
+    {
+      const worldObjects: Phaser.GameObjects.GameObject[] = [];
+      this.zones.forEach((z) => worldObjects.push(...z.displayObjects));
+      this.waystones.forEach((w) => worldObjects.push(...w.displayObjects));
+      if (this.sanctumSprite) worldObjects.push(this.sanctumSprite);
+      this.ignoreWorldObjects(worldObjects);
     }
 
     // 8E (#107) — publish every interaction zone's world center so E2E can read
@@ -1059,6 +1173,9 @@ export abstract class BaseBiomeScene extends Phaser.Scene {
         .on('pointerdown', () => this.onNpcClick(npc));
       this.npcGraphics.push(sprite);
     }
+    // #137 — NPC sprites load async (after the create() world collection), so route
+    // them to uiCam.ignore now: they are WORLD objects that zoom with the main camera.
+    this.ignoreWorldObjects([...this.npcGraphics]);
   }
 
   /**
@@ -1128,7 +1245,7 @@ export abstract class BaseBiomeScene extends Phaser.Scene {
   private showNpcPrompt(text: string): void {
     if (!this.npcPrompt) {
       this.npcPrompt = this.add
-        .text(this.cameras.main.width / 2, 80, '', {
+        .text(CANVAS_W / 2, 80, '', {
           fontSize: '14px',
           color: '#ffeeaa',
           backgroundColor: '#000000aa',
@@ -1137,6 +1254,9 @@ export abstract class BaseBiomeScene extends Phaser.Scene {
         .setOrigin(0.5, 0)
         .setScrollFactor(0)
         .setDepth(1000);
+      // #137 — the detection prompt is camera-pinned UI: parent it into uiRoot so
+      // it renders at 1:1 through uiCam, not the zoomed world camera.
+      this.uiRoot.add(this.npcPrompt);
     }
     this.npcPrompt.setText(text).setVisible(true);
   }
