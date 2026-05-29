@@ -209,7 +209,7 @@ declare global {
       spirit_current: number;
       spirit_max: number;
       food_units: number;
-      // XP-derived spirit: aggregate ring XP (spirit_max = SPIRIT_BASE + this).
+      // Aggregate XP across the player's Reliquary rings (server-computed).
       aggregate_xp: number;
       // #78 ④ — Thumb passive reminder. null when no Thumb ring is staked; a base
       // element yields { name, effect }; a fusion yields { name: null, effect: '…

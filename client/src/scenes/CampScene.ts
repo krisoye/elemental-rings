@@ -979,7 +979,11 @@ export class CampScene extends Phaser.Scene {
           return;
         }
       } else if (inBattleSlot) {
-        await this.putLoadout({ [inBattleSlot]: null });
+        const ok = await this.putLoadout({ [inBattleSlot]: null });
+        if (!ok) {
+          this.clearReliquarySelection();
+          return;
+        }
       }
       this.clearReliquarySelection();
       await this.loadData();
@@ -1849,5 +1853,15 @@ export class CampScene extends Phaser.Scene {
 
   private setStatus(msg: string): void {
     if (this.statusText) this.statusText.setText(msg);
+    // Mirror the message onto the live overlay echo label, if an overlay is open.
+    // The off-screen statusText is only snapshotted into 'overlay-status' at open
+    // time, so without this the user never sees errors raised after the overlay
+    // is already up (e.g. reliquaryMove failures).
+    if (this.overlay) {
+      const echo = this.overlay.getByName('overlay-status') as
+        | Phaser.GameObjects.Text
+        | null;
+      if (echo) echo.setText(msg);
+    }
   }
 }

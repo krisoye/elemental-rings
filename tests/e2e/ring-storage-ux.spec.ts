@@ -58,7 +58,7 @@ async function loadSanctum(page: Page): Promise<void> {
 }
 
 /** Walk to the ring-wall zone, open the RING STORAGE overlay, and wait for it. */
-async function openRingStorage(page: Page): Promise<void> {
+async function openReliquary(page: Page): Promise<void> {
   await page.evaluate(([x, y]) => (window as any).__player.setPosition(x, y), [RINGWALL.x, RINGWALL.y]);
   await page.waitForFunction(
     () => ((window as any).__sanctumZones ?? []).includes('ringwall'),
@@ -113,7 +113,7 @@ test('passive-strip: WATER Thumb shows full effect text (Thumb pays)', async ({ 
   await ctx.addInitScript(`localStorage.setItem('er_token', ${JSON.stringify(token)})`);
   const page = await ctx.newPage();
   await loadSanctum(page);
-  await openRingStorage(page);
+  await openReliquary(page);
 
   await page.waitForFunction(
     () => (window as any).__campState.staked_passive?.name === 'Wellspring',
@@ -147,7 +147,7 @@ test('reliquary-redesign: two-panel labels + live stats header are present', asy
   await ctx.addInitScript(`localStorage.setItem('er_token', ${JSON.stringify(token)})`);
   const page = await ctx.newPage();
   await loadSanctum(page);
-  await openRingStorage(page);
+  await openReliquary(page);
 
   const labels = await page.evaluate(() => {
     const scene = (window as any).__scene as Phaser.Scene;
@@ -189,7 +189,7 @@ test('scroll: overflowing sanctum grid clips at 3 rows and scrolls by row', asyn
   await page.waitForFunction(() => (window as any).__campState.atSanctum.length === 8, {
     timeout: 8000,
   });
-  await openRingStorage(page);
+  await openReliquary(page);
 
   await page.waitForFunction(() => (window as any).__campState.sanctumTotalRows === 4, {
     timeout: 5000,
@@ -247,7 +247,7 @@ test('reliquary-redesign: move a Reliquary ring into Spare carries it', async ({
   await page.waitForFunction(() => (window as any).__campState.loadout_pool.length === 0, {
     timeout: 8000,
   });
-  await openRingStorage(page);
+  await openReliquary(page);
   await page.waitForFunction(() => typeof (window as any).__reliquaryMove === 'function', {
     timeout: 5000,
   });
@@ -281,7 +281,7 @@ test('scroll: closing (Esc) and reopening resets scroll to row 0', async ({ brow
   await page.waitForFunction(() => (window as any).__campState.atSanctum.length === 8, {
     timeout: 8000,
   });
-  await openRingStorage(page);
+  await openReliquary(page);
   await page.waitForFunction(() => (window as any).__campState.sanctumTotalRows === 4, {
     timeout: 5000,
   });
@@ -294,7 +294,7 @@ test('scroll: closing (Esc) and reopening resets scroll to row 0', async ({ brow
   await page.keyboard.press('Escape');
   await page.waitForFunction(() => (window as any).__sanctumOverlayOpen === null, { timeout: 5000 });
 
-  await openRingStorage(page);
+  await openReliquary(page);
   await page.waitForFunction(() => (window as any).__campState.sanctumTotalRows === 4, {
     timeout: 5000,
   });
