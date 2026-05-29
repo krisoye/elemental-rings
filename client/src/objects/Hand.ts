@@ -90,6 +90,24 @@ export class Hand extends Phaser.GameObjects.Container {
   }
 
   /**
+   * #125 — brief recharge feedback pulse on a slot card. Non-blocking: a quick
+   * scale-up-and-settle tween on the slot's background. The authoritative use
+   * count still arrives via the normal state diff.
+   */
+  pulseSlot(key: SlotKey): void {
+    const slot = this.slots[key];
+    if (!slot) return;
+    this.scene.tweens.add({
+      targets: slot,
+      scaleX: 1.25,
+      scaleY: 1.25,
+      duration: 90,
+      yoyo: true,
+      ease: 'Quad.easeOut',
+    });
+  }
+
+  /**
    * Publish each slot's center in viewport (page) coordinates so an E2E harness
    * can tap the real screen location. Indexed thumb,a1,a2,d1,d2.
    */

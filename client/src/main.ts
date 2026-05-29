@@ -84,6 +84,9 @@ declare global {
     >;
     __slotPositions: { x: number; y: number }[];
     __orbLaunchCount: number;
+    // #125 — true while the BattleScene forfeit confirm prompt is open. E2E reads
+    // this to assert the Z+C (a1+a2) / 3+4 (d1+d2) chord raised the prompt.
+    __forfeitPromptOpen?: boolean;
     connectToRoom: (roomName: string, opts?: BattleRoomOptions) => Promise<void>;
     // Deterministic E2E hook: triggers the same code path as clicking an
     // EncounterScene marker. Set by EncounterScene.create(). 'PVP' starts the
