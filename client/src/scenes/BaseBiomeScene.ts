@@ -183,7 +183,10 @@ export abstract class BaseBiomeScene extends Phaser.Scene {
    */
   protected loadCommonAssets(): void {
     if (!this.textures.exists('forest-decoration')) {
-      this.load.image('forest-decoration', 'assets/sprites/forest-decoration.png');
+      this.load.spritesheet('forest-decoration', 'assets/sprites/forest-decoration.png', {
+        frameWidth: 32,
+        frameHeight: 32,
+      });
     }
     if (!this.textures.exists('structures')) {
       this.load.image('structures', 'assets/sprites/structures.png');
@@ -250,8 +253,8 @@ export abstract class BaseBiomeScene extends Phaser.Scene {
     // the solid one. window.__decorationCount lets E2E assert placement.
     this.decorationGroup = this.physics.add.staticGroup();
     const proofSpecs = [
-      { atlasKey: 'forest-decoration', x: 200, y: 200, solid: true, bodyInset: 8 },
-      { atlasKey: 'forest-decoration', x: 300, y: 200, solid: false },
+      { atlasKey: 'forest-decoration', frame: 0, x: 200, y: 200, solid: true, bodyInset: 8 },
+      { atlasKey: 'forest-decoration', frame: 8, x: 300, y: 200, solid: false },
     ];
     this.decorHandle = placeDecoration(this, this.decorationGroup, proofSpecs);
     this.physics.add.collider(this.player, this.decorationGroup);

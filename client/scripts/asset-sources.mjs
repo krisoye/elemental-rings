@@ -46,3 +46,6 @@ export const MONSTER_WOOD_OW =
   '/var/lib/elemental-rings/pixel_assets/source-art/Monsters/electro_ghost_14_overworld.png';
 export const CHARSET_A1 =
   '/var/lib/elemental-rings/pixel_assets/source-art/NPCs/charsetA_1.png';
+
+export const WILD_PLAINS_TILESET =
+  '/var/lib/elemental-rings/pixel_assets/source-art/WildPlains/wild_plains_pack.png';
