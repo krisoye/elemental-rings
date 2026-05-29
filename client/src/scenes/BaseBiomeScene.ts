@@ -229,6 +229,8 @@ export abstract class BaseBiomeScene extends Phaser.Scene {
   biomeVisuals?(): void;
   /** Optional per-screen decoration placement, called during create(). */
   onEnterScreen?(): void;
+  /** Accessor for the player sprite (for use in onEnterScreen overrides). */
+  protected getPlayer(): Player { return this.player; }
   /** NPC detection radius (px). Subclasses may shrink it (e.g. the foggy Swamp). */
   protected detectionRadius(): number {
     return DETECTION_RADIUS;

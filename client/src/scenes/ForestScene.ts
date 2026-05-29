@@ -130,6 +130,34 @@ export class ForestScene extends BaseBiomeScene {
   }
 
   /**
+   * The hub's west column (col 0) has gid 3 collision only at rows 0-1, 13, and
+   * 23-26. Rows 2-12 and 18-22 and 27-28 use walkable tiles — the perimeter is
+   * visually a wall but physically open. Add invisible static physics zones to
+   * close those gaps, leaving rows 14-17 (y 224-287) open for the west road exit.
+   *
+   * The zones are 28 px wide (x 0-27) so a blocked player stops at x ≈ 26, which
+   * is above the EDGE=24 px exit threshold and therefore does NOT trigger the
+   * west screen transition. Only the road gap (no zone) lets the player get close
+   * enough to trigger the exit.
+   */
+  onEnterScreen(): void {
+    if (this.screenId !== 'forest_anchorage') return;
+    const W = 28; // wider than EDGE=24 so blocked players don't trip the exit
+    const addWall = (yTop: number, yBottom: number): void => {
+      const h = yBottom - yTop;
+      const zone = this.add.zone(W / 2, yTop + h / 2, W, h);
+      this.physics.add.existing(zone, true);
+      this.physics.add.collider(this.getPlayer(), zone);
+    };
+    // Above the west road opening: rows 2-12 = y 32-207
+    addWall(32, 208);
+    // Below the west road opening: rows 18-22 = y 288-367 (rows 23-26 already gid 3)
+    addWall(288, 368);
+    // Bottom gap: rows 27-28 = y 432-463
+    addWall(432, 464);
+  }
+
+  /**
    * #137 — apply the 2× world zoom on the 16px proof screen (forest_anchorage)
    * after the base scene has built the world + dual-camera split. cameras.main is
    * the world camera (zoomed); uiCam (set up in BaseBiomeScene.create) stays at 1:1
