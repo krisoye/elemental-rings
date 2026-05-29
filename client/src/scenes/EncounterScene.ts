@@ -66,14 +66,18 @@ export class EncounterScene extends Phaser.Scene {
     aiSeed?: number;
   } | null = null;
 
+  private openBattleHandOnCreate = false;
+
   init(data?: {
     npcId?: string;
     personality?: AIPersonality;
     ambush?: boolean;
     aiSeed?: number;
+    openBattleHand?: boolean;
   }): void {
     this.busy = false;
     this.wonRingModal = null;
+    this.openBattleHandOnCreate = data?.openBattleHand === true;
     this.npcDuel =
       data?.personality !== undefined
         ? {
@@ -224,6 +228,13 @@ export class EncounterScene extends Phaser.Scene {
     // Post-battle won-ring prompt: if the just-finished duel granted a ring,
     // resolve it here before the player can pick another encounter (#40).
     if (localStorage.getItem('er_pending_ring')) void this.checkPendingWonRing();
+
+    // After returning from a battle, automatically open the battle-hand manager
+    // so the player can reassign slots before their next encounter (GDD §6.8).
+    if (this.openBattleHandOnCreate) {
+      this.openBattleHandOnCreate = false;
+      void this.openManageBattleHand();
+    }
   }
 
   /**

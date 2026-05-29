@@ -455,6 +455,13 @@ export abstract class BaseBiomeScene extends Phaser.Scene {
     void this.loadOverworldNpcs();
     // #128 — set initial forage node visual states from the server status endpoint.
     void this.loadForageNodeStatus();
+
+    // After returning from a battle, automatically open the battle-hand manager
+    // so the player can reassign slots before moving on (GDD §6.8).
+    const sceneData = this.scene.settings.data as { openBattleHand?: boolean } | undefined;
+    if (sceneData?.openBattleHand) {
+      this.openBattleHand();
+    }
   }
 
   update(): void {

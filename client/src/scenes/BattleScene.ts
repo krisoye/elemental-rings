@@ -125,18 +125,7 @@ export class BattleScene extends Phaser.Scene {
     const offExchange = room.onMessage('exchangeResult', (result: ExchangeResultPayload) => {
       window.__lastExchangeResult = result;
       this.recordRevealedElements(result, myId);
-      if (result.timing === 'PARRY') {
-        this.cameras.main.flash(200, 255, 255, 255, true);
-        const parryText = this.add.text(512, 200, 'PARRY!', {
-          fontSize: '36px', color: '#ffffff', fontStyle: 'bold',
-          stroke: '#000000', strokeThickness: 4,
-        }).setOrigin(0.5).setDepth(1100);
-        this.tweens.add({
-          targets: parryText, alpha: 0, y: 160,
-          duration: 800, ease: 'Power2',
-          onComplete: () => parryText.destroy(),
-        });
-      }
+      this.showExchangeOutcome(result);
     });
 
     // NOTE: the server's `wonRing` message (post-battle ring grant, #40) is
@@ -182,6 +171,60 @@ export class BattleScene extends Phaser.Scene {
       d2: this.hand.displayedUses('d2'),
       hearts: this.playerDuelist.displayedHearts,
     };
+  }
+
+  /**
+   * Show a brief outcome label after each exchange (GDD §6.4).
+   *
+   * Two independent axes — timing (PARRY/BLOCK/MISTIME/NO_BLOCK) and element
+   * relationship (STRONG/NEUTRAL/WEAK) — combine into five distinct outcomes:
+   *
+   *   PERFECT + STRONG  → COUNTER!   (gold)   — rally triggered
+   *   PERFECT + NEUTRAL → PERFECT!   (cyan)   — tight window, no rally
+   *   PERFECT + WEAK    → ABSORBED   (red)    — pressed but heart lost
+   *   GOOD    + STRONG or NEUTRAL → BLOCKED!  (green) — safe catch
+   *   GOOD    + WEAK    → ABSORBED   (red)    — caught but heart lost
+   *   MISSED  (any)     → MISS       (grey)   — no successful catch
+   *
+   * "PERFECT" = PARRY timing band; "GOOD" = BLOCK timing band;
+   * "MISSED"  = MISTIME or NO_BLOCK.
+   */
+  private showExchangeOutcome(result: ExchangeResultPayload): void {
+    type Outcome = { label: string; color: string; size: string; flash?: [number, number, number] };
+    let outcome: Outcome | null = null;
+
+    const { timing, relationship, rallyContinues, defenderHeartLost } = result;
+    const missed = timing === 'MISTIME' || timing === 'NO_BLOCK';
+
+    if (missed) {
+      outcome = { label: 'MISS', color: '#888888', size: '26px' };
+    } else if (rallyContinues) {
+      // PERFECT + STRONG
+      outcome = { label: 'COUNTER!', color: '#ffdd00', size: '42px', flash: [255, 200, 50] };
+    } else if (timing === 'PARRY' && !defenderHeartLost) {
+      // PERFECT + NEUTRAL
+      outcome = { label: 'PERFECT!', color: '#44eeff', size: '32px', flash: [100, 220, 255] };
+    } else if (defenderHeartLost) {
+      // PERFECT or GOOD + WEAK
+      outcome = { label: 'ABSORBED', color: '#ff4444', size: '28px' };
+    } else {
+      // GOOD + STRONG or NEUTRAL (relationship doesn't change the outcome mechanically)
+      outcome = { label: 'BLOCKED!', color: '#88ff88', size: '28px' };
+    }
+
+    if (!outcome) return;
+    if (outcome.flash) {
+      this.cameras.main.flash(220, ...outcome.flash as [number, number, number], true);
+    }
+    const t = this.add.text(512, 205, outcome.label, {
+      fontSize: outcome.size, color: outcome.color, fontStyle: 'bold',
+      stroke: '#000000', strokeThickness: 4,
+    }).setOrigin(0.5).setDepth(1100);
+    this.tweens.add({
+      targets: t, alpha: 0, y: 165,
+      duration: 750, ease: 'Power2',
+      onComplete: () => t.destroy(),
+    });
   }
 
   /** Track which opponent elements have become visible this duel. */
@@ -392,12 +435,12 @@ export class BattleScene extends Phaser.Scene {
       if (toBiome) {
         // The biome scene reads __duelOrigin in its create() to restore the player
         // position, then clears it. Don't clear it here.
-        this.scene.start(toBiome);
+        this.scene.start(toBiome, { openBattleHand: true });
       } else {
         // Hub return — clear any stray origin and pass explicit empty data so
         // EncounterScene.init sees undefined personality → npcDuel=null → hub.
         window.__duelOrigin = null;
-        this.scene.start('EncounterScene', {});
+        this.scene.start('EncounterScene', { openBattleHand: true });
       }
     });
   }
