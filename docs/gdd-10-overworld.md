@@ -116,10 +116,10 @@ The protagonist does not travel with a caravan or horse. They travel with their 
 - **Entry vestibule:** food storage, equipment, day-to-day supplies
 - **Central chamber:** the meditation circle — a permanent inlaid pattern on the floor that focuses spiritual energy; this is where all teleportation is initiated and where rings are recharged through focused meditation
 - **Sleeping area:** rest and restoration
-- **Ring storage:** inventory displayed along the walls — rings that are not in the carry loadout are stored here, their XP still accumulating passively through the sanctum's ambient energy
+- **The Reliquary:** rings displayed along the walls — all rings not in the carry loadout rest here. Rings in the Reliquary do not earn XP; XP accrues only through battle use (see §4.4). Their uses recharge passively on the game day timer.
 
 **The Sanctum as spiritual extension:**
-The Sanctum is not an inert container. It is spiritually bonded to the protagonist's ring collection — the aggregate XP of all stored rings contributes to the protagonist's spirit gauge maximum even when those rings are not carried. The protagonist and their Sanctum are one entity: the Sanctum is where their power lives when they are not channeling it.
+The Sanctum is not an inert container. It is spiritually bonded to the protagonist's ring collection. The sum of XP across all Reliquary rings is the protagonist's `aggregate_xp`; `spirit_max` is derived from `aggregate_xp`. Carried rings are excluded — `spirit_max` grows only as the protagonist retires experienced rings to the Reliquary and develops new ones to carry. The protagonist and their Sanctum are one entity: the Reliquary is where their earned power lives between expeditions.
 
 **Anchoring the Sanctum:**
 - When the protagonist teleports to an Anchorage, the Sanctum materializes within it
@@ -131,7 +131,7 @@ The Sanctum is not an inert container. It is spiritually bonded to the protagoni
 
 | Zone | How to activate |
 |------|----------------|
-| Ring-storage wall, meditation circle, bed, campfire | Walk into zone → **Press E** |
+| Reliquary wall, meditation circle, bed, campfire | Walk into zone → **Press E** |
 | Exit door | **Walk into the door** — no key press needed; transition fires automatically after a brief moment |
 
 The exit door uses touch-to-exit so leaving feels natural (protagonist walks out rather than pressing a button). All other zones retain press-E to avoid accidental triggers while passing through.
