@@ -16,6 +16,10 @@ export enum ElementEnum {
   THORNADO = 12, // Wood + Wind
   BLOOM = 13, // Wood + Earth   (GDD "Nature/Bloom")
   DUST = 14, // Wind + Earth
+  // Shadow (§3.5) sits OUTSIDE the pentagon: a rare overworld drop, not craftable
+  // from base rings. Indexed after DUST so no existing element index shifts. Its
+  // 5 dark-variant fusions (Eclipse/Void/Abyss/Wraith/Plague) are deferred.
+  SHADOW = 15,
 }
 
 /** Every named loadout slot on the dominant hand (GDD §6.1). */

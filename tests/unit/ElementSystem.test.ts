@@ -9,7 +9,60 @@ import {
 } from '../../server/src/game/ElementSystem';
 import { ElementEnum } from '../../shared/types';
 
-const { FIRE, WATER, EARTH, WIND, WOOD } = ElementEnum;
+const { FIRE, WATER, EARTH, WIND, WOOD, SHADOW } = ElementEnum;
+
+// #133 — Shadow element core (GDD §3.5). Shadow sits outside the triangle: it
+// beats Wood, loses to Fire, and is neutral vs everything else (incl. mirror).
+describe('Shadow matchups (§3.5)', () => {
+  test('SHADOW enum is 15; no existing index shifted', () => {
+    expect(SHADOW).toBe(15);
+    expect(FIRE).toBe(0);
+    expect(WOOD).toBe(4);
+    expect(ElementEnum.DUST).toBe(14);
+  });
+
+  test('isFusion(SHADOW) is false (Shadow is a base element)', () => {
+    expect(isFusion(SHADOW)).toBe(false);
+  });
+
+  test('componentsOf(SHADOW) → [SHADOW] (base, no fusion parents)', () => {
+    expect(componentsOf(SHADOW)).toEqual([SHADOW]);
+  });
+
+  // defense-role: resolve(attackEl, defenderEl, 'defense') = the DEFENDER's standing.
+  test('Shadow attack vs Wood defense → defender WEAK (Shadow beats Wood)', () => {
+    expect(resolve(SHADOW, WOOD, 'defense')).toBe('WEAK');
+  });
+  test('Shadow attack vs Fire defense → defender STRONG (Fire dispels Shadow)', () => {
+    expect(resolve(SHADOW, FIRE, 'defense')).toBe('STRONG');
+  });
+  test('Fire attack vs Shadow defense → Shadow defense WEAK', () => {
+    expect(resolve(FIRE, SHADOW, 'defense')).toBe('WEAK');
+  });
+  test('Wood attack vs Shadow defense → Shadow defense STRONG (rally-capable)', () => {
+    expect(resolve(WOOD, SHADOW, 'defense')).toBe('STRONG');
+  });
+
+  test('Shadow vs Water / Wind / Earth → NEUTRAL both directions', () => {
+    for (const other of [WATER, WIND, EARTH]) {
+      expect(resolve(SHADOW, other, 'defense')).toBe('NEUTRAL');
+      expect(resolve(other, SHADOW, 'defense')).toBe('NEUTRAL');
+      expect(resolve(SHADOW, other, 'attack')).toBe('NEUTRAL');
+      expect(resolve(other, SHADOW, 'attack')).toBe('NEUTRAL');
+    }
+  });
+
+  test('Shadow vs Shadow → NEUTRAL (mirror)', () => {
+    expect(resolve(SHADOW, SHADOW, 'defense')).toBe('NEUTRAL');
+    expect(resolve(SHADOW, SHADOW, 'attack')).toBe('NEUTRAL');
+  });
+
+  // attack-role mirrors: the attacker's standing.
+  test('attack-role: Shadow vs Wood → attacker STRONG; Shadow vs Fire → attacker WEAK', () => {
+    expect(resolve(SHADOW, WOOD, 'attack')).toBe('STRONG');
+    expect(resolve(SHADOW, FIRE, 'attack')).toBe('WEAK');
+  });
+});
 const {
   STEAM,
   WILDFIRE,
