@@ -579,22 +579,18 @@ apiRouter.get('/api/overworld/npcs', requireAuth, (req: Request, res: Response):
     return player.game_day - defeatedDay >= npc.respawnDays;
   });
 
-  // Element is derived from a STABLE per-id RNG seed so the same NPC always shows
-  // the same staked element across requests (the seed never depends on time).
-  // The aiSeed (= hashNpcId) is also returned so the EncounterScene can pass it
-  // to the battle-ai room — BattleRoom seeds its loadout RNG as
-  // makeRng(aiSeed ^ 0x1a2b3c4d), so we apply the identical XOR here. Without
-  // this the room re-randomized the element and it diverged from the overworld
-  // marker (#111).
+  // Element is now fixed in the spawn table (npc.element) — no longer derived from
+  // the personality RNG. aiSeed is still returned for BattleRoom loadout seeding.
   const npcs = visible.map((npc) => {
     const aiSeed = hashNpcId(npc.id);
-    const { element } = previewOpponent(npc.personality, makeRng(aiSeed ^ 0x1a2b3c4d));
     return {
       id: npc.id,
       personality: npc.personality,
+      type: npc.type,
+      element: npc.element,
+      spriteFrame: npc.spriteFrame,
       x: npc.tx * TILE_SIZE + TILE_SIZE / 2,
       y: npc.ty * TILE_SIZE + TILE_SIZE / 2,
-      element,
       aiSeed,
     };
   });

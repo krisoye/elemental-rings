@@ -16,7 +16,6 @@ import {
   ANCHORAGE_GROUND_RADIUS,
   DETECTION_RADIUS,
   DOUBLE_CLICK_MS,
-  ELEMENT_COLORS,
   ELEMENT_NAMES,
 } from '../Constants';
 
@@ -24,9 +23,12 @@ import {
 interface NpcInfo {
   id: string;
   personality: string;
+  type: 'monster' | 'duelist';
+  element: number;
+  /** Direct frame index into the npc-overworld spritesheet (0–11). */
+  spriteFrame: number;
   x: number;
   y: number;
-  element: number;
   /** Stable loadout seed (= hashNpcId) so the battle-ai room reproduces the
    * same staked element shown on the overworld marker (#111). */
   aiSeed?: number;
@@ -188,6 +190,12 @@ export abstract class BaseBiomeScene extends Phaser.Scene {
     }
     if (!this.textures.exists('sanctum-exterior')) {
       this.load.image('sanctum-exterior', 'assets/sprites/sanctum-exterior.png');
+    }
+    if (!this.textures.exists('npc-overworld')) {
+      this.load.spritesheet('npc-overworld', 'assets/sprites/npc-overworld.png', {
+        frameWidth: 32,
+        frameHeight: 32,
+      });
     }
   }
 
@@ -945,25 +953,17 @@ export abstract class BaseBiomeScene extends Phaser.Scene {
     window.__overworldNpcs = this.overworldNpcs;
   }
 
-  /** Render an ellipse + label for each NPC in the roster (depth 6). */
+  /** Render each NPC as a sprite from the npc-overworld atlas (depth 6). */
   private renderNpcs(): void {
     this.npcGraphics.forEach((g) => g.destroy());
     this.npcGraphics = [];
     for (const npc of this.overworldNpcs) {
-      const color = ELEMENT_COLORS[npc.element] ?? 0x888888;
-      const body = this.add
-        .ellipse(npc.x, npc.y, 28, 40, color)
+      const sprite = this.add
+        .image(npc.x, npc.y, 'npc-overworld', npc.spriteFrame)
         .setDepth(6)
         .setInteractive({ useHandCursor: true })
         .on('pointerdown', () => this.onNpcClick(npc));
-      const label = this.add
-        .text(npc.x, npc.y - 28, ELEMENT_NAMES[npc.element] ?? '?', {
-          fontSize: '10px',
-          color: '#ffffff',
-        })
-        .setOrigin(0.5)
-        .setDepth(6);
-      this.npcGraphics.push(body, label);
+      this.npcGraphics.push(sprite);
     }
   }
 
