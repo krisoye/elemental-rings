@@ -10,6 +10,8 @@ import {
   TIER1_XP_CAP,
   TIER2_XP_CAP,
   TIER2_MAX_USES,
+  FORAGE_YIELD,
+  FORAGE_RESPAWN_DAYS,
 } from '../game/constants';
 
 /** A persisted player row (no password hash exposed to callers of read helpers). */
@@ -976,3 +978,81 @@ export function getDefeatedNpcs(playerId: string): Map<string, number> {
   }>;
   return new Map(rows.map((r) => [r.npc_id, r.defeated_at_day]));
 }
+
+// ---------------------------------------------------------------------------
+// #127 — Foraging system (GDD §10.10)
+// ---------------------------------------------------------------------------
+
+/** A forage-node depletion row (per player). */
+export interface ForageNodeRow {
+  node_id: string;
+  player_id: string;
+  depleted_day: number;
+}
+
+const selectForageNode = db.prepare(
+  `SELECT node_id, player_id, depleted_day FROM forage_nodes WHERE node_id = ? AND player_id = ?`,
+);
+const upsertForageNode = db.prepare(
+  `INSERT INTO forage_nodes (node_id, player_id, depleted_day)
+   VALUES (?, ?, ?)
+   ON CONFLICT(node_id, player_id) DO UPDATE SET depleted_day = excluded.depleted_day`,
+);
+const selectForageNodesByPlayerBiomeScreen = db.prepare(
+  `SELECT node_id, depleted_day FROM forage_nodes WHERE player_id = ? AND node_id LIKE ?`,
+);
+
+/**
+ * Try to forage a node for a player. Returns `{ ok: true, food_units, yielded }`
+ * when the node is available (fresh or respawned), or `{ ok: false, reason }` when
+ * it is still within the respawn window (caller sends 409). Per-player: two
+ * players can forage the same node on the same day. Runs in a transaction so the
+ * food increment and depletion record are atomic.
+ */
+export const forage = db.transaction(
+  (
+    playerId: string,
+    nodeId: string,
+  ): { ok: true; food_units: number; yielded: number } | { ok: false; reason: string } => {
+    const player = getPlayerById(playerId);
+    if (!player) return { ok: false, reason: 'Player not found' };
+
+    const row = selectForageNode.get(nodeId, playerId) as ForageNodeRow | undefined;
+    if (row !== undefined && player.game_day - row.depleted_day < FORAGE_RESPAWN_DAYS) {
+      return { ok: false, reason: 'Node depleted' };
+    }
+
+    // Credit food and record depletion in a single transaction.
+    updateFoodAdd.run(FORAGE_YIELD, playerId);
+    upsertForageNode.run(nodeId, playerId, player.game_day);
+
+    const updated = getPlayerById(playerId)!;
+    return { ok: true, food_units: updated.food_units, yielded: FORAGE_YIELD };
+  },
+);
+
+/**
+ * Return all forage node ids matching a biome+screen prefix, each annotated with
+ * whether the node is currently depleted for the requesting player. The client uses
+ * this on scene load to initialise sprite visual states without a forage attempt.
+ *
+ * Node ids follow the convention `{screen_id}:{tag}_{n}` — the screen-level
+ * prefix is used as a LIKE pattern here (`{screen_id}:%`).
+ */
+export function getForageStatus(
+  playerId: string,
+  screenId: string,
+): Array<{ node_id: string; depleted: boolean }> {
+  const player = getPlayerById(playerId);
+  const currentDay = player?.game_day ?? 0;
+  const pattern = `${screenId}:%`;
+  const rows = selectForageNodesByPlayerBiomeScreen.all(playerId, pattern) as Array<{
+    node_id: string;
+    depleted_day: number;
+  }>;
+  return rows.map((r) => ({
+    node_id: r.node_id,
+    depleted: currentDay - r.depleted_day < FORAGE_RESPAWN_DAYS,
+  }));
+}
+

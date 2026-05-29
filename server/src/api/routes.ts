@@ -34,6 +34,8 @@ import {
   spendTalismanCharge,
   rechargeNecklace,
   getDefeatedNpcs,
+  forage,
+  getForageStatus,
 } from '../persistence/PlayerRepo';
 import { NPC_SPAWNS, hashNpcId } from '../persistence/NpcSpawns';
 import { FOOD_PER_SLEEP } from '../game/constants';
@@ -596,6 +598,52 @@ apiRouter.get('/api/overworld/npcs', requireAuth, (req: Request, res: Response):
   });
 
   res.status(200).json(npcs);
+});
+
+// ───────────────────────────────────────────────────────────────────────────
+// #127 — Foraging endpoints (GDD §10.10)
+// ───────────────────────────────────────────────────────────────────────────
+
+/**
+ * POST /api/overworld/forage — harvest a berry node. Body: { node_id: string }.
+ * Per-player depletion: two players can forage the same node on the same day.
+ * 409 when the node is within its respawn window for this player. Requires auth.
+ */
+apiRouter.post('/api/overworld/forage', requireAuth, (req: Request, res: Response): void => {
+  const playerId = req.playerId as string;
+  const { node_id } = req.body ?? {};
+  if (typeof node_id !== 'string' || !node_id) {
+    res.status(400).json({ error: 'node_id is required' });
+    return;
+  }
+  const result = forage(playerId, node_id);
+  if (!result.ok) {
+    // Distinguish "depleted" (409) from other errors (400).
+    if (result.reason === 'Node depleted') {
+      res.status(409).json({ error: result.reason });
+    } else {
+      res.status(400).json({ error: result.reason });
+    }
+    return;
+  }
+  res.status(200).json({ food_units: result.food_units, yielded: result.yielded });
+});
+
+/**
+ * GET /api/overworld/forage-status?screen=<screenId> — returns the depletion
+ * state of every node the player has ever foraged on the given screen. Nodes that
+ * have never been foraged are not returned (they are implicitly available). Client
+ * uses this on scene load to set initial sprite visuals. Requires auth.
+ */
+apiRouter.get('/api/overworld/forage-status', requireAuth, (req: Request, res: Response): void => {
+  const playerId = req.playerId as string;
+  const screen = typeof req.query.screen === 'string' ? req.query.screen : undefined;
+  if (!screen) {
+    res.status(400).json({ error: 'screen query parameter is required' });
+    return;
+  }
+  const nodes = getForageStatus(playerId, screen);
+  res.status(200).json({ nodes });
 });
 
 // ───────────────────────────────────────────────────────────────────────────
