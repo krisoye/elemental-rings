@@ -23,7 +23,7 @@ const API_URL = 'http://localhost:2568';
 const ZONE_CENTER: Record<string, { x: number; y: number }> = {
   bed:        { x: 192, y: 96 },
   meditation: { x: 88,  y: 88 },
-  ringwall:   { x: 128, y: 37 },
+  ringwall:   { x: 128, y: 56 },
   campfire:   { x: 57,  y: 37 },
 };
 
