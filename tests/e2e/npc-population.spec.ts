@@ -18,7 +18,7 @@ const URL = 'http://localhost:8090';
 const API_URL = 'http://localhost:2568';
 
 /** Sanctum door zone center (client/public/assets/maps/sanctum.json). */
-const SANCTUM_DOOR = { x: 1088, y: 608 };
+const SANCTUM_DOOR = { x: 87, y: 152 };
 /** Forest NPC world centers (tx*32+16, ty*32+16 from NpcSpawns). */
 const FOREST_NPC_1 = { id: 'forest_npc_1', x: 15 * 32 + 16, y: 12 * 32 + 16 }; // 496, 400
 const FOREST_NPC_3 = { id: 'forest_npc_3', x: 8 * 32 + 16, y: 22 * 32 + 16 }; // 272, 720

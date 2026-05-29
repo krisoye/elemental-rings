@@ -22,9 +22,9 @@ const URL = 'http://localhost:8090';
 const API_URL = 'http://localhost:2568';
 
 /** Sanctum meditation-circle zone center (client/public/assets/maps/sanctum.json). */
-const MEDITATION = { x: 992, y: 160 };
+const MEDITATION = { x: 88, y: 88 };
 /** Sanctum door zone center (client/public/assets/maps/sanctum.json). */
-const SANCTUM_DOOR = { x: 1088, y: 608 };
+const SANCTUM_DOOR = { x: 87, y: 152 };
 
 async function loadSanctum(page: Page): Promise<void> {
   await page.goto(URL);

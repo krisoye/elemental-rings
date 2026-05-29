@@ -1,5 +1,22 @@
+import Phaser from 'phaser';
 import { BaseBiomeScene } from './BaseBiomeScene';
 import { FOREST_SCREENS } from '../../../shared/world/forest';
+
+/**
+ * The Forest hub (`forest_anchorage`) composes several tilesets and a second
+ * `above-ground` layer (structures + foliage over the terrain). Each entry is
+ * [map-tileset-name, image path]; the texture key MUST equal the tileset's name in
+ * the map so buildTilesets() can resolve gids by name. `charsetA_1` (the map's npcs
+ * layer) is intentionally omitted — merchant NPCs are spawned as interactive charset
+ * sprites from the objects layer, so the static npcs layer is not rendered.
+ */
+const FOREST_HUB_TILESETS: ReadonlyArray<readonly [string, string]> = [
+  ['forest16', 'assets/tiles/forest16.png'],
+  ['Fantasy Era- Wild plains pack', 'assets/tiles/regions/woods/Fantasy Era- Wild plains pack.png'],
+  ['ModernEra_GreenForest_Tileset', 'assets/tiles/regions/woods/ModernEra_GreenForest_Tileset.png'],
+  ['asset_alliance_starter_village_main', 'assets/tiles/regions/woods/asset_alliance_starter_village_main.png'],
+  ['berry_and_trees', 'assets/tiles/regions/woods/berry_and_trees.png'],
+];
 
 /**
  * The Forest region (GDD §10.15/§10.17, Phase 8E.1). A BaseBiomeScene subclass that
@@ -24,9 +41,9 @@ export class ForestScene extends BaseBiomeScene {
   }
 
   tilesetKey(): string {
-    // #137 — forest_anchorage is the 16px proof screen (forest16 tileset, 2× zoom);
-    // every other screen stays on the 32px `forest` tileset at 1× until the full
-    // 16px migration.
+    // forest_anchorage is the hand-authored 16px Forest hub (multi-tileset; see
+    // buildTilesets). 'forest16' is its primary/ground tileset. Every other screen
+    // stays on the 32px `forest` tileset at 1× until the full 16px migration.
     return this.screenId === 'forest_anchorage' ? 'forest16' : 'forest';
   }
 
@@ -34,11 +51,61 @@ export class ForestScene extends BaseBiomeScene {
     return 'forest_' + id;
   }
 
+  /**
+   * The Forest hub registers all of its tilesets (each preloaded under a key equal
+   * to its name in the map); every other screen uses the single-tileset default.
+   * Tilesets whose texture is absent (e.g. the npcs `charsetA_1` sheet, not loaded
+   * as a tile image) are skipped — no rendered layer references them.
+   */
+  protected buildTilesets(map: Phaser.Tilemaps.Tilemap): Phaser.Tilemaps.Tileset[] {
+    if (this.screenId !== 'forest_anchorage') return super.buildTilesets(map);
+    return map.tilesets
+      .filter((t) => this.textures.exists(t.name))
+      .map((t) => map.addTilesetImage(t.name, t.name))
+      .filter((t): t is Phaser.Tilemaps.Tileset => t !== null);
+  }
+
+  /**
+   * The Forest hub uses three tile layers:
+   *   ground    — terrain base (grass, water, paths)
+   *   behind    — building south walls + tree trunks: renders below the player
+   *   in-front  — roofs + tree canopy: renders above the player
+   */
+  protected tileLayerNames(): string[] {
+    return this.screenId === 'forest_anchorage'
+      ? ['ground', 'behind', 'in-front']
+      : super.tileLayerNames();
+  }
+
+  /**
+   * `behind` uses 'non-empty' so walls and trunks physically block movement.
+   * `in-front` uses the default 'property' mode — none of the roof/canopy tiles
+   *  carry a `collides` property, so they produce zero collision (player walks under).
+   */
+  protected tileLayerCollisionMode(layerName: string): 'property' | 'non-empty' {
+    if (this.screenId === 'forest_anchorage' && layerName === 'behind') return 'non-empty';
+    return super.tileLayerCollisionMode(layerName);
+  }
+
+  /**
+   * Depth order:
+   *   ground   = 0  (terrain)
+   *   player   = 3  (set in BaseBiomeScene.create)
+   *   behind   = 2  (south walls render just below the player)
+   *   in-front = 5  (roofs + canopy render above the player; NPCs at 6)
+   */
+  protected tileLayerDepth(layerName: string): number {
+    if (this.screenId !== 'forest_anchorage') return super.tileLayerDepth(layerName);
+    if (layerName === 'behind') return 2;
+    if (layerName === 'in-front') return 5;
+    return 0; // ground
+  }
+
   preload(): void {
-    // #137 — load the 16px tileset only for the anchorage proof screen.
     if (this.screenId === 'forest_anchorage') {
-      if (!this.textures.exists('forest16')) {
-        this.load.image('forest16', 'assets/tiles/forest16.png');
+      // The hub composes several tilesets; load each under a key equal to its map name.
+      for (const [key, path] of FOREST_HUB_TILESETS) {
+        if (!this.textures.exists(key)) this.load.image(key, path);
       }
     } else if (!this.textures.exists('forest')) {
       this.load.image('forest', 'assets/tiles/forest.png');

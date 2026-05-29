@@ -1,9 +1,19 @@
 import Phaser from 'phaser';
+import {
+  CHARSET_KEY,
+  CHARSET_FRAME_W,
+  CHARSET_FRAME_H,
+  CHARSET_IDLE_COL,
+  charsetFrame,
+  preloadCharset,
+  type Facing,
+} from './charset';
 
-/** Texture key for the generated placeholder player body. */
-const PLAYER_TEXTURE = 'player-body';
-const BODY_SIZE = 24;
-const PLAYER_COLOR = 0xffcc44;
+/** Which of the 8 charset characters is the player (0 = top-left, red-haired). */
+const PLAYER_CHAR = 0;
+/** Walk-cycle playback rate (frames/sec). */
+const WALK_FPS = 8;
+
 /** Top-down walk speed in px/s (GDD §10 overworld traversal — feel, not a rule). */
 export const PLAYER_SPEED = 160;
 
@@ -20,42 +30,68 @@ interface WasdKeys {
 /**
  * Top-down player avatar for the spatial Sanctum / Overworld scenes.
  *
- * Wraps an Arcade-physics sprite using a generated colored-rectangle texture as
- * a placeholder body (swap for real art later by loading a real texture and
- * passing its key to the constructor). The sprite is the source of truth for
+ * An Arcade-physics sprite driven by the shared RPG-Maker character sheet
+ * ({@link ./charset}): a 3-frame walk cycle in each of the four facing directions,
+ * with the middle column as the idle pose. The sprite is the source of truth for
  * position; `body.x/y` and world-bounds collision are handled by Arcade Physics.
  *
- * Purely a presentation/input object — no game logic. Every camp action still
- * round-trips to the authoritative server via the owning scene.
+ * Purely a presentation/input object — no game logic. Every camp/overworld action
+ * still round-trips to the authoritative server via the owning scene.
  */
 export class Player extends Phaser.Physics.Arcade.Sprite {
+  /** Current facing; persists when idle so the avatar faces its last heading. */
+  private facing: Facing = 'down';
+
   constructor(scene: Phaser.Scene, x: number, y: number) {
-    Player.ensureTexture(scene);
-    super(scene, x, y, PLAYER_TEXTURE);
+    Player.ensureAnims(scene);
+    super(scene, x, y, CHARSET_KEY, charsetFrame(PLAYER_CHAR, 'down', CHARSET_IDLE_COL));
     scene.add.existing(this);
     scene.physics.add.existing(this);
     this.setCollideWorldBounds(true);
-    // Shrink the body slightly so the avatar can slip into 2-tile-wide gaps.
-    this.body!.setSize(BODY_SIZE - 4, BODY_SIZE - 4, true);
+    // The art is 16×32 (head + body). Collide on a small box around the feet so the
+    // avatar can slip through tile-width gaps and overlaps read from where it stands.
+    this.body!.setSize(12, 12);
+    this.body!.setOffset((CHARSET_FRAME_W - 12) / 2, CHARSET_FRAME_H - 14);
   }
 
   /**
-   * Generate the placeholder body texture once per scene texture cache. A solid
-   * rounded square with a darker outline so the avatar reads against the floor.
+   * Load the player spritesheet. Called from each owning scene's preload() so the
+   * texture is present before any Player is constructed. Idempotent across scenes.
    */
-  private static ensureTexture(scene: Phaser.Scene): void {
-    if (scene.textures.exists(PLAYER_TEXTURE)) return;
-    const g = scene.make.graphics({ x: 0, y: 0 }, false);
-    g.fillStyle(0x222222, 1).fillRect(0, 0, BODY_SIZE, BODY_SIZE);
-    g.fillStyle(PLAYER_COLOR, 1).fillRect(2, 2, BODY_SIZE - 4, BODY_SIZE - 4);
-    g.generateTexture(PLAYER_TEXTURE, BODY_SIZE, BODY_SIZE);
-    g.destroy();
+  static preload(scene: Phaser.Scene): void {
+    preloadCharset(scene);
   }
 
   /**
-   * Drive velocity from the current keyboard state. Supports arrow keys and WASD
-   * simultaneously; diagonal movement is normalized so it isn't faster than
-   * axis-aligned movement (8-directional).
+   * Register the four directional walk animations once on the game-level anim
+   * manager (shared across scenes). The cycle steps left-foot → idle → right-foot
+   * → idle so a stationary frame bookends each stride.
+   */
+  private static ensureAnims(scene: Phaser.Scene): void {
+    for (const dir of ['down', 'left', 'right', 'up'] as Facing[]) {
+      const key = `player-walk-${dir}`;
+      if (scene.anims.exists(key)) continue;
+      const cols = [0, 1, 2, 1];
+      scene.anims.create({
+        key,
+        frames: cols.map((col) => ({ key: CHARSET_KEY, frame: charsetFrame(PLAYER_CHAR, dir, col) })),
+        frameRate: WALK_FPS,
+        repeat: -1,
+      });
+    }
+  }
+
+  /** The idle (standing) frame for the current facing. */
+  private idleFrame(): number {
+    return charsetFrame(PLAYER_CHAR, this.facing, CHARSET_IDLE_COL);
+  }
+
+  /**
+   * Drive velocity from the current keyboard state and animate accordingly.
+   * Supports arrow keys and WASD simultaneously; diagonal movement is normalized
+   * so it isn't faster than axis-aligned movement (8-directional). The facing for
+   * animation favors the dominant axis (horizontal on a tie), and the avatar holds
+   * its last-faced idle pose when stationary.
    *
    * @param cursors arrow-key set from `createCursorKeys()`
    * @param wasd WASD key set from `addKeys('W,A,S,D')`
@@ -76,13 +112,19 @@ export class Player extends Phaser.Physics.Arcade.Sprite {
     if (vx !== 0 || vy !== 0) {
       const len = Math.hypot(vx, vy);
       this.setVelocity((vx / len) * PLAYER_SPEED, (vy / len) * PLAYER_SPEED);
+      this.facing = Math.abs(vx) >= Math.abs(vy) ? (vx < 0 ? 'left' : 'right') : vy < 0 ? 'up' : 'down';
+      this.anims.play(`player-walk-${this.facing}`, true);
     } else {
       this.setVelocity(0, 0);
+      this.anims.stop();
+      this.setFrame(this.idleFrame());
     }
   }
 
-  /** Zero velocity — used while a modal overlay suppresses movement. */
+  /** Zero velocity and hold the idle pose — used while a modal overlay suppresses movement. */
   halt(): void {
     this.setVelocity(0, 0);
+    this.anims.stop();
+    this.setFrame(this.idleFrame());
   }
 }

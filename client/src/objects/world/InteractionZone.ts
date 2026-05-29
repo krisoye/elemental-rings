@@ -22,18 +22,23 @@ export class InteractionZone {
   readonly centerY: number;
 
   private readonly zone: Phaser.GameObjects.Zone;
-  private readonly prompt: Phaser.GameObjects.Text;
+  /** Floating prompt above the zone, or null for zones that fire on touch. */
+  private readonly prompt: Phaser.GameObjects.Text | null;
   private active = false;
 
   /**
    * @param scene owning spatial scene
    * @param obj a Tiled rectangle object (x/y are top-left, in pixels)
-   * @param onInteract fired on E / interact while this zone is active
+   * @param onInteract fired on E / interact (or on touch) while this zone is active
+   * @param promptText label for the floating prompt, or `null` to suppress it —
+   *   used by zones that fire automatically on overlap (the exit door), where a
+   *   "Press E" hint would be misleading because no keypress is required.
    */
   constructor(
     scene: Phaser.Scene,
     obj: Phaser.Types.Tilemaps.TiledObject,
     onInteract: () => void,
+    promptText: string | null = 'Press E',
   ) {
     this.name = obj.name ?? 'zone';
     this.onInteract = onInteract;
@@ -52,17 +57,21 @@ export class InteractionZone {
     this.zone = scene.add.zone(this.centerX, this.centerY, w, h);
     scene.physics.add.existing(this.zone, true);
 
-    // Floating "Press E" prompt above the zone, hidden until active.
-    this.prompt = scene.add
-      .text(this.centerX, y - 14, 'Press E', {
-        fontSize: '13px',
-        color: '#ffffaa',
-        backgroundColor: '#000000aa',
-        padding: { x: 6, y: 3 },
-      })
-      .setOrigin(0.5, 1)
-      .setDepth(1000)
-      .setVisible(false);
+    // Floating prompt above the zone, hidden until active. Suppressed entirely
+    // (null) for touch-fired zones so no stale hint flashes on contact.
+    this.prompt =
+      promptText === null
+        ? null
+        : scene.add
+            .text(this.centerX, y - 14, promptText, {
+              fontSize: '13px',
+              color: '#ffffaa',
+              backgroundColor: '#000000aa',
+              padding: { x: 6, y: 3 },
+            })
+            .setOrigin(0.5, 1)
+            .setDepth(1000)
+            .setVisible(false);
   }
 
   /** The static overlap body's game object (for `physics.add.overlap`). */
@@ -77,7 +86,7 @@ export class InteractionZone {
    * visible only through the world (main) camera.
    */
   get displayObjects(): Phaser.GameObjects.GameObject[] {
-    return [this.zone, this.prompt];
+    return this.prompt ? [this.zone, this.prompt] : [this.zone];
   }
 
   /** True while the player's body intersects this zone's rectangle. */
@@ -96,7 +105,7 @@ export class InteractionZone {
   setActive(active: boolean): void {
     if (active === this.active) return;
     this.active = active;
-    this.prompt.setVisible(active);
+    this.prompt?.setVisible(active);
   }
 
   isActive(): boolean {
@@ -111,6 +120,6 @@ export class InteractionZone {
   /** Destroy owned game objects (on scene shutdown). */
   destroy(): void {
     this.zone.destroy();
-    this.prompt.destroy();
+    this.prompt?.destroy();
   }
 }

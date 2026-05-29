@@ -20,7 +20,7 @@ const URL = 'http://localhost:8090';
 const API_URL = 'http://localhost:2568';
 
 /** Sanctum door zone center (client/public/assets/maps/sanctum.json). */
-const SANCTUM_DOOR = { x: 1088, y: 608 };
+const SANCTUM_DOOR = { x: 87, y: 152 };
 
 /** Read a named interaction zone's world center on the current screen (#107). */
 async function zoneCenter(page: Page, name: string): Promise<{ x: number; y: number }> {
