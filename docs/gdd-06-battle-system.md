@@ -40,7 +40,7 @@ Combat is an **active, reaction-timed** exchange — not a hidden simultaneous s
 - Only one ring can be recharged per turn.
 
 **Option C — Forfeit:** Press D1 and D2 simultaneously during the attack phase to flee while holding initiative.
-- The forfeiting player **loses their staked Thumb ring** and pays a **small gold penalty** (exact amount TBD).
+- The forfeiting player **loses their staked Thumb ring** and pays **25 gold** (`GOLD_FORFEIT_PENALTY` in constants.ts).
 - Forfeiting is only available on the attacker's turn — the defender cannot flee mid-telegraph.
 - This is the escape valve when the duel cannot be won, but it costs more than just the stake.
 
