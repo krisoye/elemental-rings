@@ -80,4 +80,12 @@ export const FORAGE_RESPAWN_DAYS = 1;
 export const FOOD_SELL_PRICE = 1; // GP per food unit (merchant buys at this price)
 export const FOOD_BUY_PRICE = 2;  // GP per food unit (merchant sells at this price)
 
+// #130 — Merchant ring prices (GDD §10.11). Triangle-element rings (Fire/Water/
+// Wood) command a premium over the neutral elements (Wind/Earth). Sell prices are
+// the player's proceeds when trading a ring back to the merchant.
+export const MERCHANT_RING_BUY_PRICE_T1 = 30;       // GP to buy a Tier 1 triangle ring
+export const MERCHANT_RING_BUY_PRICE_NEUTRAL = 25;   // GP to buy a Tier 1 Wind/Earth ring
+export const MERCHANT_RING_SELL_PRICE_T1 = 10;       // GP when player sells Tier 1 triangle ring
+export const MERCHANT_RING_SELL_PRICE_NEUTRAL = 8;   // GP when player sells Tier 1 Wind/Earth ring
+
 

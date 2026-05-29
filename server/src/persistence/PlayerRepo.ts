@@ -12,6 +12,11 @@ import {
   TIER2_MAX_USES,
   FORAGE_YIELD,
   FORAGE_RESPAWN_DAYS,
+  FOOD_SELL_PRICE,
+  MERCHANT_RING_BUY_PRICE_T1,
+  MERCHANT_RING_BUY_PRICE_NEUTRAL,
+  MERCHANT_RING_SELL_PRICE_T1,
+  MERCHANT_RING_SELL_PRICE_NEUTRAL,
 } from '../game/constants';
 
 /** A persisted player row (no password hash exposed to callers of read helpers). */
@@ -1056,3 +1061,150 @@ export function getForageStatus(
   }));
 }
 
+// ---------------------------------------------------------------------------
+// #130 — Merchant buy / sell (GDD §10.11)
+// ---------------------------------------------------------------------------
+
+/** Triangle-element elements (Fire, Water, Wood) use the T1 premium price. */
+const TRIANGLE_ELEMENTS = new Set<number>([ElementEnum.FIRE, ElementEnum.WATER, ElementEnum.WOOD]);
+
+/** Buy price the merchant charges the player for a Tier 1 ring of the given element. */
+export function ringBuyPrice(element: number): number {
+  return TRIANGLE_ELEMENTS.has(element)
+    ? MERCHANT_RING_BUY_PRICE_T1
+    : MERCHANT_RING_BUY_PRICE_NEUTRAL;
+}
+
+/** Sell price the merchant pays the player for a Tier 1 ring of the given element. */
+export function ringSellPrice(element: number): number {
+  return TRIANGLE_ELEMENTS.has(element)
+    ? MERCHANT_RING_SELL_PRICE_T1
+    : MERCHANT_RING_SELL_PRICE_NEUTRAL;
+}
+
+const updateGold = db.prepare(`UPDATE players SET gold = gold + ? WHERE id = ?`);
+
+/**
+ * Buy food from the merchant. Deducts `quantity * FOOD_BUY_PRICE` gold from the
+ * player and credits the food. Returns `{ ok: true, gold, food_units }` on
+ * success, or `{ ok: false, reason }` (caller sends 400) on insufficient gold.
+ */
+export const merchantBuyFood = db.transaction(
+  (
+    playerId: string,
+    quantity: number,
+  ): { ok: true; gold: number; food_units: number } | { ok: false; reason: string } => {
+    const player = getPlayerById(playerId);
+    if (!player) return { ok: false, reason: 'Player not found' };
+    const cost = quantity * 2; // FOOD_BUY_PRICE = 2
+    if (player.gold < cost) {
+      return { ok: false, reason: `Insufficient gold (need ${cost}, have ${player.gold})` };
+    }
+    updateGold.run(-cost, playerId);
+    updateFoodAdd.run(quantity, playerId);
+    const updated = getPlayerById(playerId)!;
+    return { ok: true, gold: updated.gold, food_units: updated.food_units };
+  },
+);
+
+/**
+ * Buy a Tier 1 ring from the merchant. Deducts `ringBuyPrice(element)` gold.
+ * Returns `{ ok: true, gold, ring }` or `{ ok: false, reason }`. 400-worthy
+ * reasons: insufficient gold, carry cap exceeded, unknown element.
+ */
+export const merchantBuyRing = db.transaction(
+  (
+    playerId: string,
+    element: number,
+  ):
+    | { ok: true; gold: number; ring: RingRow }
+    | { ok: false; reason: string } => {
+    const player = getPlayerById(playerId);
+    if (!player) return { ok: false, reason: 'Player not found' };
+
+    const price = ringBuyPrice(element);
+    if (player.gold < price) {
+      return { ok: false, reason: `Insufficient gold (need ${price}, have ${player.gold})` };
+    }
+
+    // Carry cap check: count rings currently in carry.
+    const carried = (selectCarryByOwner.all(playerId) as RingRow[]).length;
+    if (carried >= player.carry_cap) {
+      return { ok: false, reason: 'Carry cap full' };
+    }
+
+    // Deduct gold, create ring, mark it as carried.
+    updateGold.run(-price, playerId);
+    const ringId = uuidv4();
+    insertRing.run({
+      id: ringId,
+      owner_id: playerId,
+      element,
+      tier: 1,
+      max_uses: 3,
+      current_uses: 3,
+      xp: 0,
+    });
+    updateRingCarry.run(1, ringId);
+
+    const updated = getPlayerById(playerId)!;
+    const ring = (selectRingById.get(ringId) as RingRow)!;
+    return { ok: true, gold: updated.gold, ring };
+  },
+);
+
+/**
+ * Sell food to the merchant. Credits `quantity * FOOD_SELL_PRICE` gold.
+ * Returns `{ ok: true, gold, food_units }` or `{ ok: false, reason }` on
+ * insufficient food.
+ */
+export const merchantSellFood = db.transaction(
+  (
+    playerId: string,
+    quantity: number,
+  ): { ok: true; gold: number; food_units: number } | { ok: false; reason: string } => {
+    const player = getPlayerById(playerId);
+    if (!player) return { ok: false, reason: 'Player not found' };
+    if (player.food_units < quantity) {
+      return {
+        ok: false,
+        reason: `Insufficient food (need ${quantity}, have ${player.food_units})`,
+      };
+    }
+    updateFoodDeduct.run(quantity, playerId);
+    updateGold.run(quantity * FOOD_SELL_PRICE, playerId);
+    const updated = getPlayerById(playerId)!;
+    return { ok: true, gold: updated.gold, food_units: updated.food_units };
+  },
+);
+
+/**
+ * Sell a ring to the merchant. The ring must be owned by the player and NOT
+ * currently assigned to any loadout slot. Returns `{ ok: true, gold }` on success
+ * or `{ ok: false, reason }` on failure.
+ */
+export const merchantSellRing = db.transaction(
+  (
+    playerId: string,
+    ringId: string,
+  ): { ok: true; gold: number } | { ok: false; reason: string } => {
+    const ring = selectRingById.get(ringId) as RingRow | undefined;
+    if (!ring || ring.owner_id !== playerId) {
+      return { ok: false, reason: 'Ring not found or not owned' };
+    }
+    // Block selling a ring that is currently equipped in a battle-hand slot.
+    const loadout = selectLoadout.get(playerId) as LoadoutRow | undefined;
+    if (loadout) {
+      for (const slot of ['thumb', 'a1', 'a2', 'd1', 'd2'] as const) {
+        if (loadout[slot] === ringId) {
+          return { ok: false, reason: 'Cannot sell a ring currently equipped in a battle slot' };
+        }
+      }
+    }
+    const price = ringSellPrice(ring.element);
+    deleteRing.run(ringId, playerId);
+    updateGold.run(price, playerId);
+    const updated = getPlayerById(playerId)!;
+    return { ok: true, gold: updated.gold };
+  },
+);
