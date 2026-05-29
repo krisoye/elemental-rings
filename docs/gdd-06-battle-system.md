@@ -39,25 +39,26 @@ Combat is an **active, reaction-timed** exchange — not a hidden simultaneous s
 - Requires enough spirit to cover the full recharge cost. If the player lacks spirit, the action is rejected.
 - Only one ring can be recharged per turn.
 
-**Option C — Flee:** Forfeit the duel at any point during the attacker's turn.
-- The fleeing player **loses their staked Thumb ring** — it is forfeited to the opponent.
-- No other penalty. Hearts, carried rings, and inventory are unchanged.
-- Fleeing is always available regardless of ring or spirit state — it is the escape valve when the duel cannot be won.
+**Option C — Forfeit:** Press D1 and D2 simultaneously during the attack phase to flee while holding initiative.
+- The forfeiting player **loses their staked Thumb ring** and pays a **small gold penalty** (exact amount TBD).
+- Forfeiting is only available on the attacker's turn — the defender cannot flee mid-telegraph.
+- This is the escape valve when the duel cannot be won, but it costs more than just the stake.
 
 **Phase-locked input:** Attack buttons (A1/A2) only register during the **attack phase**. Defense buttons (D1/D2) only register during the **defense phase**. Wrong-phase presses are silently ignored — protective, not punishing. The phase transition is the most visually prominent UI moment in a battle.
 
 **Combat hotkeys:** Two input layers are available simultaneously:
 
-| Action | Absolute key | Phase-relative key |
+| Action | Absolute keys | Phase-relative keys |
 |---|---|---|
 | Attack A1 | `1` | `Z` (single press, attack phase) |
 | Attack A2 | `2` | `C` (single press, attack phase) |
 | Recharge A1 | `1` `1` | `Z` `Z` (double-tap, attack phase) |
 | Recharge A2 | `2` `2` | `C` `C` (double-tap, attack phase) |
+| Forfeit | `3` + `4` simultaneously | `Z` + `C` simultaneously (attack phase) |
 | Defend D1 | `3` | `Z` (defense phase) |
 | Defend D2 | `4` | `C` (defense phase) |
 
-`Z` always maps to slot-1 for the current phase; `C` always maps to slot-2. Double-tap is disambiguated by timing — two presses within the recharge window trigger recharge rather than two separate attacks (which would be phase-locked anyway). Wrong-phase presses are silently ignored.
+`Z` always maps to slot-1 for the current phase; `C` always maps to slot-2. Double-tap is disambiguated by a short timing window — two presses within the window trigger recharge; outside it each press is treated independently (and phase-locked anyway). Simultaneous D1+D2 is only recognized during the attack phase; during the defense phase the two buttons act independently. Wrong-phase presses are silently ignored.
 
 Because the defender sees the incoming element before committing, there is no simultaneous hidden selection. Bluffing lives in the loadout, stake, and jewelry layers (§9), not in the turn itself.
 
@@ -149,7 +150,7 @@ Neutrals are pure attrition exchanges — safe on hearts, with the gauge and use
 - Extinguished rings cannot be used for the rest of the duel
 - The opponent can see which element types are exhausted from the HUD
 
-**Attack-ring exhaustion.** If both A1 and A2 are extinguished, the attacker cannot throw — they must recharge at least one ring (Option B, §6.3) before attacking. If they lack the spirit to recharge either, their only recourse is to flee (Option C, §6.3), forfeiting the staked ring.
+**Attack-ring exhaustion.** If both A1 and A2 are extinguished, the attacker cannot throw — they must recharge at least one ring (Option B, §6.3) before attacking. If they lack the spirit to recharge either, their only recourse is to forfeit (Option C, §6.3), losing the staked ring and a gold penalty.
 
 ### 6.7 Hearts
 - Each player starts a duel with **3 hearts**

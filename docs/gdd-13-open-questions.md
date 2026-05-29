@@ -16,6 +16,7 @@
 - Environmental passives per biome — flagged for a later design pass
 - ~~Nature/Bloom fusion — final name TBD~~ → settled: **BLOOM** (Wood + Earth); **THORNADO** (Wood + Wind)
 - Whether monster stolen rings retain their specific position in the world (trackable) or just re-enter the monster loot pool
+- Forfeit gold penalty amount (§6.3 Option C — attacker forfeits staked ring + gold)
 - Status gauge threshold scaling formula with player XP and augmentations
 - Playtesting tune for status severity now that gauges persist indefinitely (Burning at 1 full heart/turn especially)
 - ~~Post-battle "place won ring" UI~~ → settled: **prompt appears when carry is full; player swaps, leaves at camp, or discards** (§6.8; tracked in issue #40)
