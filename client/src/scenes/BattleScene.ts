@@ -125,6 +125,33 @@ export class BattleScene extends Phaser.Scene {
     const offExchange = room.onMessage('exchangeResult', (result: ExchangeResultPayload) => {
       window.__lastExchangeResult = result;
       this.recordRevealedElements(result, myId);
+      // Rally = Parry timing + Strong element (GDD §6.4). Only this combination
+      // bounces the attack back; plain Parry timing without Strong is just a safe block.
+      if (result.rallyContinues) {
+        this.cameras.main.flash(250, 255, 200, 50, true);
+        const rallyText = this.add.text(512, 200, 'COUNTER!', {
+          fontSize: '40px', color: '#ffdd00', fontStyle: 'bold',
+          stroke: '#000000', strokeThickness: 5,
+        }).setOrigin(0.5).setDepth(1100);
+        this.tweens.add({
+          targets: rallyText, alpha: 0, y: 150,
+          duration: 900, ease: 'Power2',
+          onComplete: () => rallyText.destroy(),
+        });
+      } else if (result.timing === 'BLOCK' || result.timing === 'PARRY') {
+        if (!result.defenderHeartLost) {
+          const blockText = this.add.text(512, 220,
+            result.timing === 'PARRY' ? 'PARRY' : 'BLOCK', {
+            fontSize: '28px', color: '#aaddff', fontStyle: 'bold',
+            stroke: '#000000', strokeThickness: 3,
+          }).setOrigin(0.5).setDepth(1100);
+          this.tweens.add({
+            targets: blockText, alpha: 0, y: 190,
+            duration: 600, ease: 'Power1',
+            onComplete: () => blockText.destroy(),
+          });
+        }
+      }
     });
 
     // NOTE: the server's `wonRing` message (post-battle ring grant, #40) is
@@ -262,7 +289,9 @@ export class BattleScene extends Phaser.Scene {
       // Re-check the live phase: the turn may have advanced while armed.
       const s = window.__room?.state;
       const myId = window.__room?.sessionId;
-      if (pending && s?.phase === 'ATTACK_SELECT' && s.currentAttackerId === myId) {
+      const slotState = pending && myId ? s?.players?.get(myId)?.[pending] : null;
+      if (pending && s?.phase === 'ATTACK_SELECT' && s.currentAttackerId === myId &&
+          slotState && slotState.currentUses > 0) {
         window.__room!.send('selectAttack', { slot: pending });
       }
     });
