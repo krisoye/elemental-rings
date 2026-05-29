@@ -154,7 +154,7 @@ declare global {
     // (instead of the EncounterScene hub) and the biome scene's create() restores
     // the player near {x,y}, then clears it. null/unset for hub/marker duels (which
     // return to the EncounterScene hub) and after consumption.
-    __duelOrigin?: { scene: 'ForestScene' | 'SwampScene'; x: number; y: number } | null;
+    __duelOrigin?: { scene: 'ForestScene' | 'SwampScene'; x: number; y: number; screenId?: string } | null;
     // Teleport modal snapshot (set by CampScene.openTeleportModal before render).
     __teleportState?: {
       anchor: string;

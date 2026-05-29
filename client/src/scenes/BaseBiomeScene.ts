@@ -672,12 +672,14 @@ export abstract class BaseBiomeScene extends Phaser.Scene {
    */
   private handleInteract(): void {
     if (this.detectedNpc) {
-      // #88 — record the biome origin + the player's world position so BattleScene
-      // returns to this scene when the duel ends, and create() restores the player.
+      // #88 — record the biome origin + screen + the player's world position so
+      // BattleScene returns to the correct screen when the duel ends, and create()
+      // restores the player near the NPC.
       window.__duelOrigin = {
         scene: this.scene.key as 'ForestScene' | 'SwampScene',
         x: this.player.x,
         y: this.player.y,
+        screenId: this.screenId,
       };
       this.scene.start('EncounterScene', {
         npcId: this.detectedNpc.id,
@@ -1292,6 +1294,7 @@ export abstract class BaseBiomeScene extends Phaser.Scene {
       scene: this.scene.key as 'ForestScene' | 'SwampScene',
       x: this.player.x,
       y: this.player.y,
+      screenId: this.screenId,
     };
     this.scene.start('EncounterScene', {
       npcId: npc.id,
