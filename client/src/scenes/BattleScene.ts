@@ -84,7 +84,7 @@ export class BattleScene extends Phaser.Scene {
         frameHeight: 32,
       });
     const MONSTER_BATTLERS = [
-      'assets/monsters/monster_fire_01_alt01_battler_front.png',
+      'assets/monsters/monster_fire_02_alt02_battler_front.png',
       'assets/monsters/monster_water_grass_19_alt01_battler_front.png',
       'assets/monsters/monster_electro_ghost_14_alt01_battler_front.png',
       'assets/monsters/monster_water_fly_11_alt01_battler_front.png',
