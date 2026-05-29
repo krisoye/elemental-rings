@@ -32,11 +32,18 @@ export interface PlayerLike {
   fireGauge: number;
   waterGauge: number;
   woodGauge: number;
+  shadowGauge: number;
   a1: RingLike;
   a2: RingLike;
   d1: RingLike;
   d2: RingLike;
 }
+
+/**
+ * Shadow gauge hard cap (#134, GDD §7.1). The shadow gauge clamps at 5 on
+ * increment (the triangle gauges use the separate GAUGE_SOFT_CAP).
+ */
+export const SHADOW_GAUGE_CAP = 5;
 
 /** The two attack slots Drowning can drain. */
 const ATTACK_RING_KEYS = ['a1', 'a2'] as const;
@@ -57,6 +64,16 @@ export function isDrowning(ps: PlayerLike, threshold: number = STATUS_THRESHOLD)
 /** True when the player's Wood gauge has reached the status threshold (Entangled). */
 export function isEntangled(ps: PlayerLike, threshold: number = STATUS_THRESHOLD): boolean {
   return ps.woodGauge >= threshold;
+}
+
+/**
+ * True when the player is Blinded (#134, GDD §7.2). Unlike the triangle statuses
+ * (threshold 4), Blinded triggers at ANY shadow stack (≥ 1). It has no turn-start
+ * tick — its only effect is client-side progressive HUD hiding (Shadow-3, #135),
+ * so the server merely exposes shadowGauge and this predicate.
+ */
+export function isBlinded(ps: PlayerLike, threshold: number = 1): boolean {
+  return ps.shadowGauge >= threshold;
 }
 
 /** Result of applying start-of-turn status damage to the afflicted player. */

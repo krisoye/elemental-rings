@@ -23,6 +23,10 @@ export class PlayerState extends Schema {
   @type('uint8') fireGauge: number = 0;
   @type('uint8') waterGauge: number = 0;
   @type('uint8') woodGauge: number = 0;
+  // Shadow gauge (#134, GDD §7.1/§3.5). Fills like the triangle gauges (four-case
+  // model) but caps at 5 and triggers Blinded at any stack (≥ 1). Shadow sits
+  // outside the triangle, so it is tracked separately here.
+  @type('uint8') shadowGauge: number = 0;
 
   /**
    * Server-only helper (NOT a @type) to read a ring by its named slot key.

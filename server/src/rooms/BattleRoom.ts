@@ -60,6 +60,7 @@ interface TestSetStatePayload {
   fireGauge?: number;
   waterGauge?: number;
   woodGauge?: number;
+  shadowGauge?: number;
   /** Per-slot currentUses overrides; sets isExtinguished accordingly. */
   uses?: Partial<Record<SlotKey, number>>;
   /** Per-slot element overrides (so a test can give a defense slot WATER, etc.). */
@@ -724,6 +725,7 @@ export class BattleRoom extends Room<{ state: BattleState }> {
     if (payload.fireGauge !== undefined) ps.fireGauge = Math.max(0, payload.fireGauge);
     if (payload.waterGauge !== undefined) ps.waterGauge = Math.max(0, payload.waterGauge);
     if (payload.woodGauge !== undefined) ps.woodGauge = Math.max(0, payload.woodGauge);
+    if (payload.shadowGauge !== undefined) ps.shadowGauge = Math.max(0, payload.shadowGauge);
 
     if (payload.uses) {
       for (const key of Object.keys(payload.uses) as SlotKey[]) {
@@ -750,22 +752,26 @@ export class BattleRoom extends Room<{ state: BattleState }> {
   }
 
   /**
-   * Adjust a single tracked gauge on a player by `delta`, clamped to
-   * [0, GAUGE_SOFT_CAP]. Maps the gauge element index (FIRE/WATER/WOOD) to its
-   * gauge field. Unknown elements are ignored. (#134 extends this with SHADOW.)
+   * Adjust a single tracked gauge on a player by `delta`. Maps the gauge element
+   * index to its field and clamps: the triangle gauges to [0, GAUGE_SOFT_CAP], the
+   * shadow gauge to [0, SHADOW_GAUGE_CAP] (the hard cap of 5, GDD §7.1). Unknown
+   * elements are ignored.
    */
   private adjustGauge(ps: PlayerState, el: number, delta: number): void {
-    const clamp = (v: number): number => Math.max(0, Math.min(GAUGE_SOFT_CAP, v));
-    if (el === ElementEnum.FIRE) ps.fireGauge = clamp(ps.fireGauge + delta);
-    else if (el === ElementEnum.WATER) ps.waterGauge = clamp(ps.waterGauge + delta);
-    else if (el === ElementEnum.WOOD) ps.woodGauge = clamp(ps.woodGauge + delta);
+    const clampTo = (cap: number, v: number): number => Math.max(0, Math.min(cap, v));
+    if (el === ElementEnum.FIRE) ps.fireGauge = clampTo(GAUGE_SOFT_CAP, ps.fireGauge + delta);
+    else if (el === ElementEnum.WATER) ps.waterGauge = clampTo(GAUGE_SOFT_CAP, ps.waterGauge + delta);
+    else if (el === ElementEnum.WOOD) ps.woodGauge = clampTo(GAUGE_SOFT_CAP, ps.woodGauge + delta);
+    else if (el === ElementEnum.SHADOW)
+      ps.shadowGauge = clampTo(StatusEffects.SHADOW_GAUGE_CAP, ps.shadowGauge + delta);
   }
 
-  /** Reset all tracked triangle gauges to 0 (case 4, strong parry). #134 adds shadow. */
+  /** Reset ALL tracked gauges to 0 (case 4, strong parry) — triangle + shadow. */
   private clearTriangleGauges(ps: PlayerState): void {
     ps.fireGauge = 0;
     ps.waterGauge = 0;
     ps.woodGauge = 0;
+    ps.shadowGauge = 0;
   }
 
   private _resolveExchange(): void {

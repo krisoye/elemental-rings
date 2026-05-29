@@ -3,7 +3,9 @@ import {
   isBurning,
   isDrowning,
   isEntangled,
+  isBlinded,
   applyTurnStart,
+  SHADOW_GAUGE_CAP,
   type PlayerLike,
 } from '../../server/src/game/StatusEffects';
 
@@ -26,6 +28,7 @@ function makePlayer(overrides: Partial<PlayerLike> = {}): PlayerLike {
     fireGauge: 0,
     waterGauge: 0,
     woodGauge: 0,
+    shadowGauge: 0,
     a1: makeRing(3),
     a2: makeRing(3),
     d1: makeRing(3),
@@ -33,6 +36,28 @@ function makePlayer(overrides: Partial<PlayerLike> = {}): PlayerLike {
     ...overrides,
   };
 }
+
+describe('isBlinded (#134, §7.2)', () => {
+  test('Blinded triggers at any stack (shadowGauge ≥ 1), not the triangle threshold', () => {
+    expect(isBlinded(makePlayer({ shadowGauge: 0 }))).toBe(false);
+    expect(isBlinded(makePlayer({ shadowGauge: 1 }))).toBe(true);
+    expect(isBlinded(makePlayer({ shadowGauge: 5 }))).toBe(true);
+  });
+
+  test('Blinded has no turn-start tick (applyTurnStart leaves shadow/hearts/rings alone)', () => {
+    const ps = makePlayer({ shadowGauge: 5, hearts: 3 });
+    const r = applyTurnStart(ps);
+    expect(r.heartLost).toBe(false);
+    expect(r.drowningRingKey).toBeNull();
+    expect(r.entangledRingKey).toBeNull();
+    expect(ps.shadowGauge).toBe(5); // untouched
+    expect(ps.hearts).toBe(3);
+  });
+
+  test('SHADOW_GAUGE_CAP is 5', () => {
+    expect(SHADOW_GAUGE_CAP).toBe(5);
+  });
+});
 
 describe('status predicates', () => {
   test('isBurning true at threshold, false below', () => {

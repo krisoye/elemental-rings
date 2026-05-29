@@ -265,6 +265,7 @@ export async function readMe(page: Page): Promise<any> {
       fireGauge: me.fireGauge ?? 0,
       waterGauge: me.waterGauge ?? 0,
       woodGauge: me.woodGauge ?? 0,
+      shadowGauge: me.shadowGauge ?? 0,
       thumb: slot('thumb'),
       a1: slot('a1'),
       a2: slot('a2'),

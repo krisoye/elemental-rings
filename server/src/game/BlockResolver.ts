@@ -4,30 +4,34 @@ import { Ring } from '../schemas/Ring';
 import { resolve, Relationship } from './ElementSystem';
 import { componentsOf, triangleComponentsOf, TRIANGLE } from './Fusions';
 
-const { FIRE, WATER, WOOD } = ElementEnum;
+const { FIRE, WATER, WOOD, SHADOW } = ElementEnum;
+
+/** Gauge-bearing elements: the triangle (FIRE/WATER/WOOD) plus SHADOW (#134). */
+const GAUGE_BEARING: ReadonlySet<number> = new Set([FIRE, WATER, WOOD, SHADOW]);
 
 /**
  * Strong-block decrement table (GDD §7.1, four-case model). When the defending
- * ring's element STRONGLY beats the incoming attack element, the beaten gauge is
- * reduced by 1 (case 3). Triangle-only for now; #134 extends Fire's row to also
- * decrement SHADOW.
- *   Water blocks Fire  → fire−1
- *   Wood  blocks Water → water−1
- *   Fire  blocks Wood  → wood−1
+ * ring's element STRONGLY beats the incoming attack element, the beaten gauge(s)
+ * are reduced by 1 (case 3). Fire is strong against BOTH Wood and Shadow (§3.5),
+ * and a Fire strong block decrements BOTH the wood and shadow gauges (#134/#132
+ * C2), regardless of which of the two it blocked.
+ *   Water blocks Fire          → fire−1
+ *   Wood  blocks Water         → water−1
+ *   Fire  blocks Wood or Shadow → wood−1 AND shadow−1
  */
 const STRONG_BLOCK_DECREMENT: Record<number, Record<number, number[]>> = {
   [WATER]: { [FIRE]: [FIRE] },
   [WOOD]: { [WATER]: [WATER] },
-  [FIRE]: { [WOOD]: [WOOD] },
+  [FIRE]: { [WOOD]: [WOOD, SHADOW], [SHADOW]: [WOOD, SHADOW] },
 };
 
 /**
  * The single gauge element a defending ring's element fills on a block (case 2).
- * Returns the element index for a gauge-bearing base element (the triangle here;
- * #134 adds SHADOW), or null for Wind/Earth and every fusion (no single gauge).
+ * Returns the element index for a gauge-bearing base element (triangle + SHADOW),
+ * or null for Wind/Earth and every fusion (no single gauge).
  */
 function gaugeElementOf(defenderEl: number): number | null {
-  return TRIANGLE.has(defenderEl) ? defenderEl : null;
+  return GAUGE_BEARING.has(defenderEl) ? defenderEl : null;
 }
 
 export function classifyTiming(
@@ -55,11 +59,11 @@ interface ComponentOutcome {
   volleyedElement: number; // the engaged STRONG component's triangle volley element (-1 when none)
 }
 
-/** An attack component that landed uncontested (NO_BLOCK): -1 heart + gauge if triangle. */
+/** An attack component that landed uncontested (NO_BLOCK): -1 heart + gauge if gauge-bearing (triangle or Shadow). */
 function landedComponent(attackComponent: number): ComponentOutcome {
   return {
     heartLost: true,
-    gauge: TRIANGLE.has(attackComponent) ? [attackComponent] : [],
+    gauge: GAUGE_BEARING.has(attackComponent) ? [attackComponent] : [],
     rally: false,
     volleyedElement: -1,
   };

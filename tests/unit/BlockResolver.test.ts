@@ -255,11 +255,12 @@ describe('resolveBlock — four-case gauge directives (§7.1)', () => {
     expect(r.blockedGaugeElement).toEqual([WATER]);
   });
 
-  test('Fire strong block vs Wood → fire +1, wood −1 (case 3)', () => {
+  test('Fire strong block vs Wood → fire +1, decrements wood (and shadow, #134)', () => {
     const r = resolveBlock(makeRing(WOOD, 3), makeRing(FIRE, 3), 'BLOCK');
     expect(r.relationship).toBe('STRONG');
     expect(r.blockGaugeElement).toBe(FIRE);
-    expect(r.blockedGaugeElement).toEqual([WOOD]);
+    // #134 extended Fire's strong block to decrement BOTH wood and shadow.
+    expect(r.blockedGaugeElement).toContain(WOOD);
   });
 
   test('STRONG parry → clearAllGauges true (case 4)', () => {
@@ -274,5 +275,38 @@ describe('resolveBlock — four-case gauge directives (§7.1)', () => {
     const r = resolveBlock(makeRing(FIRE, 3), makeRing(FIRE, 3), 'PARRY');
     expect(r.rallyContinues).toBe(false);
     expect(r.clearAllGauges).toBe(false);
+  });
+});
+
+// #134 — Shadow extends the four-case gauge directives.
+describe('resolveBlock — Shadow gauge directives (§7.1 / §3.5)', () => {
+  const SHADOW = ElementEnum.SHADOW;
+
+  test('uncontested Shadow hit → hitGaugeElements [SHADOW]', () => {
+    const r = resolveBlock(makeRing(SHADOW, 3), makeRing(WOOD, 3), 'NO_BLOCK');
+    expect(r.defenderHeartLost).toBe(true);
+    expect(r.hitGaugeElements).toEqual([SHADOW]);
+  });
+
+  test('blocking with a Shadow ring → blockGaugeElement SHADOW (+1)', () => {
+    // Shadow vs Water is NEUTRAL — a safe catch that fills the Shadow ring's gauge.
+    const r = resolveBlock(makeRing(WATER, 3), makeRing(SHADOW, 3), 'BLOCK');
+    expect(r.relationship).toBe('NEUTRAL');
+    expect(r.blockGaugeElement).toBe(SHADOW);
+    expect(r.blockedGaugeElement).toEqual([]);
+  });
+
+  test('Fire strong block vs Shadow → fire +1, decrements BOTH wood and shadow', () => {
+    const r = resolveBlock(makeRing(SHADOW, 3), makeRing(FIRE, 3), 'BLOCK');
+    expect(r.relationship).toBe('STRONG'); // Fire dispels Shadow
+    expect(r.blockGaugeElement).toBe(FIRE);
+    expect(r.blockedGaugeElement.sort()).toEqual([WOOD, SHADOW].sort());
+  });
+
+  test('Fire strong block vs Wood → fire +1, decrements BOTH wood and shadow (#134)', () => {
+    const r = resolveBlock(makeRing(WOOD, 3), makeRing(FIRE, 3), 'BLOCK');
+    expect(r.relationship).toBe('STRONG');
+    expect(r.blockGaugeElement).toBe(FIRE);
+    expect(r.blockedGaugeElement.sort()).toEqual([WOOD, SHADOW].sort());
   });
 });
