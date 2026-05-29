@@ -12,7 +12,7 @@ const URL = 'http://localhost:8090';
 const API_URL = 'http://localhost:2568';
 
 /** Reliquary wall zone center from client/public/assets/maps/sanctum.json. */
-const RINGWALL = { x: 160, y: 608 };
+const RINGWALL = { x: 128, y: 37 };
 
 const BATTLE_SLOTS = ['thumb', 'a1', 'a2', 'd1', 'd2'] as const;
 

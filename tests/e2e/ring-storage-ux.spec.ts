@@ -13,7 +13,7 @@ const FIRE_EL = 0;
 const WATER_EL = 1;
 
 /** Zone center from client/public/assets/maps/sanctum.json. */
-const RINGWALL = { x: 160, y: 608 };
+const RINGWALL = { x: 128, y: 37 };
 
 async function registerAndToken(): Promise<string> {
   const res = await fetch(`${API_URL}/auth/register`, {
