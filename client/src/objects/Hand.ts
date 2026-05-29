@@ -64,7 +64,6 @@ export class Hand extends Phaser.GameObjects.Container {
 
   private triggerSlot(key: SlotKey): void {
     if (key === 'thumb') return;
-    if (this.slots[key].isExtinguished) return;
     this.onPress(key);
   }
 

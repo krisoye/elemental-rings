@@ -125,6 +125,18 @@ export class BattleScene extends Phaser.Scene {
     const offExchange = room.onMessage('exchangeResult', (result: ExchangeResultPayload) => {
       window.__lastExchangeResult = result;
       this.recordRevealedElements(result, myId);
+      if (result.timing === 'PARRY') {
+        this.cameras.main.flash(200, 255, 255, 255, true);
+        const parryText = this.add.text(512, 200, 'PARRY!', {
+          fontSize: '36px', color: '#ffffff', fontStyle: 'bold',
+          stroke: '#000000', strokeThickness: 4,
+        }).setOrigin(0.5).setDepth(1100);
+        this.tweens.add({
+          targets: parryText, alpha: 0, y: 160,
+          duration: 800, ease: 'Power2',
+          onComplete: () => parryText.destroy(),
+        });
+      }
     });
 
     // NOTE: the server's `wonRing` message (post-battle ring grant, #40) is
@@ -262,7 +274,9 @@ export class BattleScene extends Phaser.Scene {
       // Re-check the live phase: the turn may have advanced while armed.
       const s = window.__room?.state;
       const myId = window.__room?.sessionId;
-      if (pending && s?.phase === 'ATTACK_SELECT' && s.currentAttackerId === myId) {
+      const slotState = pending && myId ? s?.players?.get(myId)?.[pending] : null;
+      if (pending && s?.phase === 'ATTACK_SELECT' && s.currentAttackerId === myId &&
+          slotState && slotState.currentUses > 0) {
         window.__room!.send('selectAttack', { slot: pending });
       }
     });
