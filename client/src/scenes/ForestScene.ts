@@ -65,29 +65,40 @@ export class ForestScene extends BaseBiomeScene {
       .filter((t): t is Phaser.Tilemaps.Tileset => t !== null);
   }
 
-  /** The Forest hub also renders an `above-ground` structures/foliage layer. */
+  /**
+   * The Forest hub uses three tile layers:
+   *   ground    — terrain base (grass, water, paths)
+   *   behind    — building south walls + tree trunks: renders below the player
+   *   in-front  — roofs + tree canopy: renders above the player
+   */
   protected tileLayerNames(): string[] {
-    return this.screenId === 'forest_anchorage' ? ['ground', 'above-ground'] : super.tileLayerNames();
+    return this.screenId === 'forest_anchorage'
+      ? ['ground', 'behind', 'in-front']
+      : super.tileLayerNames();
   }
 
   /**
-   * The hub's `above-ground` layer has buildings + tree canopies whose tileset tiles
-   * carry no per-tile `collides` property, so use 'non-empty' mode: every non-empty
-   * tile (walls, doors, trunks) physically blocks movement.
+   * `behind` uses 'non-empty' so walls and trunks physically block movement.
+   * `in-front` uses the default 'property' mode — none of the roof/canopy tiles
+   *  carry a `collides` property, so they produce zero collision (player walks under).
    */
   protected tileLayerCollisionMode(layerName: string): 'property' | 'non-empty' {
-    if (this.screenId === 'forest_anchorage' && layerName === 'above-ground') return 'non-empty';
+    if (this.screenId === 'forest_anchorage' && layerName === 'behind') return 'non-empty';
     return super.tileLayerCollisionMode(layerName);
   }
 
   /**
-   * The hub's `above-ground` layer (buildings, tree canopies) renders above the
-   * player (depth 5 > player depth 3) so the player visually passes behind it.
-   * NPC sprites sit at depth 6 and are not occluded by this layer.
+   * Depth order:
+   *   ground   = 0  (terrain)
+   *   player   = 3  (set in BaseBiomeScene.create)
+   *   behind   = 2  (south walls render just below the player)
+   *   in-front = 5  (roofs + canopy render above the player; NPCs at 6)
    */
   protected tileLayerDepth(layerName: string): number {
-    if (this.screenId === 'forest_anchorage' && layerName === 'above-ground') return 5;
-    return super.tileLayerDepth(layerName);
+    if (this.screenId !== 'forest_anchorage') return super.tileLayerDepth(layerName);
+    if (layerName === 'behind') return 2;
+    if (layerName === 'in-front') return 5;
+    return 0; // ground
   }
 
   preload(): void {
