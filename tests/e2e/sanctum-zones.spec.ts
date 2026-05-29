@@ -19,11 +19,12 @@ const API_URL = 'http://localhost:2568';
  */
 
 /** Zone centers from client/public/assets/maps/sanctum.json (pixel coords). */
+// Zone centers derived from the sanctum.json object layer (240×160 px map).
 const ZONE_CENTER: Record<string, { x: number; y: number }> = {
-  bed: { x: 192, y: 160 },
-  meditation: { x: 992, y: 160 },
-  ringwall: { x: 160, y: 608 },
-  campfire: { x: 608, y: 640 },
+  bed:        { x: 192, y: 96 },
+  meditation: { x: 88,  y: 88 },
+  ringwall:   { x: 128, y: 37 },
+  campfire:   { x: 57,  y: 37 },
 };
 
 async function loadSanctum(page: Page): Promise<void> {

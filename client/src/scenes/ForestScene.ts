@@ -70,6 +70,26 @@ export class ForestScene extends BaseBiomeScene {
     return this.screenId === 'forest_anchorage' ? ['ground', 'above-ground'] : super.tileLayerNames();
   }
 
+  /**
+   * The hub's `above-ground` layer has buildings + tree canopies whose tileset tiles
+   * carry no per-tile `collides` property, so use 'non-empty' mode: every non-empty
+   * tile (walls, doors, trunks) physically blocks movement.
+   */
+  protected tileLayerCollisionMode(layerName: string): 'property' | 'non-empty' {
+    if (this.screenId === 'forest_anchorage' && layerName === 'above-ground') return 'non-empty';
+    return super.tileLayerCollisionMode(layerName);
+  }
+
+  /**
+   * The hub's `above-ground` layer (buildings, tree canopies) renders above the
+   * player (depth 5 > player depth 3) so the player visually passes behind it.
+   * NPC sprites sit at depth 6 and are not occluded by this layer.
+   */
+  protected tileLayerDepth(layerName: string): number {
+    if (this.screenId === 'forest_anchorage' && layerName === 'above-ground') return 5;
+    return super.tileLayerDepth(layerName);
+  }
+
   preload(): void {
     if (this.screenId === 'forest_anchorage') {
       // The hub composes several tilesets; load each under a key equal to its map name.

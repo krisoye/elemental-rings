@@ -205,6 +205,26 @@ export abstract class BaseBiomeScene extends Phaser.Scene {
     return ['ground'];
   }
 
+  /**
+   * Collision mode per layer name. `'property'` (default) enables collision only on
+   * tiles whose Tiled `collides` property is true. `'non-empty'` makes every
+   * non-empty tile collideable — right for structure/canopy layers whose tileset
+   * tiles have no per-tile collision properties (e.g. the Forest hub's above-ground).
+   */
+  protected tileLayerCollisionMode(_layerName: string): 'property' | 'non-empty' {
+    return 'property';
+  }
+
+  /**
+   * Render depth per layer name. Default 0 (ground-level). Layers that should
+   * appear above the player (e.g. building roofs, tree canopies) should return a
+   * value higher than the player's depth (5). NPC sprites sit at depth 6 so they
+   * are not occluded by canopy layers at depth 5.
+   */
+  protected tileLayerDepth(_layerName: string): number {
+    return 0;
+  }
+
   /** Optional biome-specific visuals (fog/snow/tint), called after the tilemap is built. */
   biomeVisuals?(): void;
   /** Optional per-screen decoration placement, called during create(). */
@@ -279,12 +299,18 @@ export abstract class BaseBiomeScene extends Phaser.Scene {
     for (const name of this.tileLayerNames()) {
       const layer = map.createLayer(name, tilesets, 0, 0);
       if (!layer) continue;
-      layer.setCollisionByProperty({ collides: true });
+      if (this.tileLayerCollisionMode(name) === 'non-empty') {
+        layer.setCollisionByExclusion([-1]); // every non-empty tile blocks movement
+      } else {
+        layer.setCollisionByProperty({ collides: true });
+      }
+      layer.setDepth(this.tileLayerDepth(name));
       tileLayers.push(layer);
     }
 
     const spawn = map.getObjectLayer('objects')?.objects.find((o) => o.name === 'spawn');
     this.player = new Player(this, spawn?.x ?? 64, spawn?.y ?? 64);
+    this.player.setDepth(3); // above ground tiles (depth 0), below above-ground canopy (depth 5)
     tileLayers.forEach((layer) => this.physics.add.collider(this.player, layer));
 
     // #88 — returning from an overworld NPC duel: restore the player to where they

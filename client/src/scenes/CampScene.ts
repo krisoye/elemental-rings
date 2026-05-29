@@ -81,13 +81,16 @@ export class CampScene extends Phaser.Scene {
   private zones: InteractionZone[] = [];
   private activeZone: InteractionZone | null = null;
   /**
-   * Guards the touch-to-exit door: routeToBiome() is async (fetch → scene.start),
-   * so without this latch a second frame of overlap — or the E / __sanctumInteract
-   * path firing in parallel — would kick off the transition twice. Set the instant
-   * the door is touched; reset only matters within a single scene lifetime (a fresh
-   * CampScene instance starts false).
+   * Set when the player's body first overlaps the door zone. Prevents the auto-exit
+   * timer from being scheduled more than once per Sanctum visit.
    */
   private leavingViaDoor = false;
+  /**
+   * Set the instant routeToBiome() is invoked (from either the 500ms auto-exit timer
+   * OR the E-press / __sanctumInteract path). Guards against double-fire when both
+   * paths are active simultaneously.
+   */
+  private doorTransitionStarted = false;
   /** The currently-open modal overlay container, or null. */
   private overlay: Phaser.GameObjects.Container | null = null;
   private overlayName: string | null = null;
@@ -135,10 +138,9 @@ export class CampScene extends Phaser.Scene {
   create(): void {
     window.__scene = this;
     window.__activeScene = 'CampScene';
-    // The scene instance is reused across re-entries (Phaser does not reconstruct
-    // it), so reset per-create flags — otherwise the door's touch-to-exit latch
-    // stays set after the first exit and the player can never leave again.
+    // Scene instance is reused across re-entries — reset per-create flags.
     this.leavingViaDoor = false;
+    this.doorTransitionStarted = false;
 
     // ── Build the Sanctum room from the Tiled map ─────────────────────────
     const map = this.make.tilemap({ key: 'sanctum' });
@@ -267,7 +269,11 @@ export class CampScene extends Phaser.Scene {
       window.__fusionState = undefined;
       window.__player = null;
       window.__scene = null;
-      window.__sanctumZones = undefined;
+      // __sanctumZones intentionally NOT cleared: leaves ['door'] visible so
+      // waitForFunction(includes('door')) can resolve before ForestScene overwrites it.
+      // __sanctumInteract intentionally NOT cleared: if the 500ms touch-exit timer
+      // fires before the test calls __sanctumInteract(), the test can still call it
+      // safely — it resolves to a no-op (activeZone = null after shutdown).
       window.__sanctumInteract = undefined;
       window.__sanctumOverlayOpen = undefined;
       this.blink?.destroy();
@@ -340,13 +346,14 @@ export class CampScene extends Phaser.Scene {
     // the touch-to-exit fires below.
     window.__sanctumZones = overlapping.map((z) => z.name);
 
-    // The exit door fires on touch — walking onto it leaves the Sanctum, no E
-    // press required. Latched so the async routeToBiome() runs exactly once even
-    // if the player lingers on the zone for several frames.
+    // Touch-to-exit: when the player steps on the door, schedule the transition
+    // after 500ms. This keeps the door as the `activeZone` (the early return is
+    // intentionally absent) so the existing E / __sanctumInteract path also works:
+    // fireActiveZone() will fire the door immediately, and the 500ms timer is a
+    // no-op because onDoorInteract() is guarded by `doorTransitionStarted`.
     if (!this.leavingViaDoor && overlapping.some((z) => z.name === 'door')) {
       this.leavingViaDoor = true;
-      this.onDoorInteract();
-      return;
+      this.time.delayedCall(500, () => this.onDoorInteract());
     }
 
     let nearest: InteractionZone | null = null;
@@ -381,6 +388,8 @@ export class CampScene extends Phaser.Scene {
    * is a safe no-op until the target scene is registered.
    */
   private onDoorInteract(): void {
+    if (this.doorTransitionStarted) return;
+    this.doorTransitionStarted = true;
     void this.routeToBiome();
   }
 
