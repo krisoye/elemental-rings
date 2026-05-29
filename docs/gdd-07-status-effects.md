@@ -12,26 +12,26 @@ Each player maintains **four status gauges: Fire, Water, Wood, Shadow**. All gau
 
 **2. Block with ring X:** The defender's X gauge +1, regardless of the attacker's element. Channelling an element as a shield concentrates its force inward rather than deflecting it outward.
 
-**3. Counter-block:** When the defender blocks with ring X and the incoming attack's primary element is one that X counters, the opposing element's gauge also decreases by 1 (in addition to the +1 blocking cost on X). The counter relationships:
+**3. Strong block:** When the defender blocks with ring X and the incoming attack's primary element is one that X is strong against, the blocked element's gauge decreases by 1 (in addition to the +1 blocking cost on X). The strong-block relationships:
 
-| Defender blocks with | Against attack element | X gauge | Countered gauge |
+| Defender blocks with | Against attack element | X gauge | Blocked gauge |
 |---|---|---|---|
 | Water | Fire | Water +1 | Fire −1 |
 | Wood | Water | Wood +1 | Water −1 |
 | Fire | Wood | Fire +1 | Wood −1 |
 | Fire | Shadow | Fire +1 | Shadow −1 |
 
-Counter-blocks against non-matching attacks (e.g. Water ring blocking a Wood attack) still pay the +1 blocking cost with no counter reduction.
+Blocks against non-matching attacks (e.g. Water ring blocking a Wood attack) still pay the +1 blocking cost with no reduction on the blocked gauge.
 
-**4. Perfect counter (STRONG timing parry):** All four gauges reset to 0. A flawlessly timed deflection disperses all accumulated elemental energy at once.
+**4. Parry (STRONG timing):** All four gauges reset to 0. A flawlessly timed deflection disperses all accumulated elemental energy at once.
 
 A **weak catch** loses a heart but moves **no gauge** — heart loss and gauge gain are independent (see §6.4). Intermediate rally volleys follow the same block/parry rules as regular exchanges. A rally terminating in an uncontested hit emits one gauge delta on the terminating volley; a rally terminating in a weak catch emits none.
 
 **Server implementation:** Gauge deltas are computed by the Colyseus BattleRoom after each exchange. The `resolveBlock` result carries:
 - `hitGaugeElements: number[]` — tracked element indices to increment on an uncontested hit
 - `blockGaugeElement: number | null` — the defending ring's tracked element index (+1 to that gauge on any block or parry); null on no-block
-- `counterGaugeElement: number | null` — the countered gauge index (−1) when a counter-block fires; null otherwise
-- `clearAllGauges: boolean` — true on a STRONG parry; server sets all four gauges to 0
+- `blockedGaugeElement: number | null` — the blocked gauge index (−1) when a strong block fires; null otherwise
+- `clearAllGauges: boolean` — true on a parry; server sets all four gauges to 0
 
 For fusion attacks each tracked component that lands uncontested contributes its element index; a dual-element fusion on a full no-block fills two gauge slots simultaneously. Gauges are broadcast to both clients as part of the state update.
 
@@ -62,7 +62,7 @@ The decomposition above applies only to uncontested hits. Blocking a fusion atta
 
 ### 7.2 Base Element Statuses
 
-| Element | Status | Counter-block to reduce gauge |
+| Element | Status | Strong block to reduce gauge |
 |---|---|---|
 | Fire | Burning | Block a Fire attack with Water (Fire −1, Water +1) |
 | Water | Drowning | Block a Water attack with Wood (Water −1, Wood +1) |
@@ -71,7 +71,7 @@ The decomposition above applies only to uncontested hits. Blocking a fusion atta
 
 Each status is independent — multiple can be active simultaneously and stack their effects.
 
-Gauge reduction via counter-block is incremental (−1 per exchange). A perfect counter is the only way to clear all gauges simultaneously (reset to 0).
+Gauge reduction via strong block is incremental (−1 per exchange). A parry is the only way to clear all gauges simultaneously (reset to 0).
 
 **Status effects:**
 
