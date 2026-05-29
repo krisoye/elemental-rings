@@ -7,6 +7,7 @@ import {
   OPPONENT_X,
   OPPONENT_Y,
 } from '../Constants';
+import { charsetFrame } from './world/charset';
 
 // Combat slots whose remaining uses count toward the opponent's aggregate (the
 // thumb is a passive staked ring and is excluded from ATK/DEF totals).
@@ -30,9 +31,10 @@ const STATUS_BADGES = ['🔥 BURN', '💧 DROWN', '🌿 TANGLE'];
  * Frames 0–4 use the element-matched monster battler_front sprites; frames 5–11
  * use the charset_a1 spritesheet at the character index for that duelist slot.
  */
-function battleTextureKey(spriteFrame: number): string {
-  // 0=FIRE, 1=WATER, 2=EARTH, 3=WIND, 4=WOOD
-  if (spriteFrame <= 4) return `battle-monster-${spriteFrame}`;
+function battleTextureKey(spriteFrame: number, monsterTexKey?: string): string {
+  // 0=FIRE, 1=WATER, 2=EARTH, 3=WIND, 4=WOOD — caller passes the pre-resolved
+  // variant key (e.g. "battle-monster-0-3"); fall back to index-0 if absent.
+  if (spriteFrame <= 4) return monsterTexKey ?? `battle-monster-${spriteFrame}-0`;
   // Frames 5–11 are human charset duelists — use charset character index (spriteFrame-5).
   return 'battle-charset';
 }
@@ -47,26 +49,26 @@ export class OpponentDuelist extends Phaser.GameObjects.Container {
   private readonly thumbCard: Phaser.GameObjects.Rectangle;
   private readonly thumbDimOverlay: Phaser.GameObjects.Rectangle;
 
-  constructor(scene: Phaser.Scene, spriteFrame = 0) {
+  constructor(scene: Phaser.Scene, spriteFrame = 0, monsterTexKey?: string) {
     super(scene, OPPONENT_X, OPPONENT_Y);
 
     // ── Sprite area (top of panel) ──────────────────────────────────────────
     // Monster battler sprites are 80×80 px — displayed at native size.
     // Human duelist sprites use the charset_a1 sheet (16×32 px per frame)
     // scaled 3× so they read clearly at battle zoom.
-    const texKey = battleTextureKey(spriteFrame);
+    const texKey = battleTextureKey(spriteFrame, monsterTexKey);
+    let spriteImg: Phaser.GameObjects.Image;
     if (spriteFrame <= 4) {
       // Monster: 80×80 battler_front at native size, centered above stats.
-      scene.add.image(0, -80, texKey).setOrigin(0.5, 0.5);
+      spriteImg = scene.add.image(0, -80, texKey).setOrigin(0.5, 0.5);
     } else {
       // Human duelist: charset front-facing idle frame (col 1, direction down),
       // character index = spriteFrame - 5 (maps 5→0, 6→1, … 11→6).
       const charIdx = spriteFrame - 5;
-      const COLS = 12;
-      const idleFrame = (charIdx % 8) * 3 * COLS + 1; // row=charIdx*4 (+0=down), col=1
-      scene.add
+      const idleFrame = charsetFrame(charIdx, 'down', 1);
+      spriteImg = scene.add
         .image(0, -72, texKey, idleFrame)
-        .setScale(3)
+        .setScale(2)
         .setOrigin(0.5, 0.5);
     }
 
@@ -117,6 +119,7 @@ export class OpponentDuelist extends Phaser.GameObjects.Container {
     // as one unit. statusOverlay is added after the panel/labels so it tints on
     // top, and the thumb dim overlay sits above the thumb card.
     this.add([
+      spriteImg,
       panel,
       this.heartsText,
       this.atkText,
