@@ -47,6 +47,7 @@ export class BattleScene extends Phaser.Scene {
   revealedOpponentElements: Set<number> = new Set();
   private prevPhase = '';
   private prevRallyActive = false;
+  private prevCurrentAttackerId = '';
   private returning = false;
   // #78 ② — post-battle reward summary. The server sends `battleSummary` after
   // the ENDED state patch, so the message can arrive before, after, or around
@@ -77,6 +78,7 @@ export class BattleScene extends Phaser.Scene {
     this.revealedOpponentElements = new Set();
     this.prevPhase = '';
     this.prevRallyActive = false;
+    this.prevCurrentAttackerId = '';
     this.returning = false;
     this.pendingBattleSummary = null;
     this.bannerShown = false;
@@ -434,8 +436,10 @@ export class BattleScene extends Phaser.Scene {
     this.time.delayedCall(bannerMs, () => {
       if (toBiome) {
         // The biome scene reads __duelOrigin in its create() to restore the player
-        // position, then clears it. Don't clear it here.
-        this.scene.start(toBiome, { openBattleHand: true });
+        // position, then clears it. Pass screenId so ForestScene.init() loads the
+        // correct screen (not defaulting to forest_anchorage for every return).
+        const screenId = origin?.screenId;
+        this.scene.start(toBiome, { openBattleHand: true, ...(screenId ? { screenId } : {}) });
       } else {
         // Hub return — clear any stray origin and pass explicit empty data so
         // EncounterScene.init sees undefined personality → npcDuel=null → hub.
@@ -478,11 +482,17 @@ export class BattleScene extends Phaser.Scene {
     // A rally keeps phase=DEFEND_WINDOW but flips rallyActive true — Colyseus
     // batches RESOLVE→DEFEND_WINDOW into one patch so prevPhase stays DEFEND_WINDOW.
     const rallyStarted = state.rallyActive && !this.prevRallyActive;
+    // A COUNTER-of-a-COUNTER (volley 2+): rallyActive stays true across the whole
+    // chain, so neither phaseChanged nor rallyStarted fires. Detect by watching
+    // currentAttackerId flip — each volley swaps roles while staying in DEFEND_WINDOW.
+    const rallyVolley =
+      state.rallyActive && state.currentAttackerId !== this.prevCurrentAttackerId;
 
     this.prevPhase = state.phase;
     this.prevRallyActive = state.rallyActive;
+    this.prevCurrentAttackerId = state.currentAttackerId ?? '';
 
-    if (state.phase === 'DEFEND_WINDOW' && (phaseChanged || rallyStarted)) {
+    if (state.phase === 'DEFEND_WINDOW' && (phaseChanged || rallyStarted || rallyVolley)) {
       const imAttacker = state.currentAttackerId === myId;
       const from = imAttacker ? { x: PLAYER_X, y: PLAYER_Y } : { x: OPPONENT_X, y: OPPONENT_Y };
       const to   = imAttacker ? { x: OPPONENT_X, y: OPPONENT_Y } : { x: PLAYER_X, y: PLAYER_Y };
