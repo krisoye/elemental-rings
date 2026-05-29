@@ -435,12 +435,12 @@ export class BattleScene extends Phaser.Scene {
       if (toBiome) {
         // The biome scene reads __duelOrigin in its create() to restore the player
         // position, then clears it. Don't clear it here.
-        this.scene.start(toBiome);
+        this.scene.start(toBiome, { openBattleHand: true });
       } else {
         // Hub return — clear any stray origin and pass explicit empty data so
         // EncounterScene.init sees undefined personality → npcDuel=null → hub.
         window.__duelOrigin = null;
-        this.scene.start('EncounterScene', {});
+        this.scene.start('EncounterScene', { openBattleHand: true });
       }
     });
   }
