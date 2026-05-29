@@ -12,16 +12,17 @@ Each player maintains **four status gauges: Fire, Water, Wood, Shadow**. All gau
 
 **2. Block with ring X:** The defender's X gauge +1, regardless of the attacker's element. Channelling an element as a shield concentrates its force inward rather than deflecting it outward.
 
-**3. Strong block:** When the defender blocks with ring X and the incoming attack's primary element is one that X is strong against, the blocked element's gauge decreases by 1 (in addition to the +1 blocking cost on X). The strong-block relationships:
+**3. Strong block:** When the defender blocks with ring X and the incoming attack's primary element is one that X is strong against, **all gauges that X is strong against** each decrease by 1 (in addition to the +1 blocking cost on X). The strong-block relationships:
 
-| Defender blocks with | Against attack element | X gauge | Blocked gauge |
+| Defender blocks with | Against attack element | X gauge | Blocked gauges |
 |---|---|---|---|
 | Water | Fire | Water +1 | Fire −1 |
 | Wood | Water | Wood +1 | Water −1 |
-| Fire | Wood | Fire +1 | Wood −1 |
-| Fire | Shadow | Fire +1 | Shadow −1 |
+| Fire | Wood or Shadow | Fire +1 | Wood −1, Shadow −1 |
 
-Blocks against non-matching attacks (e.g. Water ring blocking a Wood attack) still pay the +1 blocking cost with no reduction on the blocked gauge.
+Fire is strong against both Wood and Shadow — a Fire strong block reduces both gauges simultaneously regardless of which of the two elements triggered the strong block. Water and Wood each cover one element; Fire covers two.
+
+Blocks against non-matching attacks (e.g. Water ring blocking a Wood attack) still pay the +1 blocking cost with no reduction on any gauge.
 
 **4. Parry (STRONG timing):** All four gauges reset to 0. A flawlessly timed deflection disperses all accumulated elemental energy at once.
 
