@@ -437,7 +437,11 @@ export abstract class BaseBiomeScene extends Phaser.Scene {
       this.toggleBattleHand();
     });
     this.input.keyboard!.on('keydown-ESC', () => {
-      if (this.overlayOpen) this.closeBattleHand();
+      if (this.merchantModal?.isOpen()) {
+        this.merchantModal.close();
+      } else if (this.overlayOpen) {
+        this.closeBattleHand();
+      }
     });
     window.__overworldBattleHandOpen = false;
     window.__overworldToggleBattleHand = (): void => this.toggleBattleHand();
@@ -1095,13 +1099,35 @@ export abstract class BaseBiomeScene extends Phaser.Scene {
   }
 
   /**
-   * Draw the Sanctum exterior placeholder (8B.4.1) at the given world center:
-   * a foundation slab, roof triangle, dark door opening, and a floating label.
+   * Whether to render the `sanctum-exterior` image sprite at the Sanctum's world
+   * position. Returns false when the map already contains a hand-authored building
+   * that represents the Sanctum (e.g. `forest_anchorage`), preventing a double-render.
+   * Subclasses override this for screens where the Tiled map includes the Sanctum
+   * building in its tile layers.
+   */
+  protected shouldDrawSanctumExterior(): boolean {
+    return true;
+  }
+
+  /**
+   * Draw the Sanctum exterior sprite (8B.4.1) at the given world center and add a
+   * static physics body so the player cannot walk through it.
    */
   private drawSanctumExterior(cx: number, cy: number): void {
-    this.sanctumSprite = this.add
-      .image(cx, cy, 'sanctum-exterior')
-      .setDepth(8);
+    if (!this.shouldDrawSanctumExterior()) return;
+    const img = this.add.image(cx, cy, 'sanctum-exterior').setDepth(8);
+    this.sanctumSprite = img;
+    // Static physics body sized to the building's lower half (walls + door) so the
+    // player cannot walk through the structure. The roof overhangs above and does not
+    // need collision. Offset downward from the sprite center so the body aligns with
+    // the visible wall area.
+    this.physics.add.existing(img, true /* isStatic */);
+    const body = img.body as Phaser.Physics.Arcade.StaticBody;
+    const bw = img.width * 0.8;
+    const bh = img.height * 0.5;
+    body.setSize(bw, bh);
+    body.setOffset((img.width - bw) / 2, img.height * 0.45);
+    this.physics.add.collider(this.player, img);
   }
 
   /** Read the `waystoneId` custom property off a Tiled object, if present. */

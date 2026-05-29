@@ -151,12 +151,23 @@ export class CampScene extends Phaser.Scene {
     const allTilesets = [tsFurniture, tsCeiling, tsFloor, tsWallFloor];
 
     this.groundLayer = map.createLayer('Floor', allTilesets, 0, 0)!;
-    map.createLayer('Furniture', allTilesets, 0, 0);
-    map.createLayer('Ceiling', allTilesets, 0, 0)!.setDepth(10);
+    this.groundLayer.setCollisionByProperty({ collides: true });
+
+    // Furniture and Ceiling layers also carry collideable tiles (walls, table,
+    // appliances, bookcases). Enable collision so the player can't walk through them.
+    const furnitureLayer = map.createLayer('Furniture', allTilesets, 0, 0)!;
+    furnitureLayer.setCollisionByProperty({ collides: true });
+
+    const ceilingLayer = map.createLayer('Ceiling', allTilesets, 0, 0)!;
+    ceilingLayer.setCollisionByProperty({ collides: true });
+    ceilingLayer.setDepth(10);
 
     // ── Spawn the player at the `spawn` object ────────────────────────────
     const spawn = this.findObject(map, 'spawn');
     this.player = new Player(this, spawn?.x ?? map.widthInPixels / 2, spawn?.y ?? map.heightInPixels / 2);
+    this.physics.add.collider(this.player, this.groundLayer);
+    this.physics.add.collider(this.player, furnitureLayer);
+    this.physics.add.collider(this.player, ceilingLayer);
 
     // ── Camera follows the player, clamped to map bounds ──────────────────
     this.physics.world.setBounds(0, 0, map.widthInPixels, map.heightInPixels);
@@ -325,7 +336,7 @@ export class CampScene extends Phaser.Scene {
         return () => this.openMeditationOverlay();
       case 'bed':
         return () => this.openBedOverlay();
-      case 'campfire':
+      case 'eat':
         return () => this.openCampfireOverlay();
       case 'door':
         return () => this.onDoorInteract();
@@ -1043,9 +1054,9 @@ export class CampScene extends Phaser.Scene {
     if (this.overlayName === 'bed') this.closeOverlay();
   }
 
-  /** Campfire: placeholder showing food count + "Cooking coming soon". */
+  /** Eat (at the table): shows food count + "Cooking coming soon". */
   private openCampfireOverlay(): void {
-    const c = this.beginOverlay('campfire', 'CAMPFIRE');
+    const c = this.beginOverlay('eat', 'EAT');
     const food = window.__campState?.food_units ?? 0;
     c.add(
       this.add
