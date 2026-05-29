@@ -43,6 +43,12 @@ test('Double-tap Z in attack phase rechrges a1: ring use updates, no attack thro
   // Drop a1 to 1 use so the recharge restores it (no-token-or-token, the server
   // restores; with the test PvP token it spends spirit but still restores).
   await setState(attacker, { uses: { a1: 1 } });
+  // Wait for the seed diff to apply before reading (the __testSetState mutation
+  // arrives as a separate broadcast patch).
+  await attacker.waitForFunction(() => {
+    const room = (window as any).__room;
+    return room.state.players.get(room.sessionId).a1.currentUses === 1;
+  }, { timeout: 4000 });
   const before = await readSlot(attacker, 'a1');
   expect(before.currentUses).toBe(1);
 

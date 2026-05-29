@@ -23,9 +23,17 @@ const STATUS_BADGES: { label: string; color: string }[] = [
   { label: '🌿 TANGLE', color: '#55cc44' }, // woodGauge → Entangled
 ];
 
+// SHADOW element index + its dark-purple swatch (mirrors server ElementEnum.SHADOW).
+const SHADOW_ELEMENT = 15;
+// #135 — Blinded hides own-HUD elements progressively by shadowGauge stack:
+//   ≥1 A1, ≥2 A2, ≥3 D1, ≥4 D2, ≥5 hearts (GDD §7.2). Hearts handled here; the
+//   four use counts are hidden in Hand/RingSlot keyed off the same gauge.
+const BLINDED_HEARTS_AT = 5;
+
 export class PlayerDuelist extends Phaser.GameObjects.Container {
   private readonly hearts: Phaser.GameObjects.Text;
   private readonly gaugeTexts: Phaser.GameObjects.Text[] = [];
+  private readonly shadowGaugeText: Phaser.GameObjects.Text;
   private readonly statusBadge: Phaser.GameObjects.Text;
 
   constructor(scene: Phaser.Scene) {
@@ -45,9 +53,19 @@ export class PlayerDuelist extends Phaser.GameObjects.Container {
       this.gaugeTexts.push(gt);
     });
 
+    // #135 — the 4th (shadow) gauge bar, dark-purple, beneath the triangle three.
+    // Hidden at shadowGauge 0; shown 1–5 when Shadow has been inflicted.
+    this.shadowGaugeText = scene.add
+      .text(PLAYER_X + 50, PLAYER_Y - 35 + GAUGE_ELEMENTS.length * 18, '', {
+        fontSize: '11px',
+        color: `#${ELEMENT_COLORS[SHADOW_ELEMENT].toString(16).padStart(6, '0')}`,
+        fontStyle: 'bold',
+      })
+      .setVisible(false);
+
     // Active-status badge line beneath the gauges (e.g. "🔥 BURN  💧 DROWN").
     // Stacks all active statuses; empty when none are active.
-    this.statusBadge = scene.add.text(PLAYER_X + 50, PLAYER_Y + 22, '', {
+    this.statusBadge = scene.add.text(PLAYER_X + 50, PLAYER_Y + 40, '', {
       fontSize: '11px',
       color: '#ffaa44',
       fontStyle: 'bold',
@@ -56,11 +74,20 @@ export class PlayerDuelist extends Phaser.GameObjects.Container {
     scene.add.existing(this);
   }
 
-  /** Sync hearts, gauges, and status badges to the local player's PlayerState. */
+  /** Sync hearts, gauges, shadow gauge, and status badges to the local PlayerState. */
   updateFromState(playerState: any): void {
     if (!playerState) return;
     const hearts = playerState.hearts ?? 0;
-    this.hearts.setText('♥'.repeat(hearts) + '♡'.repeat(Math.max(0, 3 - hearts)));
+    const shadowGauge = playerState.shadowGauge ?? 0;
+
+    // #135 Blinded — at shadowGauge ≥ 5 the local player can no longer read their
+    // own hearts (shown as `?`). Restores immediately when the gauge drops (e.g.
+    // a parry clears it).
+    if (shadowGauge >= BLINDED_HEARTS_AT) {
+      this.hearts.setText('?');
+    } else {
+      this.hearts.setText('♥'.repeat(hearts) + '♡'.repeat(Math.max(0, 3 - hearts)));
+    }
 
     const active: string[] = [];
     GAUGE_KEYS.forEach((key, i) => {
@@ -70,6 +97,21 @@ export class PlayerDuelist extends Phaser.GameObjects.Container {
       this.gaugeTexts[i].setText(`${ELEMENT_NAMES[el]}: ${val}${isActive ? '!' : ''}`);
       if (isActive) active.push(STATUS_BADGES[i].label);
     });
+
+    // Shadow gauge bar — visible only when inflicted (> 0). Blinded triggers at any
+    // stack, so a `!` marks it active whenever shown.
+    if (shadowGauge > 0) {
+      this.shadowGaugeText.setText(`SHADOW: ${shadowGauge}!`).setVisible(true);
+      active.push('🌑 BLIND');
+    } else {
+      this.shadowGaugeText.setVisible(false);
+    }
+
     this.statusBadge.setText(active.join('  '));
+  }
+
+  /** The rendered hearts string (`?` when Blinded at shadowGauge ≥ 5). For E2E/#135. */
+  get displayedHearts(): string {
+    return this.hearts.text;
   }
 }

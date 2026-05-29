@@ -108,6 +108,7 @@ export class BattleScene extends Phaser.Scene {
       this.playerDuelist.updateFromState(state.players.get(myId));
       this.opponentDuelist.updateFromState(state, myId, this.revealedOpponentElements);
       this.hud.updateFromState(state, myId);
+      this.publishHudView();
       this.checkPhaseTransition(state, myId);
       this.checkEnded(state, myId);
     };
@@ -152,6 +153,23 @@ export class BattleScene extends Phaser.Scene {
       this.dismissForfeitPrompt();
       window.__scene = null;
     });
+  }
+
+  /**
+   * #135 — publish the LOCAL player's RENDERED HUD (what they can actually see)
+   * to window.__hudView, so E2E can assert the Blinded `?` substitution on the
+   * own-HUD without reading pixels. Reflects the displayed strings, not the raw
+   * broadcast numbers (those remain readable via __room.state — the opponent's
+   * view is the unaffected authoritative state).
+   */
+  private publishHudView(): void {
+    window.__hudView = {
+      a1: this.hand.displayedUses('a1'),
+      a2: this.hand.displayedUses('a2'),
+      d1: this.hand.displayedUses('d1'),
+      d2: this.hand.displayedUses('d2'),
+      hearts: this.playerDuelist.displayedHearts,
+    };
   }
 
   /** Track which opponent elements have become visible this duel. */

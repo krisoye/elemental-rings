@@ -77,6 +77,17 @@ export class Hand extends Phaser.GameObjects.Container {
       if (ring) this.slots[key].updateFromRing(ring);
     }
 
+    // #135 Blinded — progressively hide the LOCAL player's own use counts as their
+    // shadowGauge climbs (≥1 A1, ≥2 A2, ≥3 D1, ≥4 D2; hearts at ≥5 are handled by
+    // PlayerDuelist). Restores immediately when the gauge drops (e.g. a parry
+    // clears it). The thumb is never hidden. This affects only THIS client's view
+    // of its own hand — the opponent's view is unaffected.
+    const shadow = me.shadowGauge ?? 0;
+    this.slots.a1.setUsesHidden(shadow >= 1);
+    this.slots.a2.setUsesHidden(shadow >= 2);
+    this.slots.d1.setUsesHidden(shadow >= 3);
+    this.slots.d2.setUsesHidden(shadow >= 4);
+
     // Highlight the active group: A1/A2 during the local player's attack phase,
     // D1/D2 during the local player's defense phase.
     const imAttacker = state.currentAttackerId === myId;
@@ -87,6 +98,11 @@ export class Hand extends Phaser.GameObjects.Container {
     this.slots.d1.setActiveGroup(defendActive);
     this.slots.d2.setActiveGroup(defendActive);
     this.slots.thumb.setActiveGroup(false);
+  }
+
+  /** The rendered use-count string for a slot (`?` when Blinded). For E2E/#135. */
+  displayedUses(key: SlotKey): string {
+    return this.slots[key].displayedUses;
   }
 
   /**

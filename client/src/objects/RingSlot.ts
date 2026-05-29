@@ -24,6 +24,10 @@ export class RingSlot extends Phaser.GameObjects.Container {
   private readonly dimOverlay: Phaser.GameObjects.Rectangle;
   private _element = 0;
   private _isExtinguished = false;
+  // #135 Blinded — when true, the use-count row renders `?` instead of pips (the
+  // local Blinded player can no longer read this ring's remaining uses).
+  private _usesHidden = false;
+  private _lastRing: { currentUses: number; maxUses: number } | null = null;
 
   constructor(scene: Phaser.Scene, x: number, y: number, slotName: string) {
     super(scene, x, y);
@@ -62,18 +66,46 @@ export class RingSlot extends Phaser.GameObjects.Container {
   updateFromRing(ring: any): void {
     this._element = ring.element;
     this._isExtinguished = ring.isExtinguished;
+    this._lastRing = { currentUses: ring.currentUses, maxUses: ring.maxUses };
     this.bg.setFillStyle(ELEMENT_COLORS[ring.element] ?? 0x333333);
     this.elementLabel.setText(ELEMENT_NAMES[ring.element] ?? '?');
     this.tierText.setText(`T${ring.tier}`);
     this.xpText.setText(`Xp: ${ring.xp}`);
-    const used = ring.maxUses - ring.currentUses;
-    this.usesText.setText('●'.repeat(ring.currentUses) + '○'.repeat(Math.max(0, used)));
+    this.renderUses();
     this.dimOverlay.setVisible(ring.isExtinguished);
+  }
+
+  /**
+   * #135 Blinded — hide or reveal this slot's use count. When hidden the row shows
+   * `?`; when revealed it restores the real pips from the last known ring state.
+   * Idempotent; safe to call every state render.
+   */
+  setUsesHidden(hidden: boolean): void {
+    if (this._usesHidden === hidden) return;
+    this._usesHidden = hidden;
+    this.renderUses();
+  }
+
+  /** Render the use-count row, honoring the Blinded `?` substitution. */
+  private renderUses(): void {
+    if (this._usesHidden) {
+      this.usesText.setText('?');
+      return;
+    }
+    const r = this._lastRing;
+    if (!r) return;
+    const used = r.maxUses - r.currentUses;
+    this.usesText.setText('●'.repeat(r.currentUses) + '○'.repeat(Math.max(0, used)));
   }
 
   /** Highlight (or dim) this slot depending on whether its group is active. */
   setActiveGroup(active: boolean): void {
     this.bg.setStrokeStyle(active ? 3 : 2, active ? 0xffff66 : 0x888888);
+  }
+
+  /** The currently-rendered use-count string (`?` when Blinded). For E2E. */
+  get displayedUses(): string {
+    return this.usesText.text;
   }
 
   get element(): number {
