@@ -4,14 +4,35 @@ Status effects are managed through persistent **element gauges** — one per tri
 
 ### 7.1 Gauge Mechanics
 
-Each player maintains **three status gauges: Fire, Water, Wood** — one per triangle element. All gauges start at 0 and floor at 0. Wind and Earth are not triangle elements — their attacks never trigger `gaugeIncreases` regardless of timing outcome.
+Each player maintains **three status gauges: Fire, Water, Wood** — one per triangle element. All gauges start at 0 and floor at 0. Wind and Earth are not triangle elements — their attacks never contribute to gauge changes regardless of timing outcome.
 
-**Gauge changes per battle exchange:**
-- **Uncontested hit** (no-block or mistime): +1 per triangle-element component of the attacking ring, added to the defender's matching gauges. Wind and Earth components contribute nothing.
+**Gauge changes per battle exchange — four cases:**
 
-A gauge only moves when the attack lands uncontested. A **weak catch** loses a heart but the attack *was* caught, so it moves **no gauge** — heart loss and gauge gain are independent (see §6.4). Successful blocks and parries — including intermediate rally volleys — never move gauges. A rally that terminates in an uncontested hit emits one gauge delta on the terminating volley; a rally that terminates in a weak catch emits none.
+**1. Uncontested hit (no-block or mistime):** +1 per triangle-element component of the attacking ring, added to the defender's matching gauges. Wind and Earth components contribute nothing.
 
-**Server implementation:** Gauge deltas are computed by the Colyseus BattleRoom after each exchange. The `resolveBlock` result carries a `gaugeElements: number[]` array listing the specific triangle element indices whose gauges should increment. For base-element attacks the array contains the attacker's element on no-block or mistime, and is empty for any caught attack (neutral, strong, or weak). For fusion attacks each triangle component that lands uncontested — either via auto-align (the unengaged component resolves as NO_BLOCK) or on a full no-block/mistime — contributes its element index; a dual-triangle fusion on a full no-block therefore fills two gauge slots simultaneously. Gauges are broadcast to both clients as part of the state update.
+**2. Block with ring X:** The defender's X gauge +1, regardless of the attacker's element. Channelling an element as a shield concentrates its force inward rather than deflecting it outward.
+
+**3. Counter-block:** When the defender blocks with ring X and the incoming attack's primary element is one that X counters, the opposing element's gauge also decreases by 1 (in addition to the +1 blocking cost on X). The triangle counter relationships:
+
+| Defender blocks with | Against attack element | X gauge | Countered gauge |
+|---|---|---|---|
+| Water | Fire | Water +1 | Fire −1 |
+| Wood | Water | Wood +1 | Water −1 |
+| Fire | Wood | Fire +1 | Wood −1 |
+
+Counter-blocks against non-matching attacks (e.g. Water ring blocking a Wood attack) still pay the +1 blocking cost with no counter reduction.
+
+**4. Perfect counter (STRONG timing parry):** All three triangle gauges reset to 0. A flawlessly timed deflection disperses all accumulated elemental energy at once.
+
+A **weak catch** loses a heart but moves **no gauge** — heart loss and gauge gain are independent (see §6.4). Intermediate rally volleys follow the same block/parry rules as regular exchanges. A rally terminating in an uncontested hit emits one gauge delta on the terminating volley; a rally terminating in a weak catch emits none.
+
+**Server implementation:** Gauge deltas are computed by the Colyseus BattleRoom after each exchange. The `resolveBlock` result carries:
+- `hitGaugeElements: number[]` — triangle element indices to increment on an uncontested hit
+- `blockGaugeElement: number | null` — the defending ring's triangle element index (+1 to that gauge on any block or parry); null on no-block
+- `counterGaugeElement: number | null` — the countered gauge index (−1) when a counter-block fires; null otherwise
+- `clearAllGauges: boolean` — true on a STRONG parry; server sets all three triangle gauges to 0
+
+For fusion attacks each triangle component that lands uncontested contributes its element index; a dual-triangle fusion on a full no-block fills two gauge slots simultaneously. Gauges are broadcast to both clients as part of the state update.
 
 **Fusion ring decomposition:**
 A fusion ring contributes to gauges based only on its **triangle-element** components. Wind and Earth components contribute nothing.
@@ -29,7 +50,7 @@ A fusion ring contributes to gauges based only on its **triangle-element** compo
 | Bloom | Wood + Earth | Wood ×1 (Earth: no gauge) |
 | Dust | Wind + Earth | No gauge contribution |
 
-A caught attack against a fusion ring moves no gauge — the decomposition above applies only to uncontested hits.
+The decomposition above applies only to uncontested hits. Blocking a fusion attack still costs the defending ring's gauge as per case 2; the attacker's fusion elements do not drive `blockGaugeElement`.
 
 **Status threshold:** Default **4**. The threshold scales upward with player experience and augmentations in late-game progression (formula TBD).
 
@@ -39,17 +60,19 @@ A caught attack against a fusion ring moves no gauge — the decomposition above
 
 ### 7.2 Base Element Statuses
 
-| Element | Status | Effect | How to Reduce Gauge |
+| Element | Status | Effect | Counter-block to reduce gauge |
 |---|---|---|---|
-| Fire | Burning | Lose 1 full heart per turn | Defend with Water |
-| Water | Drowning | All ring **attacks** cost +1 use | Defend with Wood |
-| Wood | Entangled | Highest-uses ring in battle hand loses 1 use at the start of each turn | Defend with Fire |
+| Fire | Burning | Lose 1 full heart per turn | Block a Fire attack with Water (Fire −1, Water +1) |
+| Water | Drowning | Highest-capacity **attack** ring loses 1 use at the start of each turn | Block a Water attack with Wood (Water −1, Wood +1) |
+| Wood | Entangled | Highest-capacity **defense** ring loses 1 use at the start of each turn | Block a Wood attack with Fire (Wood −1, Fire +1) |
 
 Each status is independent — multiple can be active simultaneously and stack their effects.
 
+Gauge reduction via counter-block is incremental (−1 per exchange). A perfect counter is the only way to clear all gauges simultaneously (reset to 0).
+
 ### 7.3 Shadow Status — Curse Gauge
 
-Shadow uses its own **Shadow gauge**, parallel to the three triangle gauges but with a distinct progressive effect. The same gauge rules apply: builds on uncontested hits (no-block or mistime) only; does not build during rally chains or caught attacks.
+Shadow uses its own **Shadow gauge**, parallel to the three triangle gauges but with a distinct progressive effect. The Shadow gauge builds on uncontested hits only; it is not affected by the block/counter-block/perfect-counter rules above.
 
 **Curse effect — progressive information hiding:**
 
