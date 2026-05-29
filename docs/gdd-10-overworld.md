@@ -1,9 +1,22 @@
 ## 10. Overworld
 
 ### 10.1 Visual Style
-- Top-down orthogonal perspective (32 px/tile, square grid)
+- Top-down orthogonal perspective, square grid
 - Reference: *The Legend of Zelda: A Link to the Past*
 - Renderer: Phaser.js canvas with Tiled tilemap support (orthogonal orientation)
+- **Tile size:** 32 px for generated biome screens; **16 px at 2× camera zoom** for hand-authored hub screens (e.g. `forest_anchorage`). The 2× zoom makes 16px tiles read as 32px on screen while retaining finer art detail.
+
+**Tile layer convention (all hand-authored screens):**
+
+| Layer | Depth | Collision | Contains |
+|-------|-------|-----------|----------|
+| `ground` | 0 | `collides` property only | Base terrain — grass, water, paths, dirt |
+| `behind` | 2 | all non-empty | South-facing building walls, tree trunks, fence posts — objects the player walks *in front of* |
+| *(player)* | 3 | — | Player character |
+| `in-front` | 5 | none | Roofs, tree canopy, cliff overhangs — objects the player walks *under* |
+
+**Placement rule:** ask "can the player ever walk in front of this tile?" If yes → `behind`. If no (the player walks under it) → `in-front`. Terrain → `ground`.
+Note: a single object (e.g. a building) typically uses both `behind` *and* `in-front` — south wall panels on `behind`, roof tiles on `in-front`.
 
 ### 10.2 Biomes
 Each biome has NPCs and monsters that lean toward specific element distributions, requiring players to prepare appropriate counter-rings before entering.
@@ -113,6 +126,17 @@ The Sanctum is not an inert container. It is spiritually bonded to the protagoni
 - Anchoring it establishes the camp for that area
 - When multiple players anchor their Sanctums at the same Anchorage, a temporary community forms — the campfires create a gathering space, and a small mystic settlement emerges naturally
 - This is an **Anchorage community**: not a fixed city, but a living cluster of sanctums that comes and goes with its inhabitants
+
+**Sanctum interaction (implemented):**
+
+| Zone | How to activate |
+|------|----------------|
+| Ring-storage wall, meditation circle, bed, campfire | Walk into zone → **Press E** |
+| Exit door | **Walk into the door** — no key press needed; transition fires automatically after a brief moment |
+
+The exit door uses touch-to-exit so leaving feels natural (protagonist walks out rather than pressing a button). All other zones retain press-E to avoid accidental triggers while passing through.
+
+**Sanctum rendering:** the interior map uses **16 px tiles at 2× world zoom** so the room reads at the same apparent scale as the overworld. UI overlays (inventory panels, modal dialogs) render at 1:1 via a separate camera and are unaffected by the zoom.
 
 ---
 
@@ -259,6 +283,8 @@ Food sustains the protagonist's ability to meditate and restore their spirit.
 ### 10.11 Merchants
 
 Merchants are encountered in cities and occasionally wandering the overworld between biomes. They may anchor their own modest sanctums at well-traveled Anchorages temporarily.
+
+**Overworld representation:** merchants appear as standing NPC sprites (drawn from the `charsetA_1` character sheet, distinct character per merchant). Walking into their interaction zone and pressing **E** opens the shop modal. Two merchants are placed at the Forest Anchorage hub by default.
 
 **Wares:**
 

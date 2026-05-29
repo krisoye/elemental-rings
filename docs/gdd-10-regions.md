@@ -12,7 +12,7 @@ Phase 8 is the largest phase in the roadmap — it introduces a full tilemap wor
 
 **What ships:** The Phaser tilemap engine and the Sanctum as a walkable room. Client-only — no Colyseus or server route changes. Every camp action (carry, loadout, sleep, recharge, fusion) already round-trips to authoritative REST endpoints; 8A only adds the spatial presentation layer.
 
-**Sanctum room zones** (walk to zone + press E to activate):
+**Sanctum room zones** (walk to zone; press E to activate interior zones, or simply walk into the exit door):
 
 | Zone | Action |
 |---|---|
@@ -20,7 +20,7 @@ Phase 8 is the largest phase in the roadmap — it introduces a full tilemap wor
 | Meditation circle | Ring recharge. Teleportation UI stub (enabled in 8B). |
 | Bed | Sleep — spend 25 food, restore full spirit gauge |
 | Campfire (exterior) | Placeholder — food display; cook/eat mechanic is a future phase |
-| Exit door | Transition to OverworldScene (stub in 8A.3; real biome in 8B) |
+| Exit door | Walk into the door to leave the Sanctum (touch-to-exit — no key press needed) |
 
 **Sub-issues (implement in order):**
 - [#55](https://github.com/krisoye/elemental-rings/issues/55) — 8A.1: Spatial movement engine + Sanctum room shell (tilemap, Player, collision, camera)
@@ -163,11 +163,14 @@ The Forest is a **multi-screen region** — a graph of discrete maps connected b
 ---
 
 #### `forest_anchorage` — Forest Anchorage (hub)
-- **size:** 40×30
+- **size:** 40×30 tiles × 16 px = 640×480 world pixels (rendered at 2× zoom)
 - **exits:** north → `forest_north_road`, east → `forest_east_path`, south → `forest_south_path`, west → `forest_mossy_fen`
 - **safe:** true
 - **anchorage:** `forest_entry`
-- **content:** The safe community hub. Open clearing with the central campfire ring. Wandering NPCs, friendly duels, and the Merchant (when visiting). The Sanctum anchors here by default. Dirt paths radiate toward all four exits.
+- **map:** hand-authored Tiled export (`client/public/assets/maps/forest/forest_anchorage.json`) — **not generated** by the forest-screen generator. Uses 6 tilesets: `forest16` (water/void collision), `Fantasy Era- Wild plains pack`, `ModernEra_GreenForest_Tileset`, `asset_alliance_starter_village_main`, `berry_and_trees`. The `charsetA_1` charset is declared in the map's `npcs` layer for Tiled authoring reference but that layer is not rendered — merchant NPCs are spawned as interactive sprites from the `objects` layer.
+- **layers:** follows the three-layer convention (§10.1) — `ground` (terrain), `behind` (south walls, trunks), `in-front` (roofs, canopy)
+- **objects:** `spawn` (player start), `anchorage` (forest_entry zone), `sanctum_return` (return-to-Sanctum zone), two `forage_node` objects (berry_1, berry_2), two `merchant` NPCs
+- **content:** The safe community hub. A large lake occupies the northwest quarter. An orange-roofed merchant building sits in the northeast; a larger blue-roofed building with a south-facing entrance dominates the center. Berry bushes, mixed grass-and-soil paths, and a stone wall section fill the remaining space. Two merchant NPCs are present. The Sanctum anchors here by default; all four cardinal exits lead into the wider Forest region.
 
 ---
 
