@@ -15,6 +15,11 @@ export const GREENFOREST_TILESET =
 export const STARTER_VILLAGE_A2 =
   '/var/lib/elemental-rings/pixel_assets/source-art/StarterVillage/32x32/asset_alliance_starter_village_RPG_Maker_VX&Upper_autotile_A2_32x32.png';
 
+// RPG Maker A1 animated-terrain sheet (water). The first animation frame is a
+// standard 2-tile-wide x 3-tile-tall corner-piece water autotile cell at (0,0).
+export const STARTER_VILLAGE_A1 =
+  '/var/lib/elemental-rings/pixel_assets/source-art/StarterVillage/32x32/asset_alliance_starter_village_RPG_Maker_VX&Upper_autotile_A1_32x32.png';
+
 export const STARTER_VILLAGE_MAIN =
   '/var/lib/elemental-rings/pixel_assets/source-art/StarterVillage/32x32/asset_alliance_starter_village_main_32x32.png';
 

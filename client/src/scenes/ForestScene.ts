@@ -40,11 +40,22 @@ export class ForestScene extends BaseBiomeScene {
     window.__forestScreenId = this.screenId;
   }
 
+  /**
+   * Whether this screen uses 16px tiles + 2× world zoom (the rich rendering path).
+   * Currently only `forest_anchorage` (the hand-authored hub) qualifies; the full
+   * 16px migration of generated screens is a later issue. Structuring the decision
+   * as a single predicate means every rendering branch (tilesets, layers, zoom,
+   * Sanctum) reads this method rather than repeating the id literal.
+   */
+  protected is16pxScreen(): boolean {
+    return this.screenId === 'forest_anchorage';
+  }
+
   tilesetKey(): string {
-    // forest_anchorage is the hand-authored 16px Forest hub (multi-tileset; see
-    // buildTilesets). 'forest16' is its primary/ground tileset. Every other screen
-    // stays on the 32px `forest` tileset at 1× until the full 16px migration.
-    return this.screenId === 'forest_anchorage' ? 'forest16' : 'forest';
+    // is16pxScreen() screens use the 16px hub tilesets (primary: 'forest16');
+    // every other screen stays on the 32px `forest` tileset at 1× until the
+    // full 16px migration.
+    return this.is16pxScreen() ? 'forest16' : 'forest';
   }
 
   mapKeyForScreen(id: string): string {
@@ -58,7 +69,7 @@ export class ForestScene extends BaseBiomeScene {
    * as a tile image) are skipped — no rendered layer references them.
    */
   protected buildTilesets(map: Phaser.Tilemaps.Tilemap): Phaser.Tilemaps.Tileset[] {
-    if (this.screenId !== 'forest_anchorage') return super.buildTilesets(map);
+    if (!this.is16pxScreen()) return super.buildTilesets(map);
     return map.tilesets
       .filter((t) => this.textures.exists(t.name))
       .map((t) => map.addTilesetImage(t.name, t.name))
@@ -66,13 +77,14 @@ export class ForestScene extends BaseBiomeScene {
   }
 
   /**
-   * The Forest hub uses three tile layers:
-   *   ground    — terrain base (grass, water, paths)
-   *   behind    — building south walls + tree trunks: renders below the player
-   *   in-front  — roofs + tree canopy: renders above the player
+   * 16px screens use three tile layers (GDD §10 3-layer contract, #149):
+   *   ground    — terrain base (grass, water, paths)       depth 0
+   *   behind    — building south walls + tree trunks        depth 2 (below player)
+   *   in-front  — roofs + tree canopy                      depth 5 (above player)
+   * Every other Forest screen stays on the single 'ground' layer.
    */
   protected tileLayerNames(): string[] {
-    return this.screenId === 'forest_anchorage'
+    return this.is16pxScreen()
       ? ['ground', 'behind', 'in-front']
       : super.tileLayerNames();
   }
@@ -83,19 +95,19 @@ export class ForestScene extends BaseBiomeScene {
    *  carry a `collides` property, so they produce zero collision (player walks under).
    */
   protected tileLayerCollisionMode(layerName: string): 'property' | 'non-empty' {
-    if (this.screenId === 'forest_anchorage' && layerName === 'behind') return 'non-empty';
+    if (this.is16pxScreen() && layerName === 'behind') return 'non-empty';
     return super.tileLayerCollisionMode(layerName);
   }
 
   /**
-   * Depth order:
+   * Depth order (GDD #149 contracts):
    *   ground   = 0  (terrain)
    *   player   = 3  (set in BaseBiomeScene.create)
    *   behind   = 2  (south walls render just below the player)
    *   in-front = 5  (roofs + canopy render above the player; NPCs at 6)
    */
   protected tileLayerDepth(layerName: string): number {
-    if (this.screenId !== 'forest_anchorage') return super.tileLayerDepth(layerName);
+    if (!this.is16pxScreen()) return super.tileLayerDepth(layerName);
     if (layerName === 'behind') return 2;
     if (layerName === 'in-front') return 5;
     return 0; // ground
@@ -109,11 +121,11 @@ export class ForestScene extends BaseBiomeScene {
    * sanctum_return interaction zone is still built normally.
    */
   protected shouldDrawSanctumExterior(): boolean {
-    return this.screenId !== 'forest_anchorage';
+    return !this.is16pxScreen();
   }
 
   preload(): void {
-    if (this.screenId === 'forest_anchorage') {
+    if (this.is16pxScreen()) {
       // The hub composes several tilesets; load each under a key equal to its map name.
       for (const [key, path] of FOREST_HUB_TILESETS) {
         if (!this.textures.exists(key)) this.load.image(key, path);
@@ -141,7 +153,7 @@ export class ForestScene extends BaseBiomeScene {
    * enough to trigger the exit.
    */
   onEnterScreen(): void {
-    if (this.screenId !== 'forest_anchorage') return;
+    if (!this.is16pxScreen()) return;
     const W = 28; // wider than EDGE=24 so blocked players don't trip the exit
     const addWall = (yTop: number, yBottom: number): void => {
       const h = yBottom - yTop;
@@ -155,18 +167,5 @@ export class ForestScene extends BaseBiomeScene {
     addWall(288, 368);
     // Bottom gap: rows 27-28 = y 432-463
     addWall(432, 464);
-  }
-
-  /**
-   * #137 — apply the 2× world zoom on the 16px proof screen (forest_anchorage)
-   * after the base scene has built the world + dual-camera split. cameras.main is
-   * the world camera (zoomed); uiCam (set up in BaseBiomeScene.create) stays at 1:1
-   * so the HUD/overlays are unaffected. Other screens keep the default 1× zoom.
-   */
-  create(): void {
-    super.create();
-    if (this.screenId === 'forest_anchorage') {
-      this.cameras.main.setZoom(2);
-    }
   }
 }

@@ -49,6 +49,7 @@ const SOLO_SPECS = [
   'talisman.spec.ts',
   'teleport.spec.ts',
   'waystones.spec.ts',
+  '16px-foundation.spec.ts',
 ];
 
 export default defineConfig({
