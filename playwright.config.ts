@@ -19,6 +19,13 @@ const PVP_SPECS = [
   'encounter-vs-ai.spec.ts',
   'staking.spec.ts',
   'status-effects.spec.ts',
+  // Battle System v2 + Shadow (EPIC #122 / #132).
+  'gauge-four-case.spec.ts', // #123
+  'recharge-forfeit.spec.ts', // #124
+  'recharge-input.spec.ts', // #125
+  'shadow-element.spec.ts', // #133
+  'shadow-gauge.spec.ts', // #134
+  'shadow-hud.spec.ts', // #135
 ];
 const SOLO_SPECS = [
   'auth.spec.ts',

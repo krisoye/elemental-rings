@@ -569,24 +569,15 @@ export class BattleRoom extends Room<{ state: BattleState }> {
     const ring = attacker.getSlot(payload.slot);
     if (ring.isExtinguished) return;
 
-    // Drowning (GDD §7.2): while the attacker's waterGauge ≥ threshold, every
-    // attack throw costs +1 use. The penalty hits the attack ring itself even
-    // when Tailwind covers the base throw cost.
-    const drowningCost = StatusEffects.isDrowning(attacker) ? 1 : 0;
-
-    // Tailwind passive: Wind thumb pays the BASE use cost instead of the attack
-    // ring. The Drowning surcharge always falls on the attack ring.
+    // Tailwind passive: Wind thumb pays the throw's use cost instead of the attack
+    // ring. (Drowning is no longer a per-throw surcharge — it drains an attack
+    // ring at turn start; see StatusEffects.applyTurnStart.)
     const usePaidByStake = StakeResolver.applyTailwind(attacker, ring);
     if (!usePaidByStake) {
-      ring.currentUses = Math.max(0, ring.currentUses - 1 - drowningCost);
+      ring.currentUses = Math.max(0, ring.currentUses - 1);
       ring.isExtinguished = ring.currentUses === 0;
     } else {
-      // Tailwind fired: thumb pays the base throw; Drowning still surcharges the ring.
-      if (drowningCost > 0) {
-        ring.currentUses = Math.max(0, ring.currentUses - drowningCost);
-        ring.isExtinguished = ring.currentUses === 0;
-      }
-      // Award the attacker's thumb mid-tier XP.
+      // Tailwind fired: thumb pays the throw. Award the attacker's thumb mid-tier XP.
       this.addXp(id, 'thumb', XP_THUMB_MID);
     }
 
@@ -666,6 +657,25 @@ export class BattleRoom extends Room<{ state: BattleState }> {
     }
   }
 
+  /**
+   * Adjust a single tracked gauge on a player by `delta`, clamped to
+   * [0, GAUGE_SOFT_CAP]. Maps the gauge element index (FIRE/WATER/WOOD) to its
+   * gauge field. Unknown elements are ignored. (#134 extends this with SHADOW.)
+   */
+  private adjustGauge(ps: PlayerState, el: number, delta: number): void {
+    const clamp = (v: number): number => Math.max(0, Math.min(GAUGE_SOFT_CAP, v));
+    if (el === ElementEnum.FIRE) ps.fireGauge = clamp(ps.fireGauge + delta);
+    else if (el === ElementEnum.WATER) ps.waterGauge = clamp(ps.waterGauge + delta);
+    else if (el === ElementEnum.WOOD) ps.woodGauge = clamp(ps.woodGauge + delta);
+  }
+
+  /** Reset all tracked triangle gauges to 0 (case 4, strong parry). #134 adds shadow. */
+  private clearTriangleGauges(ps: PlayerState): void {
+    ps.fireGauge = 0;
+    ps.waterGauge = 0;
+    ps.woodGauge = 0;
+  }
+
   private _resolveExchange(): void {
     if (this.windowTimer) {
       clearTimeout(this.windowTimer);
@@ -725,20 +735,21 @@ export class BattleRoom extends Room<{ state: BattleState }> {
       }
     }
 
-    // Increment the defender's matching triangle gauges (FIRE/WATER/WOOD), capped
-    // at GAUGE_SOFT_CAP (2x the GDD §7.1 threshold). Fusions can fill two gauges.
-    for (const el of result.gaugeElements) {
-      if (el === ElementEnum.FIRE) defenderPlayer.fireGauge = Math.min(GAUGE_SOFT_CAP, defenderPlayer.fireGauge + 1);
-      else if (el === ElementEnum.WATER) defenderPlayer.waterGauge = Math.min(GAUGE_SOFT_CAP, defenderPlayer.waterGauge + 1);
-      else if (el === ElementEnum.WOOD) defenderPlayer.woodGauge = Math.min(GAUGE_SOFT_CAP, defenderPlayer.woodGauge + 1);
-    }
-
-    // Gauge cleanse (GDD §7.2): a successful catch (BLOCK/PARRY) with a triangle
-    // ring reduces the gauge that element counters — Water catch −fireGauge, Wood
-    // catch −waterGauge, Fire catch −woodGauge. Non-triangle defenses cleanse
-    // nothing. Independent of whether the catch was safe or a weak catch.
-    if ((timing === 'BLOCK' || timing === 'PARRY') && defenderRing) {
-      StatusEffects.applyGaugeCleanse(defenderPlayer, defenderRing.element);
+    // Four-case gauge model (GDD §7.1). Apply the resolver's gauge directives to
+    // the DEFENDER, capped at GAUGE_SOFT_CAP / floored at 0. A strong parry (case
+    // 4) zeroes every tracked gauge and is TERMINAL — no +1/−1 directives apply on
+    // top of it (the parry's net effect is a full reset, per §7.1 scenario 3).
+    if (result.clearAllGauges) {
+      this.clearTriangleGauges(defenderPlayer);
+    } else {
+      //   hitGaugeElements — uncontested-hit components +1 each (case 1)
+      //   blockGaugeElement — the defending ring's own gauge +1 (case 2)
+      //   blockedGaugeElement — strong-block beaten gauge(s) −1 (case 3)
+      for (const el of result.hitGaugeElements) this.adjustGauge(defenderPlayer, el, +1);
+      if (result.blockGaugeElement !== null) {
+        this.adjustGauge(defenderPlayer, result.blockGaugeElement, +1);
+      }
+      for (const el of result.blockedGaugeElement) this.adjustGauge(defenderPlayer, el, -1);
     }
 
     if (defenderRing && this.defenseSlotKey) {
@@ -758,7 +769,7 @@ export class BattleRoom extends Room<{ state: BattleState }> {
       defenderHeartLost: result.defenderHeartLost,
       rallyContinues: result.rallyContinues,
       volleyedElement: result.volleyedElement,
-      gaugeElements: result.gaugeElements,
+      gaugeElements: result.hitGaugeElements,
     };
     this.broadcast('exchangeResult', exchangeResult);
 

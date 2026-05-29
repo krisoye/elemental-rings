@@ -115,9 +115,23 @@ export interface BlockResult {
   attackerHeartLost: boolean;
   rallyContinues: boolean;
   volleyedElement: number;
-  // Triangle element(s) whose defender gauge fills this exchange. A base triangle
-  // uncontested hit → [thatElement]; a fusion uncontested hit → its triangle
-  // components; a caught attack → []; a partially-caught fusion → only the landed
-  // component's triangle element(s). Wind/Earth components contribute nothing.
-  gaugeElements: number[];
+  // Four-case gauge model (GDD §7.1). The defender's gauges move as follows:
+  //
+  // hitGaugeElements — triangle element(s) whose DEFENDER gauge fills on an
+  //   uncontested hit. A base triangle uncontested hit → [thatElement]; a fusion
+  //   uncontested hit → its triangle components; a caught attack → []; a
+  //   partially-caught fusion → only the landed component's triangle element(s).
+  //   Wind/Earth/Shadow-non-triangle components contribute via element index too
+  //   (Shadow is added by #134). Wind/Earth contribute nothing.
+  hitGaugeElements: number[];
+  // blockGaugeElement — the DEFENDING ring's own gauge-bearing element index that
+  //   gains +1 on any block/parry (case 2). null when the defense did not catch or
+  //   the defending element carries no gauge (Wind/Earth/fusion).
+  blockGaugeElement: number | null;
+  // blockedGaugeElement — gauge element index(es) to DECREMENT on a strong block
+  //   (case 3): the beaten gauge(s). Empty when the catch was not a strong block.
+  blockedGaugeElement: number[];
+  // clearAllGauges — true on a STRONG parry (case 4): the defender's tracked
+  //   gauges all reset to 0.
+  clearAllGauges: boolean;
 }

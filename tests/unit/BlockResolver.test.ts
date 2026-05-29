@@ -34,7 +34,7 @@ describe('resolveBlock — base vs base', () => {
     const def = makeRing(WATER, 3);
     const r = resolveBlock(makeRing(FIRE, 3), def, 'NO_BLOCK');
     expect(r.defenderHeartLost).toBe(true);
-    expect(r.gaugeElements).toEqual([FIRE]);
+    expect(r.hitGaugeElements).toEqual([FIRE]);
     expect(def.currentUses).toBe(3); // never committed
   });
 
@@ -42,7 +42,7 @@ describe('resolveBlock — base vs base', () => {
     const def = makeRing(WATER, 3);
     const r = resolveBlock(makeRing(FIRE, 3), def, 'MISTIME');
     expect(r.defenderHeartLost).toBe(true);
-    expect(r.gaugeElements).toEqual([FIRE]);
+    expect(r.hitGaugeElements).toEqual([FIRE]);
     expect(def.currentUses).toBe(2);
   });
 
@@ -58,7 +58,7 @@ describe('resolveBlock — base vs base', () => {
     const r = resolveBlock(makeRing(FIRE, 3), def, 'BLOCK');
     expect(r.relationship).toBe('NEUTRAL');
     expect(r.defenderHeartLost).toBe(false);
-    expect(r.gaugeElements).toEqual([]);
+    expect(r.hitGaugeElements).toEqual([]);
     expect(def.currentUses).toBe(2);
   });
 
@@ -93,7 +93,7 @@ describe('resolveBlock — base vs base', () => {
     const r = resolveBlock(makeRing(FIRE, 3), def, 'BLOCK');
     expect(r.relationship).toBe('WEAK');
     expect(r.defenderHeartLost).toBe(true);
-    expect(r.gaugeElements).toEqual([]);
+    expect(r.hitGaugeElements).toEqual([]);
     expect(def.currentUses).toBe(2);
   });
 
@@ -135,7 +135,7 @@ describe('resolveBlock — fusion attack (TIDAL = Water+Wood) vs single defense'
     const def = makeRing(FIRE, 3);
     const r = resolveBlock(makeRing(TIDAL, 3), def, 'PARRY');
     expect(r.defenderHeartLost).toBe(true); // Water component lands
-    expect(r.gaugeElements).toEqual([WATER]);
+    expect(r.hitGaugeElements).toEqual([WATER]);
     expect(r.rallyContinues).toBe(true);
     expect(r.volleyedElement).toBe(FIRE);
     expect(def.currentUses).toBe(2); // exactly 1 use for the catch
@@ -145,7 +145,7 @@ describe('resolveBlock — fusion attack (TIDAL = Water+Wood) vs single defense'
     const def = makeRing(FIRE, 3);
     const r = resolveBlock(makeRing(TIDAL, 3), def, 'BLOCK');
     expect(r.defenderHeartLost).toBe(true);
-    expect(r.gaugeElements).toEqual([WATER]);
+    expect(r.hitGaugeElements).toEqual([WATER]);
     expect(r.rallyContinues).toBe(false);
     expect(def.currentUses).toBe(2);
   });
@@ -154,7 +154,7 @@ describe('resolveBlock — fusion attack (TIDAL = Water+Wood) vs single defense'
     const def = makeRing(WATER, 3);
     const r = resolveBlock(makeRing(TIDAL, 3), def, 'PARRY');
     expect(r.defenderHeartLost).toBe(true);
-    expect(r.gaugeElements).toEqual([WOOD]);
+    expect(r.hitGaugeElements).toEqual([WOOD]);
     expect(r.rallyContinues).toBe(false);
     expect(def.currentUses).toBe(2);
   });
@@ -168,7 +168,7 @@ describe('resolveBlock — fusion attack (TIDAL = Water+Wood) vs single defense'
     const def = makeRing(WOOD, 3);
     const r = resolveBlock(makeRing(TIDAL, 3), def, 'PARRY');
     expect(r.defenderHeartLost).toBe(true); // Wood component lands
-    expect(r.gaugeElements).toEqual([WOOD]);
+    expect(r.hitGaugeElements).toEqual([WOOD]);
     expect(r.rallyContinues).toBe(true);
     expect(r.volleyedElement).toBe(WOOD);
     expect(def.currentUses).toBe(2);
@@ -178,14 +178,14 @@ describe('resolveBlock — fusion attack (TIDAL = Water+Wood) vs single defense'
     const r = resolveBlock(makeRing(TIDAL, 3), null, 'NO_BLOCK');
     expect(r.defenderHeartLost).toBe(true);
     // Both triangle components fill their gauges.
-    expect(r.gaugeElements.sort()).toEqual([WATER, WOOD].sort());
+    expect(r.hitGaugeElements.sort()).toEqual([WATER, WOOD].sort());
   });
 
   test('MISTIME with Fire defense: both components land; defender ring -1 use', () => {
     const def = makeRing(FIRE, 3);
     const r = resolveBlock(makeRing(TIDAL, 3), def, 'MISTIME');
     expect(r.defenderHeartLost).toBe(true);
-    expect(r.gaugeElements.sort()).toEqual([WATER, WOOD].sort());
+    expect(r.hitGaugeElements.sort()).toEqual([WATER, WOOD].sort());
     expect(def.currentUses).toBe(2);
   });
 });
@@ -199,7 +199,7 @@ describe('resolveBlock — fusion defense (STEAM = Fire+Water) vs fusion attack 
     const def = makeRing(STEAM, 3);
     const r = resolveBlock(makeRing(TIDAL, 3), def, 'PARRY');
     expect(r.defenderHeartLost).toBe(false); // both components caught safely
-    expect(r.gaugeElements).toEqual([]); // nothing landed
+    expect(r.hitGaugeElements).toEqual([]); // nothing landed
     expect(r.rallyContinues).toBe(true);
     expect(r.volleyedElement).toBe(FIRE);
     expect(def.currentUses).toBe(2); // 1 use total for the fusion catch
@@ -209,8 +209,70 @@ describe('resolveBlock — fusion defense (STEAM = Fire+Water) vs fusion attack 
     const def = makeRing(STEAM, 3);
     const r = resolveBlock(makeRing(TIDAL, 3), def, 'BLOCK');
     expect(r.defenderHeartLost).toBe(false);
-    expect(r.gaugeElements).toEqual([]);
+    expect(r.hitGaugeElements).toEqual([]);
     expect(r.rallyContinues).toBe(false);
     expect(def.currentUses).toBe(2);
+  });
+});
+
+// #123 — four-case gauge model. hitGaugeElements covered above; these pin the
+// block (+1), strong-block (−1), and strong-parry (clear-all) directives.
+describe('resolveBlock — four-case gauge directives (§7.1)', () => {
+  test('NO_BLOCK: block/blocked/clear directives are all empty', () => {
+    const r = resolveBlock(makeRing(FIRE, 3), makeRing(WATER, 3), 'NO_BLOCK');
+    expect(r.blockGaugeElement).toBeNull();
+    expect(r.blockedGaugeElement).toEqual([]);
+    expect(r.clearAllGauges).toBe(false);
+  });
+
+  test('block with a triangle ring → its own gauge +1 (case 2)', () => {
+    // Fire blocks Fire (NEUTRAL): no decrement, but the Fire ring fills FIRE +1.
+    const r = resolveBlock(makeRing(FIRE, 3), makeRing(FIRE, 3), 'BLOCK');
+    expect(r.blockGaugeElement).toBe(FIRE);
+    expect(r.blockedGaugeElement).toEqual([]);
+    expect(r.clearAllGauges).toBe(false);
+  });
+
+  test('Wind/Earth defense → no block gauge (case 2 skipped)', () => {
+    const wind = resolveBlock(makeRing(FIRE, 3), makeRing(WIND, 3), 'BLOCK');
+    expect(wind.blockGaugeElement).toBeNull();
+    const earth = resolveBlock(makeRing(WOOD, 3), makeRing(EARTH, 3), 'BLOCK');
+    expect(earth.blockGaugeElement).toBeNull();
+  });
+
+  test('Water strong block vs Fire → water +1, fire −1 (case 3)', () => {
+    const r = resolveBlock(makeRing(FIRE, 3), makeRing(WATER, 3), 'BLOCK');
+    expect(r.relationship).toBe('STRONG');
+    expect(r.blockGaugeElement).toBe(WATER);
+    expect(r.blockedGaugeElement).toEqual([FIRE]);
+    expect(r.clearAllGauges).toBe(false);
+  });
+
+  test('Wood strong block vs Water → wood +1, water −1 (case 3)', () => {
+    const r = resolveBlock(makeRing(WATER, 3), makeRing(WOOD, 3), 'BLOCK');
+    expect(r.relationship).toBe('STRONG');
+    expect(r.blockGaugeElement).toBe(WOOD);
+    expect(r.blockedGaugeElement).toEqual([WATER]);
+  });
+
+  test('Fire strong block vs Wood → fire +1, wood −1 (case 3)', () => {
+    const r = resolveBlock(makeRing(WOOD, 3), makeRing(FIRE, 3), 'BLOCK');
+    expect(r.relationship).toBe('STRONG');
+    expect(r.blockGaugeElement).toBe(FIRE);
+    expect(r.blockedGaugeElement).toEqual([WOOD]);
+  });
+
+  test('STRONG parry → clearAllGauges true (case 4)', () => {
+    const r = resolveBlock(makeRing(FIRE, 3), makeRing(WATER, 3), 'PARRY');
+    expect(r.rallyContinues).toBe(true);
+    expect(r.clearAllGauges).toBe(true);
+    // The parrying Water ring still fills its own gauge (+1) on the catch.
+    expect(r.blockGaugeElement).toBe(WATER);
+  });
+
+  test('NEUTRAL parry does NOT clear gauges', () => {
+    const r = resolveBlock(makeRing(FIRE, 3), makeRing(FIRE, 3), 'PARRY');
+    expect(r.rallyContinues).toBe(false);
+    expect(r.clearAllGauges).toBe(false);
   });
 });

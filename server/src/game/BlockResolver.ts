@@ -1,7 +1,34 @@
 import { BlockResult } from '../../../shared/types';
+import { ElementEnum } from '../../../shared/types';
 import { Ring } from '../schemas/Ring';
 import { resolve, Relationship } from './ElementSystem';
 import { componentsOf, triangleComponentsOf, TRIANGLE } from './Fusions';
+
+const { FIRE, WATER, WOOD } = ElementEnum;
+
+/**
+ * Strong-block decrement table (GDD §7.1, four-case model). When the defending
+ * ring's element STRONGLY beats the incoming attack element, the beaten gauge is
+ * reduced by 1 (case 3). Triangle-only for now; #134 extends Fire's row to also
+ * decrement SHADOW.
+ *   Water blocks Fire  → fire−1
+ *   Wood  blocks Water → water−1
+ *   Fire  blocks Wood  → wood−1
+ */
+const STRONG_BLOCK_DECREMENT: Record<number, Record<number, number[]>> = {
+  [WATER]: { [FIRE]: [FIRE] },
+  [WOOD]: { [WATER]: [WATER] },
+  [FIRE]: { [WOOD]: [WOOD] },
+};
+
+/**
+ * The single gauge element a defending ring's element fills on a block (case 2).
+ * Returns the element index for a gauge-bearing base element (the triangle here;
+ * #134 adds SHADOW), or null for Wind/Earth and every fusion (no single gauge).
+ */
+function gaugeElementOf(defenderEl: number): number | null {
+  return TRIANGLE.has(defenderEl) ? defenderEl : null;
+}
 
 export function classifyTiming(
   offsetMs: number,
@@ -125,7 +152,10 @@ export function resolveBlock(
     attackerHeartLost: false,
     rallyContinues: false,
     volleyedElement: 0,
-    gaugeElements: [],
+    hitGaugeElements: [],
+    blockGaugeElement: null,
+    blockedGaugeElement: [],
+    clearAllGauges: false,
   };
 
   const outcomes: ComponentOutcome[] = [];
@@ -157,11 +187,37 @@ export function resolveBlock(
   // Union the component outcomes.
   for (const o of outcomes) {
     if (o.heartLost) r.defenderHeartLost = true;
-    for (const g of o.gauge) r.gaugeElements.push(g);
+    for (const g of o.gauge) r.hitGaugeElements.push(g);
     if (o.rally && !r.rallyContinues) {
       r.rallyContinues = true;
       r.volleyedElement = o.volleyedElement >= 0 ? o.volleyedElement : 0;
     }
+  }
+
+  // Four-case gauge model (GDD §7.1). A genuine catch (BLOCK or PARRY with a
+  // committed defense ring) drives cases 2-4:
+  //   case 2 — block gauge: the defending ring's own gauge-bearing element +1
+  //   case 3 — strong block: each beaten gauge −1 (per attack component)
+  //   case 4 — strong parry: all tracked gauges reset to 0
+  if ((timing === 'BLOCK' || timing === 'PARRY') && defenderRing) {
+    const defenderEl = defenderRing.element;
+    // case 2 — the defending element's own gauge fills (triangle/Shadow only;
+    // Wind/Earth/fusion carry no single gauge element → null).
+    r.blockGaugeElement = gaugeElementOf(defenderEl);
+
+    // case 3 — strong-block decrement: for each attack component the defending
+    // element STRONGLY beats, decrement that beaten gauge.
+    const decRow = STRONG_BLOCK_DECREMENT[defenderEl];
+    if (decRow) {
+      for (const c of attackComponents) {
+        const dec = decRow[c];
+        if (dec) for (const g of dec) r.blockedGaugeElement.push(g);
+      }
+    }
+
+    // case 4 — a STRONG parry clears all tracked gauges. r.rallyContinues is the
+    // authoritative "strong parry" signal (set only on PARRY × STRONG above).
+    if (timing === 'PARRY' && r.rallyContinues) r.clearAllGauges = true;
   }
 
   // Rally volley fallback: a STRONG parry with a fusion whose engaged component
