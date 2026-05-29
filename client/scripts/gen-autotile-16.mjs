@@ -4,8 +4,8 @@
 //   autotile_grass_16.png  — light-grass A2 corner-piece cell
 //   autotile_dirt_16.png   — dark-grass A2 corner-piece cell (see GATE NOTE)
 //   autotile_water_16.png  — A1 water corner-piece cell (frame 0)
+//   autotile_cliff_16.png  — procedurally generated cliff corner-piece cell
 //   autotile_proof_16.png  — a test-patch proof autotiled with the resolver
-// plus (gate permitting) autotile_cliff_16.png.
 //
 // Each strip is 768x16 = 48 variants x 16px, produced by decoding a 32px
 // corner-piece cell with decodeAutotileCorner() and downscaling 2x nearest-
@@ -19,10 +19,10 @@
 //           distinct ground autotile. Real, correctly-decoded geometry — not a
 //           stamped fake — but green-toned. Flagged here for honesty.
 //   water : PASS — StarterVillage A1 water corner-piece cell (frame 0) at (0,0)
-//   cliff : FAIL — no corner-piece cliff/wall autotile cell exists in ColdCave
-//           or GreenForest (only decorative single-blob cliff objects). Per the
-//           hard-gate rule we do NOT fabricate one; autotile_cliff_16.png is not
-//           produced. See CLIFF_GATE below.
+//   cliff : PASS (procedural) — no corner-piece cliff cell in available source art;
+//           the cell is generated in-memory by gen-cliff-cell.mjs using a
+//           warm-gray stone palette and matching CORNER_PIECES geometry exactly.
+//           Output is deterministic and committed.
 //
 // Run from client/:  node scripts/gen-autotile-16.mjs  (or npm run gen:autotile-16).
 
@@ -33,14 +33,11 @@ import { PNG } from 'pngjs';
 import { STARTER_VILLAGE_A2, STARTER_VILLAGE_A1 } from './asset-sources.mjs';
 import { decodeAutotileCorner, downscaleNearest } from './lib/rpgmaker-autotile.mjs';
 import { resolveAutotileVariant } from './lib/autotile-resolver.mjs';
+import { generateCliffCell } from './lib/gen-cliff-cell.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const OUT_DIR = resolve(__dirname, '..', 'public', 'assets', 'terrain');
 const TILE_16 = 16;
-
-// cliff GATE: no corner-piece cliff/wall autotile cell exists in the source art.
-// Keep false until a real cliff blob cell is available; flip to a cell spec then.
-const CLIFF_GATE = false;
 
 /**
  * Decode a source sheet's corner-piece cell into a 768x16 (48 x 16px) strip.
@@ -51,6 +48,18 @@ const CLIFF_GATE = false;
 function buildStrip(sourcePath, cell) {
   const src = PNG.sync.read(readFileSync(sourcePath));
   const strip32 = decodeAutotileCorner(src, cell);
+  return downscaleNearest(strip32, 2);
+}
+
+/**
+ * Decode an in-memory corner-piece cell PNG into a 768x16 (48 x 16px) strip.
+ * Used for procedurally generated cells (e.g. cliff) that have no host-bound
+ * source file.
+ * @param {PNG} cellPng 64×96 corner-piece cell PNG.
+ * @returns {PNG} 768x16 strip, tile N = resolver variant N.
+ */
+function buildStripFromCell(cellPng) {
+  const strip32 = decodeAutotileCorner(cellPng, { cellX: 0, cellY: 0 });
   return downscaleNearest(strip32, 2);
 }
 
@@ -188,21 +197,14 @@ function main() {
   const dirt = buildStrip(STARTER_VILLAGE_A2, { cellX: 8, cellY: 9 });
   const water = buildStrip(STARTER_VILLAGE_A1, { cellX: 0, cellY: 0 });
 
+  const cliff = buildStripFromCell(generateCliffCell());
+
   writePng('autotile_grass_16.png', grass);
   writePng('autotile_dirt_16.png', dirt);
   writePng('autotile_water_16.png', water);
+  writePng('autotile_cliff_16.png', cliff);
 
-  const proofStrips = [grass, dirt, water];
-  if (CLIFF_GATE) {
-    // Unreachable while cliff gate fails; wired for when a cliff cell exists.
-    const cliff = buildStrip(STARTER_VILLAGE_A2, { cellX: 0, cellY: 0 });
-    writePng('autotile_cliff_16.png', cliff);
-    proofStrips.push(cliff);
-  } else {
-    console.log('GATE: cliff autotile not produced — no corner-piece cliff cell in source art.');
-  }
-
-  const proof = stackProofs(proofStrips.map(renderPatch));
+  const proof = stackProofs([grass, dirt, water, cliff].map(renderPatch));
   writePng('autotile_proof_16.png', proof);
 }
 
