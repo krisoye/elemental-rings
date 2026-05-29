@@ -11,11 +11,11 @@ import { FOREST_SCREENS } from '../../../shared/world/forest';
  * sprites from the objects layer, so the static npcs layer is not rendered.
  */
 const FOREST_HUB_TILESETS: ReadonlyArray<readonly [string, string]> = [
-  ['forest16', 'assets/tiles/forest16.png'],
-  ['Fantasy Era- Wild plains pack', 'assets/tiles/regions/woods/Fantasy Era- Wild plains pack.png'],
-  ['ModernEra_GreenForest_Tileset', 'assets/tiles/regions/woods/ModernEra_GreenForest_Tileset.png'],
-  ['asset_alliance_starter_village_main', 'assets/tiles/regions/woods/asset_alliance_starter_village_main.png'],
-  ['berry_and_trees', 'assets/tiles/regions/woods/berry_and_trees.png'],
+  ['forest16', 'assets/terrain/terrain_forest_void.png'],
+  ['Fantasy Era- Wild plains pack', 'assets/terrain/terrain_plains_fantasy.png'],
+  ['ModernEra_GreenForest_Tileset', 'assets/terrain/terrain_forest_modern.png'],
+  ['asset_alliance_starter_village_main', 'assets/structures/tileset_village_main_a.png'],
+  ['berry_and_trees', 'assets/flora/flora_berries_trees.png'],
 ];
 
 /**
@@ -119,7 +119,7 @@ export class ForestScene extends BaseBiomeScene {
         if (!this.textures.exists(key)) this.load.image(key, path);
       }
     } else if (!this.textures.exists('forest')) {
-      this.load.image('forest', 'assets/tiles/forest.png');
+      this.load.image('forest', 'assets/terrain/terrain_forest_main.png');
     }
     this.loadCommonAssets();
     // Every screen — including the hub — loads its deterministic generated map (#107).

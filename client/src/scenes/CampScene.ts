@@ -128,10 +128,10 @@ export class CampScene extends Phaser.Scene {
 
   preload(): void {
     Player.preload(this);
-    this.load.image('cozy-furniture', 'assets/tiles/spr_tile_cozy_indoor_furniture.png');
-    this.load.image('cozy-ceiling', 'assets/tiles/spr_tile_cozy_indoor_ceiling_auto_3x3.png');
-    this.load.image('cozy-floor', 'assets/tiles/spr_tile_cozy_indoor_floor_auto_2x2.png');
-    this.load.image('cozy-wallfloor', 'assets/tiles/spr_tile_cozy_indoor_wall_floor.png');
+    this.load.image('cozy-furniture', 'assets/interiors/interior_cozy_furniture.png');
+    this.load.image('cozy-ceiling', 'assets/interiors/interior_cozy_ceiling.png');
+    this.load.image('cozy-floor', 'assets/interiors/interior_cozy_floor.png');
+    this.load.image('cozy-wallfloor', 'assets/interiors/interior_cozy_walls.png');
     this.load.tilemapTiledJSON('sanctum', 'assets/maps/sanctum.json');
   }
 

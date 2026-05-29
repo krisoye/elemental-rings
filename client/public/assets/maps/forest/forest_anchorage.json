@@ -4984,7 +4984,7 @@
     {
       "columns": 4,
       "firstgid": 1,
-      "image": "../../tiles/forest16.png",
+      "image": "../../terrain/terrain_forest_void.png",
       "imageheight": 16,
       "imagewidth": 64,
       "margin": 0,
@@ -5009,7 +5009,7 @@
     {
       "columns": 16,
       "firstgid": 5,
-      "image": "../../tiles/regions/woods/Fantasy Era- Wild plains pack.png",
+      "image": "../../terrain/terrain_plains_fantasy.png",
       "imageheight": 256,
       "imagewidth": 256,
       "margin": 0,
@@ -5022,7 +5022,7 @@
     {
       "columns": 20,
       "firstgid": 261,
-      "image": "../../tiles/regions/woods/ModernEra_GreenForest_Tileset.png",
+      "image": "../../terrain/terrain_forest_modern.png",
       "imageheight": 96,
       "imagewidth": 320,
       "margin": 0,
@@ -5035,7 +5035,7 @@
     {
       "columns": 16,
       "firstgid": 381,
-      "image": "../../tiles/regions/woods/asset_alliance_starter_village_main.png",
+      "image": "../../structures/tileset_village_main_a.png",
       "imageheight": 256,
       "imagewidth": 256,
       "margin": 0,
@@ -5130,7 +5130,7 @@
     {
       "columns": 5,
       "firstgid": 637,
-      "image": "../../tiles/regions/woods/berry_and_trees.png",
+      "image": "../../flora/flora_berries_trees.png",
       "imageheight": 176,
       "imagewidth": 80,
       "margin": 0,
@@ -5143,7 +5143,7 @@
     {
       "columns": 12,
       "firstgid": 692,
-      "image": "../../tiles/npc/charsetA_1.png",
+      "image": "../../characters/charset_a1.png",
       "imageheight": 256,
       "imagewidth": 192,
       "margin": 0,

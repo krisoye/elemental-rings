@@ -37,7 +37,7 @@ export class SwampScene extends BaseBiomeScene {
 
   preload(): void {
     if (!this.textures.exists('swamp-tiles')) {
-      this.load.image('swamp-tiles', 'assets/tiles/swamp.png');
+      this.load.image('swamp-tiles', 'assets/terrain/terrain_swamp_main.png');
     }
     this.loadCommonAssets();
     this.load.tilemapTiledJSON('swamp', 'assets/maps/swamp.json');
