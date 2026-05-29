@@ -126,7 +126,7 @@ export const COMPASS_ARROW_SIZE = 24; // px — half-length of the arrow triangl
 // beside a visible building they can walk back into. Pure presentation — the
 // anchor waystone id comes from the server (window.__waystones.anchor).
 export const SANCTUM_OFFSET = 0; // px — Sanctum body center sits AT the Anchorage center (offset toward map center)
-export const SANCTUM_DOOR_OFFSET = 44; // px — player spawns this far past the Sanctum center (outside the door)
+export const SANCTUM_DOOR_OFFSET = 96; // px — player spawns outside the door (building half-height 80px + 16px clearance)
 export const SANCTUM_ZONE_HALF = 32; // px — half-width/height of the sanctum_return interaction zone
 
 // #73 — Phase 8B.4.3 Anchorage ground treatment. A soft worn-ground ring beneath

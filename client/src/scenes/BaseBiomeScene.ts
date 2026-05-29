@@ -109,13 +109,8 @@ export abstract class BaseBiomeScene extends Phaser.Scene {
   private waystonePayload: WaystonesPayload | null = null;
   /** Camera-pinned compass HUD (8B.2) pulling toward unattuned waystones. */
   private compass!: Compass;
-  /** Sanctum exterior placeholder (8B.4.1), drawn at the anchored waystone. */
-  private sanctumGfx: Phaser.GameObjects.Graphics | null = null;
-  private sanctumLabel: Phaser.GameObjects.Text | null = null;
-  /** Anchorage ground treatment (8B.4.3), keyed by waystone id. */
-  private anchorageRings: Map<string, Phaser.GameObjects.Graphics> = new Map();
-  private anchorageFires: Map<string, { gfx: Phaser.GameObjects.Graphics; x: number; y: number }> =
-    new Map();
+  /** Sanctum exterior sprite, placed at the anchored anchorage. */
+  private sanctumSprite: Phaser.GameObjects.Image | null = null;
   /** #81 — equipped necklace talisman + remaining charges, fetched on create. */
   private talismanLoadout: { necklaceId: string | null; necklaceCharges: number } | null = null;
   /** The Anchorage zone (by waystone id) the player currently overlaps, or null. */
@@ -190,6 +185,9 @@ export abstract class BaseBiomeScene extends Phaser.Scene {
     }
     if (!this.textures.exists('structures')) {
       this.load.image('structures', 'assets/sprites/structures.png');
+    }
+    if (!this.textures.exists('sanctum-exterior')) {
+      this.load.image('sanctum-exterior', 'assets/sprites/sanctum-exterior.png');
     }
   }
 
@@ -343,14 +341,8 @@ export abstract class BaseBiomeScene extends Phaser.Scene {
       this.zones.forEach((z) => z.destroy());
       this.waystones.forEach((w) => w.destroy());
       this.compass.destroy();
-      this.sanctumGfx?.destroy();
-      this.sanctumLabel?.destroy();
-      this.sanctumGfx = null;
-      this.sanctumLabel = null;
-      this.anchorageRings.forEach((g) => g.destroy());
-      this.anchorageFires.forEach((f) => f.gfx.destroy());
-      this.anchorageRings.clear();
-      this.anchorageFires.clear();
+      this.sanctumSprite?.destroy();
+      this.sanctumSprite = null;
       this.zones = [];
       this.waystones.clear();
       this.anchorageMarkers.clear();
@@ -723,12 +715,11 @@ export abstract class BaseBiomeScene extends Phaser.Scene {
     const byId = new Map(payload.waystones.map((w) => [w.id, w]));
     const objs = map.getObjectLayer('objects')?.objects ?? [];
 
-    // Loop A — Anchorage objects (campfire + worn-ground ring, NO standing stone).
+    // Loop A — Anchorage objects: register center + interaction zone for attunement.
     for (const o of objs) {
       if (o.name !== 'anchorage') continue;
       const id = this.waystoneIdOf(o);
       if (!id) continue;
-      const info = byId.get(id);
       const cx = (o.x ?? 0) + (o.width ?? 32) / 2;
       const cy = (o.y ?? 0) + (o.height ?? 32) / 2;
       this.anchorageMarkers.set(id, { center: { x: cx, y: cy } });
@@ -740,29 +731,6 @@ export abstract class BaseBiomeScene extends Phaser.Scene {
       );
       this.physics.add.overlap(this.player, zone.overlapZone);
       this.zones.push(zone);
-
-      const ring = this.add.graphics().setDepth(1);
-      ring.fillStyle(info?.attuned ? 0x3a5a2a : 0x2a3a1a, info?.attuned ? 0.45 : 0.3);
-      ring.fillCircle(cx, cy, ANCHORAGE_GROUND_RADIUS);
-      this.anchorageRings.set(id, ring);
-
-      const fx = cx + 28;
-      const fy = cy + 36;
-      const fire = this.add
-        .graphics()
-        .setDepth(7)
-        .setPosition(fx, fy)
-        .setName(`anchorage-fire-${id}`);
-      this.drawFlame(fire, 0, 0, info?.attuned ?? false);
-      this.anchorageFires.set(id, { gfx: fire, x: 0, y: 0 });
-      this.tweens.add({
-        targets: fire,
-        scaleY: { from: 0.9, to: 1.1 },
-        duration: 600,
-        yoyo: true,
-        repeat: -1,
-        ease: 'Sine.easeInOut',
-      });
     }
 
     // Loop B — pure Waystone objects (discoverable standing stones, NO campfire).
@@ -845,58 +813,9 @@ export abstract class BaseBiomeScene extends Phaser.Scene {
    * a foundation slab, roof triangle, dark door opening, and a floating label.
    */
   private drawSanctumExterior(cx: number, cy: number): void {
-    const g = this.add.graphics().setDepth(8);
-    g.fillStyle(0x2a2a3a);
-    g.fillRect(cx - 40, cy - 24, 80, 48);
-    g.fillStyle(0x3a3a4a);
-    g.fillTriangle(cx - 44, cy - 24, cx + 44, cy - 24, cx, cy - 60);
-    g.fillStyle(0x0a0a14);
-    g.fillRect(cx - 10, cy + 8, 20, 16);
-    const label = this.add
-      .text(cx, cy - 68, 'Sanctum', { fontSize: '12px', color: '#aabbcc' })
-      .setOrigin(0.5, 1)
-      .setDepth(9);
-    this.sanctumGfx = g;
-    this.sanctumLabel = label;
-  }
-
-  /**
-   * Draw an Anchorage campfire (8B.4.3) into the given graphics object: a rock base
-   * plus a warm orange flame when `attuned`, or a cold blue flame when not.
-   */
-  private drawFlame(g: Phaser.GameObjects.Graphics, cx: number, cy: number, attuned: boolean): void {
-    g.clear();
-    g.fillStyle(0x333333);
-    g.fillEllipse(cx, cy + 4, 14, 6); // rock base
-    if (attuned) {
-      g.fillStyle(0xff6600);
-      g.fillEllipse(cx, cy, 10, 14);
-      g.fillStyle(0xff9900);
-      g.fillEllipse(cx, cy - 4, 7, 9);
-      g.fillStyle(0xffdd44);
-      g.fillEllipse(cx, cy - 8, 4, 5);
-    } else {
-      g.fillStyle(0x4466aa);
-      g.fillEllipse(cx, cy, 8, 10);
-      g.fillStyle(0x7799cc);
-      g.fillEllipse(cx, cy - 4, 5, 6);
-    }
-  }
-
-  /** Re-render the Anchorage ground rings + campfires for the given waystone state. */
-  private updateAnchorageVisuals(waystones: WaystoneInfo[]): void {
-    for (const info of waystones) {
-      const anchorage = this.anchorageMarkers.get(info.id);
-      if (!anchorage) continue;
-      const ring = this.anchorageRings.get(info.id);
-      if (ring) {
-        ring.clear();
-        ring.fillStyle(info.attuned ? 0x3a5a2a : 0x2a3a1a, info.attuned ? 0.45 : 0.3);
-        ring.fillCircle(anchorage.center.x, anchorage.center.y, ANCHORAGE_GROUND_RADIUS);
-      }
-      const fire = this.anchorageFires.get(info.id);
-      if (fire) this.drawFlame(fire.gfx, fire.x, fire.y, info.attuned);
-    }
+    this.sanctumSprite = this.add
+      .image(cx, cy, 'sanctum-exterior')
+      .setDepth(8);
   }
 
   /** Read the `waystoneId` custom property off a Tiled object, if present. */
@@ -1137,7 +1056,6 @@ export abstract class BaseBiomeScene extends Phaser.Scene {
   private cachePayload(payload: WaystonesPayload): void {
     this.waystonePayload = payload;
     window.__waystones = payload;
-    this.updateAnchorageVisuals(payload.waystones);
     // #112 — the waystone payload updates on most state-changing server
     // interactions (initial load, attune, teleport, sleep, recharge), so refresh
     // the resource HUD here to keep Day/Gold/Food/Spirit/XP current.
