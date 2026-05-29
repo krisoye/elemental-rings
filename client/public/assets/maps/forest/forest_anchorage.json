@@ -11,7 +11,7 @@
   "version": "1.10",
   "tiledversion": "1.10.2",
   "nextlayerid": 3,
-  "nextobjectid": 12,
+  "nextobjectid": 22,
   "tilesets": [
     {
       "firstgid": 1,
@@ -1338,6 +1338,30 @@
               "value": "forest_anchorage:berry_2"
             }
           ]
+        },
+        {
+          "id": 20,
+          "name": "merchant",
+          "x": 400,
+          "y": 400,
+          "width": 32,
+          "height": 32,
+          "rotation": 0,
+          "visible": true,
+          "point": false,
+          "properties": []
+        },
+        {
+          "id": 21,
+          "name": "merchant",
+          "x": 800,
+          "y": 320,
+          "width": 32,
+          "height": 32,
+          "rotation": 0,
+          "visible": true,
+          "point": false,
+          "properties": []
         }
       ]
     }

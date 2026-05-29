@@ -5,6 +5,8 @@ import { Player } from '../objects/world/Player';
 import { InteractionZone } from '../objects/world/InteractionZone';
 import { Waystone } from '../objects/world/Waystone';
 import { ForageNode } from '../objects/world/ForageNode';
+import { MerchantNpc } from '../objects/world/MerchantNpc';
+import { MerchantModal } from '../objects/MerchantModal';
 import { Compass } from '../objects/world/Compass';
 import { BlinkController } from '../objects/world/BlinkController';
 import { BattleHandOverlay } from '../objects/BattleHandOverlay';
@@ -152,6 +154,10 @@ export abstract class BaseBiomeScene extends Phaser.Scene {
   private isTransitioning = false;
   /** #128 — forage node objects on this screen (keyed by node_id). */
   private forageNodes: Map<string, ForageNode> = new Map();
+  /** #131 — merchant NPC objects on this screen. */
+  private merchantNpcs: MerchantNpc[] = [];
+  /** #131 — shop modal (singleton per scene; opens on merchant E press). */
+  private merchantModal: MerchantModal | null = null;
 
   // ── Subclass contract ───────────────────────────────────────────────────────
 
@@ -365,6 +371,10 @@ export abstract class BaseBiomeScene extends Phaser.Scene {
       this.forageNodes.forEach((n) => n.destroy());
       this.forageNodes.clear();
       window.__forageNodeForaged = undefined;
+      this.merchantNpcs.forEach((m) => m.destroy());
+      this.merchantNpcs = [];
+      this.merchantModal?.close();
+      this.merchantModal = null;
       this.compass.destroy();
       this.sanctumSprite?.destroy();
       this.sanctumSprite = null;
@@ -668,8 +678,21 @@ export abstract class BaseBiomeScene extends Phaser.Scene {
         continue;
       }
       if (o.name === 'merchant') {
-        // MerchantNpc objects are handled in loadMerchants() after the async forage
-        // status fetch. Skip here; they are wired via their own method.
+        if (!this.merchantModal) {
+          this.merchantModal = new MerchantModal(
+            this,
+            () => void this.refreshHud(),
+            () => { this.overlayOpen = false; },
+          );
+        }
+        const modal = this.merchantModal;
+        const npc = new MerchantNpc(this, o, () => {
+          this.overlayOpen = true;
+          void modal.open();
+        });
+        this.merchantNpcs.push(npc);
+        this.physics.add.overlap(this.player, npc.interactionZone.overlapZone);
+        this.zones.push(npc.interactionZone);
         continue;
       }
       // (future: handle other named zones here)
