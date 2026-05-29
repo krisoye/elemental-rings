@@ -210,3 +210,58 @@ test('forage-client: swamp forage node accessible', async ({ browser }) => {
 
   await ctx.close();
 });
+
+// Scenario 6 (P2-4) — Real walk + E-press: position the player on the berry zone,
+// let the update loop mark it active, press 'e', then assert the client-side
+// forage hook (__forageNodeForaged) fired with the right node + a credited balance.
+test('forage-client: walk to berry node and press E forages it', async ({ browser }) => {
+  const ctx = await browser.newContext();
+  await seedAuthToken(ctx);
+  const page = await ctx.newPage();
+  await page.goto(URL);
+
+  await enterForestScreen(page, 'forest_anchorage');
+
+  // Wait for the forage zone centers to be published (publishZoneCenters runs at
+  // the end of loadWaystones, after buildZones has registered the forage zones).
+  await page.waitForFunction(
+    () => {
+      const zc = (window as any).__zoneCenters as Record<string, { x: number; y: number }> | undefined;
+      return !!zc && !!zc['forest_anchorage:berry_1'];
+    },
+    { timeout: 8000 },
+  );
+
+  // Position the player on the berry node center so updateActiveZone() marks it active.
+  await page.evaluate(() => {
+    const zc = (window as any).__zoneCenters as Record<string, { x: number; y: number }>;
+    const c = zc['forest_anchorage:berry_1'];
+    (window as any).__player?.setPosition(c.x, c.y);
+  });
+
+  // Wait until the forage zone is the active zone (the update loop sets this once
+  // the player body overlaps it).
+  await page.waitForFunction(
+    () => ((window as any).__sanctumZones as string[] | undefined)?.includes('forest_anchorage:berry_1'),
+    { timeout: 5000 },
+  );
+
+  // Press E — fires handleInteract → activeZone.interact() → POST /api/overworld/forage.
+  await page.keyboard.press('e');
+
+  // The ForageNode publishes __forageNodeForaged on a 200 response.
+  await page.waitForFunction(
+    () => {
+      const f = (window as any).__forageNodeForaged as { nodeId: string; food_units: number } | undefined;
+      return !!f && f.nodeId === 'forest_anchorage:berry_1';
+    },
+    { timeout: 5000 },
+  );
+  const foraged = await page.evaluate(
+    () => (window as any).__forageNodeForaged as { nodeId: string; food_units: number },
+  );
+  expect(foraged.nodeId).toBe('forest_anchorage:berry_1');
+  expect(foraged.food_units).toBe(101); // fresh player starts at 100, +1 from this forage
+
+  await ctx.close();
+});

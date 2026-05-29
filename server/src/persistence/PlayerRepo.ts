@@ -13,6 +13,7 @@ import {
   FORAGE_YIELD,
   FORAGE_RESPAWN_DAYS,
   FOOD_SELL_PRICE,
+  FOOD_BUY_PRICE,
   MERCHANT_RING_BUY_PRICE_T1,
   MERCHANT_RING_BUY_PRICE_NEUTRAL,
   MERCHANT_RING_SELL_PRICE_T1,
@@ -1048,8 +1049,15 @@ export function getForageStatus(
   playerId: string,
   screenId: string,
 ): Array<{ node_id: string; depleted: boolean }> {
+  // Reject screen ids containing LIKE metacharacters (`%`, `_`) or any character
+  // outside the safe [a-z0-9_] screen-id alphabet, so the prefix can be used as a
+  // LIKE pattern without injection. (Screen ids in shared/world/forest.ts match this.)
+  if (!/^[a-z0-9_]+$/.test(screenId)) {
+    return [];
+  }
   const player = getPlayerById(playerId);
-  const currentDay = player?.game_day ?? 0;
+  if (!player) return [];
+  const currentDay = player.game_day;
   const pattern = `${screenId}:%`;
   const rows = selectForageNodesByPlayerBiomeScreen.all(playerId, pattern) as Array<{
     node_id: string;
@@ -1067,6 +1075,18 @@ export function getForageStatus(
 
 /** Triangle-element elements (Fire, Water, Wood) use the T1 premium price. */
 const TRIANGLE_ELEMENTS = new Set<number>([ElementEnum.FIRE, ElementEnum.WATER, ElementEnum.WOOD]);
+
+/**
+ * Base elements (0–4) the merchant will trade (GDD §10.11). Fusions (5–14),
+ * Shadow (15), and any non-base element are rejected by merchantSellRing.
+ */
+const MERCHANT_TRADEABLE_ELEMENTS = new Set<number>([
+  ElementEnum.FIRE,
+  ElementEnum.WATER,
+  ElementEnum.EARTH,
+  ElementEnum.WIND,
+  ElementEnum.WOOD,
+]);
 
 /** Buy price the merchant charges the player for a Tier 1 ring of the given element. */
 export function ringBuyPrice(element: number): number {
@@ -1096,7 +1116,7 @@ export const merchantBuyFood = db.transaction(
   ): { ok: true; gold: number; food_units: number } | { ok: false; reason: string } => {
     const player = getPlayerById(playerId);
     if (!player) return { ok: false, reason: 'Player not found' };
-    const cost = quantity * 2; // FOOD_BUY_PRICE = 2
+    const cost = quantity * FOOD_BUY_PRICE;
     if (player.gold < cost) {
       return { ok: false, reason: `Insufficient gold (need ${cost}, have ${player.gold})` };
     }
@@ -1192,10 +1212,16 @@ export const merchantSellRing = db.transaction(
     if (!ring || ring.owner_id !== playerId) {
       return { ok: false, reason: 'Ring not found or not owned' };
     }
+    // GDD §10.11 — merchants only trade Tier 1 base-element rings. Reject any
+    // fusion (5–14), Shadow (15), or higher-tier ring before any state change.
+    if (!MERCHANT_TRADEABLE_ELEMENTS.has(ring.element) || ring.tier !== 1) {
+      return { ok: false, reason: 'Ring type not accepted by merchant' };
+    }
     // Block selling a ring that is currently equipped in a battle-hand slot.
     const loadout = selectLoadout.get(playerId) as LoadoutRow | undefined;
     if (loadout) {
-      for (const slot of ['thumb', 'a1', 'a2', 'd1', 'd2'] as const) {
+      for (const slot of SLOT_KEYS) {
+        if (slot === 'player_id') continue;
         if (loadout[slot] === ringId) {
           return { ok: false, reason: 'Cannot sell a ring currently equipped in a battle slot' };
         }

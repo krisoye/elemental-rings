@@ -160,3 +160,53 @@ test('merchant-client: sell unequipped ring via sell tab', async () => {
   ).json()) as { rings: Array<{ id: string }> };
   expect(rings.some((r) => r.id === bought.id)).toBe(false);
 });
+
+// Scenario 6 (P2-4) — Real walk + E-press: position the player on the merchant
+// zone, let the update loop mark it active, press 'e', then assert the modal opened
+// (__merchantModalOpen truthy).
+test('merchant-client: walk to merchant and press E opens shop modal', async ({ browser }) => {
+  const ctx = await browser.newContext();
+  await seedAuthToken(ctx);
+  const page = await ctx.newPage();
+  await page.goto(URL);
+
+  await enterForestScreen(page, 'forest_anchorage');
+
+  // Wait for a merchant zone center to be published (zone names start with "merchant-").
+  await page.waitForFunction(
+    () => {
+      const zc = (window as any).__zoneCenters as Record<string, { x: number; y: number }> | undefined;
+      return !!zc && Object.keys(zc).some((k) => k.startsWith('merchant-'));
+    },
+    { timeout: 8000 },
+  );
+
+  // Position the player on the first merchant zone center.
+  const merchantZoneName = await page.evaluate(() => {
+    const zc = (window as any).__zoneCenters as Record<string, { x: number; y: number }>;
+    const name = Object.keys(zc).find((k) => k.startsWith('merchant-'))!;
+    const c = zc[name];
+    (window as any).__player?.setPosition(c.x, c.y);
+    return name;
+  });
+
+  // Wait until the merchant zone is the active overlapping zone.
+  await page.waitForFunction(
+    (name) => ((window as any).__sanctumZones as string[] | undefined)?.includes(name),
+    merchantZoneName,
+    { timeout: 5000 },
+  );
+
+  // Press E — fires handleInteract → activeZone.interact() → MerchantModal.open().
+  await page.keyboard.press('e');
+
+  // The MerchantModal sets __merchantModalOpen = true on open.
+  await page.waitForFunction(
+    () => (window as any).__merchantModalOpen === true,
+    { timeout: 5000 },
+  );
+  const modalOpen = await page.evaluate(() => (window as any).__merchantModalOpen);
+  expect(modalOpen).toBe(true);
+
+  await ctx.close();
+});
