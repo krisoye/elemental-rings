@@ -30,9 +30,10 @@ const STATUS_BADGES = ['🔥 BURN', '💧 DROWN', '🌿 TANGLE'];
  * Frames 0–4 use the element-matched monster battler_front sprites; frames 5–11
  * use the charset_a1 spritesheet at the character index for that duelist slot.
  */
-function battleTextureKey(spriteFrame: number): string {
-  // 0=FIRE, 1=WATER, 2=EARTH, 3=WIND, 4=WOOD
-  if (spriteFrame <= 4) return `battle-monster-${spriteFrame}`;
+function battleTextureKey(spriteFrame: number, monsterTexKey?: string): string {
+  // 0=FIRE, 1=WATER, 2=EARTH, 3=WIND, 4=WOOD — caller passes the pre-resolved
+  // variant key (e.g. "battle-monster-0-3"); fall back to index-0 if absent.
+  if (spriteFrame <= 4) return monsterTexKey ?? `battle-monster-${spriteFrame}-0`;
   // Frames 5–11 are human charset duelists — use charset character index (spriteFrame-5).
   return 'battle-charset';
 }
@@ -47,14 +48,14 @@ export class OpponentDuelist extends Phaser.GameObjects.Container {
   private readonly thumbCard: Phaser.GameObjects.Rectangle;
   private readonly thumbDimOverlay: Phaser.GameObjects.Rectangle;
 
-  constructor(scene: Phaser.Scene, spriteFrame = 0) {
+  constructor(scene: Phaser.Scene, spriteFrame = 0, monsterTexKey?: string) {
     super(scene, OPPONENT_X, OPPONENT_Y);
 
     // ── Sprite area (top of panel) ──────────────────────────────────────────
     // Monster battler sprites are 80×80 px — displayed at native size.
     // Human duelist sprites use the charset_a1 sheet (16×32 px per frame)
     // scaled 3× so they read clearly at battle zoom.
-    const texKey = battleTextureKey(spriteFrame);
+    const texKey = battleTextureKey(spriteFrame, monsterTexKey);
     let spriteImg: Phaser.GameObjects.Image;
     if (spriteFrame <= 4) {
       // Monster: 80×80 battler_front at native size, centered above stats.

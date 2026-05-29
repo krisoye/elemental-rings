@@ -17,6 +17,57 @@ import {
 const ATTACK_KEYS: ReadonlySet<SlotKey> = new Set<SlotKey>(['a1', 'a2']);
 const DEFENSE_KEYS: ReadonlySet<SlotKey> = new Set<SlotKey>(['d1', 'd2']);
 
+// All battler_front sprites per element (index = ElementEnum: 0=FIRE…4=WOOD).
+// Multiple variants let each encounter roll a different monster appearance.
+const MONSTER_BATTLERS: readonly (readonly string[])[] = [
+  // FIRE (0)
+  [
+    'assets/monsters/monster_fire_02_alt02_battler_front.png',
+    'assets/monsters/monster_fire_02_alt03_battler_front.png',
+    'assets/monsters/monster_fire_02_alt04_battler_front.png',
+    'assets/monsters/monster_fire_03_alt01_battler_front.png',
+    'assets/monsters/monster_fire_03_alt02_battler_front.png',
+    'assets/monsters/monster_fire_03_alt03_battler_front.png',
+    'assets/monsters/monster_fire_03_alt04_battler_front.png',
+  ],
+  // WATER (1)
+  [
+    'assets/monsters/monster_water_grass_19_alt01_battler_front.png',
+    'assets/monsters/monster_water_grass_19_alt02_battler_front.png',
+    'assets/monsters/monster_water_grass_19_alt03_battler_front.png',
+  ],
+  // EARTH (2)
+  [
+    'assets/monsters/monster_electro_ghost_14_alt01_battler_front.png',
+    'assets/monsters/monster_electro_ghost_15_alt01_battler_front.png',
+    'assets/monsters/monster_electro_ghost_16_alt01_battler_front.png',
+  ],
+  // WIND (3)
+  [
+    'assets/monsters/monster_water_fly_11_alt01_battler_front.png',
+    'assets/monsters/monster_water_fly_11_alt02_battler_front.png',
+    'assets/monsters/monster_water_fly_11_alt03_battler_front.png',
+    'assets/monsters/monster_water_fly_11_alt04_battler_front.png',
+    'assets/monsters/monster_water_fly_12_alt01_battler_front.png',
+    'assets/monsters/monster_water_fly_12_alt02_battler_front.png',
+    'assets/monsters/monster_water_fly_12_alt03_battler_front.png',
+    'assets/monsters/monster_water_fly_12_alt04_battler_front.png',
+    'assets/monsters/monster_water_fly_13_alt01_battler_front.png',
+    'assets/monsters/monster_water_fly_13_alt02_battler_front.png',
+    'assets/monsters/monster_water_fly_13_alt03_battler_front.png',
+    'assets/monsters/monster_water_fly_13_alt04_battler_front.png',
+  ],
+  // WOOD (4)
+  [
+    'assets/monsters/monster_water_grass_20_alt01_battler_front.png',
+    'assets/monsters/monster_water_grass_20_alt02_battler_front.png',
+    'assets/monsters/monster_water_grass_20_alt03_battler_front.png',
+    'assets/monsters/monster_water_grass_21_alt01_battler_front.png',
+    'assets/monsters/monster_water_grass_21_alt02_battler_front.png',
+    'assets/monsters/monster_water_grass_21_alt03_battler_front.png',
+  ],
+];
+
 // Compile-time flag injected by Vite (see client/vite.config.ts). True only in
 // the E2E fast build; production bundles inline `false`.
 declare const __E2E_FAST__: boolean;
@@ -83,16 +134,11 @@ export class BattleScene extends Phaser.Scene {
         frameWidth: 16,
         frameHeight: 32,
       });
-    const MONSTER_BATTLERS = [
-      'assets/monsters/monster_fire_02_alt02_battler_front.png',
-      'assets/monsters/monster_water_grass_19_alt01_battler_front.png',
-      'assets/monsters/monster_electro_ghost_14_alt01_battler_front.png',
-      'assets/monsters/monster_water_fly_11_alt01_battler_front.png',
-      'assets/monsters/monster_water_grass_20_alt01_battler_front.png',
-    ];
-    MONSTER_BATTLERS.forEach((path, i) => {
-      const key = `battle-monster-${i}`;
-      if (!this.textures.exists(key)) this.load.image(key, path);
+    MONSTER_BATTLERS.forEach((variants, element) => {
+      variants.forEach((path, variantIdx) => {
+        const key = `battle-monster-${element}-${variantIdx}`;
+        if (!this.textures.exists(key)) this.load.image(key, path);
+      });
     });
   }
 
@@ -121,7 +167,11 @@ export class BattleScene extends Phaser.Scene {
     const myId = room.sessionId;
 
     this.playerDuelist = new PlayerDuelist(this);
-    this.opponentDuelist = new OpponentDuelist(this, this.opponentSpriteFrame);
+    const monsterTexKey =
+      this.opponentSpriteFrame <= 4
+        ? `battle-monster-${this.opponentSpriteFrame}-${Math.floor(Math.random() * MONSTER_BATTLERS[this.opponentSpriteFrame].length)}`
+        : undefined;
+    this.opponentDuelist = new OpponentDuelist(this, this.opponentSpriteFrame, monsterTexKey);
     this.hud = new Hud(this);
     this.hand = new Hand(this, (slot) => this.onSlotPressed(slot));
 
