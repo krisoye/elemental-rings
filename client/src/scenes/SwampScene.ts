@@ -43,6 +43,15 @@ export class SwampScene extends BaseBiomeScene {
     this.load.tilemapTiledJSON('swamp', 'assets/maps/swamp.json');
   }
 
+  /**
+   * The Swamp has no 16px screens (all on 32px single-layer ground maps). Returns
+   * false explicitly so the rendering path is unambiguous when the Swamp is
+   * migrated to BaseBiomeScene features in future phases.
+   */
+  protected is16pxScreen(): boolean {
+    return false;
+  }
+
   /** The Swamp's single screen reuses the hand-authored swamp.json (solid perimeter
    *  except its NW biome_exit zone), so edge transitions stay off — the return to
    *  the Forest is driven by the biome_exit overlap zone, not an edge. */

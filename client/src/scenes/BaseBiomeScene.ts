@@ -44,9 +44,21 @@ declare const __SERVER_URL__: string;
 const WS = __SERVER_URL__ || `ws://${window.location.hostname}:2567`;
 const API_BASE = WS.replace(/^ws/, 'http');
 
-/** px from a map edge at which an edge transition fires (8E.1). */
-const EDGE = 24; // player body half-width is 10px; 8px is unreachable with world bounds
-/** px inset from the spawn edge at which the player materialises after a transition. */
+/**
+ * px from a map edge at which an edge transition fires (8E.1).
+ * At 16px tiles this equals 1.5 tiles — enough to trigger reliably without the
+ * player appearing to leave the perimeter road. Player body half-width is 10px;
+ * 8px would be unreachable with world bounds, so EDGE must be > 10px.
+ * Both 32px (0.75 tiles) and 16px (1.5 tiles) maps work correctly at this value
+ * because the threshold is evaluated in world-space px, not tile units.
+ */
+const EDGE = 24;
+/**
+ * px inset from the spawn edge at which the player materialises after a transition.
+ * At 16px tiles this equals 3 tiles — enough to clear the wall/border tiles at the
+ * arriving edge before physics resolves the first frame. Works for both tile sizes
+ * because it is a px measurement in world space.
+ */
 const SPAWN_INSET = 48;
 
 /** One entry of the GET /api/waystones payload (server is the authority). */
@@ -238,6 +250,26 @@ export abstract class BaseBiomeScene extends Phaser.Scene {
   }
 
   /**
+   * Whether this screen uses 16px tiles rendered at 2× world zoom (the rich path).
+   * Default returns false (32px / 1× for all generated screens and the Swamp).
+   * A subclass overrides this to return true for screens flagged as 16px in the
+   * manifest, so every rendering branch (tilesets, layers, zoom, Sanctum) consults
+   * a single predicate rather than re-checking the id literal.
+   */
+  protected is16pxScreen(): boolean {
+    return false;
+  }
+
+  /**
+   * World-camera zoom factor for this screen. Returns 2 when is16pxScreen() is
+   * true (16px tiles need 2× to fill the same apparent space as 32px at 1×),
+   * otherwise 1. Applied in create() on cameras.main; the uiCam always stays 1:1.
+   */
+  protected worldZoom(): number {
+    return this.is16pxScreen() ? 2 : 1;
+  }
+
+  /**
    * Whether walking into a screen edge fade-transitions to the neighbour. Defaults
    * to true for the generated per-screen maps (all carry open perimeter gaps at
    * their exits); a subclass may return false for a single-screen biome whose
@@ -332,15 +364,16 @@ export abstract class BaseBiomeScene extends Phaser.Scene {
     this.cameras.main.setBounds(0, 0, map.widthInPixels, map.heightInPixels);
     this.cameras.main.startFollow(this.player, true, 0.1, 0.1);
 
-    // ── Dual-camera split (#137) ───────────────────────────────────────────
+    // ── Dual-camera split (#137) + world zoom (#150) ──────────────────────
     // uiCam: full-viewport, zoom 1, no follow. cameras.main ignores uiRoot (the
     // persistent HUD + compass) once; modal overlays (BattleHand, MerchantModal,
     // toasts) are ignored per-container so they stay at the scene root for E2E
     // single-level flatMap traversal. uiCam is added AFTER main so it draws on top.
-    // The per-screen zoom is applied by the subclass (ForestScene.applyScreenZoom);
-    // the UI stays 1:1 here regardless of the world zoom.
+    // worldZoom() returns 2 for 16px screens (is16pxScreen() = true), else 1. The
+    // uiCam always stays at 1:1 so the HUD/overlays are unaffected by the zoom.
     this.uiRoot = this.add.container(0, 0).setDepth(4000);
     this.cameras.main.ignore(this.uiRoot);
+    this.cameras.main.setZoom(this.worldZoom());
     this.uiCam = this.cameras.add(0, 0, CANVAS_W, CANVAS_H);
     // uiCam ignores world objects; the synchronous ones are collected after
     // buildZones() below, and the async ones (waystones, NPCs) are routed as they
