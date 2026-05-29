@@ -119,7 +119,7 @@ test('reliquary: moving a ring into Spare drops aggregate_xp and updates spirit_
 }) => {
   const token = await registerAndToken();
   const me = await getMe(token);
-  const slotted = new Set(Object.values(me.loadout).filter(Boolean) as string[]);
+  const slotted = new Set(['thumb','a1','a2','d1','d2'].map((s: string) => (me.loadout as any)[s]).filter(Boolean) as string[]);
   // A Reliquary ring with positive XP so aggregate_xp visibly changes when carried.
   const reliquaryRing = me.rings.find(
     (r: any) => r.in_carry === 0 && !slotted.has(r.id) && r.xp > 0,
@@ -162,7 +162,7 @@ test('reliquary: moving a Spare ring back to the Reliquary raises aggregate_xp',
 }) => {
   const token = await registerAndToken();
   const me = await getMe(token);
-  const slotted = new Set(Object.values(me.loadout).filter(Boolean) as string[]);
+  const slotted = new Set(['thumb','a1','a2','d1','d2'].map((s: string) => (me.loadout as any)[s]).filter(Boolean) as string[]);
   // Seed a carried-but-unslotted (Spare) ring: carry the 5 battle rings plus one
   // extra Reliquary ring so it sits in Spare.
   const extra = me.rings.find((r: any) => r.in_carry === 0 && !slotted.has(r.id));
@@ -199,7 +199,7 @@ test('reliquary: moving a Spare ring back to the Reliquary raises aggregate_xp',
 test('reliquary: a Reliquary ring moves directly into a Battle Hand slot', async ({ browser }) => {
   const token = await registerAndToken();
   const me = await getMe(token);
-  const slotted = new Set(Object.values(me.loadout).filter(Boolean) as string[]);
+  const slotted = new Set(['thumb','a1','a2','d1','d2'].map((s: string) => (me.loadout as any)[s]).filter(Boolean) as string[]);
   const reliquaryRing = me.rings.find((r: any) => r.in_carry === 0 && !slotted.has(r.id));
   expect(reliquaryRing).toBeDefined();
 
@@ -302,7 +302,7 @@ test('reliquary: Escape closes the modal', async ({ browser }) => {
 test('reliquary: moving within the loadout does not change aggregate_xp', async ({ browser }) => {
   const token = await registerAndToken();
   const me = await getMe(token);
-  const slotted = new Set(Object.values(me.loadout).filter(Boolean) as string[]);
+  const slotted = new Set(['thumb','a1','a2','d1','d2'].map((s: string) => (me.loadout as any)[s]).filter(Boolean) as string[]);
   const extra = me.rings.find((r: any) => r.in_carry === 0 && !slotted.has(r.id));
   expect(extra).toBeDefined();
   // Seed it into Spare (carried, unslotted).
