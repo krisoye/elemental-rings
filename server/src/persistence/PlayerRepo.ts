@@ -370,6 +370,22 @@ export function addRingUses(ringId: string, n: number): void {
   updateRingUsesAdd.run(n, ringId);
 }
 
+/**
+ * Atomic in-duel recharge persistence (#124): spend `affordableUses *
+ * SPIRIT_PER_RING_USE` spirit AND restore `affordableUses` uses to the ring in a
+ * single transaction, so a crash between the two writes can never leave spirit
+ * spent without uses restored (or vice versa). The affordability is computed by
+ * the caller against the live PlayerState; a non-positive `affordableUses` is a
+ * no-op. Mirrors the spirit-per-use coupling of the camp recharge path.
+ */
+export const rechargeRingInBattle = db.transaction(
+  (playerId: string, ringId: string, affordableUses: number): void => {
+    if (affordableUses <= 0) return;
+    updateSpiritDeduct.run(affordableUses * SPIRIT_PER_RING_USE, playerId);
+    updateRingUsesAdd.run(affordableUses, ringId);
+  },
+);
+
 /** Set or clear the escrowed flag on a ring (true → 1, false → 0). */
 export function setEscrowed(ringId: string, escrowed: boolean): void {
   updateRingEscrowed.run(escrowed ? 1 : 0, ringId);
@@ -473,6 +489,33 @@ export const forfeitRing = db.transaction(
       }
     }
     deleteRing.run(ringId, fromPlayerId);
+  },
+);
+
+/**
+ * Atomic forfeit settlement (#124): transfer the forfeiter's staked thumb ring to
+ * the winner AND deduct the gold penalty (floored at 0) in a SINGLE transaction,
+ * so a crash can't leave the ring transferred without the penalty applied (or
+ * vice versa). Returns the transferred ring id. Both inner ops nest under one
+ * better-sqlite3 transaction (savepoint). Used when the loser is a human and the
+ * winner is a human.
+ */
+export const transferRingWithGoldPenalty = db.transaction(
+  (ringId: string, fromPlayerId: string, toPlayerId: string, penalty: number): string => {
+    const id = transferRing(ringId, fromPlayerId, toPlayerId);
+    deductGoldFloored(fromPlayerId, penalty);
+    return id;
+  },
+);
+
+/**
+ * Atomic forfeit settlement vs an AI/no-DB winner (#124): delete the forfeiter's
+ * staked thumb ring AND deduct the gold penalty (floored at 0) in one transaction.
+ */
+export const forfeitRingWithGoldPenalty = db.transaction(
+  (ringId: string, fromPlayerId: string, penalty: number): void => {
+    forfeitRing(ringId, fromPlayerId);
+    deductGoldFloored(fromPlayerId, penalty);
   },
 );
 

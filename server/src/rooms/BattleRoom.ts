@@ -29,7 +29,10 @@ import {
   XP_THUMB_MID,
   XP_THUMB_ABSORB,
   GAUGE_SOFT_CAP,
+  SHADOW_GAUGE_CAP,
   AMBUSH_SPIRIT_COST,
+  SPIRIT_PER_RING_USE,
+  GOLD_FORFEIT_PENALTY,
 } from '../game/constants';
 import {
   ElementEnum,
@@ -43,7 +46,6 @@ import {
   DefenseSlot,
   BattleSummaryPayload,
 } from '../../../shared/types';
-import { GOLD_FORFEIT_PENALTY } from '../game/constants';
 
 /** Fixed sessionId used for the virtual AI player (it has no Colyseus client). */
 const AI_ID = 'AI';
@@ -477,16 +479,28 @@ export class BattleRoom extends Room<{ state: BattleState }> {
       let wonRingId: string | undefined;
       let wonRingElement: number | undefined;
 
+      // GDD §6.3 forfeit gold penalty: when THIS loss was a forfeit (the loser is
+      // the forfeiter), the loser also pays GOLD_FORFEIT_PENALTY (floored at 0).
+      // It is bundled into the SAME transaction as the staked-ring loss so the two
+      // can never desync. A KO loss (forfeiterId null) pays no penalty.
+      const forfeiterIsLoser =
+        this.forfeiterId !== null && loserId !== undefined && this.forfeiterId === loserId;
+      const goldPenalty = forfeiterIsLoser ? GOLD_FORFEIT_PENALTY : 0;
+
       if (loserPlayerId && loserThumbRingId) {
         if (winnerPlayerId) {
-          const loserThumb = this.sessionToRingIds.get(loserId!)?.thumb;
           const loserPs = loserId ? this.state.players.get(loserId) : undefined;
-          wonRingId = PlayerRepo.transferRing(loserThumbRingId, loserPlayerId, winnerPlayerId);
+          // Atomic: ring transfer + (any) forfeit gold penalty in one transaction.
+          wonRingId = PlayerRepo.transferRingWithGoldPenalty(
+            loserThumbRingId,
+            loserPlayerId,
+            winnerPlayerId,
+            goldPenalty,
+          );
           wonRingElement = loserPs?.thumb.element;
-          void loserThumb;
         } else {
-          // vsAI: winner has no DB record — just delete the ring.
-          PlayerRepo.forfeitRing(loserThumbRingId, loserPlayerId);
+          // vsAI: winner has no DB record — delete the ring (+ penalty), atomically.
+          PlayerRepo.forfeitRingWithGoldPenalty(loserThumbRingId, loserPlayerId, goldPenalty);
         }
       } else if (!loserPlayerId && winnerPlayerId && loserId) {
         // vsAI win: AI has no DB ring to transfer, so grant the winner a new
@@ -502,14 +516,11 @@ export class BattleRoom extends Room<{ state: BattleState }> {
         if (this.npcId) PlayerRepo.recordNpcDefeat(winnerPlayerId, this.npcId);
       }
 
-      // GDD §6.3 forfeit gold penalty: when the loss was a forfeit (not a KO),
-      // deduct GOLD_FORFEIT_PENALTY from the forfeiter, floored at 0 so the
-      // balance never goes negative. The staked-ring transfer above already ran.
-      if (this.forfeiterId) {
-        const forfeiterPlayerId = this.sessionToPlayerId.get(this.forfeiterId);
-        if (forfeiterPlayerId) {
-          PlayerRepo.deductGoldFloored(forfeiterPlayerId, GOLD_FORFEIT_PENALTY);
-        }
+      // Forfeit gold penalty fallback: if the forfeiting loser had NO staked thumb
+      // ring (so the combined ring+penalty transaction above didn't run), still
+      // apply the floored penalty here. The common path already bundled it.
+      if (goldPenalty > 0 && !(loserPlayerId && loserThumbRingId) && loserPlayerId) {
+        PlayerRepo.deductGoldFloored(loserPlayerId, goldPenalty);
       }
 
       // Recompute each human player's XP-derived spirit_max now that XP has been
@@ -642,11 +653,14 @@ export class BattleRoom extends Room<{ state: BattleState }> {
       let affordable = cost;
       if (playerId) {
         const { spirit_current } = PlayerRepo.getSpiritAndFood(playerId);
-        affordable = Math.min(cost, Math.max(0, spirit_current));
+        // Affordable in USES: spirit covers SPIRIT_PER_RING_USE per restored use.
+        affordable = Math.min(cost, Math.floor(Math.max(0, spirit_current) / SPIRIT_PER_RING_USE));
         if (affordable > 0) {
-          PlayerRepo.spendSpirit(playerId, affordable);
           const ringId = this.sessionToRingIds.get(id)?.[payload.slot];
-          if (ringId) PlayerRepo.addRingUses(ringId, affordable);
+          // Atomic: spend (affordable × SPIRIT_PER_RING_USE) spirit AND restore the
+          // uses in one transaction so a crash can't desync spirit and uses.
+          if (ringId) PlayerRepo.rechargeRingInBattle(playerId, ringId, affordable);
+          else PlayerRepo.spendSpirit(playerId, affordable * SPIRIT_PER_RING_USE);
         }
       }
       if (affordable > 0) {
@@ -763,11 +777,11 @@ export class BattleRoom extends Room<{ state: BattleState }> {
     else if (el === ElementEnum.WATER) ps.waterGauge = clampTo(GAUGE_SOFT_CAP, ps.waterGauge + delta);
     else if (el === ElementEnum.WOOD) ps.woodGauge = clampTo(GAUGE_SOFT_CAP, ps.woodGauge + delta);
     else if (el === ElementEnum.SHADOW)
-      ps.shadowGauge = clampTo(StatusEffects.SHADOW_GAUGE_CAP, ps.shadowGauge + delta);
+      ps.shadowGauge = clampTo(SHADOW_GAUGE_CAP, ps.shadowGauge + delta);
   }
 
   /** Reset ALL tracked gauges to 0 (case 4, strong parry) — triangle + shadow. */
-  private clearTriangleGauges(ps: PlayerState): void {
+  private clearAllGauges(ps: PlayerState): void {
     ps.fireGauge = 0;
     ps.waterGauge = 0;
     ps.woodGauge = 0;
@@ -838,7 +852,7 @@ export class BattleRoom extends Room<{ state: BattleState }> {
     // 4) zeroes every tracked gauge and is TERMINAL — no +1/−1 directives apply on
     // top of it (the parry's net effect is a full reset, per §7.1 scenario 3).
     if (result.clearAllGauges) {
-      this.clearTriangleGauges(defenderPlayer);
+      this.clearAllGauges(defenderPlayer);
     } else {
       //   hitGaugeElements — uncontested-hit components +1 each (case 1)
       //   blockGaugeElement — the defending ring's own gauge +1 (case 2)
@@ -867,7 +881,6 @@ export class BattleRoom extends Room<{ state: BattleState }> {
       defenderHeartLost: result.defenderHeartLost,
       rallyContinues: result.rallyContinues,
       volleyedElement: result.volleyedElement,
-      gaugeElements: result.hitGaugeElements,
     };
     this.broadcast('exchangeResult', exchangeResult);
 
@@ -901,8 +914,9 @@ export class BattleRoom extends Room<{ state: BattleState }> {
       this.impactTime = Date.now() + TELEGRAPH_MS;
       state.phase = 'DEFEND_WINDOW';
       this.windowTimer = setTimeout(() => this._resolveExchange(), DEFEND_WINDOW_MS);
-      // Rally stays in DEFEND_WINDOW — checkAttackForfeit fires at the
-      // ATTACK_SELECT entry after this rally resolves, never mid-rally.
+      // Rally stays in DEFEND_WINDOW. Ring exhaustion no longer auto-forfeits
+      // (#124, GDD §6.6): once the rally resolves to the next ATTACK_SELECT, an
+      // attacker with no usable attack ring must recharge or forfeit voluntarily.
       this.notifyAI();
     } else {
       // Normal: swap roles, go to ATTACK_SELECT.

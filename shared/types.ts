@@ -99,9 +99,6 @@ export interface ExchangeResultPayload {
   defenderHeartLost: boolean;
   rallyContinues: boolean;
   volleyedElement: number;
-  // Triangle elements (FIRE/WATER/WOOD) whose defender gauge should increment.
-  // Empty for a fully-caught attack; one or two entries for landed components.
-  gaugeElements: number[];
 }
 
 /**

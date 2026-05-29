@@ -13,7 +13,11 @@
 // This module is pure and Colyseus-free so it is fully unit-testable with plain
 // objects — it references only a minimal structural view of PlayerState/Ring
 // (the same approach BlockResolver/ElementSystem take with their inputs).
-import { STATUS_THRESHOLD } from './constants';
+import { STATUS_THRESHOLD, SHADOW_GAUGE_CAP } from './constants';
+
+// Re-export so existing importers (BattleRoom, tests) can keep referencing
+// StatusEffects.SHADOW_GAUGE_CAP; the value now lives in constants.ts.
+export { SHADOW_GAUGE_CAP };
 
 /** Minimal structural view of a Ring (only the fields the status code touches). */
 interface RingLike {
@@ -39,11 +43,6 @@ export interface PlayerLike {
   d2: RingLike;
 }
 
-/**
- * Shadow gauge hard cap (#134, GDD §7.1). The shadow gauge clamps at 5 on
- * increment (the triangle gauges use the separate GAUGE_SOFT_CAP).
- */
-export const SHADOW_GAUGE_CAP = 5;
 
 /** The two attack slots Drowning can drain. */
 const ATTACK_RING_KEYS = ['a1', 'a2'] as const;

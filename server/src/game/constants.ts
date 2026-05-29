@@ -22,6 +22,9 @@ export const DEFEND_WINDOW_MS = TELEGRAPH_MS + BLOCK_WINDOW_MS; // 1100 (350 und
 // stay readable.
 export const STATUS_THRESHOLD = 4;
 export const GAUGE_SOFT_CAP = 8;
+// Shadow gauge hard cap (#134, GDD §7.1). The shadow gauge clamps at 5 on
+// increment; the triangle gauges use the separate GAUGE_SOFT_CAP.
+export const SHADOW_GAUGE_CAP = 5;
 
 export const GOLD_PER_WIN = 50;
 export const STARTER_GOLD = 200;
