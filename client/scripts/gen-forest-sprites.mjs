@@ -1,21 +1,25 @@
-// Forest decoration sprite-atlas generator (8D.4).
+// Forest decoration sprite-atlas generator (8D.4, updated).
 //
-// Crops standalone decoration objects (trees / foliage / rocks / bush) from the
-// GreenForest source (16px native), 2x NEAREST-upscales them, and lays them out
-// as a horizontal strip of 32x32 sprites →
+// Draws from two source packs (Wild Plains + GreenForest) to produce a richer
+// 12-frame horizontal strip of 32×32 sprites →
 // client/public/assets/sprites/forest-decoration.png.
 //
-// These source tiles carry partial alpha (they are overlay decorations, not full
-// ground tiles), so each 32x32 sprite has transparency around the object and
-// reads correctly when placed over a ground layer by Decoration.placeDecoration.
+// All source tiles are 16px native; each is 2× nearest-neighbour upscaled to 32×32.
+// Partial alpha is preserved so each sprite reads as an object on grass.
 //
-// Atlas layout (left → right, 32px each):
-//   0 tree-a     (dense canopy)
-//   1 tree-b     (lighter foliage)
-//   2 tree-c     (dark conifer)
-//   3 rock       (grey boulder)
-//   4 bush       (low green shrub)
-//   5 clearing   (pond / mossy blob)
+// Atlas layout (left → right, frame index → description):
+//   0  Wild Plains (1,0)   green round tree
+//   1  Wild Plains (4,0)   autumn/gold tree
+//   2  Wild Plains (6,0)   dark conifer
+//   3  Wild Plains (8,0)   cave entrance (deepwood)
+//   4  Wild Plains (9,0)   red flower cluster
+//   5  Wild Plains (10,0)  yellow flower cluster
+//   6  Wild Plains (12,6)  large grey boulder
+//   7  GreenForest (9,2)   round pinkish rock
+//   8  GreenForest (13,0)  low green bush
+//   9  GreenForest (11,2)  grass tuft
+//  10  GreenForest (18,0)  wide foliage blob
+//  11  Wild Plains (12,0)  purple butterfly
 //
 // Output is byte-stable (deterministic crop, no RNG).
 //
@@ -26,36 +30,37 @@ import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { PNG } from 'pngjs';
-import { GREENFOREST_TILESET } from './asset-sources.mjs';
+import { GREENFOREST_TILESET, WILD_PLAINS_TILESET } from './asset-sources.mjs';
 import { cropTile, nearestScale, buildStrip } from './lib/tile-utils.mjs';
 
-const TILE = 32; // output sprite size (32px after 2x upscale of 16px native)
+const TILE = 32; // output sprite size (2× upscale of 16px source)
 
-// GreenForest 16px-tile grid positions of standalone decoration objects, chosen
-// for partial-alpha (transparent margins) so each reads as an object on grass:
-//   tree-a   → (9,0)  green canopy   rgb[162,193,91]
-//   tree-b   → (11,0) bright foliage rgb[141,183,60]
-//   tree-c   → (13,1) dark foliage   rgb[74,114,61]
-//   rock     → (9,2)  grey boulder   rgb[169,172,167]
-//   bush     → (13,0) dark shrub     rgb[85,140,52]
-//   clearing → (15,3) mossy blob     rgb[154,195,58]
+const wp16 = PNG.sync.read(readFileSync(WILD_PLAINS_TILESET));
+const gf16 = PNG.sync.read(readFileSync(GREENFOREST_TILESET));
+const wp = nearestScale(wp16, 2);
+const gf = nearestScale(gf16, 2);
+
+// [source, tx, ty] — tile-grid coordinates in the 16px source (upscale happens above).
 const SPRITE_TILES = [
-  { tx: 9, ty: 0 }, // tree-a
-  { tx: 11, ty: 0 }, // tree-b
-  { tx: 13, ty: 1 }, // tree-c
-  { tx: 9, ty: 2 }, // rock
-  { tx: 13, ty: 0 }, // bush
-  { tx: 15, ty: 3 }, // clearing
+  [wp, 1,  0],  //  0 green round tree
+  [wp, 4,  0],  //  1 autumn tree
+  [wp, 6,  0],  //  2 dark conifer
+  [wp, 8,  0],  //  3 cave entrance
+  [wp, 9,  0],  //  4 red flower
+  [wp, 10, 0],  //  5 yellow flower
+  [wp, 12, 6],  //  6 grey boulder
+  [gf, 9,  2],  //  7 round rock
+  [gf, 13, 0],  //  8 low bush
+  [gf, 11, 2],  //  9 grass tuft
+  [gf, 18, 0],  // 10 wide foliage
+  [wp, 12, 0],  // 11 purple butterfly
 ];
 
-const src16 = PNG.sync.read(readFileSync(GREENFOREST_TILESET)); // 16px native
-const scaled = nearestScale(src16, 2); // 32px tiles now
-
-const sprites = SPRITE_TILES.map((s) => cropTile(scaled, s.tx, s.ty, TILE));
+const sprites = SPRITE_TILES.map(([src, tx, ty]) => cropTile(src, tx, ty, TILE));
 const strip = buildStrip(sprites, TILE);
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const outPath = resolve(__dirname, '..', 'public', 'assets', 'sprites', 'forest-decoration.png');
 mkdirSync(dirname(outPath), { recursive: true });
 writeFileSync(outPath, PNG.sync.write(strip));
-console.log(`Wrote ${strip.width}x${strip.height} forest decoration atlas → ${outPath}`);
+console.log(`Wrote ${strip.width}x${strip.height} forest decoration atlas (${sprites.length} frames) → ${outPath}`);

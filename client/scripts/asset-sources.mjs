@@ -32,3 +32,20 @@ export const COLD_CAVE_TILESET =
 
 export const STARTER_VILLAGE_MAIN_B_16 =
   '/var/lib/elemental-rings/pixel_assets/source-art/StarterVillage/16px/asset_alliance_starter_village_main_B_16px.png';
+
+// NPC overworld sprite sources (monster walk-cycles + human charsets).
+export const MONSTER_FIRE_OW =
+  '/var/lib/elemental-rings/pixel_assets/source-art/Monsters/fire_01_overworld.png';
+export const MONSTER_WATER_OW =
+  '/var/lib/elemental-rings/pixel_assets/source-art/Monsters/water_grass_19_overworld.png';
+export const MONSTER_EARTH_OW =
+  '/var/lib/elemental-rings/pixel_assets/source-art/Monsters/water_grass_20_overworld.png';
+export const MONSTER_WIND_OW =
+  '/var/lib/elemental-rings/pixel_assets/source-art/Monsters/water_fly_11_overworld.png';
+export const MONSTER_WOOD_OW =
+  '/var/lib/elemental-rings/pixel_assets/source-art/Monsters/electro_ghost_14_overworld.png';
+export const CHARSET_A1 =
+  '/var/lib/elemental-rings/pixel_assets/source-art/NPCs/charsetA_1.png';
+
+export const WILD_PLAINS_TILESET =
+  '/var/lib/elemental-rings/pixel_assets/source-art/WildPlains/wild_plains_pack.png';
