@@ -410,9 +410,12 @@ export abstract class BaseBiomeScene extends Phaser.Scene {
       this.zones.forEach((z) => worldObjects.push(...z.displayObjects));
       this.forageNodes.forEach((n) => worldObjects.push(...n.displayObjects));
       this.merchantNpcs.forEach((m) => worldObjects.push(...m.displayObjects));
-      // Decoration sprites live in the static physics group (DecorationHandle only
-      // exposes destroy()), so collect them from the group's child list.
-      if (this.decorationGroup) worldObjects.push(...this.decorationGroup.getChildren());
+      // All decoration sprites (solid AND non-solid) must be ignored by uiCam.
+      // Collecting only decorationGroup.getChildren() misses non-solid sprites:
+      // they live in the scene but not in the physics group, and a sprite not
+      // ignored by uiCam gets double-rendered — world cam in world-space AND
+      // uiCam at a fixed screen position on top of all world content.
+      if (this.decorHandle) worldObjects.push(...this.decorHandle.sprites);
       this.ignoreWorldObjects(worldObjects);
     }
 
