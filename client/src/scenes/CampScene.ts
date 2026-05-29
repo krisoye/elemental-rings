@@ -64,7 +64,7 @@ export class CampScene extends Phaser.Scene {
   /**
    * UI camera: zoom 1, no follow. Renders the persistent HUD/toast objects in
    * uiRoot plus the modal overlay containers (which cameras.main ignores). It
-   * does not scroll, so UI renders at a fixed 1:1 while the world zooms 4×.
+   * does not scroll, so UI renders at a fixed 1:1 while the world zooms 2×.
    */
   private uiCam!: Phaser.Cameras.Scene2D.Camera;
   /**
@@ -80,6 +80,14 @@ export class CampScene extends Phaser.Scene {
   // ── Interaction zones + modal overlays (8A.2) ─────────────────────────────
   private zones: InteractionZone[] = [];
   private activeZone: InteractionZone | null = null;
+  /**
+   * Guards the touch-to-exit door: routeToBiome() is async (fetch → scene.start),
+   * so without this latch a second frame of overlap — or the E / __sanctumInteract
+   * path firing in parallel — would kick off the transition twice. Set the instant
+   * the door is touched; reset only matters within a single scene lifetime (a fresh
+   * CampScene instance starts false).
+   */
+  private leavingViaDoor = false;
   /** The currently-open modal overlay container, or null. */
   private overlay: Phaser.GameObjects.Container | null = null;
   private overlayName: string | null = null;
@@ -116,6 +124,7 @@ export class CampScene extends Phaser.Scene {
   }
 
   preload(): void {
+    Player.preload(this);
     this.load.image('cozy-furniture', 'assets/tiles/spr_tile_cozy_indoor_furniture.png');
     this.load.image('cozy-ceiling', 'assets/tiles/spr_tile_cozy_indoor_ceiling_auto_3x3.png');
     this.load.image('cozy-floor', 'assets/tiles/spr_tile_cozy_indoor_floor_auto_2x2.png');
@@ -126,6 +135,10 @@ export class CampScene extends Phaser.Scene {
   create(): void {
     window.__scene = this;
     window.__activeScene = 'CampScene';
+    // The scene instance is reused across re-entries (Phaser does not reconstruct
+    // it), so reset per-create flags — otherwise the door's touch-to-exit latch
+    // stays set after the first exit and the player can never leave again.
+    this.leavingViaDoor = false;
 
     // ── Build the Sanctum room from the Tiled map ─────────────────────────
     const map = this.make.tilemap({ key: 'sanctum' });
@@ -145,7 +158,7 @@ export class CampScene extends Phaser.Scene {
 
     // ── Camera follows the player, clamped to map bounds ──────────────────
     this.physics.world.setBounds(0, 0, map.widthInPixels, map.heightInPixels);
-    this.cameras.main.setZoom(4); // #118 — 4× world zoom (re-enabled; UI is on uiCam)
+    this.cameras.main.setZoom(2); // #118 — 2× world zoom (UI is on uiCam). Lowered from 4× — the 16px interior tiles lack the resolution to read cleanly at 4×.
     this.cameras.main.setBounds(0, 0, map.widthInPixels, map.heightInPixels);
     this.cameras.main.startFollow(this.player, true, 0.1, 0.1);
 
@@ -280,13 +293,18 @@ export class CampScene extends Phaser.Scene {
 
   // ── Interaction zones (8A.2) ────────────────────────────────────────────
 
-  /** Build an InteractionZone per named rectangle on the `objects` layer. */
+  /**
+   * Build an InteractionZone per named rectangle on the `objects` layer. The exit
+   * `door` is built without a prompt: it fires on touch (see updateActiveZone), so
+   * a "Press E" hint would be misleading. All other zones keep the E-press prompt.
+   */
   private buildZones(map: Phaser.Tilemaps.Tilemap): void {
     const objs = map.getObjectLayer('objects')?.objects ?? [];
     for (const o of objs) {
       const cb = this.zoneCallback(o.name ?? '');
       if (!cb) continue;
-      const zone = new InteractionZone(this, o, cb);
+      const promptText = o.name === 'door' ? null : 'Press E';
+      const zone = new InteractionZone(this, o, cb, promptText);
       this.physics.add.overlap(this.player, zone.overlapZone);
       this.zones.push(zone);
     }
@@ -318,6 +336,18 @@ export class CampScene extends Phaser.Scene {
     const px = this.player.x;
     const py = this.player.y;
     const overlapping = this.zones.filter((z) => z.contains(px, py));
+    // Publish first so the E2E `walkToZone` probe sees 'door' even on the frame
+    // the touch-to-exit fires below.
+    window.__sanctumZones = overlapping.map((z) => z.name);
+
+    // The exit door fires on touch — walking onto it leaves the Sanctum, no E
+    // press required. Latched so the async routeToBiome() runs exactly once even
+    // if the player lingers on the zone for several frames.
+    if (!this.leavingViaDoor && overlapping.some((z) => z.name === 'door')) {
+      this.leavingViaDoor = true;
+      this.onDoorInteract();
+      return;
+    }
 
     let nearest: InteractionZone | null = null;
     let best = Infinity;
@@ -334,8 +364,6 @@ export class CampScene extends Phaser.Scene {
       nearest?.setActive(true);
       this.activeZone = nearest;
     }
-
-    window.__sanctumZones = overlapping.map((z) => z.name);
   }
 
   /** Fire the active zone's interaction (E key or __sanctumInteract hook). */
@@ -447,7 +475,7 @@ export class CampScene extends Phaser.Scene {
     this.closeOverlay(); // never stack overlays
     // #118: the overlay container stays at the SCENE ROOT (not inside uiRoot) so
     // the existing E2E single-level flatMap traversals still reach its children.
-    // To render it at 1:1 instead of the 4× world camera we tell cameras.main to
+    // To render it at 1:1 instead of the 2× world camera we tell cameras.main to
     // ignore the container; ignoring a container cascades to its whole subtree,
     // so children added later (panels, labels) are excluded automatically.
     const c = this.add.container(0, 0).setDepth(4000);
@@ -955,7 +983,7 @@ export class CampScene extends Phaser.Scene {
    *
    * #118: kept at scene root (not inside uiRoot) so that the E2E lookup
    * `scene.children.getByName('teleport-error')` continues to find it. To
-   * render at 1:1 through uiCam rather than the 4× world camera we tell
+   * render at 1:1 through uiCam rather than the 2× world camera we tell
    * cameras.main to ignore it individually and rely on uiCam (which ignores
    * nothing at the scene-root level) to display it.
    */
@@ -965,7 +993,7 @@ export class CampScene extends Phaser.Scene {
       .setOrigin(0.5)
       .setDepth(4001) // above the overlay container (depth 4000)
       .setName('teleport-error');
-    // Exclude from the 4× world camera so the text renders at 1:1 via uiCam.
+    // Exclude from the 2× world camera so the text renders at 1:1 via uiCam.
     this.cameras.main.ignore(errText);
     this.time.delayedCall(8000, () => {
       if (errText.active) {
@@ -1434,7 +1462,7 @@ export class CampScene extends Phaser.Scene {
     this.fusionPanel.open(this.rings);
     // #118: the FusionPanel container stays at the scene root (so its E2E
     // traversals are unchanged); tell cameras.main to ignore it so it renders
-    // at 1:1 via uiCam instead of the 4× world camera. Ignoring the container
+    // at 1:1 via uiCam instead of the 2× world camera. Ignoring the container
     // cascades to all its children.
     const fc = this.fusionPanel.getContainer();
     if (fc) this.cameras.main.ignore(fc);

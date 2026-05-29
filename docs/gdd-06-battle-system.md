@@ -134,6 +134,19 @@ A strong element with only **Block** timing is a safe block but forfeits the ral
 
 *The same logic applies to all element matchups across all tiers.*
 
+**Outcome feedback (HUD).** When a defense resolves, the defender sees a single label, color, and (for a counter) a screen flash. This is presentation only — the underlying result is the Block Resolution Table above; the feedback collapses the (timing × element) outcome into one legible cue. The timing bands map to the table as **PERFECT = Parry**, **GOOD = Block**, and **MISS = Mistime _or_ No-block**.
+
+| Timing | Element | Label | Color | Flash |
+|---|---|---|---|---|
+| **PERFECT** (parry window) | Strong | `COUNTER!` | Gold | Orange flash — rally triggered |
+| **PERFECT** | Neutral | `PERFECT!` | Cyan | Cyan flash — tight window, no rally |
+| **PERFECT** | Weak | `ABSORBED` | Red | — heart lost despite timing |
+| **GOOD** (block window) | Strong or Neutral | `BLOCKED!` | Green | — |
+| **GOOD** | Weak | `ABSORBED` | Red | — heart lost despite good timing |
+| **MISTIME / NO_BLOCK** | any | `MISS` | Grey | — |
+
+`COUNTER!` is the only label that signals a rally — the only outcome where Parry timing and a Strong element combine (§6.4 Rally). `PERFECT!` teaches players what the inner timing window feels like even when their element isn't strong enough to counter. `ABSORBED` explains why a heart was lost despite pressing a key on time — a weak-element catch costs a heart regardless of timing.
+
 ### 6.5 Neutral Block Rules
 A neutral block occurs when the defender blocks (timing = block or parry) with an element that has no relationship to the attack.
 

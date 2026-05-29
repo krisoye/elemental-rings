@@ -183,6 +183,28 @@ export abstract class BaseBiomeScene extends Phaser.Scene {
   /** Phaser tilemap cache key for the given screen id. */
   abstract mapKeyForScreen(id: string): string;
 
+  /**
+   * Register the tileset(s) this screen's map uses and return them for createLayer.
+   * Default: a single tileset keyed by `tilesetKey()` — covers every generated
+   * screen and the Swamp, where Phaser resolves the lone tileset at firstgid 1
+   * regardless of the map's tileset name. A subclass overrides this for maps that
+   * compose several tilesets (each must be preloaded under a texture key equal to
+   * its name in the map). See ForestScene for the multi-tileset Forest hub.
+   */
+  protected buildTilesets(map: Phaser.Tilemaps.Tilemap): Phaser.Tilemaps.Tileset[] {
+    return [map.addTilesetImage(this.tilesetKey(), this.tilesetKey())!];
+  }
+
+  /**
+   * Names of the tile layers to render, in draw order (first = ground). Default is
+   * the single 'ground' layer every generated screen + Swamp ships. A subclass
+   * overrides this for maps with extra layers (e.g. the Forest hub's 'above-ground'
+   * structures). Layers named here that are absent from the map are skipped.
+   */
+  protected tileLayerNames(): string[] {
+    return ['ground'];
+  }
+
   /** Optional biome-specific visuals (fog/snow/tint), called after the tilemap is built. */
   biomeVisuals?(): void;
   /** Optional per-screen decoration placement, called during create(). */
@@ -208,6 +230,7 @@ export abstract class BaseBiomeScene extends Phaser.Scene {
    * call this from their own preload() alongside the biome tileset + map JSON.
    */
   protected loadCommonAssets(): void {
+    Player.preload(this);
     if (!this.textures.exists('forest-decoration')) {
       this.load.spritesheet('forest-decoration', 'assets/sprites/forest-decoration.png', {
         frameWidth: 32,
@@ -247,13 +270,22 @@ export abstract class BaseBiomeScene extends Phaser.Scene {
 
     const map = this.make.tilemap({ key: this.mapKeyForScreen(this.screenId) });
     this.map = map;
-    const tileset = map.addTilesetImage(this.tilesetKey(), this.tilesetKey())!;
-    const groundLayer = map.createLayer('ground', tileset, 0, 0)!;
-    groundLayer.setCollisionByProperty({ collides: true });
+    // Register the screen's tileset(s) and render its tile layer(s). The defaults
+    // (single tileset, single 'ground' layer) cover every generated screen + Swamp;
+    // a subclass overrides buildTilesets()/tileLayerNames() for richer maps (e.g.
+    // the Forest hub's multi-tileset ground + above-ground composition).
+    const tilesets = this.buildTilesets(map);
+    const tileLayers: Array<Phaser.Tilemaps.TilemapLayer | Phaser.Tilemaps.TilemapGPULayer> = [];
+    for (const name of this.tileLayerNames()) {
+      const layer = map.createLayer(name, tilesets, 0, 0);
+      if (!layer) continue;
+      layer.setCollisionByProperty({ collides: true });
+      tileLayers.push(layer);
+    }
 
     const spawn = map.getObjectLayer('objects')?.objects.find((o) => o.name === 'spawn');
     this.player = new Player(this, spawn?.x ?? 64, spawn?.y ?? 64);
-    this.physics.add.collider(this.player, groundLayer);
+    tileLayers.forEach((layer) => this.physics.add.collider(this.player, layer));
 
     // #88 — returning from an overworld NPC duel: restore the player to where they
     // left (recorded in window.__duelOrigin before the duel). This scene was shut
@@ -352,7 +384,7 @@ export abstract class BaseBiomeScene extends Phaser.Scene {
     // objects so they render only through the world (main) camera. Waystones and
     // NPCs load async and are routed as they are created (loadWaystones/renderNpcs).
     {
-      const worldObjects: Phaser.GameObjects.GameObject[] = [groundLayer, this.player];
+      const worldObjects: Phaser.GameObjects.GameObject[] = [...tileLayers, this.player];
       this.zones.forEach((z) => worldObjects.push(...z.displayObjects));
       this.forageNodes.forEach((n) => worldObjects.push(...n.displayObjects));
       this.merchantNpcs.forEach((m) => worldObjects.push(...m.displayObjects));
@@ -754,10 +786,15 @@ export abstract class BaseBiomeScene extends Phaser.Scene {
           );
         }
         const modal = this.merchantModal;
-        const npc = new MerchantNpc(this, o, () => {
-          this.overlayOpen = true;
-          void modal.open();
-        });
+        const npc = new MerchantNpc(
+          this,
+          o,
+          () => {
+            this.overlayOpen = true;
+            void modal.open();
+          },
+          this.merchantNpcs.length, // ordinal → distinct charset character per merchant
+        );
         this.merchantNpcs.push(npc);
         this.physics.add.overlap(this.player, npc.interactionZone.overlapZone);
         this.zones.push(npc.interactionZone);

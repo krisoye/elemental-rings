@@ -1,38 +1,39 @@
 import Phaser from 'phaser';
 import { InteractionZone } from './InteractionZone';
+import { CHARSET_KEY, CHARSET_IDLE_COL, charsetFrame } from './charset';
 
-// Visual constants for the merchant placeholder sprite (drawn as a golden rectangle
-// with a tag label; replaced by a real NPC sprite on an art pass).
-const MERCHANT_W = 22;
-const MERCHANT_H = 30;
-const COLOR_MERCHANT = 0xd4a017; // gold
+/** Charset character indices used for merchant NPCs (cycled per merchant on a screen). */
+const MERCHANT_CHARS = [4, 6];
 
 /**
- * A merchant NPC in the overworld (GDD §10.11). Draws a standing-figure graphic
- * at the Tiled object position and wraps an {@link InteractionZone} so the player
- * can walk up and press E to open the shop. Pressing E fires the supplied
- * `onInteract` callback, which opens the MerchantModal.
+ * A merchant NPC in the overworld (GDD §10.11). Draws a character sprite from the
+ * shared charset ({@link ./charset}) at the Tiled object position and wraps an
+ * {@link InteractionZone} so the player can walk up and press E to open the shop.
+ * Pressing E fires the supplied `onInteract` callback, which opens the MerchantModal.
  *
- * Follows the Waystone.ts sprite+InteractionZone pattern exactly. The
- * zone prompt overrides "Press E" with "Trade [E]" via the zone name.
+ * Follows the Waystone.ts sprite+InteractionZone pattern. The charset sheet is
+ * loaded by the owning scene (via Player.preload in loadCommonAssets).
  */
 export class MerchantNpc {
   /** Center of the merchant in world coordinates. */
   readonly center: { x: number; y: number };
 
   private readonly zone: InteractionZone;
-  private readonly body: Phaser.GameObjects.Rectangle;
+  private readonly body: Phaser.GameObjects.Sprite;
   private readonly label: Phaser.GameObjects.Text;
 
   /**
    * @param scene owning spatial scene
    * @param obj the Tiled `merchant` rectangle object (x/y top-left, in px)
    * @param onInteract fired on E / interact while this merchant is the active zone
+   * @param charIndexHint stable index (e.g. the merchant's ordinal on the screen) used
+   *   to pick a distinct charset character so multiple merchants don't look identical
    */
   constructor(
     scene: Phaser.Scene,
     obj: Phaser.Types.Tilemaps.TiledObject,
     onInteract: () => void,
+    charIndexHint = 0,
   ) {
     const x = obj.x ?? 0;
     const y = obj.y ?? 0;
@@ -40,16 +41,18 @@ export class MerchantNpc {
     const h = obj.height ?? 32;
     this.center = { x: x + w / 2, y: y + h / 2 };
 
-    // Placeholder body rect (golden colour).
+    // Character sprite (idle, facing down) from the shared charset sheet. Origin at
+    // bottom-center so the 16×32 figure's feet sit on the object's center point.
+    const char = MERCHANT_CHARS[charIndexHint % MERCHANT_CHARS.length];
     this.body = scene.add
-      .rectangle(this.center.x, this.center.y - 4, MERCHANT_W, MERCHANT_H, COLOR_MERCHANT)
-      .setStrokeStyle(2, 0x8b6914)
+      .sprite(this.center.x, this.center.y + h / 2, CHARSET_KEY, charsetFrame(char, 'down', CHARSET_IDLE_COL))
+      .setOrigin(0.5, 1)
       .setDepth(6)
       .setName(`merchant-${x}-${y}`);
 
-    // Floating "Merchant" label.
+    // Floating "Merchant" label above the sprite's head.
     this.label = scene.add
-      .text(this.center.x, this.center.y - MERCHANT_H - 6, 'Merchant', {
+      .text(this.center.x, this.center.y - h / 2 - 6, 'Merchant', {
         fontSize: '11px',
         color: '#f5e070',
       })

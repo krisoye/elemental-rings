@@ -90,14 +90,14 @@ test('sanctum: camera keeps the player within its view when moving', async ({ br
   const page = await ctx.newPage();
   await loadSanctum(page);
 
-  // #118 — the Sanctum renders at 4× zoom. The hand-built interior map (#115) is
-  // 240×160 px, smaller than the 256×144 px zoomed viewport horizontally, so the
-  // camera is horizontally locked (the whole room fits) and `scrollX` is a fixed
-  // negative value — it cannot become positive on this room. "Follows the player"
-  // is therefore asserted the way Phaser actually defines it: the follow camera
-  // keeps the moving player inside its worldView (the camera tracks the player
-  // rather than letting them walk off-screen). Move the player and confirm they
-  // stay within the camera's visible world rectangle.
+  // #118 — the Sanctum renders at 2× zoom (lowered from 4× so the 16px interior
+  // tiles read cleanly). At 2× the zoomed viewport (1024×576 / 2 = 512×288 px) is
+  // wider than the interior room, so the camera stays locked on the small room and
+  // `scrollX` is a fixed value — it cannot follow freely on this map. "Follows the
+  // player" is therefore asserted the way Phaser actually defines it: the follow
+  // camera keeps the moving player inside its worldView (the camera tracks the
+  // player rather than letting them walk off-screen). Move the player and confirm
+  // they stay within the camera's visible world rectangle.
   await page.keyboard.down('ArrowRight');
   await page.waitForTimeout(1200);
   await page.keyboard.up('ArrowRight');
