@@ -23,8 +23,8 @@
 - Additional jewelry body positions (off-hand bracelet, necklace) and their passive archetypes (flagged Phase 7+)
 - Carry cap expansion cost curve — how much gold per +1 slot, and what is the maximum cap?
 - Wandering merchant patrol routes and trade window duration
-- ~~Spirit gauge formula: exact mapping of aggregate ring XP → spirit max (linear? logarithmic? stepped?)~~ → settled: **`spirit_max = SPIRIT_BASE + floor(aggregate_ring_xp / XP_SCALER)`**, `SPIRIT_BASE = 50`, `XP_SCALER = 5` — constants in `server/src/game/constants.ts` (§12.1)
-- ~~Starting aggregate XP / spirit max at game start (before any battles)~~ → settled: **50** (SPIRIT_BASE with 0 ring XP)
+- ~~Spirit gauge formula: exact mapping of aggregate ring XP → spirit max (linear? logarithmic? stepped?)~~ → settled: **`spirit_max = SPIRIT_BASE + floor(aggregate_ring_xp / XP_SCALER)`** — constants in `server/src/game/constants.ts` (§12.1)
+- ~~Starting aggregate XP / spirit max at game start (before any battles)~~ → settled: **SPIRIT_BASE** (with 0 ring XP) — see `server/src/game/constants.ts`
 - Exact ratio: spirit max to carry capacity (e.g. every N spirit units = 1 carry slot) — carry cap currently fixed at 10; growth curve deferred to Phase 8
 - Food quantities tuning: forage yield per node, boss drop amount, merchant buy/sell prices
 - Future food segmentation: fruits, vegetables, grains, meats — different effects? Or purely cosmetic variety?
@@ -46,7 +46,7 @@
 ---
 
 *Document version 3.2 — Updated May 2026*
-*v3.2 changes: Marked spirit gauge formula and starting spirit max as settled (`SPIRIT_BASE=50`, `XP_SCALER=5`; §12.1). Noted carry-cap growth curve remains open and deferred to Phase 8.*
+*v3.2 changes: Marked spirit gauge formula and starting spirit max as settled (see `SPIRIT_BASE` and `XP_SCALER` in `server/src/game/constants.ts`; §12.1). Noted carry-cap growth curve remains open and deferred to Phase 8.*
 
 *Document version 3.1 — Updated May 2026*
 *v3.1 changes: GDD consistency pass. Fixed all subsection numbers (were off by 1 vs ToC throughout). Added §6.4 Block Resolution Table expanded row-per-outcome format. Corrected: hearts settled at 3 (was TBD); parry costs 1 use only (volley is free); gauge fills only on uncontested hit, not on caught attacks including fused rings (removed erroneous "perfect counter decrements gauges" note). Updated Phase 1 build description to reflect Vitest/@colyseus/testing (not Playwright/Godot). Updated Phase 2 keyboard layout (each player uses 1–5 in own window). Fixed all §-cross-references (§5.4→§6.4, §6→§7 for status effects, §8→§9 for staking). Removed duplicate combined v2.0/2.1 changelog entry. Marked hearts open question as resolved.*

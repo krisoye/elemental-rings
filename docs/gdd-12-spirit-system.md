@@ -17,17 +17,6 @@ spirit_max = SPIRIT_BASE + floor(aggregate_ring_xp / XP_SCALER)
 
 Both constants are in one file — changing them automatically updates the boot-time backfill, all runtime recharge logic, and the sleep restore, with no other code to touch.
 
-**Reference values** (computed from current `constants.ts` — re-derive if the constants change):
-
-| Aggregate ring XP | spirit_max |
-|---|---|
-| 0 (new player) | 50 |
-| 100 | 52 |
-| 500 | 60 |
-| 1 000 | 70 |
-| 2 000 | 90 |
-| 5 000 | 150 |
-
 **Implications:**
 - Use rings in battle → rings earn XP → aggregate rises → spirit max increases
 - Win a high-XP ring → aggregate spikes → spirit may increase significantly
