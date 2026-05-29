@@ -24,7 +24,7 @@ export class ForestScene extends BaseBiomeScene {
   }
 
   tilesetKey(): string {
-    return 'forest';
+    return this.screenId === 'forest_anchorage' ? 'forest16' : 'forest';
   }
 
   mapKeyForScreen(id: string): string {
@@ -32,14 +32,26 @@ export class ForestScene extends BaseBiomeScene {
   }
 
   preload(): void {
-    if (!this.textures.exists('forest')) {
-      this.load.image('forest', 'assets/tiles/forest.png');
+    if (this.screenId === 'forest_anchorage') {
+      if (!this.textures.exists('forest16')) {
+        this.load.image('forest16', 'assets/tiles/forest16.png');
+      }
+    } else {
+      if (!this.textures.exists('forest')) {
+        this.load.image('forest', 'assets/tiles/forest.png');
+      }
     }
     this.loadCommonAssets();
-    // Every screen — including the hub — loads its deterministic generated map (#107).
     this.load.tilemapTiledJSON(
       this.mapKeyForScreen(this.screenId),
       `assets/maps/forest/${this.screenId}.json`,
     );
+  }
+
+  create(): void {
+    super.create();
+    if (this.screenId === 'forest_anchorage') {
+      this.cameras.main.setZoom(2);
+    }
   }
 }
