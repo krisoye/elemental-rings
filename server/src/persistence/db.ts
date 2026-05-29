@@ -76,6 +76,19 @@ db.exec(
 db.exec('UPDATE players SET spirit_current = MIN(spirit_current, spirit_max)');
 db.exec(`UPDATE players SET spirit_current = spirit_max WHERE spirit_current < ${SPIRIT_BASE}`);
 
+// #127 — forage_nodes: per-player node depletion tracking (GDD §10.10). The
+// table is created here with IF NOT EXISTS so it is idempotent on every boot.
+// An explicit anchored_waystone migration guard above already ran, so forage
+// nodes can safely reference players(id) via their foreign key.
+db.exec(`
+  CREATE TABLE IF NOT EXISTS forage_nodes (
+    node_id     TEXT    NOT NULL,
+    player_id   TEXT    NOT NULL REFERENCES players(id),
+    depleted_day INTEGER NOT NULL,
+    PRIMARY KEY (node_id, player_id)
+  )
+`);
+
 // #40 — carry flag on rings. On first introduction of the column, backfill it:
 // rings already assigned to a loadout slot become carried, then remaining slots
 // up to each player's carry_cap are filled by element ascending. This block is

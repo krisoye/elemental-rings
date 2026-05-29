@@ -66,3 +66,26 @@ export const SPIRIT_BASE = 50;
 // spirit cost. The server spends it in BattleRoom.onJoin when the firstStrike
 // option is set and the player can afford it; otherwise the flag is ignored.
 export const AMBUSH_SPIRIT_COST = 5;
+
+// #127 — Foraging system (GDD §10.10). Each node interaction yields this many
+// food units. After FORAGE_RESPAWN_DAYS game-days the node is harvestable again
+// (per-player tracking — two players can forage the same node independently).
+export const FORAGE_YIELD = 1;
+export const FORAGE_RESPAWN_DAYS = 1;
+
+// #127/#130 — Merchant food prices (GDD §10.10/§10.11). Merchants buy food from
+// the player at the base forage value and sell it at a 2× markup (the emergency-
+// supply premium described in the GDD). Downstream: merchant endpoints (#130)
+// import these constants so prices are defined in one place.
+export const FOOD_SELL_PRICE = 1; // GP per food unit (merchant buys at this price)
+export const FOOD_BUY_PRICE = 2;  // GP per food unit (merchant sells at this price)
+
+// #130 — Merchant ring prices (GDD §10.11). Triangle-element rings (Fire/Water/
+// Wood) command a premium over the neutral elements (Wind/Earth). Sell prices are
+// the player's proceeds when trading a ring back to the merchant.
+export const MERCHANT_RING_BUY_PRICE_T1 = 30;       // GP to buy a Tier 1 triangle ring
+export const MERCHANT_RING_BUY_PRICE_NEUTRAL = 25;   // GP to buy a Tier 1 Wind/Earth ring
+export const MERCHANT_RING_SELL_PRICE_T1 = 10;       // GP when player sells Tier 1 triangle ring
+export const MERCHANT_RING_SELL_PRICE_NEUTRAL = 8;   // GP when player sells Tier 1 Wind/Earth ring
+
+

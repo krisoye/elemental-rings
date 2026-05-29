@@ -244,6 +244,16 @@ declare global {
     // E2E reads it to find per-screen positions dynamically instead of hardcoding
     // pixel coordinates that move between the generated Forest screens.
     __zoneCenters?: Record<string, { x: number; y: number }>;
+    // #128 — last successful forage event: the node_id foraged and the resulting
+    // food_units balance. Set by ForageNode.interact on a 200 response; cleared
+    // on scene shutdown. E2E reads it to assert food credits without a /api/me call.
+    __forageNodeForaged?: { nodeId: string; food_units: number } | undefined;
+    // #128 — forage-status snapshot from GET /api/overworld/forage-status, published
+    // by BaseBiomeScene.loadForageNodeStatus on scene load. E2E reads it to assert
+    // which nodes are depleted on load without additional HTTP calls.
+    __forageStatus?: Array<{ node_id: string; depleted: boolean }> | undefined;
+    // #131 — merchant modal state: set when MerchantModal opens, cleared on close.
+    __merchantModalOpen?: boolean | undefined;
   }
 }
 

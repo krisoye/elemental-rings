@@ -11,7 +11,7 @@
   "version": "1.10",
   "tiledversion": "1.10.2",
   "nextlayerid": 3,
-  "nextobjectid": 99,
+  "nextobjectid": 11,
   "tilesets": [
     {
       "firstgid": 1,
@@ -689,6 +689,18 @@
           "point": true,
           "rotation": 0,
           "visible": true
+        },
+        {
+          "id": 10,
+          "name": "merchant",
+          "x": 576,
+          "y": 480,
+          "width": 32,
+          "height": 32,
+          "rotation": 0,
+          "visible": true,
+          "point": false,
+          "properties": []
         }
       ]
     }

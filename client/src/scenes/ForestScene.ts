@@ -24,7 +24,10 @@ export class ForestScene extends BaseBiomeScene {
   }
 
   tilesetKey(): string {
-    return 'forest';
+    // #137 — forest_anchorage is the 16px proof screen (forest16 tileset, 2× zoom);
+    // every other screen stays on the 32px `forest` tileset at 1× until the full
+    // 16px migration.
+    return this.screenId === 'forest_anchorage' ? 'forest16' : 'forest';
   }
 
   mapKeyForScreen(id: string): string {
@@ -32,7 +35,12 @@ export class ForestScene extends BaseBiomeScene {
   }
 
   preload(): void {
-    if (!this.textures.exists('forest')) {
+    // #137 — load the 16px tileset only for the anchorage proof screen.
+    if (this.screenId === 'forest_anchorage') {
+      if (!this.textures.exists('forest16')) {
+        this.load.image('forest16', 'assets/tiles/forest16.png');
+      }
+    } else if (!this.textures.exists('forest')) {
       this.load.image('forest', 'assets/tiles/forest.png');
     }
     this.loadCommonAssets();
@@ -41,5 +49,18 @@ export class ForestScene extends BaseBiomeScene {
       this.mapKeyForScreen(this.screenId),
       `assets/maps/forest/${this.screenId}.json`,
     );
+  }
+
+  /**
+   * #137 — apply the 2× world zoom on the 16px proof screen (forest_anchorage)
+   * after the base scene has built the world + dual-camera split. cameras.main is
+   * the world camera (zoomed); uiCam (set up in BaseBiomeScene.create) stays at 1:1
+   * so the HUD/overlays are unaffected. Other screens keep the default 1× zoom.
+   */
+  create(): void {
+    super.create();
+    if (this.screenId === 'forest_anchorage') {
+      this.cameras.main.setZoom(2);
+    }
   }
 }

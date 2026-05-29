@@ -2,8 +2,8 @@
   "compressionlevel": -1,
   "width": 40,
   "height": 30,
-  "tilewidth": 32,
-  "tileheight": 32,
+  "tilewidth": 16,
+  "tileheight": 16,
   "infinite": false,
   "orientation": "orthogonal",
   "renderorder": "right-down",
@@ -11,16 +11,16 @@
   "version": "1.10",
   "tiledversion": "1.10.2",
   "nextlayerid": 3,
-  "nextobjectid": 99,
+  "nextobjectid": 22,
   "tilesets": [
     {
       "firstgid": 1,
-      "name": "forest",
-      "image": "../../tiles/forest.png",
-      "imagewidth": 128,
-      "imageheight": 32,
-      "tilewidth": 32,
-      "tileheight": 32,
+      "name": "forest16",
+      "image": "../../tiles/forest16.png",
+      "imagewidth": 64,
+      "imageheight": 16,
+      "tilewidth": 16,
+      "tileheight": 16,
       "tilecount": 4,
       "columns": 4,
       "margin": 0,
@@ -1302,6 +1302,66 @@
           "rotation": 0,
           "visible": true,
           "point": false
+        },
+        {
+          "id": 10,
+          "name": "forage_node",
+          "x": 128,
+          "y": 128,
+          "width": 32,
+          "height": 32,
+          "rotation": 0,
+          "visible": true,
+          "point": false,
+          "properties": [
+            {
+              "name": "node_id",
+              "type": "string",
+              "value": "forest_anchorage:berry_1"
+            }
+          ]
+        },
+        {
+          "id": 11,
+          "name": "forage_node",
+          "x": 480,
+          "y": 320,
+          "width": 32,
+          "height": 32,
+          "rotation": 0,
+          "visible": true,
+          "point": false,
+          "properties": [
+            {
+              "name": "node_id",
+              "type": "string",
+              "value": "forest_anchorage:berry_2"
+            }
+          ]
+        },
+        {
+          "id": 20,
+          "name": "merchant",
+          "x": 192,
+          "y": 384,
+          "width": 32,
+          "height": 32,
+          "rotation": 0,
+          "visible": true,
+          "point": false,
+          "properties": []
+        },
+        {
+          "id": 21,
+          "name": "merchant",
+          "x": 448,
+          "y": 96,
+          "width": 32,
+          "height": 32,
+          "rotation": 0,
+          "visible": true,
+          "point": false,
+          "properties": []
         }
       ]
     }

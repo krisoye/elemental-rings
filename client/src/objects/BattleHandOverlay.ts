@@ -30,6 +30,13 @@ export class BattleHandOverlay {
   private readonly scene: Phaser.Scene;
   /** Optional sink for status messages that belong outside the modal (errors). */
   private readonly onStatus?: (msg: string) => void;
+  /**
+   * #137 — optional hook fired after each (re)render builds the modal container,
+   * passing it so a dual-camera host (BaseBiomeScene under 2× zoom) can
+   * `cameras.main.ignore(container)` and render the overlay at 1:1 through its UI
+   * camera. The modal is rebuilt on every render, so this fires per render.
+   */
+  private readonly onModalRender?: (container: Phaser.GameObjects.Container) => void;
   /** Fired after the overlay closes (host scene re-enables movement, etc.). */
   private onCloseCb?: () => void;
 
@@ -46,10 +53,17 @@ export class BattleHandOverlay {
    * @param scene the host spatial/encounter scene
    * @param onStatus optional callback for errors that should surface outside the
    *   modal (e.g. EncounterScene's bottom status text); defaults to a no-op
+   * @param onModalRender optional hook (#137) fired with the modal container after
+   *   each render, so a zoomed dual-camera host can route it to its UI camera
    */
-  constructor(scene: Phaser.Scene, onStatus?: (msg: string) => void) {
+  constructor(
+    scene: Phaser.Scene,
+    onStatus?: (msg: string) => void,
+    onModalRender?: (container: Phaser.GameObjects.Container) => void,
+  ) {
     this.scene = scene;
     this.onStatus = onStatus;
+    this.onModalRender = onModalRender;
   }
 
   /** True while the modal is on screen (host scene reads this to halt movement). */
@@ -291,6 +305,9 @@ export class BattleHandOverlay {
     container.add([rechargeBtn, rechargeAllBtn, this.manageStatusText]);
 
     this.manageModal = container;
+    // #137 — let a zoomed dual-camera host route this freshly-built container to
+    // its UI camera (cameras.main.ignore) so the overlay renders at 1:1, not 2×.
+    this.onModalRender?.(container);
 
     // #87 Part D — re-expose the discard hook the original inlined EncounterScene
     // modal published (tests/e2e/carry.spec.ts calls window.__encounterDiscardRing).

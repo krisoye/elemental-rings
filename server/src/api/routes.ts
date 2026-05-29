@@ -34,9 +34,21 @@ import {
   spendTalismanCharge,
   rechargeNecklace,
   getDefeatedNpcs,
+  forage,
+  getForageStatus,
+  merchantBuyFood,
+  merchantBuyRing,
+  merchantSellFood,
+  merchantSellRing,
+  ringBuyPrice,
+  ringSellPrice,
 } from '../persistence/PlayerRepo';
 import { NPC_SPAWNS, hashNpcId } from '../persistence/NpcSpawns';
-import { FOOD_PER_SLEEP } from '../game/constants';
+import {
+  FOOD_PER_SLEEP,
+  FOOD_BUY_PRICE,
+  FOOD_SELL_PRICE,
+} from '../game/constants';
 import { WAYSTONES, getWaystone } from '../../../shared/waystones';
 import { getTalisman } from '../../../shared/talismans';
 import { blinkCost } from '../../../shared/blink';
@@ -596,6 +608,164 @@ apiRouter.get('/api/overworld/npcs', requireAuth, (req: Request, res: Response):
   });
 
   res.status(200).json(npcs);
+});
+
+// ───────────────────────────────────────────────────────────────────────────
+// #127 — Foraging endpoints (GDD §10.10)
+// ───────────────────────────────────────────────────────────────────────────
+
+/**
+ * POST /api/overworld/forage — harvest a berry node. Body: { node_id: string }.
+ * Per-player depletion: two players can forage the same node on the same day.
+ * 409 when the node is within its respawn window for this player. Requires auth.
+ */
+apiRouter.post('/api/overworld/forage', requireAuth, (req: Request, res: Response): void => {
+  const playerId = req.playerId as string;
+  const { node_id } = req.body ?? {};
+  if (typeof node_id !== 'string' || !node_id) {
+    res.status(400).json({ error: 'node_id is required' });
+    return;
+  }
+  const result = forage(playerId, node_id);
+  if (!result.ok) {
+    // Distinguish "depleted" (409) from other errors (400).
+    if (result.reason === 'Node depleted') {
+      res.status(409).json({ error: result.reason });
+    } else {
+      res.status(400).json({ error: result.reason });
+    }
+    return;
+  }
+  res.status(200).json({ food_units: result.food_units, yielded: result.yielded });
+});
+
+/**
+ * GET /api/overworld/forage-status?screen=<screenId> — returns the depletion
+ * state of every node the player has ever foraged on the given screen. Nodes that
+ * have never been foraged are not returned (they are implicitly available). Client
+ * uses this on scene load to set initial sprite visuals. Requires auth.
+ */
+apiRouter.get('/api/overworld/forage-status', requireAuth, (req: Request, res: Response): void => {
+  const playerId = req.playerId as string;
+  const screen = typeof req.query.screen === 'string' ? req.query.screen : undefined;
+  if (!screen) {
+    res.status(400).json({ error: 'screen query parameter is required' });
+    return;
+  }
+  const nodes = getForageStatus(playerId, screen);
+  res.status(200).json({ nodes });
+});
+
+// ───────────────────────────────────────────────────────────────────────────
+// #130 — Merchant endpoints (GDD §10.11)
+// ───────────────────────────────────────────────────────────────────────────
+
+/** Element name → integer index map for merchant buy/sell body parsing. */
+const ELEMENT_NAME_MAP: Record<string, number> = {
+  fire: 0,
+  water: 1,
+  earth: 2,
+  wind: 3,
+  wood: 4,
+};
+
+/**
+ * GET /api/merchant/catalog — the fixed merchant inventory with buy and sell
+ * prices. No auth required (prices are public). Returns food prices and a ring
+ * entry per base element (Tier 1 only for MVP).
+ */
+apiRouter.get('/api/merchant/catalog', (_req: Request, res: Response): void => {
+  const rings = Object.entries(ELEMENT_NAME_MAP).map(([name, element]) => ({
+    element: name,
+    elementIndex: element,
+    tier: 1,
+    buyPrice: ringBuyPrice(element),
+    sellPrice: ringSellPrice(element),
+  }));
+  res.status(200).json({
+    food: { buyPrice: FOOD_BUY_PRICE, sellPrice: FOOD_SELL_PRICE },
+    rings,
+  });
+});
+
+/**
+ * POST /api/merchant/buy — buy food or a Tier 1 ring from the merchant.
+ * Body: { item: 'food', quantity: number } | { item: 'ring', element: string, tier: 1 }
+ * 400 on insufficient gold, carry cap full, or unknown element. Requires auth.
+ */
+apiRouter.post('/api/merchant/buy', requireAuth, (req: Request, res: Response): void => {
+  const playerId = req.playerId as string;
+  const body = req.body ?? {};
+
+  if (body.item === 'food') {
+    const quantity = typeof body.quantity === 'number' ? Math.floor(body.quantity) : 0;
+    if (quantity <= 0) {
+      res.status(400).json({ error: 'quantity must be a positive integer' });
+      return;
+    }
+    const result = merchantBuyFood(playerId, quantity);
+    if (!result.ok) {
+      res.status(400).json({ error: result.reason });
+      return;
+    }
+    res.status(200).json({ gold: result.gold, food_units: result.food_units });
+
+  } else if (body.item === 'ring') {
+    if (typeof body.element !== 'string' || !(body.element in ELEMENT_NAME_MAP)) {
+      res.status(400).json({ error: 'element must be one of: fire, water, earth, wind, wood' });
+      return;
+    }
+    const element = ELEMENT_NAME_MAP[body.element];
+    const result = merchantBuyRing(playerId, element);
+    if (!result.ok) {
+      res.status(400).json({ error: result.reason });
+      return;
+    }
+    res.status(200).json({ gold: result.gold, ring: result.ring });
+
+  } else {
+    res.status(400).json({ error: 'item must be "food" or "ring"' });
+  }
+});
+
+/**
+ * POST /api/merchant/sell — sell food or a ring to the merchant.
+ * Body: { item: 'food', quantity: number } | { item: 'ring', ring_id: string }
+ * 400 on insufficient food, ring not owned, or ring in active battle slot. Requires auth.
+ */
+apiRouter.post('/api/merchant/sell', requireAuth, (req: Request, res: Response): void => {
+  const playerId = req.playerId as string;
+  const body = req.body ?? {};
+
+  if (body.item === 'food') {
+    const quantity = typeof body.quantity === 'number' ? Math.floor(body.quantity) : 0;
+    if (quantity <= 0) {
+      res.status(400).json({ error: 'quantity must be a positive integer' });
+      return;
+    }
+    const result = merchantSellFood(playerId, quantity);
+    if (!result.ok) {
+      res.status(400).json({ error: result.reason });
+      return;
+    }
+    res.status(200).json({ gold: result.gold, food_units: result.food_units });
+
+  } else if (body.item === 'ring') {
+    if (typeof body.ring_id !== 'string' || !body.ring_id) {
+      res.status(400).json({ error: 'ring_id is required' });
+      return;
+    }
+    const result = merchantSellRing(playerId, body.ring_id);
+    if (!result.ok) {
+      // "equipped" → 400; "not found" → 400 (same status; caller can inspect message)
+      res.status(400).json({ error: result.reason });
+      return;
+    }
+    res.status(200).json({ gold: result.gold });
+
+  } else {
+    res.status(400).json({ error: 'item must be "food" or "ring"' });
+  }
 });
 
 // ───────────────────────────────────────────────────────────────────────────

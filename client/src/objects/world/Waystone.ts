@@ -92,6 +92,16 @@ export class Waystone {
     return this.zone;
   }
 
+  /**
+   * The world-space display objects owned by this waystone (the stone sprite, its
+   * glow disc, the name label) plus the wrapped InteractionZone's display objects.
+   * Returned so the owning scene can tell the UI camera to ignore them (#137),
+   * keeping the marker visible only through the world (main) camera.
+   */
+  get displayObjects(): Phaser.GameObjects.GameObject[] {
+    return [this.stone, this.glow, this.label, ...this.zone.displayObjects];
+  }
+
   /** Recolor the stone for the given attuned state (true → glowing). */
   setAttuned(attuned: boolean): void {
     this.attuned = attuned;
