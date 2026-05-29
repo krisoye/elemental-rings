@@ -84,22 +84,31 @@ test('sanctum: wall collision clamps rightward movement', async ({ browser }) =>
 });
 
 // ── Scenario 4: Camera follows the player ────────────────────────────────────
-test('sanctum: camera follows player when moving', async ({ browser }) => {
+test('sanctum: camera keeps the player within its view when moving', async ({ browser }) => {
   const ctx = await browser.newContext();
   await seedAuthToken(ctx);
   const page = await ctx.newPage();
   await loadSanctum(page);
 
-  // Map is 1280px wide vs the 1024px viewport, so moving right past centre scrolls
-  // the camera. Spawn is at x=640; hold right to push the camera off its left edge.
+  // #118 — the Sanctum renders at 4× zoom. The hand-built interior map (#115) is
+  // 240×160 px, smaller than the 256×144 px zoomed viewport horizontally, so the
+  // camera is horizontally locked (the whole room fits) and `scrollX` is a fixed
+  // negative value — it cannot become positive on this room. "Follows the player"
+  // is therefore asserted the way Phaser actually defines it: the follow camera
+  // keeps the moving player inside its worldView (the camera tracks the player
+  // rather than letting them walk off-screen). Move the player and confirm they
+  // stay within the camera's visible world rectangle.
   await page.keyboard.down('ArrowRight');
   await page.waitForTimeout(1200);
   await page.keyboard.up('ArrowRight');
 
-  const scrollX = await page.evaluate(
-    () => (window as any).__game.scene.getScene('CampScene').cameras.main.scrollX,
-  );
-  expect(scrollX).toBeGreaterThan(0);
+  const inView = await page.evaluate(() => {
+    const cam = (window as any).__game.scene.getScene('CampScene').cameras.main as Phaser.Cameras.Scene2D.Camera;
+    const p = (window as any).__player as { x: number; y: number };
+    const v = cam.worldView; // world-space rectangle the camera currently sees
+    return p.x >= v.x && p.x <= v.x + v.width && p.y >= v.y && p.y <= v.y + v.height;
+  });
+  expect(inView).toBe(true);
   await ctx.close();
 });
 
