@@ -164,24 +164,10 @@ Shadow vs. Shadow is neutral (mirror match).
 
 When Shadow is the staked Thumb ring, the **last 20% of every telegraph duration is hidden from the opponent** — the orb disappears from the screen ~180 ms before impact, forcing the defender to anticipate hit timing from the first 80% of the animation only. This is an information-denial passive; the attack cannot be reacted to at the last moment.
 
-#### Shadow Gauge — Curse
+#### Shadow Gauge — Blinded
 
-Shadow uses a **Shadow gauge** that builds on uncontested hits only (no-block or mistime), identical to triangle gauge rules. It does not build during successful rally chains. The gauge persists throughout the duel and progressively hides the **Cursed player's ring and heart information from themselves** — they must track from memory; their opponent still sees everything.
+Shadow uses a **Shadow gauge** governed by the same four-case rules as all other tracked elements (§7.1). The status it inflicts is **Blinded** — see §7.2 for the full effect table and progressive HUD-hiding progression.
 
-| Shadow gauge | Newly hidden |
-|---|---|
-| 1 | A1 use count |
-| 2 | A2 use count |
-| 3 | D1 use count |
-| 4 | D2 use count |
-| 5 | Hearts |
-
-The gauge caps at 5. The Cursed player can still use rings normally.
-
-**Cleansing the Shadow gauge** follows the same parry/block rule as triangle cleanse (§7.1):
-- **Parry with Fire** (STRONG timing) → entire shadow gauge clears; all hidden information restores at once
-- **Block with Fire** (BLOCK timing) → shadow gauge −1; most-recently-hidden item restores
-
-Fire is the natural counter to Shadow — loading Fire defense rings is the correct preparation.
+Fire is the natural counter to Shadow. A Fire strong block against a Shadow attack reduces both the Shadow and Wood gauges simultaneously (§7.1 strong-block rule — Fire is strong against both). A parry resets all four gauges to 0.
 
 ---

@@ -33,7 +33,7 @@ Only triangle components (Fire, Water, Wood) contribute to gauges. Wind and Eart
 
 **Shadow fusions (5) — dark-variant Tier 2:**
 
-These require a Shadow drop ring as a parent. Obtainable only at shrines; Shadow cannot be crafted, only found (§3.5). Shadow fusions participate in the Shadow gauge / Curse system rather than the triangle gauge system; their specific combat mechanics require a dedicated design pass.
+These require a Shadow drop ring as a parent. Obtainable only at shrines; Shadow cannot be crafted, only found (§3.5). Shadow fusions participate in the Shadow gauge (Blinded status, §7.2) rather than the triangle gauge system; their specific combat mechanics require a dedicated design pass.
 
 | Fusion | Parents | Name |
 |---|---|---|

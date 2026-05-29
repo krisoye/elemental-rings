@@ -73,7 +73,7 @@ Each passive fires at specific moments during battle and **costs the Thumb ring 
 
 ### 9.5 Gold Rewards
 
-Winning a duel pays **50 gold** in addition to the opponent's staked ring. Losing a duel carries no direct gold penalty — only the staked ring is forfeited.
+Winning a duel pays **50 gold** in addition to the opponent's staked ring. Losing a duel carries no direct gold penalty — only the staked ring is forfeited. Forfeiting (§6.3 Option C) costs the staked ring **plus 25 gold**.
 
 Gold is spent **only at merchants** — not for sleeping or ring recharging.
 
@@ -85,7 +85,7 @@ Gold is spent **only at merchants** — not for sleeping or ring recharging.
 
 The economic loop: dueling earns 50g per win; gold buys merchant goods (garments, rings); food enables sleep; spirit enables recharging. A player who can't forage food can't sleep, can't restore spirit, and can't recharge rings — forcing them back toward a food source.
 
-> *Tunable constants: `GOLD_PER_WIN`, `FOOD_PER_SLEEP`, `SPIRIT_PER_RING_USE`, `MERCHANT_FOOD_MARKUP` in `server/src/game/constants.ts`.*
+> *Tunable constants: `GOLD_PER_WIN`, `GOLD_FORFEIT_PENALTY`, `FOOD_PER_SLEEP`, `SPIRIT_PER_RING_USE`, `MERCHANT_FOOD_MARKUP` in `server/src/game/constants.ts`.*
 
 ### 9.6 Natural Self-Regulation
 No artificial matchmaking is needed. The economy self-regulates:

@@ -24,25 +24,41 @@ Of the carried rings, the player assigns **5 to the battle hand** before each en
 - Once both players formally agree to duel, the battle begins
 
 ### 6.3 Turn Structure (Active Timed Block)
-Combat is an **active, reaction-timed** exchange — not a hidden simultaneous selection. On each turn:
-1. The **attacker** presses **A1 or A2** to fire the ring in that slot. The attack costs **1 use** up front, regardless of the outcome.
+Combat is an **active, reaction-timed** exchange — not a hidden simultaneous selection. On each turn the **attacker chooses one of three actions**:
+
+**Option A — Attack:** Press A1 or A2 to fire the ring in that slot.
+1. The attack costs **1 use** up front, regardless of the outcome.
 2. The attack is **telegraphed**: the ring's element color(s) travel across the screen toward the defender over a **900 ms** window. Fused rings show all of their component colors (e.g. a Mud ring shows blue + brown).
 3. The **defender** presses **D1 or D2** to fire the ring in that slot — it must land within the timing window as the incoming attack arrives.
 4. The block is resolved on two independent axes — **timing** (parry / block / mistime / no-block) and **element relationship** (strong / neutral / weak). See §6.4.
 5. Roles swap — the defender becomes the attacker next turn.
 
+**Option B — Recharge:** Double-press A1 or A2 (double-tap Z or C) to fully restore that ring's uses.
+- Cost: **1 spirit per use restored** (same rate as overworld recharging, §4.3). A Tier 1 ring at 0 uses costs 3 spirit; one at 1 use costs 2 spirit.
+- The ring is restored to its full `max_uses`. The turn ends immediately — no attack is thrown.
+- Requires enough spirit to cover the full recharge cost. If the player lacks spirit, the action is rejected.
+- Only one ring can be recharged per turn.
+
+**Option C — Forfeit:** Press D1 and D2 simultaneously during the attack phase to flee while holding initiative.
+- The forfeiting player **loses their staked Thumb ring** and pays **25 gold** (`GOLD_FORFEIT_PENALTY` in constants.ts).
+- Forfeiting is only available on the attacker's turn — the defender cannot flee mid-telegraph.
+- This is the escape valve when the duel cannot be won, but it costs more than just the stake.
+
 **Phase-locked input:** Attack buttons (A1/A2) only register during the **attack phase**. Defense buttons (D1/D2) only register during the **defense phase**. Wrong-phase presses are silently ignored — protective, not punishing. The phase transition is the most visually prominent UI moment in a battle.
 
 **Combat hotkeys:** Two input layers are available simultaneously:
 
-| Slot | Absolute key | Phase-relative key |
+| Action | Absolute keys | Phase-relative keys |
 |---|---|---|
-| A1 | `1` | `Z` (attack phase) |
-| A2 | `2` | `C` (attack phase) |
-| D1 | `3` | `Z` (defense phase) |
-| D2 | `4` | `C` (defense phase) |
+| Attack A1 | `1` | `Z` (single press, attack phase) |
+| Attack A2 | `2` | `C` (single press, attack phase) |
+| Recharge A1 | `1` `1` | `Z` `Z` (double-tap, attack phase) |
+| Recharge A2 | `2` `2` | `C` `C` (double-tap, attack phase) |
+| Forfeit | `3` + `4` simultaneously | `Z` + `C` simultaneously (attack phase) |
+| Defend D1 | `3` | `Z` (defense phase) |
+| Defend D2 | `4` | `C` (defense phase) |
 
-`Z` always fires the slot-1 ring for the **current** phase (A1 when attacking, D1 when defending); `C` fires slot-2. This lets a player keep their left hand on WASD between turns and use Z/C in combat without moving to the number row. Wrong-phase presses are silently ignored under the phase-lock rule regardless of which key layer is used.
+`Z` always maps to slot-1 for the current phase; `C` always maps to slot-2. Double-tap is disambiguated by a short timing window — two presses within the window trigger recharge; outside it each press is treated independently (and phase-locked anyway). Simultaneous D1+D2 is only recognized during the attack phase; during the defense phase the two buttons act independently. Wrong-phase presses are silently ignored.
 
 Because the defender sees the incoming element before committing, there is no simultaneous hidden selection. Bluffing lives in the loadout, stake, and jewelry layers (§9), not in the turn itself.
 
@@ -79,7 +95,7 @@ The attacker always pays **1 use to throw**. The defender's response — its **t
 | **Parry** | Strong | 0 | −1 | — | ✓ |
 | **Parry** | Weak | −1 | −1 | — | — |
 
-*Attacker always pays −1 use on throw. Gauge = defender's gauge for the attacking ring's element.*
+*Attacker always pays −1 use on throw. Gauge rules: see §7.1.*
 
 **Compact form (original):**
 
@@ -94,7 +110,7 @@ The attacker always pays **1 use to throw**. The defender's response — its **t
 
 On the two failure rows (**no-block**, **mistime**) the element axis is irrelevant — timing failed and the attack lands uncontested. **No-block** is a deliberate sacrifice (save the ring use, take a heart); **mistime** is the punished attempt (lose a heart AND burn the attempted ring's use; a ring drained to exactly 0 this way is extinguished, no extra heart).
 
-**Gauge only fills on an uncontested hit.** No-block and mistime let the attack land, so the defender's matching element gauge increases (§7). A weak catch loses a heart but the attack *was* caught — so it moves **no gauge**. Heart loss and gauge gain are independent: weak = heart but no gauge; no-block/mistime = heart and gauge.
+**Gauge movement** is governed by §7.1. Heart loss and gauge movement are fully independent.
 
 **Fusion ring resolution.** A fusion ring's two components are each resolved independently. On No-block or Mistime all components land. On a timed defense the defending ring auto-aligns to the attack component it is strongest against; the remaining component resolves as No-block. See §3.4 for the full rule and outcome tables.
 
@@ -123,9 +139,9 @@ A neutral block occurs when the defender blocks (timing = block or parry) with a
 
 - The defender's ring spends 1 use; the attacker's thrown ring already spent its 1 use
 - No heart damage
-- No status gauge change — gauges only move on uncontested hits (no-block, mistime); a caught attack never moves a gauge (see §7)
+- Gauge movement follows §7.1 — a standard block (not a strong block) applies case 2 only
 
-Neutrals are pure attrition exchanges. A correctly-timed neutral block is always safe; the tension is whether to spend a use blocking or to no-block and take the heart to conserve it.
+Neutrals are pure attrition exchanges — safe on hearts, with the gauge and use cost as the only tradeoff.
 
 ### 6.6 Extinguished Rings
 - A ring is **extinguished** whenever its `current_uses` reaches 0 during a battle, regardless of which outcome drained it (throw, block cost, or weak-catch cost)
@@ -134,7 +150,7 @@ Neutrals are pure attrition exchanges. A correctly-timed neutral block is always
 - Extinguished rings cannot be used for the rest of the duel
 - The opponent can see which element types are exhausted from the HUD
 
-**Attack-ring forfeit.** If the current attacker begins their turn with **both** attack rings (A1 and A2) extinguished, they immediately forfeit the duel (phase → `ENDED`, opponent wins). Spending all attack-ring uses is a loss condition even with hearts remaining. If a rally exchange drains both players' attack rings simultaneously, the player whose turn comes next forfeits.
+**Attack-ring exhaustion.** If both A1 and A2 are extinguished, the attacker cannot throw — they must recharge at least one ring (Option B, §6.3) before attacking. If they lack the spirit to recharge either, their only recourse is to forfeit (Option C, §6.3), losing the staked ring and a gold penalty.
 
 ### 6.7 Hearts
 - Each player starts a duel with **3 hearts**
