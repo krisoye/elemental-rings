@@ -4,7 +4,7 @@
 
 The spirit gauge represents the protagonist's spiritual energy — the force that allows them to attune to rings, channel power through them, and fold space for teleportation.
 
-The protagonist has **no independent XP pool**. Their spiritual power is entirely derived from their rings. The spirit gauge maximum is a direct function of **aggregate ring XP** — the sum of XP across every ring the protagonist owns (including those stored in the Sanctum). As rings gain XP through battle, the aggregate rises and the spirit gauge maximum grows.
+The protagonist has **no independent XP pool**. Their spiritual power is entirely derived from their rings. The spirit gauge maximum is a direct function of **aggregate ring XP** — the sum of XP across all rings in the **Reliquary** (the Sanctum ring storage; see §4.1 and §10.6). Rings in the carry loadout are excluded. As the protagonist retires experienced rings to the Reliquary and develops new ones to carry, the aggregate rises and the spirit gauge maximum grows.
 
 ```
 spirit_max = SPIRIT_BASE + floor(aggregate_ring_xp / XP_SCALER)
@@ -41,7 +41,7 @@ Rings are not heavy — they are spiritually demanding. Attuning to too many sim
 - Base spirit capacity → `carry_cap = 10` rings (starting)
 - As spirit max grows, carry cap grows proportionally — the exact ratio is an **open question** (§13); currently `carry_cap` is fixed at 10
 - Garments from merchants can further expand carry cap beyond the spirit-derived baseline
-- Rings stored in the Sanctum count toward aggregate XP even when not carried
+- Only Reliquary rings count toward `aggregate_xp` — rings in the carry loadout are excluded
 
 This is why the 11th ring feels impossible to carry at the start — not weight, but spiritual bandwidth.
 
