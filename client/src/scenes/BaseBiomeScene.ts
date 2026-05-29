@@ -229,6 +229,8 @@ export abstract class BaseBiomeScene extends Phaser.Scene {
   biomeVisuals?(): void;
   /** Optional per-screen decoration placement, called during create(). */
   onEnterScreen?(): void;
+  /** Accessor for the player sprite (for use in onEnterScreen overrides). */
+  protected getPlayer(): Player { return this.player; }
   /** NPC detection radius (px). Subclasses may shrink it (e.g. the foggy Swamp). */
   protected detectionRadius(): number {
     return DETECTION_RADIUS;
@@ -354,17 +356,13 @@ export abstract class BaseBiomeScene extends Phaser.Scene {
     }
 
     // 8D.4 — minimal proof placement of decorations over the ground layer. Two
-    // sprites in the clearing (walkable floor): one solid (trunk-collision, inset
-    // body) and one non-solid (walk-through bush). The collider lets the player bump
-    // the solid one. window.__decorationCount lets E2E assert placement.
+    // Decoration group for screen-specific solid props (trees, rocks, etc.).
+    // Populated by onEnterScreen() overrides in subclasses; empty by default so
+    // screens that don't override it incur no physics cost.
     this.decorationGroup = this.physics.add.staticGroup();
-    const proofSpecs = [
-      { atlasKey: 'forest-decoration', frame: 0, x: 200, y: 200, solid: true, bodyInset: 8 },
-      { atlasKey: 'forest-decoration', frame: 8, x: 300, y: 200, solid: false },
-    ];
-    this.decorHandle = placeDecoration(this, this.decorationGroup, proofSpecs);
+    this.decorHandle = placeDecoration(this, this.decorationGroup, []);
     this.physics.add.collider(this.player, this.decorationGroup);
-    window.__decorationCount = proofSpecs.length;
+    window.__decorationCount = 0;
 
     // Biome title (pinned to the camera). #137 — parented into uiRoot so it
     // renders at 1:1 through uiCam, not the zoomed world camera.
@@ -414,9 +412,12 @@ export abstract class BaseBiomeScene extends Phaser.Scene {
       this.zones.forEach((z) => worldObjects.push(...z.displayObjects));
       this.forageNodes.forEach((n) => worldObjects.push(...n.displayObjects));
       this.merchantNpcs.forEach((m) => worldObjects.push(...m.displayObjects));
-      // Decoration sprites live in the static physics group (DecorationHandle only
-      // exposes destroy()), so collect them from the group's child list.
-      if (this.decorationGroup) worldObjects.push(...this.decorationGroup.getChildren());
+      // All decoration sprites (solid AND non-solid) must be ignored by uiCam.
+      // Collecting only decorationGroup.getChildren() misses non-solid sprites:
+      // they live in the scene but not in the physics group, and a sprite not
+      // ignored by uiCam gets double-rendered — world cam in world-space AND
+      // uiCam at a fixed screen position on top of all world content.
+      if (this.decorHandle) worldObjects.push(...this.decorHandle.sprites);
       this.ignoreWorldObjects(worldObjects);
     }
 
@@ -437,7 +438,11 @@ export abstract class BaseBiomeScene extends Phaser.Scene {
       this.toggleBattleHand();
     });
     this.input.keyboard!.on('keydown-ESC', () => {
-      if (this.overlayOpen) this.closeBattleHand();
+      if (this.merchantModal?.isOpen()) {
+        this.merchantModal.close();
+      } else if (this.overlayOpen) {
+        this.closeBattleHand();
+      }
     });
     window.__overworldBattleHandOpen = false;
     window.__overworldToggleBattleHand = (): void => this.toggleBattleHand();
@@ -1095,13 +1100,35 @@ export abstract class BaseBiomeScene extends Phaser.Scene {
   }
 
   /**
-   * Draw the Sanctum exterior placeholder (8B.4.1) at the given world center:
-   * a foundation slab, roof triangle, dark door opening, and a floating label.
+   * Whether to render the `sanctum-exterior` image sprite at the Sanctum's world
+   * position. Returns false when the map already contains a hand-authored building
+   * that represents the Sanctum (e.g. `forest_anchorage`), preventing a double-render.
+   * Subclasses override this for screens where the Tiled map includes the Sanctum
+   * building in its tile layers.
+   */
+  protected shouldDrawSanctumExterior(): boolean {
+    return true;
+  }
+
+  /**
+   * Draw the Sanctum exterior sprite (8B.4.1) at the given world center and add a
+   * static physics body so the player cannot walk through it.
    */
   private drawSanctumExterior(cx: number, cy: number): void {
-    this.sanctumSprite = this.add
-      .image(cx, cy, 'sanctum-exterior')
-      .setDepth(8);
+    if (!this.shouldDrawSanctumExterior()) return;
+    const img = this.add.image(cx, cy, 'sanctum-exterior').setDepth(8);
+    this.sanctumSprite = img;
+    // Static physics body sized to the building's lower half (walls + door) so the
+    // player cannot walk through the structure. The roof overhangs above and does not
+    // need collision. Offset downward from the sprite center so the body aligns with
+    // the visible wall area.
+    this.physics.add.existing(img, true /* isStatic */);
+    const body = img.body as Phaser.Physics.Arcade.StaticBody;
+    const bw = img.width * 0.8;
+    const bh = img.height * 0.5;
+    body.setSize(bw, bh);
+    body.setOffset((img.width - bw) / 2, img.height * 0.45);
+    this.physics.add.collider(this.player, img);
   }
 
   /** Read the `waystoneId` custom property off a Tiled object, if present. */

@@ -152,3 +152,98 @@ The shared `charset.ts` module handles frame math. The sheet is 192×256 (12 col
 | 6 | Merchant NPC 2 |
 
 Walk animations are registered once on the Phaser `AnimationManager` under keys `player-walk-down/left/right/up`. The idle frame is the middle column (col 1) of each direction row.
+
+---
+
+## The `forest16.png` tileset
+
+`forest16.png` is a tiny (64×16 px) placeholder tileset — four 16px tiles, three are blank/transparent. **Only tile id 2 (gid 3) is meaningful:** it carries `collides:true` and is painted wherever the designer wants an invisible solid boundary (water edges, void areas, map perimeter). The tile renders as a faint colored pixel, invisible at game zoom.
+
+**Never remove this tileset from `forest_anchorage.json`.** gid 3 tiles form the perimeter collision (top/bottom walls, east edge) and the blue pond. If forest16 is removed, all of those boundaries become walkable.
+
+---
+
+## Collision on the `ground` layer — perimeter pattern
+
+The hub map (`forest_anchorage`) uses **gid 3 (forest16 water tile)** for most of the perimeter:
+- North row 0: gid 3 cols 0-16 and 23-39 — solid. Cols 17-22 open (north road).
+- South row 29: same — solid except cols 17-22 (south road).
+- East col 39: gid 3 rows 0-13 and 18-29 — solid. Rows 14-17 open (east road).
+- West col 0: gid 3 only at corners/select rows. The rest is walkable tiles.
+
+**The west wall gap is handled in code**, not tiles. `ForestScene.onEnterScreen()` adds invisible static physics zones (28 px wide) for rows 2-12, 18-22, and 27-28, leaving the road gap at rows 14-17 open. The zones are 28 px wide — deliberately wider than `EDGE=24 px` — so a blocked player stops at x ≈ 26 and does **not** trigger the west exit. Only the road gap (no zone) lets the player reach x ≤ 24.
+
+Pattern for any screen that needs solid walls with specific road openings:
+1. Paint gid 3 tiles in the `ground` layer where the wall should be solid.
+2. Leave non-gid-3 tiles where road exits should be open.
+3. If walkable tiles appear at the perimeter without a road, add a static zone in `onEnterScreen()`.
+
+### Adding collision to interior terrain tiles
+
+To make a specific tile type solid (e.g. stone tiles, cliff faces), add `collides: true` to the relevant **tile ID** in the tileset definition inside the map JSON:
+
+```python
+# Example: add collides:true to asset_alliance tile IDs 155-189 (grey stone tiles)
+tileset["tiles"].append({
+    "id": 155,
+    "properties": [{"name": "collides", "type": "bool", "value": True}]
+})
+```
+
+The `ground` layer already calls `setCollisionByProperty({ collides: true })` in `BaseBiomeScene`. No scene code change is needed when adding collision via tile properties.
+
+### Adding screen-specific physics bodies (`onEnterScreen`)
+
+For collision that can't be expressed cleanly through tile properties (e.g. the west wall gaps), override `onEnterScreen()` in `ForestScene`:
+
+```typescript
+onEnterScreen(): void {
+  if (this.screenId !== 'forest_anchorage') return;
+  const zone = this.add.zone(cx, cy, w, h);
+  this.physics.add.existing(zone, true); // static body
+  this.physics.add.collider(this.getPlayer(), zone); // getPlayer() is a protected accessor
+}
+```
+
+`onEnterScreen?.()` is called at the end of `BaseBiomeScene.create()`. Zones created here are invisible but physically solid.
+
+---
+
+## Decorations gotcha — non-solid sprites and the UI camera
+
+`placeDecoration(scene, group, specs)` adds solid sprites to the physics `staticGroup` and non-solid sprites directly to the scene. **Non-solid sprites are NOT in the group** and were historically missed by `uiCam.ignore()`, causing them to be rendered by both the world camera (correct, world-space) and the UI camera (wrong — fixed screen position on top of all world content, appearing to float above buildings and follow the player).
+
+**Always use `decorHandle.sprites` to route decorations to the correct camera** — `DecorationHandle.sprites` now exposes all sprites (solid and non-solid):
+
+```typescript
+// Correct — routes ALL decoration sprites to world cam only
+if (this.decorHandle) worldObjects.push(...this.decorHandle.sprites);
+
+// Wrong — misses non-solid sprites
+if (this.decorationGroup) worldObjects.push(...this.decorationGroup.getChildren());
+```
+
+The base class already uses the correct form. Only matters if you bypass `placeDecoration`.
+
+---
+
+## Sanctum interior maps (`sanctum.json`)
+
+The Sanctum uses a **different layer system** from overworld maps — it has no `behind`/`in-front` layers. Instead it uses three Cozy Indoor tileset layers:
+
+| Layer | Depth | Collision enabled |
+|-------|-------|-------------------|
+| `Floor` | 0 | `setCollisionByProperty` (walls, blocking floor tiles) |
+| `Furniture` | 0 | `setCollisionByProperty` (table, appliances, bookcases) |
+| `Ceiling` | 10 | `setCollisionByProperty` (outer walls, upper structure tiles) |
+
+To add collision to a tile, add `collides: true` to its tile ID in the relevant tileset definition within `sanctum.json`. Collision is enabled on all three layers via `setCollisionByProperty` in `CampScene.create()`.
+
+**Rug placement rule:** decorative floor rugs belong on the **Floor** layer (depth 0) so the player appears above them. If a rug tile ends up on the Ceiling layer (depth 10), the player disappears behind it. Move the tiles to Floor and re-export from Tiled.
+
+**Zone naming:** the five interaction zones in the Sanctum objects layer are:
+- `ringwall` → inventory / ring management
+- `meditation` → recharge + teleport
+- `bed` → sleep
+- `eat` → food / cooking (was `campfire`, zone moved to the table)
+- `door` → touch-to-exit (fires automatically, no E press needed)

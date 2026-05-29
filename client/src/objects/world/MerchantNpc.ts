@@ -55,6 +55,8 @@ export class MerchantNpc {
       .text(this.center.x, this.center.y - h / 2 - 6, 'Merchant', {
         fontSize: '11px',
         color: '#f5e070',
+        backgroundColor: '#000000bb',
+        padding: { x: 4, y: 2 },
       })
       .setOrigin(0.5, 1)
       .setDepth(6);

@@ -22,6 +22,10 @@ export interface DecorationSpec {
 
 /** Handle for cleaning up a placed decoration batch on scene shutdown. */
 export interface DecorationHandle {
+  /** All placed sprites (solid and non-solid). Used by the owning scene to route
+   *  world objects to the correct camera so non-solid sprites are not accidentally
+   *  rendered by the UI camera and appear floating above the world. */
+  readonly sprites: Phaser.GameObjects.Image[];
   destroy(): void;
 }
 
@@ -63,6 +67,7 @@ export function placeDecoration(
   }
 
   return {
+    sprites,
     destroy() {
       // Tear each sprite down the SAME way Phaser's Group.clear(true, true) does:
       // first detach the group's auto-remove DESTROY listener, THEN destroy the
