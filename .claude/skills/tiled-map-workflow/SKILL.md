@@ -121,19 +121,24 @@ Source assets live on OneDrive and are copied into the repo as needed:
 /mnt/t/OneDrive/Documents/Game Assets/game/elemental-rings/
   tiles/
     regions/woods/   ← Forest biome tilesets
-    npc/             ← Character sheet (charsetA_1.png etc.)
+    npc/             ← Character charsets (charsetA_1–2, charsetB_1–2, base)
     interiors/       ← Sanctum interior tilesets
+    monsters/        ← Monster overworld + battler sprites (68 files)
   maps/
     forest/          ← Master Tiled source maps
 ```
 
-Repo paths (committed assets):
+Repo paths (committed assets, reorganized in PR #146):
 ```
 client/public/assets/
-  tiles/
-    forest16.png              ← Hub ground/collision tile
-    regions/woods/            ← Hub tilesets copied from OneDrive
-    npc/charsetA_1.png        ← Player + merchant sprites
+  ASSET_CATALOG.md            ← Full glossary of every asset file
+  terrain/                    ← Map tilesets (terrain_forest_main, terrain_forest_void, …)
+  structures/                 ← Building tilesets + sanctum exterior
+  interiors/                  ← Cozy indoor tiles (furniture, floor, ceiling, walls)
+  characters/                 ← charset_a1/a2/b1/b2/base spritesheets
+  monsters/                   ← 67 monster sprites (overworld + battler views)
+  flora/                      ← flora_berries_trees.png
+  sprites/                    ← Generated strips (sprite_npc_overworld, sprite_forest_decor)
   maps/
     forest/forest_anchorage.json
     sanctum.json
@@ -152,6 +157,21 @@ The shared `charset.ts` module handles frame math. The sheet is 192×256 (12 col
 | 6 | Merchant NPC 2 |
 
 Walk animations are registered once on the Phaser `AnimationManager` under keys `player-walk-down/left/right/up`. The idle frame is the middle column (col 1) of each direction row.
+
+**Battle screen usage:** `BattleScene.preload()` loads `characters/charset_a1.png` under the key `battle-charset`. The front-facing idle frame (row 0 = down direction, col 1 = idle) is frame index **1** in the 12-col sheet. It's displayed at 4× scale as the player's battle avatar.
+
+**Battle sprite frame mapping** (from `NpcSpawns.ts`):
+
+| spriteFrame | NPC type | Battle sprite key |
+|-------------|----------|------------------|
+| 0 | Fire monster | `battle-monster-0` → `monster_fire_01_alt01_battler_front.png` |
+| 1 | Water monster | `battle-monster-1` → `monster_water_grass_19_alt01_battler_front.png` |
+| 2 | Earth monster | `battle-monster-2` → `monster_electro_ghost_14_alt01_battler_front.png` |
+| 3 | Wind monster | `battle-monster-3` → `monster_water_fly_11_alt01_battler_front.png` |
+| 4 | Wood monster | `battle-monster-4` → `monster_water_grass_20_alt01_battler_front.png` |
+| 5–11 | Human duelist | `battle-charset` (charset_a1, char index = frame-5) |
+
+The `spriteFrame` flows: overworld `NpcInfo.spriteFrame` → `scene.start('EncounterScene', { spriteFrame })` → `startAIDuel(..., spriteFrame)` → `scene.start('BattleScene', { opponentSpriteFrame })` → `OpponentDuelist(scene, spriteFrame)`.
 
 ---
 

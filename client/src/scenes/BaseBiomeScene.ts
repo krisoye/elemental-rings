@@ -133,6 +133,7 @@ export abstract class BaseBiomeScene extends Phaser.Scene {
     x: number;
     y: number;
     aiSeed?: number;
+    spriteFrame: number;
   } | null = null;
   /** Camera-pinned Approach [E] detection prompt; created lazily, reused/hidden. */
   private npcPrompt: Phaser.GameObjects.Text | null = null;
@@ -683,6 +684,7 @@ export abstract class BaseBiomeScene extends Phaser.Scene {
         npcId: this.detectedNpc.id,
         personality: this.detectedNpc.personality as AIPersonality,
         aiSeed: this.detectedNpc.aiSeed,
+        spriteFrame: this.detectedNpc.spriteFrame,
       });
       return;
     }
@@ -1298,6 +1300,7 @@ export abstract class BaseBiomeScene extends Phaser.Scene {
       personality: npc.personality as AIPersonality,
       aiSeed: npc.aiSeed,
       ambush: true,
+      spriteFrame: npc.spriteFrame,
     });
   }
 
@@ -1327,6 +1330,7 @@ export abstract class BaseBiomeScene extends Phaser.Scene {
         x: nearest.x,
         y: nearest.y,
         aiSeed: nearest.aiSeed,
+        spriteFrame: nearest.spriteFrame,
       };
       const elementName = ELEMENT_NAMES[nearest.element] ?? '?';
       this.showNpcPrompt(`${elementName} duelist — Approach [E]`);

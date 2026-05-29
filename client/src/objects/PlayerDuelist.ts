@@ -38,7 +38,13 @@ export class PlayerDuelist extends Phaser.GameObjects.Container {
 
   constructor(scene: Phaser.Scene) {
     super(scene, PLAYER_X, PLAYER_Y);
-    scene.add.rectangle(PLAYER_X, PLAYER_Y, 80, 120, 0x444444).setStrokeStyle(2, 0x888888);
+    // Player battle sprite: character 0 (red-haired protagonist), front-facing
+    // idle frame (row 0, col 1 in the 12-col charset sheet), scaled 4×.
+    if (scene.textures.exists('battle-charset')) {
+      scene.add.image(PLAYER_X, PLAYER_Y - 80, 'battle-charset', 1).setScale(4).setOrigin(0.5, 0.5);
+    }
+    // Compact stats panel beneath the sprite (height trimmed from 120 to 40).
+    scene.add.rectangle(PLAYER_X, PLAYER_Y, 80, 40, 0x444444, 0.8).setStrokeStyle(1, 0x888888);
 
     this.hearts = scene.add.text(PLAYER_X + 50, PLAYER_Y - 55, '♥♥♥', {
       fontSize: '14px',

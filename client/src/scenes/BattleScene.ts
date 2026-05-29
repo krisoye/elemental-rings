@@ -72,7 +72,31 @@ export class BattleScene extends Phaser.Scene {
     super({ key: 'BattleScene' });
   }
 
-  init(): void {
+  /** spriteFrame (0-11) from the overworld NPC that started this duel. */
+  private opponentSpriteFrame = 0;
+
+  preload(): void {
+    // Opponent monster battle sprites (80×80, one per element + charset for duelists)
+    if (!this.textures.exists('battle-charset'))
+      this.load.spritesheet('battle-charset', 'assets/characters/charset_a1.png', {
+        frameWidth: 16,
+        frameHeight: 32,
+      });
+    const MONSTER_BATTLERS = [
+      'assets/monsters/monster_fire_01_alt01_battler_front.png',
+      'assets/monsters/monster_water_grass_19_alt01_battler_front.png',
+      'assets/monsters/monster_electro_ghost_14_alt01_battler_front.png',
+      'assets/monsters/monster_water_fly_11_alt01_battler_front.png',
+      'assets/monsters/monster_water_grass_20_alt01_battler_front.png',
+    ];
+    MONSTER_BATTLERS.forEach((path, i) => {
+      const key = `battle-monster-${i}`;
+      if (!this.textures.exists(key)) this.load.image(key, path);
+    });
+  }
+
+  init(data?: { opponentSpriteFrame?: number }): void {
+    this.opponentSpriteFrame = data?.opponentSpriteFrame ?? 0;
     // Reset per-start state (scene may be re-entered on a rematch).
     this.revealedOpponentElements = new Set();
     this.prevPhase = '';
@@ -95,7 +119,7 @@ export class BattleScene extends Phaser.Scene {
     const myId = room.sessionId;
 
     this.playerDuelist = new PlayerDuelist(this);
-    this.opponentDuelist = new OpponentDuelist(this);
+    this.opponentDuelist = new OpponentDuelist(this, this.opponentSpriteFrame);
     this.hud = new Hud(this);
     this.hand = new Hand(this, (slot) => this.onSlotPressed(slot));
 
