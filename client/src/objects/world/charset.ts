@@ -10,7 +10,7 @@ import Phaser from 'phaser';
  * NPCs (MerchantNpc.ts) draw from this one sheet — different character indices.
  */
 export const CHARSET_KEY = 'charset-a1';
-const CHARSET_PATH = 'assets/tiles/npc/charsetA_1.png';
+const CHARSET_PATH = 'assets/characters/charset_a1.png';
 
 export const CHARSET_FRAME_W = 16;
 export const CHARSET_FRAME_H = 32;

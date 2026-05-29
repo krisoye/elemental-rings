@@ -133,6 +133,7 @@ export abstract class BaseBiomeScene extends Phaser.Scene {
     x: number;
     y: number;
     aiSeed?: number;
+    spriteFrame: number;
   } | null = null;
   /** Camera-pinned Approach [E] detection prompt; created lazily, reused/hidden. */
   private npcPrompt: Phaser.GameObjects.Text | null = null;
@@ -254,19 +255,19 @@ export abstract class BaseBiomeScene extends Phaser.Scene {
   protected loadCommonAssets(): void {
     Player.preload(this);
     if (!this.textures.exists('forest-decoration')) {
-      this.load.spritesheet('forest-decoration', 'assets/sprites/forest-decoration.png', {
+      this.load.spritesheet('forest-decoration', 'assets/sprites/sprite_forest_decor.png', {
         frameWidth: 32,
         frameHeight: 32,
       });
     }
     if (!this.textures.exists('structures')) {
-      this.load.image('structures', 'assets/sprites/structures.png');
+      this.load.image('structures', 'assets/structures/structure_misc.png');
     }
     if (!this.textures.exists('sanctum-exterior')) {
-      this.load.image('sanctum-exterior', 'assets/sprites/sanctum-exterior.png');
+      this.load.image('sanctum-exterior', 'assets/structures/structure_sanctum_exterior.png');
     }
     if (!this.textures.exists('npc-overworld')) {
-      this.load.spritesheet('npc-overworld', 'assets/sprites/npc-overworld.png', {
+      this.load.spritesheet('npc-overworld', 'assets/sprites/sprite_npc_overworld.png', {
         frameWidth: 32,
         frameHeight: 32,
       });
@@ -274,7 +275,7 @@ export abstract class BaseBiomeScene extends Phaser.Scene {
     // #128 — berry bush / fruit tree nodes (GDD §10.10).
     // Spritesheet is 80×176 with 16×16 frames (5 cols × 11 rows).
     if (!this.textures.exists('berry-nodes')) {
-      this.load.spritesheet('berry-nodes', 'assets/tiles/berry_and_trees.png', {
+      this.load.spritesheet('berry-nodes', 'assets/flora/flora_berries_trees.png', {
         frameWidth: 16,
         frameHeight: 16,
       });
@@ -685,6 +686,7 @@ export abstract class BaseBiomeScene extends Phaser.Scene {
         npcId: this.detectedNpc.id,
         personality: this.detectedNpc.personality as AIPersonality,
         aiSeed: this.detectedNpc.aiSeed,
+        spriteFrame: this.detectedNpc.spriteFrame,
       });
       return;
     }
@@ -1301,6 +1303,7 @@ export abstract class BaseBiomeScene extends Phaser.Scene {
       personality: npc.personality as AIPersonality,
       aiSeed: npc.aiSeed,
       ambush: true,
+      spriteFrame: npc.spriteFrame,
     });
   }
 
@@ -1330,6 +1333,7 @@ export abstract class BaseBiomeScene extends Phaser.Scene {
         x: nearest.x,
         y: nearest.y,
         aiSeed: nearest.aiSeed,
+        spriteFrame: nearest.spriteFrame,
       };
       const elementName = ELEMENT_NAMES[nearest.element] ?? '?';
       this.showNpcPrompt(`${elementName} duelist — Approach [E]`);
