@@ -29,3 +29,6 @@ export const COZY_FLOOR_AUTO16 =
 
 export const COLD_CAVE_TILESET =
   '/var/lib/elemental-rings/pixel_assets/source-art/ColdCave/Tileset.png';
+
+export const STARTER_VILLAGE_MAIN_B_16 =
+  '/var/lib/elemental-rings/pixel_assets/source-art/StarterVillage/16px/asset_alliance_starter_village_main_B_16px.png';
