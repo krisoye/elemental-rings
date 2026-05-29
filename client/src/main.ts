@@ -129,6 +129,22 @@ declare global {
     // buttons and the mouse wheel.
     __campSanctumScroll?: (delta: number) => void;
     __campLoadoutScroll?: (delta: number) => void;
+    // #154 Reliquary modal — click-then-click move hooks (no pixel hit-testing).
+    // __reliquarySelect picks up a ring from a section ('reliquary' = not-carried,
+    // 'spare' = carried-unslotted, 'battle' = assigned to a battle slot).
+    // __reliquaryMove performs a full move to a target section/slot and resolves
+    // once the authoritative reload has rebuilt __campState. __reliquaryLocked is
+    // true while the carry cap is full (Reliquary cards are inert). All registered
+    // only while the Reliquary modal is open; cleared on close.
+    __reliquarySelect?: (
+      ringId: string,
+      source: 'reliquary' | 'spare' | 'battle',
+    ) => void;
+    __reliquaryMove?: (
+      ringId: string,
+      target: 'reliquary' | 'spare' | 'thumb' | 'a1' | 'a2' | 'd1' | 'd2',
+    ) => Promise<void>;
+    __reliquaryLocked?: boolean;
     // #81 — talisman loadout snapshot (the GET /api/talisman-loadout payload).
     // Published by CampScene (on ring-wall overlay open) and OverworldScene (on
     // create) so E2E can assert the equipped necklace + remaining charges. null

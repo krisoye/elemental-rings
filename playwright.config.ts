@@ -41,6 +41,7 @@ const SOLO_SPECS = [
   'npc-population.spec.ts',
   'overworld-battlehand.spec.ts',
   'overworld-transition.spec.ts',
+  'reliquary-modal.spec.ts',
   'ring-storage-ux.spec.ts',
   'sanctum-movement.spec.ts',
   'sanctum-zones.spec.ts',

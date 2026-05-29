@@ -109,6 +109,30 @@ export class CampScene extends Phaser.Scene {
   private loadoutHeaderText!: Phaser.GameObjects.Text;
   private statLineText!: Phaser.GameObjects.Text;
   private statusText!: Phaser.GameObjects.Text;
+
+  // ── Reliquary modal (#154) — live header + click-then-click selection ──────
+  /**
+   * The full-width stats header (aggregate_xp / spirit_max / spirit current/max)
+   * at the top of the Reliquary modal. Lives inside the overlay container; the
+   * container destroy reclaims it on close, so the reference is dropped there.
+   * Re-rendered from the authoritative `window.__campState` after every move.
+   */
+  private reliquaryHeader: Phaser.GameObjects.Text | null = null;
+  /**
+   * The right-panel loadout count badge ("8 / 10"); turns red at the carry cap.
+   * Overlay-container-scoped like `reliquaryHeader`.
+   */
+  private loadoutBadge: Phaser.GameObjects.Text | null = null;
+  /**
+   * The current click-then-click selection: which ring is "picked up" and which
+   * section it came from. `null` when nothing is selected. The Reliquary and
+   * Spare sources are the InventoryGrids (so their own selection stroke shows);
+   * a `battle` source carries the slot it was assigned to. Cleared after every
+   * completed move and on overlay close.
+   */
+  private reliquarySelection:
+    | { ringId: string; source: 'reliquary' | 'spare' | 'battle'; slot?: 'thumb' | LoadoutSlot }
+    | null = null;
   // #78 ④ — last-computed Thumb passive reminder (recomputed every refreshPools),
   // mirrored into __campState and rendered as a strip in the ring-storage overlay.
   private stakedPassive: { name: string | null; effect: string } | null = null;
@@ -265,6 +289,9 @@ export class CampScene extends Phaser.Scene {
       window.__campHitTestRing = undefined;
       window.__campSanctumScroll = undefined;
       window.__campLoadoutScroll = undefined;
+      window.__reliquaryMove = undefined;
+      window.__reliquarySelect = undefined;
+      window.__reliquaryLocked = undefined;
       window.__teleportState = undefined;
       window.__campState = undefined;
       window.__fusionState = undefined;
@@ -483,7 +510,12 @@ export class CampScene extends Phaser.Scene {
    * content into it. Closing destroys the container (and any non-adopted
    * children); adopted reusable panels are released via `overlayOnClose`.
    */
-  private beginOverlay(name: string, title: string, onClose?: () => void): Phaser.GameObjects.Container {
+  private beginOverlay(
+    name: string,
+    title: string,
+    onClose?: () => void,
+    size?: { width: number; height: number },
+  ): Phaser.GameObjects.Container {
     this.closeOverlay(); // never stack overlays
     // #118: the overlay container stays at the SCENE ROOT (not inside uiRoot) so
     // the existing E2E single-level flatMap traversals still reach its children.
@@ -494,8 +526,13 @@ export class CampScene extends Phaser.Scene {
     const backdrop = this.add
       .rectangle(CANVAS_W / 2, CANVAS_H / 2, CANVAS_W, CANVAS_H, 0x000000, 0.78)
       .setInteractive(); // swallow clicks to the room behind
+    // #154 — the Reliquary modal passes a larger panel so its header + two stacked
+    // right-column panels (Battle Hand over Spare) fit; other overlays keep the
+    // historic 760×470.
+    const panelW = size?.width ?? 760;
+    const panelH = size?.height ?? 470;
     const panel = this.add
-      .rectangle(CANVAS_W / 2, CANVAS_H / 2, 760, 470, 0x161622)
+      .rectangle(CANVAS_W / 2, CANVAS_H / 2, panelW, panelH, 0x161622)
       .setStrokeStyle(2, 0x6082aa);
     const titleText = this.add
       .text(CANVAS_W / 2, 60, title, { fontSize: '20px', color: '#ffffff' })
@@ -558,13 +595,19 @@ export class CampScene extends Phaser.Scene {
   }
 
   /**
-   * Ring-storage wall: inventory (At Sanctum + Loadout grids), carry move
-   * buttons, the battle-hand panels, and a [Fuse Rings] button that opens the
-   * existing FusionPanel. Reuses the exact panel instances parented into the
-   * overlay container.
+   * Reliquary wall (#154): a two-panel loadout manager with a live stats header.
+   *   - Full-width header: aggregate_xp / spirit_max / spirit current-max, read
+   *     from the authoritative `window.__campState` and re-rendered after every
+   *     move (the server owns spirit_max — never computed client-side).
+   *   - Left panel RELIQUARY: scrollable grid of all NOT-carried rings (in_carry
+   *     = 0). Locked (non-interactive) when the carry cap is full.
+   *   - Right panel LOADOUT: a fixed BATTLE HAND (Thumb + A1/A2/D1/D2) atop a
+   *     scrollable SPARE grid (carried rings not assigned to a battle slot).
+   * Interaction is click-then-click (no drag): select a ring, then click the
+   * target section/slot. Reuses the exact reusable panel instances.
    */
   private openRingwallOverlay(): void {
-    const c = this.beginOverlay('ringwall', 'RING STORAGE', () => {
+    const c = this.beginOverlay('ringwall', 'RELIQUARY', () => {
       // #85 Fix 2A — tear down the wheel handler + scroll hooks/masks before the
       // grids are released back off-screen (a stale mask on a parked grid would
       // clip nothing but leak a Graphics object).
@@ -577,40 +620,105 @@ export class CampScene extends Phaser.Scene {
       this.releasePanel(c, this.loadoutGrid);
       this.releasePanel(c, this.stakePanel);
       this.releasePanel(c, this.loadoutPanel);
-      // The strip lives inside the overlay container — the container destroy
-      // reclaims it, so just drop the stale reference (#78 ④).
+      // The strip + header + badge live inside the overlay container — the
+      // container destroy reclaims them, so just drop the stale references.
       this.passiveLabel = null;
+      this.reliquaryHeader = null;
+      this.loadoutBadge = null;
+      this.reliquarySelection = null;
       window.__campHitTestRing = undefined;
-    });
+      window.__reliquaryMove = undefined;
+      window.__reliquarySelect = undefined;
+      window.__reliquaryLocked = undefined;
+    }, { width: 760, height: 500 });
 
-    // #85 Fix 2B — column headers paired with their action buttons on one row
-    // (y=96), above the grids, so the actions are never buried under an
-    // overflowing inventory. Header text at its column x, then a bracket-style
-    // action 12px + the header width to its right.
-    this.addHeaderWithAction(
-      c, 40, 96, 'At Sanctum', '[Add to Loadout]', '#aaffaa',
-      () => void this.addSelectedToLoadout(),
-    );
-    this.addHeaderWithAction(
-      c, 300, 96, this.loadoutHeaderText.text, '[Leave at Sanctum]', '#ffaaaa',
-      () => void this.leaveSelectedAtSanctum(),
-    );
-    this.addHeaderWithAction(
-      c, 580, 96, 'Battle Hand', '[Fuse Rings]', '#cc88ff',
-      () => this.openFusionPanel(),
+    // ── Full-width live stats header (#154) ───────────────────────────────────
+    this.reliquaryHeader = this.add
+      .text(40, 92, '', { fontSize: '14px', color: '#ffdd66' })
+      .setScrollFactor(0)
+      .setName('reliquary-header');
+    c.add(this.reliquaryHeader);
+    // Thin divider beneath the header separating it from the two panels.
+    c.add(
+      this.add
+        .rectangle(CANVAS_W / 2, 116, 720, 1, 0x6082aa)
+        .setScrollFactor(0),
     );
 
-    // Adopt the reusable grids/panels into the overlay.
-    this.adoptPanel(c, this.sanctumGrid, 40, 120);
-    this.adoptPanel(c, this.loadoutGrid, 300, 120);
-    this.adoptPanel(c, this.stakePanel, 580, 120);
-    this.adoptPanel(c, this.loadoutPanel, 670, 120);
+    // ── Left panel — RELIQUARY ────────────────────────────────────────────────
+    c.add(
+      this.add
+        .text(40, 128, 'RELIQUARY', { fontSize: '13px', color: '#cccccc' })
+        .setScrollFactor(0)
+        .setName('reliquary-label'),
+    );
+    // [Fuse Rings] retains its existing role (surface the FusionPanel).
+    const fuseBtn = this.add
+      .text(140, 128, '[Fuse Rings]', { fontSize: '12px', color: '#cc88ff' })
+      .setScrollFactor(0)
+      .setInteractive({ useHandCursor: true })
+      .on('pointerdown', () => this.openFusionPanel());
+    c.add(fuseBtn);
+    // Clicking anywhere in the Reliquary column drop-zone sends the selected
+    // carried ring (Spare or Battle Hand) back to the Reliquary in one action.
+    const reliquaryDrop = this.add
+      .rectangle(40 + 75, 156 + (RINGWALL_VISIBLE_ROWS * 92) / 2, 150, RINGWALL_VISIBLE_ROWS * 92, 0x000000, 0.001)
+      .setOrigin(0.5)
+      .setScrollFactor(0)
+      .setName('reliquary-dropzone')
+      .setInteractive({ useHandCursor: true })
+      .on('pointerdown', () => void this.onReliquaryDropClicked());
+    c.add(reliquaryDrop);
+
+    // ── Right panel — LOADOUT ─────────────────────────────────────────────────
+    c.add(
+      this.add
+        .text(360, 128, 'LOADOUT', { fontSize: '13px', color: '#cccccc' })
+        .setScrollFactor(0)
+        .setName('loadout-label'),
+    );
+    this.loadoutBadge = this.add
+      .text(440, 128, '', { fontSize: '13px', color: '#aaffaa' })
+      .setScrollFactor(0)
+      .setName('loadout-badge');
+    c.add(this.loadoutBadge);
+    c.add(
+      this.add
+        .text(360, 150, 'BATTLE HAND', { fontSize: '11px', color: '#cc88ff' })
+        .setScrollFactor(0)
+        .setName('battle-hand-label'),
+    );
+    c.add(
+      this.add
+        .text(360, 360, 'SPARE', { fontSize: '11px', color: '#88ccaa' })
+        .setScrollFactor(0)
+        .setName('spare-label'),
+    );
+    // [→ Spare] affordance: drop the selected Battle Hand ring into Spare
+    // (unassign without leaving the loadout).
+    const spareDrop = this.add
+      .text(420, 360, '[← drop here]', { fontSize: '11px', color: '#88ccaa' })
+      .setScrollFactor(0)
+      .setName('spare-dropzone')
+      .setInteractive({ useHandCursor: true })
+      .on('pointerdown', () => void this.onSpareDropClicked());
+    c.add(spareDrop);
+
+    // Adopt the reusable grids/panels into the overlay. The Reliquary grid stays
+    // on the left; the Battle Hand panels sit at the top of the right column and
+    // the Spare grid below them.
+    this.adoptPanel(c, this.sanctumGrid, 40, 156);
+    this.adoptPanel(c, this.stakePanel, 360, 170);
+    this.adoptPanel(c, this.loadoutPanel, 450, 170);
+    this.adoptPanel(c, this.loadoutGrid, 360, 384);
 
     // #85 Fix 2A — cap both grids at RINGWALL_VISIBLE_ROWS visible rows now that
     // they are positioned in the overlay (the mask geometry needs the live world
     // position). Grids with ≤3 rows show no arrows and behave exactly as before.
     this.sanctumGrid.setVisibleRows(RINGWALL_VISIBLE_ROWS);
-    this.loadoutGrid.setVisibleRows(RINGWALL_VISIBLE_ROWS);
+    // Spare shows one row in the right column's lower band; the ▲/▼ arrows page
+    // through additional carried-but-unslotted rings.
+    this.loadoutGrid.setVisibleRows(1);
     // Mouse wheel over a scrollable grid scrolls it; over a non-scrollable grid or
     // outside both is a no-op. Torn down in the overlay's onClose above.
     this.input.on('wheel', this.onRingwallWheel, this);
@@ -628,8 +736,13 @@ export class CampScene extends Phaser.Scene {
     };
     this.publishScrollState();
 
+    // Refresh the lock state of the Reliquary cards (cap-full) and render the
+    // live header from the cached snapshot.
+    this.applyReliquaryLockState();
+    this.renderReliquaryHeader();
+
     // Live status echo (errors from carry / assign).
-    c.add(this.add.text(40, 430, this.statusText.text, { fontSize: '12px', color: '#ff8888' }).setName('overlay-status').setScrollFactor(0));
+    c.add(this.add.text(40, 470, this.statusText.text, { fontSize: '12px', color: '#ff8888' }).setName('overlay-status').setScrollFactor(0));
 
     // #78 ④ — render the Thumb passive reminder now the overlay (and its adopted
     // stake card) exist. refreshPools may have already run while the overlay was
@@ -640,7 +753,7 @@ export class CampScene extends Phaser.Scene {
     // render the equipped talisman + remaining charges (filled/empty dots). No
     // equip UI here — equipping happens via /api/talisman/equip elsewhere.
     const necklaceLabel = this.add
-      .text(580, 470, 'Necklace: —', { fontSize: '12px', color: '#cfe3ff' })
+      .text(360, 510, 'Necklace: —', { fontSize: '12px', color: '#cfe3ff' })
       .setScrollFactor(0)
       .setName('necklace-slot');
     c.add(necklaceLabel);
@@ -664,33 +777,258 @@ export class CampScene extends Phaser.Scene {
       );
       return { found: true, hit: out.indexOf(bg) !== -1 };
     };
+
+    // #154 — programmatic select+move hooks so E2E does not depend on pixel
+    // hit-testing. __reliquarySelect picks up a ring from a section; __reliquaryMove
+    // performs a complete move (select → target) in one call.
+    window.__reliquarySelect = (
+      ringId: string,
+      source: 'reliquary' | 'spare' | 'battle',
+    ): void => this.selectReliquaryRing(ringId, source);
+    window.__reliquaryMove = (
+      ringId: string,
+      target: 'reliquary' | 'spare' | 'thumb' | LoadoutSlot,
+    ): Promise<void> => this.reliquaryMove(ringId, target);
+  }
+
+  // ── Reliquary modal — selection + moves (#154) ────────────────────────────
+
+  /**
+   * Render the full-width live stats header from the authoritative snapshot in
+   * `window.__campState` (populated from `/api/me`). Never computes spirit_max or
+   * aggregate_xp locally — both are read straight from the server response. Also
+   * refreshes the LOADOUT count badge (turns red at the carry cap). A no-op when
+   * the header label has been torn down (overlay closed).
+   */
+  private renderReliquaryHeader(): void {
+    const s = window.__campState;
+    if (this.reliquaryHeader && s) {
+      this.reliquaryHeader.setText(
+        `aggregate_xp: ${s.aggregate_xp}    spirit_max: ${s.spirit_max}    ` +
+          `spirit: ${s.spirit_current} / ${s.spirit_max}`,
+      );
+    }
+    if (this.loadoutBadge && s) {
+      const carried = s.rings.filter((r: RingData) => r.in_carry === 1).length;
+      const atCap = carried >= s.carry_cap;
+      this.loadoutBadge
+        .setText(`${carried} / ${s.carry_cap}`)
+        .setColor(atCap ? '#ff5555' : '#aaffaa');
+    }
   }
 
   /**
-   * #85 Fix 2B — add a column header at (x, y) paired with a bracket-style action
-   * label 12px to its right. Both live on the overlay container (camera-pinned).
-   * The action width is computed from the header text width so the gap is stable
-   * across the three columns regardless of header length.
+   * Dim and lock the Reliquary cards when the carry cap is full — clicking a
+   * locked card is a no-op (the player must free a carried slot first). Each
+   * locked card is greyed and shows a small lock glyph; clearing the lock removes
+   * the glyph and restores full alpha. Driven from the cached snapshot.
    */
-  private addHeaderWithAction(
-    c: Phaser.GameObjects.Container,
-    x: number,
-    y: number,
-    headerText: string,
-    actionText: string,
-    actionColor: string,
-    onClick: () => void,
+  private applyReliquaryLockState(): void {
+    const s = window.__campState;
+    if (!s) return;
+    const carried = s.rings.filter((r: RingData) => r.in_carry === 1).length;
+    const locked = carried >= s.carry_cap;
+    for (const ring of s.atSanctum as RingData[]) {
+      const bg = this.sanctumGrid.getCardBg(ring.id);
+      if (bg) bg.setAlpha(locked ? 0.45 : 1);
+    }
+    window.__reliquaryLocked = locked;
+  }
+
+  /**
+   * Selection callback from either InventoryGrid. `ring` is the newly-selected
+   * ring or null on deselect; `source` is which grid fired. When the Reliquary is
+   * locked (cap full), a Reliquary selection is rejected (the card is a no-op).
+   */
+  private onGridSelectionChanged(ring: RingData | null, source: 'reliquary' | 'spare'): void {
+    if (!ring) {
+      this.reliquarySelection = null;
+      return;
+    }
+    if (source === 'reliquary' && window.__reliquaryLocked) {
+      // Cap full — Reliquary cards are inert. Undo the grid's own selection.
+      this.sanctumGrid.clearSelection();
+      this.reliquarySelection = null;
+      this.setStatus('Loadout is full — leave a ring at the Reliquary first');
+      return;
+    }
+    this.reliquarySelection = { ringId: ring.id, source };
+  }
+
+  /**
+   * Programmatic selection (E2E hook). Mirrors a click on a ring card / battle
+   * slot. For grid sources it routes through the grid so the selection stroke
+   * shows; for a battle source it records the slot the ring is assigned to.
+   */
+  private selectReliquaryRing(
+    ringId: string,
+    source: 'reliquary' | 'spare' | 'battle',
   ): void {
-    const header = this.add
-      .text(x, y, headerText, { fontSize: '13px', color: '#cccccc' })
-      .setScrollFactor(0);
-    c.add(header);
-    const action = this.add
-      .text(x + header.width + 12, y, actionText, { fontSize: '13px', color: actionColor })
-      .setScrollFactor(0)
-      .setInteractive({ useHandCursor: true })
-      .on('pointerdown', onClick);
-    c.add(action);
+    if (source === 'reliquary') {
+      const bg = this.sanctumGrid.getCardBg(ringId);
+      bg?.emit('pointerdown');
+      return;
+    }
+    if (source === 'spare') {
+      const bg = this.loadoutGrid.getCardBg(ringId);
+      bg?.emit('pointerdown');
+      return;
+    }
+    // Battle source — pick up the ring assigned to its slot.
+    const slot = (BATTLE_SLOTS as readonly string[]).find((s) => this.loadout[s] === ringId) as
+      | 'thumb'
+      | LoadoutSlot
+      | undefined;
+    if (!slot) return;
+    this.sanctumGrid.clearSelection();
+    this.loadoutGrid.clearSelection();
+    this.reliquarySelection = { ringId, source: 'battle', slot };
+  }
+
+  /**
+   * Click on a Battle Hand slot (Thumb / A1 / A2 / D1 / D2). With a ring selected
+   * (from any section) the ring is assigned to the slot — carrying it first if it
+   * came from the Reliquary. With nothing selected, the ring already in the slot
+   * (if any) is picked up so a subsequent Reliquary/Spare click can move it.
+   */
+  private async onBattleSlotClicked(slot: 'thumb' | LoadoutSlot): Promise<void> {
+    const sel = this.reliquarySelection;
+    if (sel) {
+      await this.reliquaryMove(sel.ringId, slot);
+      return;
+    }
+    const occupant = this.loadout[slot];
+    if (occupant) {
+      this.selectReliquaryRing(occupant, 'battle');
+    }
+  }
+
+  /**
+   * The Reliquary column drop-zone was clicked: send the currently-selected
+   * carried ring (Spare or Battle Hand) back to the Reliquary in one action. A
+   * Reliquary selection or no selection is a no-op.
+   */
+  private async onReliquaryDropClicked(): Promise<void> {
+    const sel = this.reliquarySelection;
+    if (!sel || sel.source === 'reliquary') return;
+    await this.reliquaryMove(sel.ringId, 'reliquary');
+  }
+
+  /**
+   * The Spare drop affordance was clicked: drop the selected Battle Hand ring into
+   * Spare (unassign it without leaving the loadout). Only meaningful for a battle
+   * selection; other sources are a no-op.
+   */
+  private async onSpareDropClicked(): Promise<void> {
+    const sel = this.reliquarySelection;
+    if (!sel || sel.source !== 'battle') return;
+    await this.reliquaryMove(sel.ringId, 'spare');
+  }
+
+  /**
+   * Execute a complete ring move from its current section to `target` and reload
+   * authoritative state. The server is the source of truth for every effect:
+   *   - Reliquary → Spare / Battle Hand: PUT /api/carry adds the ring to carry
+   *     (aggregate_xp drops, spirit_max recomputed server-side); a Battle Hand
+   *     target then PUTs /api/loadout to assign the slot.
+   *   - Spare / Battle Hand → Reliquary: PUT /api/carry removes it (aggregate_xp
+   *     rises); a battle ring is also nulled out of its slot.
+   *   - within the loadout (Spare ↔ Battle Hand): PUT /api/loadout only — no
+   *     carry change, so aggregate_xp is unchanged.
+   * After the round-trip refreshPools rebuilds __campState and the header re-renders.
+   */
+  private async reliquaryMove(
+    ringId: string,
+    target: 'reliquary' | 'spare' | 'thumb' | LoadoutSlot,
+  ): Promise<void> {
+    const ring = this.ringMap.get(ringId);
+    if (!ring) {
+      this.setStatus('Ring not found');
+      return;
+    }
+    if (ring.escrowed) {
+      this.setStatus('Ring is locked in a duel');
+      this.clearReliquarySelection();
+      return;
+    }
+    const wasCarried = ring.in_carry === 1;
+    const inBattleSlot = (BATTLE_SLOTS as readonly string[]).find((s) => this.loadout[s] === ringId);
+
+    if (target === 'reliquary') {
+      // Leave at the Reliquary: drop from carry. If it was in a battle slot, null
+      // that slot first so the loadout never references an uncarried ring.
+      if (inBattleSlot) {
+        const ok = await this.putLoadout({ [inBattleSlot]: null });
+        if (!ok) {
+          this.clearReliquarySelection();
+          return;
+        }
+      }
+      await this.moveToCarry(ringId, false);
+      this.clearReliquarySelection();
+      return;
+    }
+
+    if (target === 'spare') {
+      // Into Spare: carry the ring if it isn't already, then unassign any battle
+      // slot so it falls into the spare (carried-but-unslotted) pool.
+      if (!wasCarried) {
+        const ok = await this.carryRing(ringId);
+        if (!ok) {
+          this.clearReliquarySelection();
+          return;
+        }
+      } else if (inBattleSlot) {
+        await this.putLoadout({ [inBattleSlot]: null });
+      }
+      this.clearReliquarySelection();
+      await this.loadData();
+      this.afterReliquaryReload();
+      return;
+    }
+
+    // target is a named battle slot — carry the ring first if needed, then assign.
+    if (!wasCarried) {
+      const ok = await this.carryRing(ringId);
+      if (!ok) {
+        this.clearReliquarySelection();
+        return;
+      }
+    }
+    await this.putLoadout({ [target]: ringId });
+    this.clearReliquarySelection();
+    await this.loadData();
+    this.afterReliquaryReload();
+  }
+
+  /**
+   * Add one ring to the carried set via PUT /api/carry, enforcing the carry cap
+   * locally for a friendly message (the server is still authoritative). Returns
+   * whether the carry succeeded. Does NOT reload — the caller batches the reload.
+   */
+  private async carryRing(ringId: string): Promise<boolean> {
+    const carried = new Set(this.rings.filter((r) => r.in_carry === 1).map((r) => r.id));
+    if (carried.has(ringId)) return true;
+    if (carried.size >= this.carryCap) {
+      this.setStatus('Loadout is full — leave a ring at the Reliquary first');
+      return false;
+    }
+    carried.add(ringId);
+    return this.putCarry(Array.from(carried), false);
+  }
+
+  /** Clear the pending selection and both grids' selection strokes. */
+  private clearReliquarySelection(): void {
+    this.reliquarySelection = null;
+    this.sanctumGrid.clearSelection();
+    this.loadoutGrid.clearSelection();
+  }
+
+  /** Re-render header + lock state after a Reliquary modal reload. */
+  private afterReliquaryReload(): void {
+    if (this.overlayName !== 'ringwall') return;
+    this.applyReliquaryLockState();
+    this.renderReliquaryHeader();
   }
 
   /**
@@ -1073,17 +1411,26 @@ export class CampScene extends Phaser.Scene {
    * modal overlay containers when a zone is interacted with.
    */
   private buildPanels(): void {
-    this.sanctumGrid = new InventoryGrid(this, OFFSCREEN_X, OFFSCREEN_Y, () =>
-      this.loadoutGrid.clearSelection(),
-    );
-    this.loadoutGrid = new InventoryGrid(this, OFFSCREEN_X + 350, OFFSCREEN_Y, () =>
-      this.sanctumGrid.clearSelection(),
-    );
+    // #154 — the two grids drive the click-then-click selection. The Reliquary
+    // grid (sanctumGrid) selecting a card picks it up as a 'reliquary' source and
+    // clears the Spare selection; the Spare grid (loadoutGrid) is symmetric. A
+    // null callback (deselect) clears the pending selection.
+    this.sanctumGrid = new InventoryGrid(this, OFFSCREEN_X, OFFSCREEN_Y, (ring) => {
+      this.loadoutGrid.clearSelection();
+      this.onGridSelectionChanged(ring, 'reliquary');
+    });
+    this.loadoutGrid = new InventoryGrid(this, OFFSCREEN_X + 350, OFFSCREEN_Y, (ring) => {
+      this.sanctumGrid.clearSelection();
+      this.onGridSelectionChanged(ring, 'spare');
+    });
+    // The Battle Hand panels behave as click targets in the new model: clicking a
+    // slot assigns the pending ring, or — when nothing is selected — picks up the
+    // ring already in that slot.
     this.stakePanel = new StakePanel(this, OFFSCREEN_X + 700, OFFSCREEN_Y, () =>
-      this.assignSlot('thumb'),
+      void this.onBattleSlotClicked('thumb'),
     );
     this.loadoutPanel = new LoadoutPanel(this, OFFSCREEN_X + 790, OFFSCREEN_Y, (slot: LoadoutSlot) =>
-      this.assignSlot(slot),
+      void this.onBattleSlotClicked(slot),
     );
     // #118 P2: parked panels are invisible so neither camera traverses them per
     // frame. adoptPanel re-shows them when an overlay opens; releasePanel hides
@@ -1220,6 +1567,11 @@ export class CampScene extends Phaser.Scene {
     // while the ring-storage overlay is open (after a carry move reloads). Re-mirror
     // the grids' live scroll state so the E2E scroll fields are never dropped.
     this.publishScrollState();
+
+    // #154 — populate() rebuilt the Reliquary grid cards (resetting alpha), so the
+    // cap-lock state and the live stats header must be re-applied if the modal is
+    // open. afterReliquaryReload is a no-op when the modal is closed.
+    this.afterReliquaryReload();
   }
 
   /**
@@ -1237,14 +1589,14 @@ export class CampScene extends Phaser.Scene {
       ? `${this.stakedPassive.name}\n${this.stakedPassive.effect}`
       : `No passive\n${this.stakedPassive.effect}`;
     if (!this.passiveLabel) {
-      // Beneath the stake card (adopted at x=580, y=120; the StakePanel card bg is
-      // 70px wide → spans x≈580–650, then the LoadoutPanel battle slots begin at
-      // x=670). #85 Fix 1 — widen the strip to PASSIVE_STRIP_WIDTH (88px) and drop
-      // the 6-line cap so the longest base passive (WATER/Wellspring) renders in
-      // full. 88px still wraps within the Thumb column without reaching the battle
-      // slots at x=670, and no maxLines means no clipping.
+      // #154 — the Battle Hand panels sit at the top of the LOADOUT column (Thumb
+      // adopted at x=360, the A1/A2/D1/D2 grid at x=450 spanning to ~606). The
+      // passive reminder is parked to the right of the battle slots at x=620 where
+      // there is clear space within the panel. #85 Fix 1 — PASSIVE_STRIP_WIDTH
+      // (88px) and no maxLines so the longest base passive (WATER/Wellspring)
+      // wraps in full without clipping.
       this.passiveLabel = this.add
-        .text(580, 230, text, {
+        .text(620, 170, text, {
           fontSize: '10px',
           color: '#ffcc88',
           wordWrap: { width: PASSIVE_STRIP_WIDTH },
@@ -1260,48 +1612,37 @@ export class CampScene extends Phaser.Scene {
     }
   }
 
-  // ── Carry moves (#40) ───────────────────────────────────────────────────
-
-  /** Add the selected At-Sanctum ring to the loadout (carry), if there's room. */
-  private async addSelectedToLoadout(): Promise<void> {
-    const ring = this.sanctumGrid.getSelected();
-    if (!ring) {
-      this.setStatus('Select a ring at the Sanctum first');
-      return;
-    }
-    await this.moveToCarry(ring.id, true);
-  }
-
-  /** Leave the selected loadout ring at the Sanctum (clear in_carry). */
-  private async leaveSelectedAtSanctum(): Promise<void> {
-    const ring = this.loadoutGrid.getSelected();
-    if (!ring) {
-      this.setStatus('Select a loadout ring first');
-      return;
-    }
-    await this.moveToCarry(ring.id, false);
-  }
+  // ── Carry moves (#40, #154) ───────────────────────────────────────────────
 
   /**
    * Set a ring's carried state via PUT /api/carry. Computes the new carried set
    * from the cached snapshot and lets the server enforce the cap & ownership.
+   * Used by the legacy __campAddToLoadout / __campLeaveAtSanctum E2E hooks and by
+   * the Reliquary modal's "leave at Reliquary" path.
    */
   private async moveToCarry(ringId: string, inCarry: boolean): Promise<void> {
     const carried = new Set(this.rings.filter((r) => r.in_carry === 1).map((r) => r.id));
     if (inCarry) {
       if (carried.size >= this.carryCap) {
-        this.setStatus('Loadout is full — leave a ring at the Sanctum first');
+        this.setStatus('Loadout is full — leave a ring at the Reliquary first');
         return;
       }
       carried.add(ringId);
     } else {
       carried.delete(ringId);
     }
-    await this.putCarry(Array.from(carried));
+    if (await this.putCarry(Array.from(carried), false)) {
+      await this.loadData();
+      this.afterReliquaryReload();
+    }
   }
 
-  /** PUT /api/carry with the full carried set, then reload. */
-  private async putCarry(ringIds: string[]): Promise<boolean> {
+  /**
+   * PUT /api/carry with the full carried set. When `reload` is true the cached
+   * snapshot is refreshed via loadData(); the Reliquary modal passes false so it
+   * can batch a carry + loadout change into a single reload. Returns success.
+   */
+  private async putCarry(ringIds: string[], reload = true): Promise<boolean> {
     const token = localStorage.getItem('er_token');
     if (!token) {
       this.scene.start('LoginScene');
@@ -1322,59 +1663,44 @@ export class CampScene extends Phaser.Scene {
       this.setStatus('Network error during carry update');
       return false;
     }
-    this.sanctumGrid.clearSelection();
-    this.loadoutGrid.clearSelection();
-    await this.loadData();
+    if (reload) {
+      this.sanctumGrid.clearSelection();
+      this.loadoutGrid.clearSelection();
+      await this.loadData();
+    }
     return true;
   }
 
-  // ── Battle-slot assignment ─────────────────────────────────────────────────
+  // ── Battle-slot assignment (#154) ──────────────────────────────────────────
 
   /**
-   * Assign the currently selected ring to a battle slot. Battle slots only
-   * accept carried (in_carry = 1) rings; selecting an At-Sanctum ring is
-   * rejected with a hint.
+   * PUT /api/loadout with a partial slot map (slot → ringId | null). The server
+   * enforces the one-slot rule and ownership; this never reloads on its own so
+   * the Reliquary modal can batch the reload after a carry + assign pair. Returns
+   * whether the request succeeded.
    */
-  private async assignSlot(slot: 'thumb' | LoadoutSlot): Promise<void> {
-    const ring = this.loadoutGrid.getSelected() ?? this.sanctumGrid.getSelected();
-    if (!ring) {
-      this.setStatus('Select a carried ring first');
-      return;
-    }
-    if (ring.escrowed) {
-      this.setStatus('Ring is locked in a duel');
-      return;
-    }
-    if (ring.in_carry !== 1) {
-      this.setStatus('Add the ring to your loadout before assigning a battle slot');
-      return;
-    }
-
+  private async putLoadout(partial: Record<string, string | null>): Promise<boolean> {
     const token = localStorage.getItem('er_token');
     if (!token) {
       this.scene.start('LoginScene');
-      return;
+      return false;
     }
-
     try {
       const res = await fetch(`${API_BASE}/api/loadout`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ [slot]: ring.id }),
+        body: JSON.stringify(partial),
       });
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));
         this.setStatus(body?.error ?? `Assignment failed (${res.status})`);
-        return;
+        return false;
       }
     } catch {
       this.setStatus('Network error during assignment');
-      return;
+      return false;
     }
-
-    this.sanctumGrid.clearSelection();
-    this.loadoutGrid.clearSelection();
-    await this.loadData();
+    return true;
   }
 
   // ── Sleep ─────────────────────────────────────────────────────────────────

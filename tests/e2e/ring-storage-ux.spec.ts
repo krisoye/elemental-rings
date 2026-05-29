@@ -136,8 +136,12 @@ test('passive-strip: WATER Thumb shows full effect text (Thumb pays)', async ({ 
   await ctx.close();
 });
 
-// ── Scenario 2: Action buttons live at the header row (y≈96), not y=400 ───────
-test('action-buttons: relocated to header row, not buried at y=400', async ({ browser }) => {
+// ── Scenario 2: Reliquary redesign (#154) — two-panel labels + live header ────
+// After #154 the modal is a two-panel loadout manager (RELIQUARY left, LOADOUT
+// right with BATTLE HAND over SPARE) topped by a live stats header. The old
+// [Add to Loadout]/[Leave at Sanctum] action buttons are gone — moves are
+// click-then-click. Assert the new structure is present.
+test('reliquary-redesign: two-panel labels + live stats header are present', async ({ browser }) => {
   const token = await registerAndToken();
   const ctx = await browser.newContext();
   await ctx.addInitScript(`localStorage.setItem('er_token', ${JSON.stringify(token)})`);
@@ -145,22 +149,29 @@ test('action-buttons: relocated to header row, not buried at y=400', async ({ br
   await loadSanctum(page);
   await openRingStorage(page);
 
-  const ys = await page.evaluate(() => {
+  const labels = await page.evaluate(() => {
     const scene = (window as any).__scene as Phaser.Scene;
     const all = scene.children
       .getAll()
       .flatMap((c: any) => (c.getAll ? [c, ...c.getAll()] : [c]));
-    const labels = ['[Add to Loadout]', '[Leave at Sanctum]', '[Fuse Rings]'];
-    return labels.map((l) => {
-      const o = all.find((g: any) => g.type === 'Text' && g.text === l);
-      return o ? (o as any).y : null;
-    });
+    const byName = (n: string) => all.find((o: any) => o.name === n);
+    return {
+      header: (byName('reliquary-header') as any)?.text ?? null,
+      reliquary: (byName('reliquary-label') as any)?.text ?? null,
+      loadout: (byName('loadout-label') as any)?.text ?? null,
+      battleHand: (byName('battle-hand-label') as any)?.text ?? null,
+      spare: (byName('spare-label') as any)?.text ?? null,
+      hasFuse: !!all.find((o: any) => o.type === 'Text' && o.text === '[Fuse Rings]'),
+    };
   });
-  for (const y of ys) {
-    expect(y).not.toBeNull();
-    expect(y).toBeGreaterThanOrEqual(80);
-    expect(y).toBeLessThanOrEqual(110);
-  }
+  expect(labels.reliquary).toBe('RELIQUARY');
+  expect(labels.loadout).toBe('LOADOUT');
+  expect(labels.battleHand).toBe('BATTLE HAND');
+  expect(labels.spare).toBe('SPARE');
+  expect(labels.hasFuse).toBe(true);
+  expect(labels.header).toContain('aggregate_xp:');
+  expect(labels.header).toContain('spirit_max:');
+  expect(labels.header).toContain('spirit:');
   await ctx.close();
 });
 
@@ -216,13 +227,14 @@ test('scroll: overflowing sanctum grid clips at 3 rows and scrolls by row', asyn
   await ctx.close();
 });
 
-// ── Scenario 4: [Add to Loadout] works from the relocated header position ────
-test('action-buttons: [Add to Loadout] carries the selected ring', async ({ browser }) => {
+// ── Scenario 4: Reliquary → Spare via the click-then-click move (#154) ───────
+// The redesign replaces the [Add to Loadout] button with a click-then-click move:
+// select a Reliquary card, then drop it into the LOADOUT column's Spare. Drive it
+// through the programmatic __reliquaryMove hook (registered while the modal is
+// open) and assert the server-confirmed carry state.
+test('reliquary-redesign: move a Reliquary ring into Spare carries it', async ({ browser }) => {
   const token = await registerAndToken();
   const { rings, loadout } = await getMe(token);
-  // Pick a Sanctum-only ring (in_carry 0 AND not in any battle slot) so carrying
-  // it lands in the loadout pool — not the battle hand. Carry only that one so the
-  // sanctum grid still has the card and the loadout pool starts empty.
   const slotted = new Set(Object.values(loadout).filter(Boolean) as string[]);
   const spare = rings.find((r: any) => r.in_carry === 0 && !slotted.has(r.id));
   expect(spare).toBeDefined();
@@ -236,27 +248,12 @@ test('action-buttons: [Add to Loadout] carries the selected ring', async ({ brow
     timeout: 8000,
   });
   await openRingStorage(page);
-
-  // Select the spare Sanctum card, then click the relocated [Add to Loadout] button.
-  const sanctumId = spare.id as string;
-  await page.evaluate((id) => {
-    const scene = (window as any).__scene as any;
-    const hit = scene.children
-      .getAll()
-      .flatMap((c: any) => (c.getAll ? [c, ...c.getAll()] : [c]))
-      .filter((g: any) => typeof g.getCardBg === 'function')
-      .map((g: any) => g.getCardBg(id))
-      .find((bg: any) => !!bg);
-    hit?.emit('pointerdown');
-  }, sanctumId);
-  await page.evaluate(() => {
-    const scene = (window as any).__scene as Phaser.Scene;
-    const btn = scene.children
-      .getAll()
-      .flatMap((c: any) => (c.getAll ? [c, ...c.getAll()] : [c]))
-      .find((o: any) => o.type === 'Text' && o.text === '[Add to Loadout]');
-    btn?.emit('pointerdown');
+  await page.waitForFunction(() => typeof (window as any).__reliquaryMove === 'function', {
+    timeout: 5000,
   });
+
+  const sanctumId = spare.id as string;
+  await page.evaluate((id) => (window as any).__reliquaryMove(id, 'spare'), sanctumId);
 
   await page.waitForFunction(
     (id) => {
