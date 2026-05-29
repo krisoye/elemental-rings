@@ -4,6 +4,16 @@ import type { AIPersonality } from '../../../shared/types';
 import { CANVAS_W, CANVAS_H, ELEMENT_COLORS, ELEMENT_NAMES } from '../Constants';
 import type { RingData } from '../objects/InventoryGrid';
 import { BattleHandOverlay } from '../objects/BattleHandOverlay';
+import { CHARSET_KEY, charsetFrame, preloadCharset } from '../objects/world/charset';
+
+// One overworld sprite per element pool — each is a 72×96 strip (3 cols × 4 rows, 24×24 per frame).
+const TRAINING_MONSTERS = [
+  'assets/monsters/monster_fire_02_alt01_overworld.png',       // FIRE (0)
+  'assets/monsters/monster_water_grass_19_alt01_overworld.png', // WATER (1)
+  'assets/monsters/monster_electro_ghost_14_alt01_overworld.png', // EARTH (2)
+  'assets/monsters/monster_water_fly_11_alt01_overworld.png',   // WIND (3)
+  'assets/monsters/monster_water_grass_20_alt01_overworld.png', // WOOD (4)
+] as const;
 
 declare const __SERVER_URL__: string;
 const _WS_ENC = __SERVER_URL__ || `ws://${window.location.hostname}:2567`;
@@ -50,6 +60,15 @@ export class EncounterScene extends Phaser.Scene {
 
   constructor() {
     super({ key: 'EncounterScene' });
+  }
+
+  preload(): void {
+    preloadCharset(this);
+    TRAINING_MONSTERS.forEach((path, i) => {
+      const key = `enc-mon-${i}`;
+      if (!this.textures.exists(key))
+        this.load.spritesheet(key, path, { frameWidth: 24, frameHeight: 24 });
+    });
   }
 
   // #83 — when entered from an overworld NPC (OverworldScene/SwampScene start this
@@ -120,7 +139,7 @@ export class EncounterScene extends Phaser.Scene {
     }
 
     this.add
-      .text(CANVAS_W / 2, 40, 'ENCOUNTER — choose an opponent', {
+      .text(CANVAS_W / 2, 40, 'TRAINING — choose a challenger', {
         fontSize: '24px',
         color: '#ffffff',
       })
@@ -143,15 +162,15 @@ export class EncounterScene extends Phaser.Scene {
     MARKERS.forEach((m, i) => {
       const x = spacing * (i + 1);
 
+      // PVP keeps a plain rectangle; AI trainers get an animated sprite card.
+      const cardAlpha = m.choice === 'PVP' ? 0.85 : 0.35;
       const rect = this.add
-        .rectangle(x, markerY, 90, 110, m.fallbackColor, 0.85)
+        .rectangle(x, markerY, 90, 110, m.fallbackColor, cardAlpha)
         .setStrokeStyle(2, 0xffffff)
         .setInteractive({ useHandCursor: true });
       rects.set(m.choice, rect);
 
-      // Personality label. #85 Fix 4 — 11px + wordWrap(86) + center so longer
-      // labels (e.g. "Status-hunter") fit within the 90px card instead of
-      // overflowing its edges.
+      // Personality label.
       this.add
         .text(x, markerY - 40, m.label, {
           fontSize: '11px',
@@ -161,9 +180,6 @@ export class EncounterScene extends Phaser.Scene {
         })
         .setOrigin(0.5);
 
-      // Stake element label (filled in after preview fetch). #85 Fix 4 — set
-      // wordWrap(86) at construction (not only when the preview arrives) so the
-      // multi-line stake text wraps within the 90px card from the first render.
       const stakeLabel = this.add
         .text(x, markerY + 30, m.choice === 'PVP' ? '' : '…', {
           fontSize: '11px',
@@ -173,6 +189,12 @@ export class EncounterScene extends Phaser.Scene {
         })
         .setOrigin(0.5);
       stakeLabels.set(m.choice, stakeLabel);
+
+      if (m.choice !== 'PVP') {
+        const sprite = this.buildTrainerSprite(x, markerY - 5);
+        sprite.setInteractive({ useHandCursor: true });
+        sprite.on('pointerdown', () => this.select(m.choice));
+      }
 
       rect.on('pointerdown', () => this.select(m.choice));
     });
@@ -559,6 +581,54 @@ export class EncounterScene extends Phaser.Scene {
       this.wonRingModal.destroy(true);
       this.wonRingModal = null;
     }
+  }
+
+  // ── Trainer sprite builder ───────────────────────────────────────────────────
+
+  /**
+   * Create a randomly-assigned animated trainer sprite (monster overworld OR
+   * human charset character). Called once per non-PVP marker on each scene entry
+   * so the lineup varies every visit. Monster walk cycle uses the down-facing
+   * row (frames 0–2 of the 24×24 overworld strip). Charset walk cycle uses the
+   * down-facing frames from charsetFrame() at 2× scale.
+   */
+  private buildTrainerSprite(x: number, y: number): Phaser.GameObjects.Sprite {
+    const isMonster = Math.random() < 0.5;
+
+    if (isMonster) {
+      const element = Math.floor(Math.random() * TRAINING_MONSTERS.length);
+      const texKey = `enc-mon-${element}`;
+      const animKey = `enc-mon-walk-${element}`;
+      if (!this.anims.exists(animKey)) {
+        this.anims.create({
+          key: animKey,
+          frames: this.anims.generateFrameNumbers(texKey, { start: 0, end: 2 }),
+          frameRate: 6,
+          repeat: -1,
+        });
+      }
+      return (this.add.sprite(x, y, texKey, 0) as Phaser.GameObjects.Sprite)
+        .setScale(2)
+        .play(animKey);
+    }
+
+    // Human charset: pick a random character (skip 0 = player avatar).
+    const charIdx = 1 + Math.floor(Math.random() * 7);
+    const animKey = `enc-charset-walk-${charIdx}`;
+    if (!this.anims.exists(animKey)) {
+      this.anims.create({
+        key: animKey,
+        frames: [0, 1, 2, 1].map((col) => ({
+          key: CHARSET_KEY,
+          frame: charsetFrame(charIdx, 'down', col),
+        })),
+        frameRate: 6,
+        repeat: -1,
+      });
+    }
+    return (this.add.sprite(x, y, CHARSET_KEY, charsetFrame(charIdx, 'down', 1)) as Phaser.GameObjects.Sprite)
+      .setScale(2)
+      .play(animKey);
   }
 
   // ── Manage Battle Hand modal (#87 Part D — delegated to BattleHandOverlay) ──

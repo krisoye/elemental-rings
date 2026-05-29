@@ -185,16 +185,6 @@ export class CampScene extends Phaser.Scene {
     this.uiCam = this.cameras.add(0, 0, CANVAS_W, CANVAS_H);
     // uiCam ignores world objects; collected after buildZones() below.
 
-    // ── Dev/test shortcut: "Set Out →" HUD button → EncounterScene ────────
-    // Parented into uiRoot so it renders at 1:1 through uiCam.
-    const setOutBtn = this.add
-      .text(CANVAS_W - 120, 16, 'Set Out →', { fontSize: '16px', color: '#aaffaa' })
-      .setDepth(500)
-      .setName('set-out-btn')
-      .setInteractive({ useHandCursor: true })
-      .on('pointerdown', () => this.goToEncounter());
-    this.uiRoot.add(setOutBtn);
-
     // ── Reusable inventory panels (parked off-screen) ─────────────────────
     this.buildPanels();
 
@@ -340,6 +330,8 @@ export class CampScene extends Phaser.Scene {
         return () => this.openCampfireOverlay();
       case 'door':
         return () => this.onDoorInteract();
+      case 'training':
+        return () => this.goToEncounter();
       default:
         return null;
     }

@@ -7,6 +7,7 @@ import {
   OPPONENT_X,
   OPPONENT_Y,
 } from '../Constants';
+import { charsetFrame } from './world/charset';
 
 // Combat slots whose remaining uses count toward the opponent's aggregate (the
 // thumb is a passive staked ring and is excluded from ATK/DEF totals).
@@ -64,11 +65,10 @@ export class OpponentDuelist extends Phaser.GameObjects.Container {
       // Human duelist: charset front-facing idle frame (col 1, direction down),
       // character index = spriteFrame - 5 (maps 5→0, 6→1, … 11→6).
       const charIdx = spriteFrame - 5;
-      const COLS = 12;
-      const idleFrame = (charIdx % 8) * 3 * COLS + 1; // row=charIdx*4 (+0=down), col=1
+      const idleFrame = charsetFrame(charIdx, 'down', 1);
       spriteImg = scene.add
         .image(0, -72, texKey, idleFrame)
-        .setScale(3)
+        .setScale(2)
         .setOrigin(0.5, 0.5);
     }
 

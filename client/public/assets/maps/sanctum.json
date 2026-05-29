@@ -568,6 +568,18 @@
           "width": 45.596919127086,
           "x": 64.0821566110398,
           "y": 144.595635430039
+        },
+        {
+          "height": 20,
+          "id": 9,
+          "name": "training",
+          "opacity": 1,
+          "rotation": 0,
+          "type": "",
+          "visible": true,
+          "width": 24,
+          "x": 176,
+          "y": 120
         }
       ],
       "opacity": 1,
@@ -578,7 +590,7 @@
     }
   ],
   "nextlayerid": 5,
-  "nextobjectid": 10,
+  "nextobjectid": 11,
   "orientation": "orthogonal",
   "renderorder": "right-down",
   "tiledversion": "1.12.2",

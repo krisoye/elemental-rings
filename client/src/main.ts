@@ -286,6 +286,8 @@ const game = new Phaser.Game({
   // Phase 8A: top-down spatial scenes (Sanctum / Overworld) use Arcade Physics
   // with zero gravity for movement + tile-wall collision. Battle scenes ignore it.
   physics: { default: 'arcade', arcade: { gravity: { x: 0, y: 0 }, debug: false } },
+  // Disable bilinear interpolation so pixel-art sprites stay crisp at any integer scale.
+  render: { pixelArt: true },
   // BootScene must stay first (it routes by auth state). LoginScene/CampScene
   // are the new auth flow; Encounter/Lobby/Battle are unchanged.
   // ForestScene (8E.1, the BaseBiomeScene-driven multi-screen Forest region,
