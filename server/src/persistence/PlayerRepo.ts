@@ -348,6 +348,28 @@ export function addGold(playerId: string, amount: number): void {
   updatePlayerGold.run(amount, playerId);
 }
 
+/**
+ * Deduct gold floored at 0: the balance never goes negative. Reads the current
+ * balance and subtracts only as much as the player can afford. Used by the
+ * forfeit penalty (GDD §6.3). No-op for an unknown player.
+ */
+export function deductGoldFloored(playerId: string, amount: number): void {
+  const player = getPlayerById(playerId);
+  if (!player) return;
+  const toDeduct = Math.min(Math.max(0, amount), player.gold);
+  if (toDeduct > 0) updatePlayerGold.run(-toDeduct, playerId);
+}
+
+/**
+ * Restore `n` uses to a ring (clamped to its max_uses). Used by the in-duel
+ * recharge action (GDD §6.3) to persist the ring row alongside the live
+ * PlayerState mutation. A non-positive `n` is a no-op.
+ */
+export function addRingUses(ringId: string, n: number): void {
+  if (n <= 0) return;
+  updateRingUsesAdd.run(n, ringId);
+}
+
 /** Set or clear the escrowed flag on a ring (true → 1, false → 0). */
 export function setEscrowed(ringId: string, escrowed: boolean): void {
   updateRingEscrowed.run(escrowed ? 1 : 0, ringId);
@@ -852,6 +874,15 @@ export function refreshSpiritMax(playerId: string): number {
 /** Restore the spirit gauge to its (XP-derived) maximum (resting effect). */
 export function restoreSpirit(playerId: string): void {
   updateSpiritCurrent.run(computeSpiritMax(playerId), playerId);
+}
+
+/**
+ * Set the spirit gauge to an exact value (clamped at ≥ 0). Used only by the E2E
+ * test route to seed a precise partial-spirit recharge scenario; never wired into
+ * normal gameplay.
+ */
+export function setSpiritCurrent(playerId: string, value: number): void {
+  updateSpiritCurrent.run(Math.max(0, value), playerId);
 }
 
 /** Add food units to the player's larder. */

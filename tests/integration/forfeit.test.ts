@@ -1,26 +1,25 @@
 /**
- * Forfeit integration tests using @colyseus/testing (Colyseus 0.17) — issue #24.
+ * Recharge + Forfeit integration tests using @colyseus/testing (Colyseus 0.17)
+ * — issue #124 (supersedes the old §6.6 auto-forfeit suite).
  *
- * GDD §6.6: if the current attacker begins their turn with BOTH attack rings
- * (A1 + A2) extinguished, they immediately forfeit and the opponent wins —
- * even with hearts remaining. Before this fix the room sat in ATTACK_SELECT
- * indefinitely (deadlock), since no attack could ever be submitted.
+ * GDD §6.3 (PR #120 rewrote §6.6): ring exhaustion NO LONGER auto-loses. A
+ * player who begins their turn with both attack rings extinguished simply has no
+ * `attack` action — they must `recharge` (spend spirit to restore a ring) or
+ * `forfeit` (concede: lose the staked ring + GOLD_FORFEIT_PENALTY gold).
  *
- * These tests boot a real Colyseus server, mutate ring state on the live room
- * (the `room` handle returned by createRoom IS the BattleRoom instance — see
- * battle.test.ts accessing `room.impactTime`), then drive REAL phase
- * transitions through the same client/handler path a duel uses. All assertions
- * read authoritative `room.state`, never mocked values.
+ * These tests boot a real Colyseus server and drive the real handler path. State
+ * assertions read authoritative `room.state`. Recharge spirit / forfeit gold
+ * persistence is exercised by the e2e suite (DB-backed); here we assert the live
+ * room state machine (no auto-forfeit, recharge restores + advances turn, an
+ * explicit forfeit message ends the duel for the opponent).
  *
- * Default loadout (seatPlayer): thumb=WOOD, a1=FIRE, a2=WATER, d1=WOOD, d2=EARTH.
+ * Default loadout (seatPlayer DEFAULT_LOADOUT): thumb=FIRE, a1=FIRE, a2=WATER,
+ * d1=WOOD, d2=EARTH. With a FIRE thumb, Kindling buffs the FIRE a1 to 4 uses.
  */
 import { describe, test, expect, beforeAll, afterAll } from 'vitest';
 import { ColyseusTestServer, boot } from '@colyseus/testing';
 import { Server } from 'colyseus';
 import { BattleRoom } from '../../server/src/rooms/BattleRoom';
-import { TELEGRAPH_MS, BLOCK_WINDOW_MS } from '../../server/src/game/constants';
-
-const RESOLVE_BUFFER_MS = 250;
 
 let colyseus: ColyseusTestServer<any>;
 
@@ -49,9 +48,6 @@ async function joinBattle() {
 function attackerClient(room: any, c1: any, c2: any) {
   return room.state.currentAttackerId === c1.sessionId ? c1 : c2;
 }
-function defenderClient(room: any, c1: any, c2: any) {
-  return room.state.currentAttackerId === c1.sessionId ? c2 : c1;
-}
 
 /** Drain both attack rings of a player's PlayerState directly. */
 function extinguishAttacks(ps: any) {
@@ -61,129 +57,142 @@ function extinguishAttacks(ps: any) {
   }
 }
 
-async function waitForResolve() {
-  await sleep(TELEGRAPH_MS + BLOCK_WINDOW_MS + RESOLVE_BUFFER_MS);
-}
-
-describe('Scenario 1: both attack rings exhausted at turn start → forfeit', () => {
-  test('a no-block exchange swaps to an attacker with no usable attacks → ENDED, opponent wins', async () => {
-    const { room, c1, c2 } = await joinBattle();
-    const attacker = attackerClient(room, c1, c2);
-    const defender = defenderClient(room, c1, c2);
-    const attackerId = attacker.sessionId;
-    const defenderId = defender.sessionId;
-
-    // The current DEFENDER will become the next attacker after a normal exchange.
-    // Drain both of THEIR attack rings so the post-swap checkAttackForfeit fires.
-    extinguishAttacks(room.state.players.get(defenderId));
-
-    // Real transition: attacker fires FIRE(a1), defender never blocks → normal
-    // (non-rally) resolve swaps roles into ATTACK_SELECT, where the new attacker
-    // (former defender) has no usable attack ring.
-    attacker.send('selectAttack', { slot: 'a1' });
-    await room.waitForNextPatch();
-    await waitForResolve();
-
-    expect(room.state.phase).toBe('ENDED');
-    expect(room.state.winnerId).toBe(attackerId);
-    expect(room.state.winnerId).not.toBe(defenderId);
-  });
-
-  test('forfeit can fire at duel start: opening attacker has both attack rings dead', async () => {
-    // Seat both players, then (before the 2nd join completes the ATTACK_SELECT
-    // entry is hard to interleave) instead create the room, connect one client,
-    // drain the seated player's attacks, then connect the second client so the
-    // size===2 branch runs checkAttackForfeit at onJoin.
+describe('No more auto-forfeit (#124)', () => {
+  test('both attack rings extinguished at turn start → NOT defeated; stays in ATTACK_SELECT', async () => {
     const room = await colyseus.createRoom<any>('battle', {});
     const c1 = await colyseus.connectTo(room);
     await room.waitForNextPatch();
 
-    // c1 is seated first → will be currentAttackerId (ids[0]) once the 2nd joins.
+    // c1 is seated first → it becomes currentAttackerId (ids[0]) once c2 joins.
     extinguishAttacks(room.state.players.get(c1.sessionId));
 
     const c2 = await colyseus.connectTo(room);
     await room.waitForNextPatch();
     await sleep(50);
 
-    expect(room.state.phase).toBe('ENDED');
-    expect(room.state.winnerId).toBe(c2.sessionId);
-    expect(room.state.winnerId).not.toBe(c1.sessionId);
+    // No auto-forfeit: the duel stays live in ATTACK_SELECT with c1 as attacker.
+    expect(room.state.phase).toBe('ATTACK_SELECT');
+    expect(room.state.currentAttackerId).toBe(c1.sessionId);
+    expect(room.state.winnerId).toBeFalsy();
   });
-});
 
-describe('Scenario 2: one attack ring usable → no forfeit', () => {
-  test('only a1 extinguished; a2 usable → selectAttack(a2) proceeds to DEFEND_WINDOW', async () => {
+  test('a normal exchange that swaps to an attacker with both rings dead does NOT end the duel', async () => {
     const { room, c1, c2 } = await joinBattle();
     const attacker = attackerClient(room, c1, c2);
-    const attackerId = attacker.sessionId;
+    const defenderId = (attacker.sessionId === c1.sessionId ? c2 : c1).sessionId;
 
-    const ps = room.state.players.get(attackerId);
-    // Kill a1 only; leave a2 fully usable.
-    ps.a1.currentUses = 0;
-    ps.a1.isExtinguished = true;
-    expect(ps.a2.isExtinguished).toBe(false);
-    expect(ps.a2.currentUses).toBeGreaterThanOrEqual(1);
+    // The current defender becomes the next attacker after a normal no-block
+    // exchange. Drain their attack rings — the post-swap entry must NOT forfeit.
+    extinguishAttacks(room.state.players.get(defenderId));
 
-    // We are already in ATTACK_SELECT with this attacker; no forfeit must have
-    // been triggered at join (a2 was usable).
-    expect(room.state.phase).toBe('ATTACK_SELECT');
-
-    attacker.send('selectAttack', { slot: 'a2' }); // WATER, usable
+    attacker.send('selectAttack', { slot: 'a1' });
     await room.waitForNextPatch();
+    await sleep(1400); // telegraph + window + resolve
 
-    expect(room.state.phase).toBe('DEFEND_WINDOW');
-    expect(room.state.attackerSlot).toBe('a2');
+    expect(room.state.phase).toBe('ATTACK_SELECT');
+    expect(room.state.currentAttackerId).toBe(defenderId);
     expect(room.state.winnerId).toBeFalsy();
   });
 });
 
-describe('Scenario 3: AI exhausts its own attack rings → AI loses', () => {
-  test('drain the AI attacker rings, then drive a real swap → non-AI wins, ENDED', async () => {
-    const room = await colyseus.createRoom<any>('battle-ai', {
-      vsAI: true,
-      personality: 'DEFENSIVE',
-      aiSeed: 4242,
-    });
-    const human = await colyseus.connectTo(room);
+describe('Recharge (#124)', () => {
+  test('recharge restores the ring to max and advances the turn to the opponent', async () => {
+    const { room, c1, c2 } = await joinBattle();
+    const attacker = attackerClient(room, c1, c2);
+    const defenderId = (attacker.sessionId === c1.sessionId ? c2 : c1).sessionId;
+    const ps = room.state.players.get(attacker.sessionId);
+
+    // Drop a1 to 0/its-max so recharge has work to do. (No DB-backed spirit on a
+    // no-token integration session → recharge is "free", restoring fully.)
+    const max = ps.a1.maxUses;
+    ps.a1.currentUses = 0;
+    ps.a1.isExtinguished = true;
+
+    attacker.send('recharge', { slot: 'a1' });
     await room.waitForNextPatch();
-    await sleep(20);
+    await sleep(50);
 
-    // AI is seated first → it is the opening attacker.
-    expect(room.state.currentAttackerId).toBe('AI');
+    const after = room.state.players.get(attacker.sessionId);
+    expect(after.a1.currentUses).toBe(max); // restored to max
+    expect(after.a1.isExtinguished).toBe(false);
+    // Turn consumed → opponent is now the attacker, back in ATTACK_SELECT.
+    expect(room.state.currentAttackerId).toBe(defenderId);
+    expect(room.state.phase).toBe('ATTACK_SELECT');
+  });
 
-    // Drain the AI's attack rings. The AI will become the next attacker after a
-    // normal exchange in which the HUMAN is the attacker; so we need the human
-    // attacking and the AI defending, then the swap makes the (drained) AI the
-    // attacker → forfeit. Force that ordering by extinguishing the AI's attacks
-    // and letting the human throw on the AI's defense.
-    extinguishAttacks(room.state.players.get('AI'));
+  test('recharge on a full ring is a no-op that still consumes the turn', async () => {
+    const { room, c1, c2 } = await joinBattle();
+    const attacker = attackerClient(room, c1, c2);
+    const defenderId = (attacker.sessionId === c1.sessionId ? c2 : c1).sessionId;
+    const ps = room.state.players.get(attacker.sessionId);
+    const fullUses = ps.a2.currentUses;
+    expect(ps.a2.currentUses).toBe(ps.a2.maxUses); // already full
 
-    // Wait for it to become the human's turn (the AI may take its opening attack
-    // first; since its attack rings are now empty, the AI's own ATTACK_SELECT
-    // entry — already past at join — won't re-trigger until a swap). The simplest
-    // deterministic path: idle until the AI's scheduled opening attack is blocked
-    // by empty rings, leaving the room in ATTACK_SELECT with AI as attacker but
-    // unable to throw — except the forfeit check only runs ON ENTRY. So instead,
-    // drive a real entry: the AI was the opening attacker BEFORE we drained, so
-    // its onJoin ATTACK_SELECT entry already passed. Re-enter ATTACK_SELECT with
-    // the AI as attacker by running one full exchange where the human throws and
-    // the swap returns the turn to the AI.
+    attacker.send('recharge', { slot: 'a2' });
+    await room.waitForNextPatch();
+    await sleep(50);
 
-    // Make the AI the defender for one exchange: it is currently the attacker, so
-    // first let the AI attack the human (it still has its scheduled think-delay,
-    // but empty attack rings mean handleSelectAttack is a no-op for it). To avoid
-    // depending on AI internals, directly set the human as the current attacker
-    // for a clean, real ATTACK_SELECT → DEFEND_WINDOW → swap → forfeit path:
-    room.state.currentAttackerId = human.sessionId;
+    const after = room.state.players.get(attacker.sessionId);
+    expect(after.a2.currentUses).toBe(fullUses); // unchanged
+    expect(room.state.currentAttackerId).toBe(defenderId); // turn still consumed
+  });
 
-    // Human throws FIRE; AI (DEFENSIVE) may or may not block. Either way the
-    // non-rally resolve swaps the attacker to the (drained) AI → forfeit.
-    human.send('selectAttack', { slot: 'a1' });
-    // Wait through the defend window + resolve + a margin for the AI's press.
-    await sleep(TELEGRAPH_MS + BLOCK_WINDOW_MS + 800);
+  test('recharge from the wrong sender / wrong phase is silently ignored', async () => {
+    const { room, c1, c2 } = await joinBattle();
+    const attacker = attackerClient(room, c1, c2);
+    const defender = attacker.sessionId === c1.sessionId ? c2 : c1;
+    const attackerId = attacker.sessionId;
+
+    // The non-attacker tries to recharge during ATTACK_SELECT → ignored.
+    defender.send('recharge', { slot: 'a1' });
+    await sleep(50);
+    expect(room.state.phase).toBe('ATTACK_SELECT');
+    expect(room.state.currentAttackerId).toBe(attackerId); // turn did NOT advance
+  });
+});
+
+describe('Forfeit (#124)', () => {
+  test('forfeit by the attacker → phase ENDED, opponent wins', async () => {
+    const { room, c1, c2 } = await joinBattle();
+    const attacker = attackerClient(room, c1, c2);
+    const defenderId = (attacker.sessionId === c1.sessionId ? c2 : c1).sessionId;
+
+    attacker.send('forfeit');
+    await room.waitForNextPatch();
+    await sleep(50);
 
     expect(room.state.phase).toBe('ENDED');
-    expect(room.state.winnerId).toBe(human.sessionId);
-    expect(room.state.winnerId).not.toBe('AI');
-  }, 15000);
+    expect(room.state.winnerId).toBe(defenderId);
+    expect(room.state.winnerId).not.toBe(attacker.sessionId);
+  });
+
+  test('forfeit from the wrong sender (defender) is silently ignored', async () => {
+    const { room, c1, c2 } = await joinBattle();
+    const attacker = attackerClient(room, c1, c2);
+    const defender = attacker.sessionId === c1.sessionId ? c2 : c1;
+
+    defender.send('forfeit');
+    await sleep(50);
+    expect(room.state.phase).toBe('ATTACK_SELECT'); // not ended
+    expect(room.state.winnerId).toBeFalsy();
+  });
+
+  test('forfeit works even with both attack rings exhausted (the intended escape hatch)', async () => {
+    const room = await colyseus.createRoom<any>('battle', {});
+    const c1 = await colyseus.connectTo(room);
+    await room.waitForNextPatch();
+    extinguishAttacks(room.state.players.get(c1.sessionId));
+    const c2 = await colyseus.connectTo(room);
+    await room.waitForNextPatch();
+    await sleep(50);
+
+    // c1 (no attacks) is the attacker, not auto-defeated. It forfeits explicitly.
+    expect(room.state.currentAttackerId).toBe(c1.sessionId);
+    c1.send('forfeit');
+    await room.waitForNextPatch();
+    await sleep(50);
+
+    expect(room.state.phase).toBe('ENDED');
+    expect(room.state.winnerId).toBe(c2.sessionId);
+  });
 });

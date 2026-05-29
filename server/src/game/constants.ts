@@ -25,6 +25,9 @@ export const GAUGE_SOFT_CAP = 8;
 
 export const GOLD_PER_WIN = 50;
 export const STARTER_GOLD = 200;
+// GDD §6.3 — forfeiting a duel costs the staked ring AND a flat gold penalty
+// (floored at 0 so a balance never goes negative).
+export const GOLD_FORFEIT_PENALTY = 25;
 
 // #47 — Fusion crafting (GDD §5). A parent ring must reach its tier's XP cap
 // before it can be fused; the resulting fusion ring resets to the new tier's

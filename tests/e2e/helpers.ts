@@ -328,11 +328,18 @@ export async function driveAiDuel(
         room?.state?.currentAttackerId === room?.sessionId
       ) {
         // Fall back to a2 when a1 is extinguished so forced-loss duels (aiHearts:99)
-        // progress through both attack rings → checkAttackForfeit fires → ENDED.
-        // Without this, rejected a1 sends deadlock the duel indefinitely.
+        // progress through both attack rings. When BOTH are extinguished, ring
+        // exhaustion no longer auto-loses (#124) — the protagonist must `forfeit`
+        // explicitly to end the duel (the §6.3 escape hatch). Without this, the
+        // deadlocked turn would never resolve.
         const me = room.state.players.get(room.sessionId);
-        const slot = me?.a1?.isExtinguished ? 'a2' : 'a1';
-        room.send('selectAttack', { slot });
+        const a1Dead = !!me?.a1?.isExtinguished;
+        const a2Dead = !!me?.a2?.isExtinguished;
+        if (a1Dead && a2Dead) {
+          room.send('forfeit');
+        } else {
+          room.send('selectAttack', { slot: a1Dead ? 'a2' : 'a1' });
+        }
       } else if (
         room?.state?.phase === 'DEFEND_WINDOW' &&
         room?.state?.currentAttackerId !== room?.sessionId

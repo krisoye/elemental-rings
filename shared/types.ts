@@ -67,6 +67,11 @@ export interface BattleRoomOptions {
 export interface SelectAttackPayload {
   slot: AttackSlot;
 }
+// GDD §6.3 — recharge one of the attacker's two attack rings, spending spirit
+// (1 per use restored) up to the ring's deficit.
+export interface RechargePayload {
+  slot: AttackSlot;
+}
 // pressTime is retained for future client-side lag compensation, but the server
 // IGNORES it for timing authority — it timestamps on message arrival instead.
 export interface SubmitDefensePayload {

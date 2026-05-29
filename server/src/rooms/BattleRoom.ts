@@ -35,6 +35,7 @@ import {
   ElementEnum,
   SelectAttackPayload,
   SubmitDefensePayload,
+  RechargePayload,
   ExchangeResultPayload,
   BattleRoomOptions,
   SlotKey,
@@ -42,6 +43,7 @@ import {
   DefenseSlot,
   BattleSummaryPayload,
 } from '../../../shared/types';
+import { GOLD_FORFEIT_PENALTY } from '../game/constants';
 
 /** Fixed sessionId used for the virtual AI player (it has no Colyseus client). */
 const AI_ID = 'AI';
@@ -121,6 +123,13 @@ export class BattleRoom extends Room<{ state: BattleState }> {
   /** Guard: persistBattleResult() runs exactly once per room lifetime. */
   private ended = false;
 
+  /**
+   * The sessionId that forfeited the duel (GDD §6.3), or null for a normal KO.
+   * When set, persistBattleResult deducts GOLD_FORFEIT_PENALTY (floored at 0)
+   * from this session's player on top of the standard loser thumb-transfer.
+   */
+  private forfeiterId: string | null = null;
+
   /** Server's real impact time for the current exchange (read by the AI). */
   get currentImpactTime(): number {
     return this.impactTime;
@@ -136,6 +145,13 @@ export class BattleRoom extends Room<{ state: BattleState }> {
     this.onMessage('submitDefense', (client, payload: SubmitDefensePayload) =>
       this.handleSubmitDefense(client.sessionId, payload),
     );
+    // GDD §6.3 — the attacker's two alternative turn actions. Recharge spends
+    // spirit to restore an attack ring; forfeit concedes the duel (loses the
+    // staked ring + a gold penalty). Both are phase-/turn-locked in their handlers.
+    this.onMessage('recharge', (client, payload: RechargePayload) =>
+      this.handleRecharge(client.sessionId, payload),
+    );
+    this.onMessage('forfeit', (client) => this.handleForfeit(client.sessionId));
 
     // Test-only state-setter. Mounted ONLY when E2E_TEST_ROUTES=1 (set by the
     // Playwright webServer env), never in production. Lets E2E status-effect
@@ -312,7 +328,9 @@ export class BattleRoom extends Room<{ state: BattleState }> {
         this.notifyAI();
         return;
       }
-      this.checkAttackForfeit();
+      // GDD §6.6 (PR #120): ring exhaustion no longer auto-loses. A player who
+      // begins their turn with both attack rings extinguished simply has no
+      // `attack` action — they must `recharge` or `forfeit`.
       this.notifyAI();
     }
   }
@@ -373,15 +391,15 @@ export class BattleRoom extends Room<{ state: BattleState }> {
   }
 
   /**
-   * GDD §7 start-of-turn status tick for the current attacker. Runs at every
-   * ATTACK_SELECT entry BEFORE checkAttackForfeit (Burning is lethal — design
-   * decision #46). Applies:
+   * GDD §7 start-of-turn status tick for the current attacker, run at every
+   * ATTACK_SELECT entry (Burning is lethal — design decision #46). Applies:
    *   - Burning: −1 heart. If it KOs the attacker, ends the duel (opponent wins).
-   *   - Entangled: the attacker's highest-use battle ring loses 1 use.
+   *   - Drowning: the attacker's highest-capacity attack ring loses 1 use.
+   *   - Entangled: the attacker's highest-capacity defense ring loses 1 use.
    *
-   * Returns true if the duel ended here (Burning KO) — the caller must then skip
-   * checkAttackForfeit and return after notifyAI(). Does NOT notify the AI itself
-   * (the caller owns the single notifyAI() per transition, like checkAttackForfeit).
+   * Returns true if the duel ended here (Burning KO) — the caller must then
+   * return after notifyAI(). Does NOT notify the AI itself (the caller owns the
+   * single notifyAI() per transition).
    */
   private applyAttackerTurnStart(): boolean {
     const state = this.state;
@@ -398,28 +416,6 @@ export class BattleRoom extends Room<{ state: BattleState }> {
       return true;
     }
     return false;
-  }
-
-  /**
-   * GDD §6.6 forfeit: if the current attacker begins their turn with both A1 and
-   * A2 extinguished, they immediately forfeit and the opponent wins. Spending all
-   * attack-ring uses is a loss condition even with hearts remaining. Call at the
-   * top of every ATTACK_SELECT entry (whoever is the current attacker forfeits).
-   *
-   * Does NOT notify the AI itself: every call site fires this.notifyAI()
-   * unconditionally on the next line, which broadcasts the resulting phase
-   * (ENDED or ATTACK_SELECT) exactly once.
-   */
-  private checkAttackForfeit(): void {
-    const state = this.state;
-    const attackerId = state.currentAttackerId;
-    const ids = Array.from(state.players.keys());
-    const defenderId = ids.find((id) => id !== attackerId)!;
-    if (!this.hasUsableAttack(state.players.get(attackerId)!)) {
-      state.winnerId = defenderId;
-      state.phase = 'ENDED';
-      this.finalizeEnded();
-    }
   }
 
   /**
@@ -503,6 +499,16 @@ export class BattleRoom extends Room<{ state: BattleState }> {
         // #83 — this was a win over an overworld NPC: record the defeat so the
         // NPC respawns per its spawn-table cadence (permanent NPCs stay beaten).
         if (this.npcId) PlayerRepo.recordNpcDefeat(winnerPlayerId, this.npcId);
+      }
+
+      // GDD §6.3 forfeit gold penalty: when the loss was a forfeit (not a KO),
+      // deduct GOLD_FORFEIT_PENALTY from the forfeiter, floored at 0 so the
+      // balance never goes negative. The staked-ring transfer above already ran.
+      if (this.forfeiterId) {
+        const forfeiterPlayerId = this.sessionToPlayerId.get(this.forfeiterId);
+        if (forfeiterPlayerId) {
+          PlayerRepo.deductGoldFloored(forfeiterPlayerId, GOLD_FORFEIT_PENALTY);
+        }
       }
 
       // Recompute each human player's XP-derived spirit_max now that XP has been
@@ -606,6 +612,92 @@ export class BattleRoom extends Room<{ state: BattleState }> {
       // Server-authoritative timing: timestamp on message ARRIVAL.
       this.defensePressTime = Date.now();
     }
+  }
+
+  /**
+   * GDD §6.3 recharge: the attacker spends spirit to restore uses to one of their
+   * attack rings, consuming the turn. Phase-/turn-locked; wrong-phase or
+   * wrong-sender messages are silently ignored.
+   *
+   * cost = maxUses − currentUses. affordable = min(cost, spirit). The affordable
+   * uses are restored on both the live PlayerState ring and the persisted ring
+   * row, and the affordable spirit is spent. A full ring (cost 0) is a no-op that
+   * still consumes the turn. The turn then advances to the opponent.
+   */
+  private handleRecharge(id: string, payload: RechargePayload): void {
+    const state = this.state;
+    if (state.phase !== 'ATTACK_SELECT') return;
+    if (id !== state.currentAttackerId) return;
+    if (!ATTACK_SLOTS.has(payload.slot)) return;
+
+    const attacker = state.players.get(id)!;
+    const ring = attacker.getSlot(payload.slot);
+    const cost = Math.max(0, ring.maxUses - ring.currentUses);
+
+    if (cost > 0) {
+      // Spirit is a DB-backed resource; humans (token sessions) have a balance,
+      // the AI / no-token sessions recharge "for free" (no DB row to read).
+      const playerId = this.sessionToPlayerId.get(id);
+      let affordable = cost;
+      if (playerId) {
+        const { spirit_current } = PlayerRepo.getSpiritAndFood(playerId);
+        affordable = Math.min(cost, Math.max(0, spirit_current));
+        if (affordable > 0) {
+          PlayerRepo.spendSpirit(playerId, affordable);
+          const ringId = this.sessionToRingIds.get(id)?.[payload.slot];
+          if (ringId) PlayerRepo.addRingUses(ringId, affordable);
+        }
+      }
+      if (affordable > 0) {
+        ring.currentUses = Math.min(ring.maxUses, ring.currentUses + affordable);
+        ring.isExtinguished = ring.currentUses === 0;
+      }
+    }
+
+    // Recharge consumes the turn → swap to the opponent and run the turn-start tick.
+    this.advanceTurn();
+  }
+
+  /**
+   * GDD §6.3 forfeit: the attacker concedes — the opponent wins, the forfeiter
+   * loses their staked ring (existing persist path) and a flat gold penalty.
+   * Phase-/turn-locked; wrong-phase or wrong-sender messages are silently ignored.
+   */
+  handleForfeit(id: string): void {
+    const state = this.state;
+    if (state.phase !== 'ATTACK_SELECT') return;
+    if (id !== state.currentAttackerId) return;
+
+    const ids = Array.from(state.players.keys());
+    const opponentId = ids.find((pid) => pid !== id)!;
+    this.forfeiterId = id;
+    state.winnerId = opponentId;
+    state.phase = 'ENDED';
+    this.finalizeEnded();
+    this.notifyAI();
+  }
+
+  /**
+   * Swap the turn to the opponent and enter ATTACK_SELECT, running the §7
+   * turn-start status tick. Shared by recharge (and any future turn-consuming
+   * action). A Burning KO during the tick ends the duel. Owns its single
+   * notifyAI() per transition.
+   */
+  private advanceTurn(): void {
+    const state = this.state;
+    const ids = Array.from(state.players.keys());
+    const opponentId = ids.find((pid) => pid !== state.currentAttackerId)!;
+    state.currentAttackerId = opponentId;
+    state.attackerSlot = '';
+    state.defenderSlot = '';
+    state.rallyActive = false;
+    state.volleyedElement = 0;
+    state.phase = 'ATTACK_SELECT';
+    if (this.applyAttackerTurnStart()) {
+      this.notifyAI();
+      return;
+    }
+    this.notifyAI();
   }
 
   /**
@@ -814,13 +906,13 @@ export class BattleRoom extends Room<{ state: BattleState }> {
       state.rallyActive = false;
       state.volleyedElement = 0;
       state.phase = 'ATTACK_SELECT';
-      // GDD §7 turn-start status tick (Burning/Entangled) runs before the §6.6
-      // attack-ring forfeit check. A Burning KO ends the duel here.
+      // GDD §7 turn-start status tick (Burning/Drowning/Entangled). A Burning KO
+      // ends the duel here. Ring exhaustion no longer auto-forfeits (GDD §6.6, PR
+      // #120) — the new attacker recharges or forfeits if both attack rings are out.
       if (this.applyAttackerTurnStart()) {
         this.notifyAI();
         return;
       }
-      this.checkAttackForfeit();
       this.notifyAI();
     }
   }

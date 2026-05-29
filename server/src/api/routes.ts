@@ -15,6 +15,7 @@ import {
   discardRing,
   spendFood,
   restoreSpirit,
+  setSpiritCurrent,
   rechargeRingWithSpirit,
   rechargeAllWithSpirit,
   getSpiritAndFood,
@@ -25,6 +26,7 @@ import {
   unlockStake,
   fuseRings,
   setRingXP,
+  addGold,
   getAttunements,
   attuneWaystone,
   getAnchor,
@@ -670,5 +672,44 @@ if (process.env.E2E_TEST_ROUTES === '1') {
       return;
     }
     res.status(200).json({ rings: getRingsByOwner(playerId) });
+  });
+
+  /**
+   * POST /api/test/set-gold — set the authenticated player's gold to an exact
+   * value. The forfeit gold penalty (#124) floors at 0, so the floor case needs a
+   * player seeded below the penalty; gold has no precise normal-play setter.
+   * Body: { gold }. Test-only.
+   */
+  apiRouter.post('/api/test/set-gold', requireAuth, (req: Request, res: Response): void => {
+    const playerId = req.playerId as string;
+    const { gold } = req.body ?? {};
+    if (typeof gold !== 'number' || gold < 0 || !Number.isInteger(gold)) {
+      res.status(400).json({ error: 'gold (non-negative integer) is required' });
+      return;
+    }
+    const player = getPlayerById(playerId);
+    if (!player) {
+      res.status(404).json({ error: 'player not found' });
+      return;
+    }
+    // addGold takes a delta; compute the delta to reach the target exactly.
+    addGold(playerId, gold - player.gold);
+    res.status(200).json({ gold: getPlayerById(playerId)?.gold ?? 0 });
+  });
+
+  /**
+   * POST /api/test/set-spirit — set the authenticated player's spirit_current to
+   * an exact value so the partial-spirit recharge case (#124) can be seeded
+   * deterministically (drain-spirit only zeroes). Body: { spirit }. Test-only.
+   */
+  apiRouter.post('/api/test/set-spirit', requireAuth, (req: Request, res: Response): void => {
+    const playerId = req.playerId as string;
+    const { spirit } = req.body ?? {};
+    if (typeof spirit !== 'number' || spirit < 0 || !Number.isInteger(spirit)) {
+      res.status(400).json({ error: 'spirit (non-negative integer) is required' });
+      return;
+    }
+    setSpiritCurrent(playerId, spirit);
+    res.status(200).json({ spirit_current: getSpiritAndFood(playerId).spirit_current });
   });
 }
