@@ -354,17 +354,13 @@ export abstract class BaseBiomeScene extends Phaser.Scene {
     }
 
     // 8D.4 — minimal proof placement of decorations over the ground layer. Two
-    // sprites in the clearing (walkable floor): one solid (trunk-collision, inset
-    // body) and one non-solid (walk-through bush). The collider lets the player bump
-    // the solid one. window.__decorationCount lets E2E assert placement.
+    // Decoration group for screen-specific solid props (trees, rocks, etc.).
+    // Populated by onEnterScreen() overrides in subclasses; empty by default so
+    // screens that don't override it incur no physics cost.
     this.decorationGroup = this.physics.add.staticGroup();
-    const proofSpecs = [
-      { atlasKey: 'forest-decoration', frame: 0, x: 200, y: 200, solid: true, bodyInset: 8 },
-      { atlasKey: 'forest-decoration', frame: 8, x: 300, y: 200, solid: false },
-    ];
-    this.decorHandle = placeDecoration(this, this.decorationGroup, proofSpecs);
+    this.decorHandle = placeDecoration(this, this.decorationGroup, []);
     this.physics.add.collider(this.player, this.decorationGroup);
-    window.__decorationCount = proofSpecs.length;
+    window.__decorationCount = 0;
 
     // Biome title (pinned to the camera). #137 — parented into uiRoot so it
     // renders at 1:1 through uiCam, not the zoomed world camera.
