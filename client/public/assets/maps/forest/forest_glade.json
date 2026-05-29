@@ -11,7 +11,7 @@
   "version": "1.10",
   "tiledversion": "1.10.2",
   "nextlayerid": 3,
-  "nextobjectid": 99,
+  "nextobjectid": 11,
   "tilesets": [
     {
       "firstgid": 1,
@@ -1097,6 +1097,24 @@
               "name": "waystoneId",
               "type": "string",
               "value": "forest_glade"
+            }
+          ]
+        },
+        {
+          "id": 10,
+          "name": "forage_node",
+          "x": 320,
+          "y": 192,
+          "width": 32,
+          "height": 32,
+          "rotation": 0,
+          "visible": true,
+          "point": false,
+          "properties": [
+            {
+              "name": "node_id",
+              "type": "string",
+              "value": "forest_glade:berry_1"
             }
           ]
         }

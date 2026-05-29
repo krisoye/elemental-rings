@@ -4,6 +4,7 @@ import type { ScreenDef } from '../../../shared/world/forest';
 import { Player } from '../objects/world/Player';
 import { InteractionZone } from '../objects/world/InteractionZone';
 import { Waystone } from '../objects/world/Waystone';
+import { ForageNode } from '../objects/world/ForageNode';
 import { Compass } from '../objects/world/Compass';
 import { BlinkController } from '../objects/world/BlinkController';
 import { BattleHandOverlay } from '../objects/BattleHandOverlay';
@@ -149,6 +150,8 @@ export abstract class BaseBiomeScene extends Phaser.Scene {
   private decorHandle: DecorationHandle | null = null;
   /** 8E.1 — guards a screen edge transition so it fires once per departure. */
   private isTransitioning = false;
+  /** #128 — forage node objects on this screen (keyed by node_id). */
+  private forageNodes: Map<string, ForageNode> = new Map();
 
   // ── Subclass contract ───────────────────────────────────────────────────────
 
@@ -198,6 +201,14 @@ export abstract class BaseBiomeScene extends Phaser.Scene {
       this.load.spritesheet('npc-overworld', 'assets/sprites/npc-overworld.png', {
         frameWidth: 32,
         frameHeight: 32,
+      });
+    }
+    // #128 — berry bush / fruit tree nodes (GDD §10.10).
+    // Spritesheet is 80×176 with 16×16 frames (5 cols × 11 rows).
+    if (!this.textures.exists('berry-nodes')) {
+      this.load.spritesheet('berry-nodes', 'assets/tiles/berry_and_trees.png', {
+        frameWidth: 16,
+        frameHeight: 16,
       });
     }
   }
@@ -351,6 +362,9 @@ export abstract class BaseBiomeScene extends Phaser.Scene {
       this.hudText = null;
       this.zones.forEach((z) => z.destroy());
       this.waystones.forEach((w) => w.destroy());
+      this.forageNodes.forEach((n) => n.destroy());
+      this.forageNodes.clear();
+      window.__forageNodeForaged = undefined;
       this.compass.destroy();
       this.sanctumSprite?.destroy();
       this.sanctumSprite = null;
@@ -371,6 +385,8 @@ export abstract class BaseBiomeScene extends Phaser.Scene {
     void this.loadTalismanLoadout();
     // #83 — fetch the NPC roster + render the markers.
     void this.loadOverworldNpcs();
+    // #128 — set initial forage node visual states from the server status endpoint.
+    void this.loadForageNodeStatus();
   }
 
   update(): void {
@@ -633,6 +649,29 @@ export abstract class BaseBiomeScene extends Phaser.Scene {
         this.zones.push(zone);
         continue;
       }
+      if (o.name === 'forage_node') {
+        const nodeId = this.stringPropOf(o, 'node_id');
+        if (!nodeId) continue;
+        const node = new ForageNode(
+          this,
+          o,
+          nodeId,
+          (food_units) => {
+            this.refreshHud();
+            window.__forageNodeForaged = { nodeId, food_units };
+          },
+          (msg, color) => this.showToast(msg, color),
+        );
+        this.forageNodes.set(nodeId, node);
+        this.physics.add.overlap(this.player, node.interactionZone.overlapZone);
+        this.zones.push(node.interactionZone);
+        continue;
+      }
+      if (o.name === 'merchant') {
+        // MerchantNpc objects are handled in loadMerchants() after the async forage
+        // status fetch. Skip here; they are wired via their own method.
+        continue;
+      }
       // (future: handle other named zones here)
     }
   }
@@ -689,6 +728,35 @@ export abstract class BaseBiomeScene extends Phaser.Scene {
       .setScrollFactor(0)
       .setDepth(1000)
       .setName('biome-barrier');
+    this.tweens.add({
+      targets: msg,
+      alpha: { from: 1, to: 0 },
+      delay: 1200,
+      duration: 600,
+      onComplete: () => msg.destroy(),
+    });
+  }
+
+  /**
+   * Show a brief camera-pinned toast message that fades out. `color` defaults to
+   * white; pass '#aaffaa' for success or '#ff8888' for error. Reuses the same
+   * name as showBarrierMessage so concurrent toasts replace each other (one at
+   * a time) without stacking.
+   */
+  private showToast(text: string, color = '#ffffff'): void {
+    const existing = this.children.getByName('biome-toast') as Phaser.GameObjects.Text | null;
+    existing?.destroy();
+    const msg = this.add
+      .text(this.cameras.main.width / 2, this.cameras.main.height - 110, text, {
+        fontSize: '14px',
+        color,
+        backgroundColor: '#000000aa',
+        padding: { x: 8, y: 4 },
+      })
+      .setOrigin(0.5, 1)
+      .setScrollFactor(0)
+      .setDepth(1000)
+      .setName('biome-toast');
     this.tweens.add({
       targets: msg,
       alpha: { from: 1, to: 0 },
@@ -1063,6 +1131,37 @@ export abstract class BaseBiomeScene extends Phaser.Scene {
     // interactions (initial load, attune, teleport, sleep, recharge), so refresh
     // the resource HUD here to keep Day/Gold/Food/Spirit/XP current.
     void this.refreshHud();
+  }
+
+  /**
+   * #128 — fetch GET /api/overworld/forage-status?screen= and set the initial
+   * available/depleted visual for every forage_node on this screen. Nodes that
+   * have never been foraged are not returned (implicitly available). Runs once
+   * on scene create, after buildZones has instantiated the ForageNode objects.
+   * On any network / auth failure the nodes remain in the default available state.
+   */
+  private async loadForageNodeStatus(): Promise<void> {
+    if (this.forageNodes.size === 0) return;
+    const token = localStorage.getItem('er_token');
+    if (!token) return;
+    try {
+      const res = await fetch(
+        `${API_BASE}/api/overworld/forage-status?screen=${this.screenId}`,
+        { headers: { Authorization: `Bearer ${token}` } },
+      );
+      if (!res.ok) return;
+      const data = (await res.json()) as {
+        nodes: Array<{ node_id: string; depleted: boolean }>;
+      };
+      for (const entry of data.nodes) {
+        const node = this.forageNodes.get(entry.node_id);
+        if (node && entry.depleted) node.setDepleted(true);
+      }
+      // Publish to E2E hook.
+      window.__forageStatus = data.nodes;
+    } catch {
+      // Network failure — leave nodes in default available state.
+    }
   }
 
   /**
