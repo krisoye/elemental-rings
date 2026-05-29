@@ -60,6 +60,23 @@ export class CampScene extends Phaser.Scene {
   private cursors!: Phaser.Types.Input.Keyboard.CursorKeys;
   private wasd!: { W: Phaser.Input.Keyboard.Key; A: Phaser.Input.Keyboard.Key; S: Phaser.Input.Keyboard.Key; D: Phaser.Input.Keyboard.Key };
 
+  // ── Dual-camera split (#118) ──────────────────────────────────────────────
+  /**
+   * UI camera: zoom 1, no follow. Renders the persistent HUD/toast objects in
+   * uiRoot plus the modal overlay containers (which cameras.main ignores). It
+   * does not scroll, so UI renders at a fixed 1:1 while the world zooms 4×.
+   */
+  private uiCam!: Phaser.Cameras.Scene2D.Camera;
+  /**
+   * Persistent container for HUD objects that have no E2E flatMap traversal —
+   * the "Set Out →" button and the transient teleport confirm toast. cameras.main
+   * ignores this whole subtree once at creation, so anything added later is
+   * automatically excluded from the world camera. Modal overlays do NOT live
+   * here: they stay at the scene root (preserving E2E traversal depth) and are
+   * excluded from cameras.main via per-container ignore() in beginOverlay().
+   */
+  private uiRoot!: Phaser.GameObjects.Container;
+
   // ── Interaction zones + modal overlays (8A.2) ─────────────────────────────
   private zones: InteractionZone[] = [];
   private activeZone: InteractionZone | null = null;
@@ -128,26 +145,55 @@ export class CampScene extends Phaser.Scene {
 
     // ── Camera follows the player, clamped to map bounds ──────────────────
     this.physics.world.setBounds(0, 0, map.widthInPixels, map.heightInPixels);
-    // this.cameras.main.setZoom(4);
+    this.cameras.main.setZoom(4); // #118 — 4× world zoom (re-enabled; UI is on uiCam)
     this.cameras.main.setBounds(0, 0, map.widthInPixels, map.heightInPixels);
     this.cameras.main.startFollow(this.player, true, 0.1, 0.1);
 
+    // ── Dual-camera split (#118) ──────────────────────────────────────────
+    // uiCam: full-viewport, zoom 1, no follow. cameras.main ignores uiRoot (HUD
+    // + toasts) once. Modal overlays are ignored per-container in beginOverlay()
+    // so they can stay at the scene root for E2E traversal. uiCam is added after
+    // main, so it draws on top — correct for UI occluding the world.
+    this.uiRoot = this.add.container(0, 0).setDepth(4000);
+    this.cameras.main.ignore(this.uiRoot);
+    this.uiCam = this.cameras.add(0, 0, CANVAS_W, CANVAS_H);
+    // uiCam ignores world objects; collected after buildZones() below.
+
     // ── Dev/test shortcut: "Set Out →" HUD button → EncounterScene ────────
-    // Survives the spatial transform per the 8A.3 product decision; pinned to
-    // the camera so it stays visible while the room scrolls.
-    this.add
+    // Parented into uiRoot so it renders at 1:1 through uiCam.
+    const setOutBtn = this.add
       .text(CANVAS_W - 120, 16, 'Set Out →', { fontSize: '16px', color: '#aaffaa' })
-      .setScrollFactor(0)
       .setDepth(500)
       .setName('set-out-btn')
       .setInteractive({ useHandCursor: true })
       .on('pointerdown', () => this.goToEncounter());
+    this.uiRoot.add(setOutBtn);
 
     // ── Reusable inventory panels (parked off-screen) ─────────────────────
     this.buildPanels();
 
     // ── Interaction zones (8A.2) ──────────────────────────────────────────
     this.buildZones(map);
+
+    // ── Tell uiCam to ignore all world objects (#118) ─────────────────────
+    // Collected once after buildZones(): tilemap layers, player sprite, and
+    // every InteractionZone's display objects (zone + prompt). The uiRoot
+    // subtree is already excluded from cameras.main; these world objects are
+    // excluded from uiCam symmetrically. We walk the display list to pick up
+    // all tilemap layers (Floor, Furniture, Ceiling) regardless of type,
+    // matching on the layer name stored in the base TilemapLayer type.
+    {
+      const worldObjects: Phaser.GameObjects.GameObject[] = [];
+      // Collect all tilemap layers created above (Floor, Furniture, Ceiling).
+      this.children.getAll().forEach((child) => {
+        if (child.type === 'TilemapLayer') {
+          worldObjects.push(child as Phaser.GameObjects.GameObject);
+        }
+      });
+      worldObjects.push(this.player);
+      this.zones.forEach((z) => worldObjects.push(...z.displayObjects));
+      this.uiCam.ignore(worldObjects);
+    }
 
     // #87 Part A — double-click a Sanctum interaction zone within range to blink
     // onto it (spending spirit, cost ∝ distance). Suppressed while a modal overlay
@@ -379,6 +425,19 @@ export class CampScene extends Phaser.Scene {
   // ── Modal overlays (8A.2) ─────────────────────────────────────────────────
 
   /**
+   * Inverse of `cameras.main.ignore(obj)` (#118). Phaser 4.1's `ignore()` only
+   * sets `obj.cameraFilter |= camera.id` (a bit flag stored on the object — the
+   * camera keeps no collection), so the clean undo is to clear that bit. Called
+   * on transient UI objects just before they're destroyed so no stale main-camera
+   * filter survives if the object is ever revived or its id reused. Ignoring a
+   * container cascades to its children; clearing the parent's flag is enough for
+   * the destroy path because the whole subtree is torn down with it.
+   */
+  private unignoreMain(obj: Phaser.GameObjects.GameObject): void {
+    obj.cameraFilter &= ~this.cameras.main.id;
+  }
+
+  /**
    * Create a fresh modal overlay container: a dimmed full-screen backdrop fixed
    * to the camera, plus a titled panel. Returns the container; callers add panel
    * content into it. Closing destroys the container (and any non-adopted
@@ -386,26 +445,28 @@ export class CampScene extends Phaser.Scene {
    */
   private beginOverlay(name: string, title: string, onClose?: () => void): Phaser.GameObjects.Container {
     this.closeOverlay(); // never stack overlays
-    const c = this.add.container(0, 0).setDepth(4000).setScrollFactor(0);
+    // #118: the overlay container stays at the SCENE ROOT (not inside uiRoot) so
+    // the existing E2E single-level flatMap traversals still reach its children.
+    // To render it at 1:1 instead of the 4× world camera we tell cameras.main to
+    // ignore the container; ignoring a container cascades to its whole subtree,
+    // so children added later (panels, labels) are excluded automatically.
+    const c = this.add.container(0, 0).setDepth(4000);
     const backdrop = this.add
       .rectangle(CANVAS_W / 2, CANVAS_H / 2, CANVAS_W, CANVAS_H, 0x000000, 0.78)
-      .setScrollFactor(0)
       .setInteractive(); // swallow clicks to the room behind
     const panel = this.add
       .rectangle(CANVAS_W / 2, CANVAS_H / 2, 760, 470, 0x161622)
-      .setStrokeStyle(2, 0x6082aa)
-      .setScrollFactor(0);
+      .setStrokeStyle(2, 0x6082aa);
     const titleText = this.add
       .text(CANVAS_W / 2, 60, title, { fontSize: '20px', color: '#ffffff' })
-      .setOrigin(0.5)
-      .setScrollFactor(0);
+      .setOrigin(0.5);
     const closeBtn = this.add
       .text(CANVAS_W / 2 + 360, 56, '[×]', { fontSize: '16px', color: '#ff8888' })
       .setOrigin(0.5)
-      .setScrollFactor(0)
       .setInteractive({ useHandCursor: true })
       .on('pointerdown', () => this.closeOverlay());
     c.add([backdrop, panel, titleText, closeBtn]);
+    this.cameras.main.ignore(c);
 
     this.overlay = c;
     this.overlayName = name;
@@ -420,11 +481,16 @@ export class CampScene extends Phaser.Scene {
     // Release adopted reusable panels back to the scene root (off-screen) so the
     // container destroy doesn't take them with it.
     this.overlayOnClose?.();
+    // #118: the overlay container lives at the scene root. Clear its main-camera
+    // ignore flag before destroying it (mirrors the ignore() in beginOverlay).
+    this.unignoreMain(this.overlay);
     this.overlay.destroy(true);
     this.overlay = null;
     this.overlayName = null;
     this.overlayOnClose = null;
     window.__sanctumOverlayOpen = null;
+    // #118: the FusionPanel's onClose callback clears its own container's
+    // main-camera ignore flag before destroying it.
     if (this.fusionPanel.isOpen()) this.fusionPanel.close();
   }
 
@@ -441,12 +507,14 @@ export class CampScene extends Phaser.Scene {
     container.add(panel);
     panel.setPosition(x, y);
     panel.setScrollFactor(0);
+    panel.setVisible(true); // #118 P2: shown while adopted into the visible overlay
   }
 
   /** Return an adopted panel to the scene root, parked off-screen. */
   private releasePanel(container: Phaser.GameObjects.Container, panel: Phaser.GameObjects.Container): void {
     container.remove(panel); // re-parents to the scene display list
     panel.setPosition(OFFSCREEN_X, OFFSCREEN_Y);
+    panel.setVisible(false); // #118 P2: hidden while parked so cameras skip it
   }
 
   /**
@@ -538,41 +606,22 @@ export class CampScene extends Phaser.Scene {
     c.add(necklaceLabel);
     void this.loadTalismanLoadout(necklaceLabel);
 
-    // #78 ① — hit-test probe. Scrolls the camera past a card's half-size, then
-    // hit-tests the card's bg at its (scroll-independent) render position. With
-    // the scrollFactor(0) fix applied the hit area tracks the render, so the test
-    // still hits; an unfixed (scrollFactor 1) bg would miss. Registered only
-    // while this overlay is open; cleared in the overlay's onClose above.
-    //
-    // The follow camera lerps its scroll back toward the player inside its own
-    // preRender, so we stopFollow → setScroll → preRender (now no re-lerp; this
-    // also rebuilds matrixCombined that hitTest's getWorldPoint reads) → hitTest,
-    // then restore scroll + follow synchronously before the next render frame.
-    // useBounds is disabled during the probe so the +200 scroll is never clamped
-    // to a no-op (the ringwall sits at the map edge, where bounds would otherwise
-    // pin one axis and mask the bug).
+    // #118 — hit-test probe switched to uiCam. Ring cards live under the overlay
+    // container, which cameras.main ignores and uiCam renders. uiCam does not
+    // follow or scroll, so the card's world-transform position (tx, ty) is its
+    // exact render position in uiCam space — no scroll dance needed. The probe is
+    // a straight uiCam hitTest at that position.
     window.__campHitTestRing = (ringId: string): { found: boolean; hit: boolean } => {
-      const cam = this.cameras.main;
       const bg = this.sanctumGrid.getCardBg(ringId) ?? this.loadoutGrid.getCardBg(ringId);
       if (!bg) return { found: false, hit: false };
-      const m = bg.getWorldTransformMatrix(); // render-space (scroll-independent)
-      const prevX = cam.scrollX;
-      const prevY = cam.scrollY;
-      const prevBounds = cam.useBounds;
-      cam.stopFollow();
-      cam.useBounds = false;
-      cam.setScroll(prevX + 200, prevY + 200);
-      cam.preRender(); // rebuild matrixCombined at the scrolled position
+      const m = bg.getWorldTransformMatrix(); // render-space position
       const out: Phaser.GameObjects.GameObject[] = [];
       this.input.manager.hitTest(
         { x: m.tx, y: m.ty } as unknown as Phaser.Input.Pointer,
         [bg],
-        cam,
+        this.uiCam,
         out,
       );
-      cam.useBounds = prevBounds;
-      cam.setScroll(prevX, prevY);
-      cam.startFollow(this.player, true, 0.1, 0.1);
       return { found: true, hit: out.indexOf(bg) !== -1 };
     };
   }
@@ -876,6 +925,7 @@ export class CampScene extends Phaser.Scene {
     }
     if (res.ok) {
       this.closeOverlay();
+      // #118: toast lives in uiRoot → renders at 1:1 through uiCam.
       const msg = this.add
         .text(CANVAS_W / 2, CANVAS_H / 2 - 50, `Sanctum re-anchored near ${waystoneName}`, {
           fontSize: '14px',
@@ -884,10 +934,13 @@ export class CampScene extends Phaser.Scene {
           padding: { x: 8, y: 4 },
         })
         .setOrigin(0.5)
-        .setScrollFactor(0)
         .setDepth(600)
         .setName('teleport-confirm');
-      this.time.delayedCall(2000, () => msg.destroy());
+      this.uiRoot.add(msg);
+      this.time.delayedCall(2000, () => {
+        this.uiRoot?.remove(msg);
+        msg.destroy();
+      });
       if (window.__teleportState) {
         window.__teleportState.anchor = waystoneId;
       }
@@ -897,16 +950,30 @@ export class CampScene extends Phaser.Scene {
     }
   }
 
-  /** Show a teleport error — kept in the scene display list (not the overlay container)
-   *  so E2E can locate it via scene.children.getByName('teleport-error'). */
+  /**
+   * Show a teleport error.
+   *
+   * #118: kept at scene root (not inside uiRoot) so that the E2E lookup
+   * `scene.children.getByName('teleport-error')` continues to find it. To
+   * render at 1:1 through uiCam rather than the 4× world camera we tell
+   * cameras.main to ignore it individually and rely on uiCam (which ignores
+   * nothing at the scene-root level) to display it.
+   */
   private showTeleportError(message: string): void {
     const errText = this.add
       .text(CANVAS_W / 2, 420, message, { fontSize: '13px', color: '#ff6666' })
       .setOrigin(0.5)
-      .setScrollFactor(0)
       .setDepth(4001) // above the overlay container (depth 4000)
       .setName('teleport-error');
-    this.time.delayedCall(8000, () => { if (errText.active) errText.destroy(); });
+    // Exclude from the 4× world camera so the text renders at 1:1 via uiCam.
+    this.cameras.main.ignore(errText);
+    this.time.delayedCall(8000, () => {
+      if (errText.active) {
+        // #118: clear the ignore flag before destroying (mirrors the ignore above).
+        this.unignoreMain(errText);
+        errText.destroy();
+      }
+    });
   }
 
   /** Bed: sleep confirmation overlay ([Sleep — 25 food] → doSleep). */
@@ -978,11 +1045,20 @@ export class CampScene extends Phaser.Scene {
     this.loadoutPanel = new LoadoutPanel(this, OFFSCREEN_X + 790, OFFSCREEN_Y, (slot: LoadoutSlot) =>
       this.assignSlot(slot),
     );
+    // #118 P2: parked panels are invisible so neither camera traverses them per
+    // frame. adoptPanel re-shows them when an overlay opens; releasePanel hides
+    // them again. They are still populated by loadData() while hidden.
+    this.sanctumGrid.setVisible(false);
+    this.loadoutGrid.setVisible(false);
+    this.stakePanel.setVisible(false);
+    this.loadoutPanel.setVisible(false);
     this.fusionPanel = new FusionPanel(
       this,
       (ringId1, ringId2) => this.doFuse(ringId1, ringId2),
-      () => {
-        /* closed — no extra cleanup needed */
+      (container) => {
+        // #118: clear the container's main-camera ignore flag before FusionPanel
+        // destroys it (fires for both the panel's own [×] button and closeOverlay).
+        if (container) this.unignoreMain(container);
       },
     );
 
@@ -1356,6 +1432,12 @@ export class CampScene extends Phaser.Scene {
   /** Open the fusion modal with the current ring inventory snapshot. */
   private openFusionPanel(): void {
     this.fusionPanel.open(this.rings);
+    // #118: the FusionPanel container stays at the scene root (so its E2E
+    // traversals are unchanged); tell cameras.main to ignore it so it renders
+    // at 1:1 via uiCam instead of the 4× world camera. Ignoring the container
+    // cascades to all its children.
+    const fc = this.fusionPanel.getContainer();
+    if (fc) this.cameras.main.ignore(fc);
   }
 
   /**
@@ -1384,7 +1466,9 @@ export class CampScene extends Phaser.Scene {
       this.setStatus(`Fusion complete! ${ELEMENT_NAMES[ring.element] ?? 'New'} ring added`);
       const wasOpen = this.fusionPanel.isOpen();
       await this.loadData();
-      if (wasOpen) this.fusionPanel.open(this.rings);
+      // #118: reopen via openFusionPanel() so the freshly-created container is
+      // ignored by cameras.main and renders at 1:1 through uiCam.
+      if (wasOpen) this.openFusionPanel();
       return null;
     } catch {
       return 'Network error during fusion';

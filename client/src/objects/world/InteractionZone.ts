@@ -70,6 +70,16 @@ export class InteractionZone {
     return this.zone;
   }
 
+  /**
+   * The world-space display objects owned by this zone (the invisible overlap
+   * zone + the "Press E" prompt text). Returned so the owning scene can tell
+   * the UI camera to ignore them, keeping them invisible in the UI layer and
+   * visible only through the world (main) camera.
+   */
+  get displayObjects(): Phaser.GameObjects.GameObject[] {
+    return [this.zone, this.prompt];
+  }
+
   /** True while the player's body intersects this zone's rectangle. */
   contains(px: number, py: number): boolean {
     return Phaser.Geom.Rectangle.Contains(this.rect, px, py);

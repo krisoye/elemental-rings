@@ -34,18 +34,20 @@ export class FusionPanel {
   private readonly scene: Phaser.Scene;
   private container: Phaser.GameObjects.Container | null = null;
   private readonly onFuse: (ringId1: string, ringId2: string) => Promise<string | null>;
-  private readonly onClose: () => void;
+  private readonly onClose: (container: Phaser.GameObjects.Container | null) => void;
 
   /**
    * @param scene owning Phaser scene.
    * @param onFuse async callback performing the fusion; resolves to an error
    *   message string on failure, or null on success.
-   * @param onClose called when the panel is dismissed.
+   * @param onClose called when the panel is dismissed, BEFORE the container is
+   *   destroyed, with the live container (or null if already closed) so the
+   *   owner can perform pre-destroy cleanup (e.g. clear a camera ignore flag).
    */
   constructor(
     scene: Phaser.Scene,
     onFuse: (ringId1: string, ringId2: string) => Promise<string | null>,
-    onClose: () => void,
+    onClose: (container: Phaser.GameObjects.Container | null) => void,
   ) {
     this.scene = scene;
     this.onFuse = onFuse;
@@ -55,6 +57,15 @@ export class FusionPanel {
   /** True while the modal is open. */
   isOpen(): boolean {
     return this.container !== null;
+  }
+
+  /**
+   * Return the live container, or null when the panel is closed. Used by
+   * CampScene to re-parent the container into `uiRoot` after `open()` so it
+   * renders through the UI camera at 1:1 zoom rather than the world camera.
+   */
+  getContainer(): Phaser.GameObjects.Container | null {
+    return this.container;
   }
 
   /** Open (or re-render) the panel for the given ring inventory. */
@@ -111,12 +122,14 @@ export class FusionPanel {
 
   /** Close and destroy the modal. */
   close(): void {
+    // Notify the owner with the live container BEFORE destroying it, so it can
+    // run pre-destroy cleanup (e.g. clearing a camera ignore flag, #118).
+    this.onClose(this.container);
     if (this.container) {
       this.container.destroy(true);
       this.container = null;
     }
     window.__fusionState = undefined;
-    this.onClose();
   }
 
   /**
