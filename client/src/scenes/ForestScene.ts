@@ -30,6 +30,19 @@ export const FOREST_GENERATED_TILESETS: ReadonlyArray<readonly [string, string]>
   ['berry_and_trees', 'assets/flora/flora_berries_trees.png'],
 ];
 
+// Tilesets for hand-authored Forest screens (forest_deepwood, forest_mossy_fen,
+// forest_south_path). Extends the generated base with every extra tileset used
+// across those three maps; buildTilesets() filters to only what each map declares.
+const FOREST_HANDAUTHORED_TILESETS: ReadonlyArray<readonly [string, string]> = [
+  ...FOREST_GENERATED_TILESETS,
+  ['terrain_forest_modern', 'assets/terrain/terrain_forest_modern.png'],
+  ['terrain_plains_fantasy', 'assets/terrain/terrain_plains_fantasy.png'],
+  ['tileset_village_main_a', 'assets/structures/tileset_village_main_a.png'],
+  ['terrain_forest_void', 'assets/terrain/terrain_forest_void.png'],
+  ['terrain_forest_deepwoods', 'assets/terrain/terrain_forest_deepwoods.png'],
+  ['tileset_village_main_b', 'assets/structures/tileset_village_main_b.png'],
+];
+
 /**
  * The Forest region (GDD §10.15/§10.17, Phase 8E.1). A BaseBiomeScene subclass that
  * drives the multi-screen Forest manifest (FOREST_SCREENS): walking into a screen
@@ -143,6 +156,12 @@ export class ForestScene extends BaseBiomeScene {
     if (this.screenId === 'forest_anchorage') {
       // Hub: hand-authored multi-tileset map; load each under a key equal to its map name.
       for (const [key, path] of FOREST_HUB_TILESETS) {
+        if (!this.textures.exists(key)) this.load.image(key, path);
+      }
+    } else if (['forest_deepwood', 'forest_mossy_fen', 'forest_south_path'].includes(this.screenId)) {
+      // Hand-authored maps; load the full extra tileset pool — buildTilesets() filters
+      // to only what each map's JSON actually declares.
+      for (const [key, path] of FOREST_HANDAUTHORED_TILESETS) {
         if (!this.textures.exists(key)) this.load.image(key, path);
       }
     } else {
