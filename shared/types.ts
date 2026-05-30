@@ -71,10 +71,12 @@ export interface BattleRoomOptions {
 export interface SelectAttackPayload {
   slot: AttackSlot;
 }
-// GDD §6.3 — recharge one of the attacker's two attack rings, spending spirit
-// (1 per use restored) up to the ring's deficit.
+// GDD §6.3 — recharge one of the attacker's four COMBAT rings (a1/a2/d1/d2;
+// the Thumb is never rechargeable in-duel), spending spirit (1 per use restored)
+// up to the ring's deficit. Attack rings recharge via double-tap 1/2 (Z/C);
+// defense rings via double-tap 3/4 or the D1/D2 card (#188).
 export interface RechargePayload {
-  slot: AttackSlot;
+  slot: AttackSlot | DefenseSlot;
 }
 // pressTime is retained for future client-side lag compensation, but the server
 // IGNORES it for timing authority — it timestamps on message arrival instead.

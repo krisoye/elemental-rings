@@ -33,11 +33,12 @@ Combat is an **active, reaction-timed** exchange — not a hidden simultaneous s
 4. The block is resolved on two independent axes — **timing** (parry / block / mistime / no-block) and **element relationship** (strong / neutral / weak). See §6.4.
 5. Roles swap — the defender becomes the attacker next turn.
 
-**Option B — Recharge:** Double-press A1 or A2 (double-tap Z or C) to fully restore that ring's uses.
+**Option B — Recharge:** Double-press A1, A2, D1, or D2 to fully restore that ring's uses. Attack rings recharge via double-tap `1`/`2` or `Z`/`C`; defense rings recharge via double-tap `3`/`4` or a double-tap on the D1/D2 card. All four combat rings are rechargeable in-duel (the Thumb is not).
 - Cost: **1 spirit per use restored** (same rate as overworld recharging, §4.3). A Tier 1 ring at 0 uses costs 3 spirit; one at 1 use costs 2 spirit.
 - The ring is restored to its full `max_uses`. The turn ends immediately — no attack is thrown.
-- Requires enough spirit to cover the full recharge cost. If the player lacks spirit, the action is rejected.
+- Spirit-gated: only the affordable portion is restored. If the player lacks spirit for a full recharge, the affordable uses are restored (or none, at zero affordable) and the turn is still consumed.
 - Only one ring can be recharged per turn.
+- Defense recharge has **no letter-key (Z/C) form** — during the attack phase `Z`/`C` bind to A1/A2, so defense rings are reachable only by the number keys `3`/`4` and by tapping the D1/D2 cards.
 
 **Option C — Forfeit:** Press D1 and D2 simultaneously during the attack phase to flee while holding initiative.
 - The forfeiting player **loses their staked Thumb ring** and pays **25 gold** (`GOLD_FORFEIT_PENALTY` in constants.ts).
@@ -54,6 +55,8 @@ Combat is an **active, reaction-timed** exchange — not a hidden simultaneous s
 | Attack A2 | `2` | `C` (single press, attack phase) |
 | Recharge A1 | `1` `1` | `Z` `Z` (double-tap, attack phase) |
 | Recharge A2 | `2` `2` | `C` `C` (double-tap, attack phase) |
+| Recharge D1 | `3` `3` / double-tap D1 card | — (no Z/C form; Z/C bind to A1/A2 in attack phase) |
+| Recharge D2 | `4` `4` / double-tap D2 card | — (no Z/C form; Z/C bind to A1/A2 in attack phase) |
 | Forfeit | `3` + `4` simultaneously | `Z` + `C` simultaneously (attack phase) |
 | Defend D1 | `3` | `Z` (defense phase) |
 | Defend D2 | `4` | `C` (defense phase) |

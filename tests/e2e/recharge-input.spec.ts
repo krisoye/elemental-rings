@@ -33,6 +33,31 @@ async function isMyTurn(page: Page): Promise<boolean> {
   });
 }
 
+// The PvP battle pages are token-backed (seedAuthToken injects er_token), so a
+// test can hit /api/me + /api/test/set-spirit for the same DB player whose rings
+// recharge in-duel. These exercise the spirit-gated path (#188 defense recharge).
+const API_URL = 'http://localhost:2568';
+const SPIRIT_PER_RING_USE = 1; // mirrors server/src/game/constants.ts
+
+async function tokenOf(page: Page): Promise<string> {
+  return page.evaluate(() => localStorage.getItem('er_token') as string);
+}
+
+async function spiritOf(token: string): Promise<number> {
+  const res = await fetch(`${API_URL}/api/me`, { headers: { Authorization: `Bearer ${token}` } });
+  if (!res.ok) throw new Error(`/api/me failed (${res.status})`);
+  return (await res.json()).player.spirit_current as number;
+}
+
+async function setSpirit(token: string, spirit: number): Promise<void> {
+  const res = await fetch(`${API_URL}/api/test/set-spirit`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+    body: JSON.stringify({ spirit }),
+  });
+  if (!res.ok) throw new Error(`/api/test/set-spirit failed (${res.status})`);
+}
+
 // ── Scenario 1: double-tap Z rechrges a1 ─────────────────────────────────────
 test('Double-tap Z in attack phase rechrges a1: ring use updates, no attack thrown', async ({
   browser,
@@ -178,6 +203,110 @@ test('Defense phase: Z fires D1 normally, no forfeit prompt, no recharge', async
 
   const promptOpen = await defender.evaluate(() => (window as any).__forfeitPromptOpen === true);
   expect(promptOpen).toBe(false);
+
+  await closeBattle(h);
+});
+
+// ── #188 Scenario 6: double-tap `4` recharges d2, restores uses, spends spirit ─
+test('Double-tap 4 in attack phase recharges d2: uses restored, spirit spent, turn passes', async ({
+  browser,
+}) => {
+  const h = await setupBattle(browser);
+  const { attacker } = await attackerDefender(h.p1, h.p2);
+  const token = await tokenOf(attacker);
+
+  // Deplete d2 in the live battle state so the recharge has a deficit to cover,
+  // and seat plenty of spirit so the full deficit is affordable.
+  await setState(attacker, { uses: { d2: 0 } });
+  await attacker.waitForFunction(() => {
+    const room = (window as any).__room;
+    return room.state.players.get(room.sessionId).d2.currentUses === 0;
+  }, { timeout: 4000 });
+  await setSpirit(token, 50);
+
+  const d2Max = (await readSlot(attacker, 'd2')).maxUses;
+  const spiritBefore = await spiritOf(token);
+
+  // Two `4` presses inside the (fast=120ms) double-tap window → recharge d2.
+  await attacker.keyboard.press('4');
+  await attacker.keyboard.press('4');
+
+  // d2 restores above 0 and the turn advances to the opponent (recharge consumes
+  // the turn). A lone/first defense press would do nothing.
+  await attacker.waitForFunction(() => {
+    const room = (window as any).__room;
+    const me = room.state.players.get(room.sessionId);
+    return me.d2.currentUses > 0 && room.state.currentAttackerId !== room.sessionId;
+  }, { timeout: 5000 });
+
+  const after = await readSlot(attacker, 'd2');
+  expect(after.currentUses).toBe(d2Max); // fully restored (spirit was ample)
+  expect(await isMyTurn(attacker)).toBe(false); // turn advanced
+
+  // Spirit dropped by restored × SPIRIT_PER_RING_USE.
+  const restored = after.currentUses - 0;
+  const spiritAfter = await spiritOf(token);
+  expect(spiritAfter).toBe(spiritBefore - restored * SPIRIT_PER_RING_USE);
+
+  await closeBattle(h);
+});
+
+// ── #188 Scenario 7: insufficient spirit → partial/no-op but turn still consumed
+test('Double-tap 3 on depleted d1 with no spirit: no restore but the turn is still consumed', async ({
+  browser,
+}) => {
+  const h = await setupBattle(browser);
+  const { attacker } = await attackerDefender(h.p1, h.p2);
+  const token = await tokenOf(attacker);
+
+  // Deplete d1 and drain spirit to 0 → nothing is affordable.
+  await setState(attacker, { uses: { d1: 0 } });
+  await attacker.waitForFunction(() => {
+    const room = (window as any).__room;
+    return room.state.players.get(room.sessionId).d1.currentUses === 0;
+  }, { timeout: 4000 });
+  await setSpirit(token, 0);
+  expect(await spiritOf(token)).toBe(0);
+
+  // Double-tap `3` → recharge d1. With zero affordable spirit the ring stays at 0
+  // but the turn is still consumed (the recharge always advances the turn).
+  await attacker.keyboard.press('3');
+  await attacker.keyboard.press('3');
+
+  await attacker.waitForFunction(() => {
+    const room = (window as any).__room;
+    return room.state.currentAttackerId !== room.sessionId;
+  }, { timeout: 5000 });
+
+  const after = await readSlot(attacker, 'd1');
+  expect(after.currentUses).toBe(0); // no spirit → no restore (no-op)
+  expect(await isMyTurn(attacker)).toBe(false); // but the turn was consumed
+  expect(await spiritOf(token)).toBe(0); // nothing spent
+
+  await closeBattle(h);
+});
+
+// ── #188 Scenario 8: forfeit chord 3+4 still raises the forfeit prompt ─────────
+test('3+4 simultaneous in attack phase still shows the forfeit confirm (no regression)', async ({
+  browser,
+}) => {
+  const h = await setupBattle(browser);
+  const { attacker } = await attackerDefender(h.p1, h.p2);
+
+  // Press `3` then `4` back-to-back (well within FORFEIT_CHORD_MS over a local
+  // socket) → the d1+d2 chord raises the forfeit prompt. The new defense-recharge
+  // branch runs AFTER the chord check, so it must not shadow the forfeit.
+  await attacker.keyboard.down('3');
+  await attacker.keyboard.down('4');
+  await attacker.keyboard.up('3');
+  await attacker.keyboard.up('4');
+
+  await attacker.waitForFunction(() => (window as any).__forfeitPromptOpen === true, {
+    timeout: 3000,
+  });
+
+  // Still the attacker's live turn — the prompt is open, the duel has not ended.
+  expect(await isMyTurn(attacker)).toBe(true);
 
   await closeBattle(h);
 });

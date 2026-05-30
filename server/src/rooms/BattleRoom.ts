@@ -71,6 +71,8 @@ interface TestSetStatePayload {
 
 const ATTACK_SLOTS: ReadonlySet<string> = new Set<AttackSlot>(['a1', 'a2']);
 const DEFENSE_SLOTS: ReadonlySet<string> = new Set<DefenseSlot>(['d1', 'd2']);
+// All four combat rings are rechargeable in-duel (Thumb is not).
+const RECHARGEABLE_SLOTS: ReadonlySet<string> = new Set<string>([...ATTACK_SLOTS, ...DEFENSE_SLOTS]); // a1, a2, d1, d2
 
 // Default loadout (GDD §6.1). thumb is a passive staked ring (never pressed).
 //   thumb=FIRE, a1=FIRE, a2=WATER, d1=WOOD, d2=EARTH.
@@ -641,8 +643,8 @@ export class BattleRoom extends Room<{ state: BattleState }> {
 
   /**
    * GDD §6.3 recharge: the attacker spends spirit to restore uses to one of their
-   * attack rings, consuming the turn. Phase-/turn-locked; wrong-phase or
-   * wrong-sender messages are silently ignored.
+   * COMBAT rings (a1/a2/d1/d2; the Thumb is not rechargeable), consuming the turn.
+   * Phase-/turn-locked; wrong-phase or wrong-sender messages are silently ignored.
    *
    * cost = maxUses − currentUses. affordable = min(cost, spirit). The affordable
    * uses are restored on both the live PlayerState ring and the persisted ring
@@ -653,7 +655,7 @@ export class BattleRoom extends Room<{ state: BattleState }> {
     const state = this.state;
     if (state.phase !== 'ATTACK_SELECT') return;
     if (id !== state.currentAttackerId) return;
-    if (!ATTACK_SLOTS.has(payload.slot)) return;
+    if (!RECHARGEABLE_SLOTS.has(payload.slot)) return;
 
     const attacker = state.players.get(id)!;
     const ring = attacker.getSlot(payload.slot);
