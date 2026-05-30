@@ -10,7 +10,7 @@ Each player maintains **four status gauges: Fire, Water, Wood, Shadow**. All gau
 
 **1. Uncontested hit (no-block or mistime):** +1 per tracked-element component of the attacking ring, added to the defender's matching gauges. Wind and Earth components contribute nothing.
 
-**2. Block with ring X:** The defender's X gauge +1, regardless of the attacker's element. Channelling an element as a shield concentrates its force inward rather than deflecting it outward.
+**2. Block with ring X:** The defender's X gauge increases, regardless of the attacker's element. Channelling an element as a shield concentrates its force inward rather than deflecting it outward. The amount added depends on the defending ring's tier (see **Tier-based gauge reduction** below). A base Tier 0 ring adds +1; higher tiers add less.
 
 **3. Strong block:** When the defender blocks with ring X and the incoming attack's primary element is one that X is strong against, **all gauges that X is strong against** each decrease by 1 (in addition to the +1 blocking cost on X). The strong-block relationships:
 
@@ -29,12 +29,12 @@ Blocks against non-matching attacks (e.g. Water ring blocking a Wood attack) sti
 A **weak catch** loses a heart but moves **no gauge** — heart loss and gauge gain are independent (see §6.4). Intermediate rally volleys follow the same block/parry rules as regular exchanges. A rally terminating in an uncontested hit emits one gauge delta on the terminating volley; a rally terminating in a weak catch emits none.
 
 **Server implementation:** Gauge deltas are computed by the Colyseus BattleRoom after each exchange. The `resolveBlock` result carries:
-- `hitGaugeElements: number[]` — tracked element indices to increment on an uncontested hit
-- `blockGaugeElement: number | null` — the defending ring's tracked element index (+1 to that gauge on any block or parry); null on no-block
+- `hitGaugeElements: number[]` — tracked element indices to increment on an uncontested hit (+1 each, full rate regardless of tier)
+- `blockGaugeDeltas: Array<{ element: number, delta: number }>` — gauge increments for the defending ring on a block; `delta = 1 / 2^tier`, split equally across each tracked-element parent for fusion rings; empty on no-block
 - `blockedGaugeElement: number | null` — the blocked gauge index (−1) when a strong block fires; null otherwise
 - `clearAllGauges: boolean` — true on a parry; server sets all four gauges to 0
 
-For fusion attacks each tracked component that lands uncontested contributes its element index; a dual-element fusion on a full no-block fills two gauge slots simultaneously. Gauges are broadcast to both clients as part of the state update.
+Attack gauge increments are always +1 per tracked component (tier-reduction applies only to defense). Gauges are stored as floats server-side and broadcast to both clients as part of the state update.
 
 **Fusion ring decomposition:**
 A fusion ring contributes to gauges based only on its **tracked-element** components. Wind and Earth components contribute nothing.
@@ -52,7 +52,37 @@ A fusion ring contributes to gauges based only on its **tracked-element** compon
 | Bloom | Wood + Earth | Wood ×1 (Earth: no gauge) |
 | Dust | Wind + Earth | No gauge contribution |
 
-The decomposition above applies only to uncontested hits. Blocking a fusion attack still costs the defending ring's gauge as per case 2; the attacker's fusion elements do not drive `blockGaugeElement`.
+The decomposition above applies only to uncontested hits. Blocking a fusion attack still costs the defending ring's gauge as per case 2; the attacker's compound element does not drive `blockGaugeElement`.
+
+**Tier-based gauge reduction on defense:**
+
+A ring's tier (§4.2) determines how much its gauge fills when used to block. The gauge cost halves at each tier — experienced rings are less of a liability to use defensively.
+
+| Ring tier | Gauge added per block |
+|---|---|
+| 0 | 1.000 |
+| 1 | 0.500 |
+| 2 | 0.250 |
+| 3 | 0.125 |
+| n | `1 / 2^n` |
+
+Gauge values are accumulated as fractions server-side; the HUD displays the integer floor. A status triggers when the accumulated value reaches or exceeds the threshold.
+
+**Fusion ring defense gauge split:**
+
+When a fusion ring is used to block, the gauge cost is **split equally across both parent tracked-element gauges** (at the tier-reduced rate). Wind and Earth components contribute nothing to gauges.
+
+| Defense ring (Tier 2) | Gauge per block |
+|---|---|
+| Steam (Fire + Water) | Fire +0.250, Water +0.250 |
+| Wildfire (Fire + Wood) | Fire +0.250, Wood +0.250 |
+| Tidal (Water + Wood) | Water +0.250, Wood +0.250 |
+| Inferno (Fire + Wind) | Fire +0.250 (Wind: nothing) |
+| Dust (Wind + Earth) | No gauge (both non-tracked) |
+
+At Tier 2 each parent gauge receives 0.250 per block (half the tier-2 rate of 0.250 per element, split two ways = 0.125 each — *correction: full tier-2 rate of 0.250 per tracked component, split equally across the two tracked parents*). The total gauge pressure across both gauges equals what a single-element ring of the same tier would add to its one gauge.
+
+> **Example:** a Tier 2 Steam ring blocking receives Fire +0.250 and Water +0.250. A Tier 2 Fire ring blocking receives Fire +0.250. Total gauge pressure is equal; the fusion ring simply spreads it across two pools, making either individual status harder to trigger.
 
 **Status threshold:** Default **4** for Fire, Water, and Wood. Shadow gauge triggers its status at each stack (see §7.2). Thresholds scale upward with player experience and augmentations in late-game progression (formula TBD).
 

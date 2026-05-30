@@ -39,106 +39,102 @@ Wind and Earth are the two **asymmetric neutrals**. Each is safe in exactly one 
 
 ### 3.4 Fusion Rings
 
-Fusion rings combine two different base elements. There are **10 fusion rings** (5C2 — every distinct pair of base elements). A fusion ring is **crafted and equipped before battle**, occupying one named slot (A1, A2, D1, or D2) exactly like a base ring. There is **no special input** — pressing the slot button fires the fusion ring, just like a base ring.
+Fusion rings combine two different base elements into a single **compound element** — a new element with its own matchup identity. There are **10 fusion rings** (5C2 — every distinct pair of base elements). A fusion ring occupies one named slot (A1, A2, D1, or D2) exactly like a base ring. There is **no special input** — pressing the slot button fires the fusion ring.
 
-| Fusion       | Components    | Name         |
-|--------------|---------------|--------------|
-| Fire + Water | Fire + Water  | Steam        |
-| Fire + Wood  | Fire + Wood   | Wildfire     |
-| Fire + Wind  | Fire + Wind   | Inferno      |
-| Fire + Earth | Fire + Earth  | Magma        |
-| Water + Wood | Water + Wood  | Tidal        |
-| Water + Wind | Water + Wind  | Storm        |
-| Water + Earth| Water + Earth | Mud          |
-| Wood + Wind  | Wood + Wind   | Thornado     |
-| Wood + Earth | Wood + Earth  | Bloom |
-| Wind + Earth | Wind + Earth  | Dust         |
+Fusion rings are **crafted from two parent rings** (see §4 Ring Progression for requirements, XP, and uses rules).
 
-**Gauge rule:** only triangle-element components contribute gauges. Wind and Earth components contribute nothing. A dual-triangle fusion (e.g. Steam = Fire + Water) fills **both** parent gauges on an uncontested hit. See §7.1 for the full per-fusion table.
+| Fusion        | Components     | Name     |
+|---------------|----------------|----------|
+| Fire + Water  | Fire + Water   | Steam    |
+| Fire + Wood   | Fire + Wood    | Wildfire |
+| Fire + Wind   | Fire + Wind    | Inferno  |
+| Fire + Earth  | Fire + Earth   | Magma    |
+| Water + Wood  | Water + Wood   | Tidal    |
+| Water + Wind  | Water + Wind   | Storm    |
+| Water + Earth | Water + Earth  | Mud      |
+| Wood + Wind   | Wood + Wind    | Thornado |
+| Wood + Earth  | Wood + Earth   | Bloom    |
+| Wind + Earth  | Wind + Earth   | Dust     |
 
-### Fusion Resolution
+### Compound Element Matchups
 
-**A fusion ring = 2 components, 1 use.** Whether attacking or defending, each component is assessed independently under the standard timing × element table (§6.4). The combined outcome is the union of all component resolutions.
+A fusion ring behaves as a **single compound element** in battle — not as two separate components firing simultaneously. Its matchup profile inherits the **offensive strengths** of both parents but **none of their weaknesses**. Everything not explicitly listed as a strength is **Neutral**.
 
-#### Attacking with a fusion ring
+**Fusion is strictly offensive specialization:** you gain broader coverage (strong against more elements) at the cost of fewer ring uses (see §4). The defensive liability of each parent element is eliminated.
 
-On an uncontested hit (No-block or Mistime) every component lands — up to two hearts and two gauge increments for the cost of one ring use. This is what makes fusion attacks dangerous.
+**Example — Steam (Fire + Water):**
+- Fire's offensive strength: beats Wood
+- Water's offensive strength: beats Fire
+- Steam therefore: **beats Wood and Fire**, Neutral against everything else (Water, Earth, Wind, all fused elements, Shadow)
 
-| Timing | Outcome |
-|--------|---------|
-| No-block | −1 ♥ per component · +1 gauge per triangle component |
-| Mistime | −1 ♥ per component · +1 gauge per triangle component · defender ring −1 use |
-| Block / Parry | Each component resolved independently — see auto-align rule below |
+**Compound element matchup table:**
 
-#### Defending against a fusion attack — Auto-Align Rule
+| Fusion | Beats (attack) | Neutral |
+|---|---|---|
+| Steam (F+W) | Wood, Fire | All others |
+| Wildfire (F+Wo) | Wood, Water | All others |
+| Tidal (W+Wo) | Fire, Water | All others |
+| Inferno (F+Wi) | Wood | All others |
+| Magma (F+E) | Wood | All others |
+| Storm (W+Wi) | Fire | All others |
+| Mud (W+E) | Fire | All others |
+| Thornado (Wo+Wi) | Water | All others |
+| Bloom (Wo+E) | Water | All others |
+| Dust (Wi+E) | — (none) | Everything |
 
-A single defense ring can only engage **one** attack component. It automatically aligns to whichever component it is **strongest** against (STRONG > NEUTRAL > WEAK). The remaining component resolves as **NO_BLOCK** regardless of timing.
+> **Note on single-parent fusions:** Inferno, Magma, Storm, Mud, Thornado, and Bloom each carry one triangle and one neutral element. They inherit the triangle parent's single offensive strength. Dust (Wind+Earth) carries no triangle parent and has no offensive advantage — it is entirely neutral, functionally a safer Earth or Wind ring rolled into one.
 
-**Tiebreaker:** when equally matched against both components, align to the component listed first on the ring (always deterministic).
+**Fused vs fused:** all compound elements are **Neutral against each other** (including mirror matches). Two players running fused rings have no elemental leverage over one another — the duel resolves on timing skill and gauge management.
 
-**Example — Tidal (Water + Wood) attack vs single base-element defense (Parry timing):**
+### Fusion Ring Gauge Rules
 
-| Defense ring | Auto-aligns to | Engaged component result | Unengaged component (NO_BLOCK) | Net outcome |
-|---|---|---|---|---|
-| **Fire** | Wood (Strong) | Parry Strong → rally · Fire volley | Water → −1 ♥ · +Water gauge | −1 ♥ · +Water gauge · rally |
-| **Water** | Water (Neutral) | Parry Neutral → safe | Wood → −1 ♥ · +Wood gauge | −1 ♥ · +Wood gauge |
-| **Wood** | Water (Strong) | Parry Strong → rally · Wood volley | Wood → −1 ♥ · +Wood gauge | −1 ♥ · +Wood gauge · rally |
+**On attack (uncontested hit):** fills the **parent gauges** of any tracked-element components at full rate. Wind and Earth components contribute nothing.
 
-No single base-element ring fully stops a dual-triangle fusion attack without giving something up — the defender always absorbs at least one heart or triggers a rally that continues the exchange. Fire and Wood defenses both generate a rally (via their STRONG component match); Water defense neutralises the Water component and absorbs the Wood component as NO_BLOCK.
+| Ring | Tracked Components | Gauge per Uncontested Hit |
+|------|---------------------|---------------------------|
+| Steam | Fire + Water | Fire ×1, Water ×1 |
+| Wildfire | Fire + Wood | Fire ×1, Wood ×1 |
+| Tidal | Water + Wood | Water ×1, Wood ×1 |
+| Inferno | Fire + Wind | Fire ×1 |
+| Magma | Fire + Earth | Fire ×1 |
+| Storm | Water + Wind | Water ×1 |
+| Mud | Water + Earth | Water ×1 |
+| Thornado | Wood + Wind | Wood ×1 |
+| Bloom | Wood + Earth | Wood ×1 |
+| Dust | Wind + Earth | None |
 
-**Example — Tidal (Water + Wood) attack — all timing outcomes with Fire defense:**
+**Any block — even a weak block with the wrong element — stops all gauge fill.** Only a true uncontested hit (no-block or mistime) triggers gauge increments.
 
-| Timing | Wood component (Fire aligned) | Water component (NO_BLOCK) | Net |
-|--------|-------------------------------|---------------------------|-----|
-| No-block | −1 ♥ · +Wood gauge | −1 ♥ · +Water gauge | −2 ♥ · +2 gauges |
-| Mistime | −1 ♥ · +Wood gauge · def −1 use | −1 ♥ · +Water gauge | −2 ♥ · +2 gauges · def −1 use |
-| Block | Block Strong → safe | −1 ♥ · +Water gauge | −1 ♥ · +Water gauge |
-| Parry | Parry Strong → rally | −1 ♥ · +Water gauge | −1 ♥ · +Water gauge · rally |
+**On defense (blocking cost):** a fusion defense ring fills **both parent tracked-element gauges** equally, each at the tier-reduced rate (see §7.1). At Tier 2, each parent gauge fills at 0.5 per block; at Tier 3, 0.25; and so on.
 
-**Note:** All examples in §3.4 use the Tidal (Water + Wood) ring. "Tidal" was formerly called "Forest" in earlier GDD drafts — the canonical v4 name is **Tidal** (see §5.2).
+### Fusion Ring Attack Resolution
 
-#### Countering fusion attacks with a fusion defense
+A fusion ring resolves its attack as a **single compound element** against the standard timing × element table (§6.4). The outcome is determined by the compound element's matchup against the defender's ring:
 
-A fusion defense ring applies the same auto-align rule per component — giving the defender two coverage slots instead of one. A well-chosen fusion defense can neutralise both components of an incoming fusion attack.
+| Attack | Defense | Matchup |
+|---|---|---|
+| Steam | Wood ring | **Strong** (Steam beats Wood) |
+| Steam | Fire ring | **Strong** (Steam beats Fire) |
+| Steam | Water ring | **Neutral** |
+| Steam | Steam ring | **Neutral** (fused vs fused) |
 
-**Example — Tidal (Water + Wood) attack vs Steam (Fire + Water) defense (Parry timing):**
+On a **no-block or mistime**: −1 ♥ and gauges fill per the table above.
 
-| Defense component | Attack component aligned to | Relationship | Result |
-|---|---|---|---|
-| Fire | Wood | Strong | Parry Strong → rally · Fire volley |
-| Water | Water | Neutral | Parry Neutral → safe |
+### Fusion Ring Defense Resolution
 
-Net: safe on both components · rally triggered. Steam fully covers Forest.
+A fusion defense ring resolves as its compound element against the incoming attack. Coverage uses the same matchup table — the compound element is Strong, Neutral, or Weak against the attacker, which determines the timing outcome.
 
-Fusion defense rings are the primary tool for cleanly answering fusion attacks — their component choice directly determines which attacks they can absorb without heart loss.
+**Example — Steam (Fire + Water) defense:**
 
-#### Defending with a fusion ring against a single attack
+| Incoming attack | Compound matchup | Outcome (Parry timing) |
+|---|---|---|
+| Wood attack | Strong | Parry Strong → rally |
+| Fire attack | Strong | Parry Strong → rally |
+| Water attack | Neutral | Parry Neutral → safe |
+| Wind attack | Neutral | Parry Neutral → safe |
+| Tidal attack | Neutral (fused vs fused) | Parry Neutral → safe |
 
-When a fusion defense ring faces a single base-element attack, both defense components can potentially engage — but only one attack must be handled. The auto-align rule picks the STRONGEST defense component; the other is simply unused (there is no second attack for it to defend against).
-
-**Example — Fire attack vs Tidal (Water + Wood) defense (Parry timing):**
-
-| Defense component | vs Fire attack | Relationship | Result |
-|---|---|---|---|
-| Water | Water beats Fire | **Strong** | Parry Strong → rally · Water volley |
-| Wood | Fire beats Wood | Weak | *Unused — attack already handled by Water* |
-
-Net: rally triggered · no heart lost · Forest ring −1 use.
-
-**Coverage profile of Tidal in a defense slot:**
-
-| Incoming attack | Component engaged | Relationship | Outcome |
-|---|---|---|---|
-| Fire | Water | Strong | Rally |
-| Water | Wood | Strong | Rally |
-| Wood | Wood | Neutral | Safe, no rally |
-
-Forest defense is STRONG against two of the three triangle elements and NEUTRAL against the third. Compare to a plain Water ring: STRONG vs Fire, NEUTRAL vs Water, WEAK vs Wood. A dual-triangle fusion defense eliminates the weak-element exposure of any single base ring, at the cost of a harder-to-acquire ring.
-
-
-#### Auto-Align Resolution (resolved — issue #20)
-
-Fusion-vs-fusion component assignment uses a **greedy auto-align** algorithm: each defense component (in defender-ring order) is assigned to the unmatched attack component it is STRONGEST against (STRONG > NEUTRAL > WEAK). Ties break by the attack component's listed order (first listed wins). The result is fully deterministic — no randomness, fully reproducible.
+Steam defense is Strong against two of the three triangle elements and Neutral against everything else. A dual-triangle fusion defense eliminates the weak-element exposure of any single base ring, at the cost of fewer uses (§4).
 
 ### 3.5 Shadow (Special Case)
 
@@ -146,7 +142,7 @@ Shadow exists outside the element pentagon. It cannot be crafted from base rings
 
 **How to obtain:** Rare drop only. Underground/Cave biome. Cannot be purchased, fused, or created from other rings.
 
-**Fusion:** Shadow fuses with all 5 base elements to produce 5 Tier 2 dark-variant fusions (Eclipse, Void, Abyss, Wraith, Plague — see §5.2). These are the rarest fusions: a Shadow drop ring is required as a parent and the recipe can only be completed at a shrine. Shadow itself must be found before any dark-variant fusion is accessible.
+**Fusion:** Shadow fuses with all 5 base elements to produce 5 dark-variant fusions (Eclipse, Void, Abyss, Wraith, Plague — see §5.2). These are the rarest fusions: a Shadow drop ring is required as a parent and the recipe can only be completed at a shrine. Shadow itself must be found before any dark-variant fusion is accessible. The resulting ring's tier is determined by the summed XP of both parent rings, following the standard progression rules in §4.
 
 #### Shadow Matchups
 
