@@ -3,6 +3,7 @@ import path from 'path';
 import { describe, test, it, expect } from 'vitest';
 import { WAYSTONES, getWaystone, canTeleport } from '../../shared/waystones';
 import { FOREST_SCREENS } from '../../shared/world/forest';
+import { SWAMP_SCREENS } from '../../shared/world/swamp';
 
 // ---------------------------------------------------------------------------
 // getWaystone — catalog lookup
