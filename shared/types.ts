@@ -130,10 +130,13 @@ export interface BlockResult {
   //   Wind/Earth/Shadow-non-triangle components contribute via element index too
   //   (Shadow is added by #134). Wind/Earth contribute nothing.
   hitGaugeElements: number[];
-  // blockGaugeElement — the DEFENDING ring's own gauge-bearing element index that
-  //   gains +1 on any block/parry (case 2). null when the defense did not catch or
-  //   the defending element carries no gauge (Wind/Earth/fusion).
-  blockGaugeElement: number | null;
+  // blockGaugeDeltas — the DEFENDING ring's gauge fills on a NEUTRAL/STRONG block or
+  //   parry (case 2). One entry per tracked-element (FIRE/WATER/WOOD/SHADOW) component
+  //   of the defender ring, each `delta = 1 / 2^tierForXp(defender.xp)` — full
+  //   tier-reduced rate per tracked parent (GDD §7.1). Empty when the defense did not
+  //   catch, on a WEAK catch (no gauge movement), or when the defender carries no
+  //   tracked component (Wind/Earth/Dust).
+  blockGaugeDeltas: { element: number; delta: number }[];
   // blockedGaugeElement — gauge element index(es) to DECREMENT on a strong block
   //   (case 3): the beaten gauge(s). Empty when the catch was not a strong block.
   blockedGaugeElement: number[];

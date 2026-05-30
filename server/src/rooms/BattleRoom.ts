@@ -855,11 +855,12 @@ export class BattleRoom extends Room<{ state: BattleState }> {
       this.clearAllGauges(defenderPlayer);
     } else {
       //   hitGaugeElements — uncontested-hit components +1 each (case 1)
-      //   blockGaugeElement — the defending ring's own gauge +1 (case 2)
+      //   blockGaugeDeltas — each tracked parent of the defending ring += its
+      //     tier-reduced delta (case 2; full rate per tracked parent, §7.1)
       //   blockedGaugeElement — strong-block beaten gauge(s) −1 (case 3)
       for (const el of result.hitGaugeElements) this.adjustGauge(defenderPlayer, el, +1);
-      if (result.blockGaugeElement !== null) {
-        this.adjustGauge(defenderPlayer, result.blockGaugeElement, +1);
+      for (const { element, delta } of result.blockGaugeDeltas) {
+        this.adjustGauge(defenderPlayer, element, delta);
       }
       for (const el of result.blockedGaugeElement) this.adjustGauge(defenderPlayer, el, -1);
     }
