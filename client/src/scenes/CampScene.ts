@@ -661,13 +661,18 @@ export class CampScene extends Phaser.Scene {
 
     // Clicking empty modal space (the panel background, behind all content)
     // deselects. The backdrop already swallows clicks outside the modal.
+    // Insert it just above the backdrop (index 1) rather than on top: a
+    // full-modal interactive rect added last would out-prioritise the [×] close
+    // button (and every other control) in container input hit-testing, swallowing
+    // their clicks. Below all interactive content, empty-space clicks still fall
+    // through the non-interactive panel to reach it, while controls win their own.
     const deselectZone = this.add
       .rectangle(CANVAS_W / 2, CANVAS_H / 2, MODAL_W, MODAL_H, 0x000000, 0.001)
       .setScrollFactor(0)
       .setName('reliquary-deselect-zone')
       .setInteractive()
       .on('pointerdown', () => this.clearReliquarySelection());
-    c.add(deselectZone);
+    c.addAt(deselectZone, 1);
 
     // ── Centered live stats header (#154) ─────────────────────────────────────
     this.reliquaryHeader = this.add
