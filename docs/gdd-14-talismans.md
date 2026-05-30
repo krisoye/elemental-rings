@@ -19,46 +19,22 @@ Talismans are utility items distinct from rings. They occupy separate equipment 
 
 | Slot | Items | Limit |
 |---|---|---|
-| **Necklace** | One talisman (e.g. Sanctum Stone) | 1 equipped |
+| **Necklace** | One optional talisman | 1 equipped |
 | **Bracelet** | Charm slots — future expansion | TBD |
 
 Talisman slots are independent of the ring carry cap. A player with 10 carried rings can still equip a necklace talisman.
 
 ---
 
-## 14.3 The Sanctum Stone
+## 14.3 Sanctum Summoning (Natural Ability — Not a Talisman)
 
-### What it does
-When activated at an **Anchorage** in the overworld, the Sanctum Stone **permanently transports** the player's Sanctum to that Anchorage. The Sanctum **physically moves** to that location and **remains there** — the player can then sleep (restoring spirit) and recharge rings, and the Sanctum stays anchored at that spot indefinitely.
+Sanctum summoning is a **natural spiritual ability**, not a talisman or equippable item. The protagonist can summon the Sanctum to any discovered Anchorage at any time by activating the campfire there. No item, no necklace slot, no acquisition step required.
 
-The Sanctum stays at its new Anchorage until the player either activates the Stone again at a different Anchorage (relocating it once more) or teleports away from within the Sanctum via the meditation circle. There is no temporary link that closes when the player walks off — the relocation is durable and persists across the expedition.
+See **§12.5c** for the full mechanic: spirit cost (equal to the `spiritCost` of the Anchorage where the Sanctum currently sits), the campfire rest → summon recovery sequence, and unlock timing (available from the first discovered Anchorage).
 
-### Physical form
-A polished stone on a chain, worn as a necklace. It glows faintly when near an Anchorage.
+**Why summoning is not a talisman:** Sanctum access is a core expedition mechanic — players would never set out without the Stone if it existed as an item. Tying that to a purchasable necklace slot adds friction without strategic depth and forces the necklace into a mandatory role. As a natural ability, the necklace slot opens up for genuinely optional utility choices.
 
-### Stats
-| Property | Value |
-|---|---|
-| Slot | Necklace |
-| Charges | 3 |
-| Where usable | Anchorages only (see §10) |
-| Recharge | Automatically when player sleeps at the Sanctum |
-| Gold cost (from merchant) | TBD |
-
-### Charge economy
-- Charges are pre-loaded before each expedition by sleeping at home.
-- Charges do **not** refill in the field — if you run out, you cannot relocate the Sanctum to an Anchorage.
-- Sleeping at the Sanctum (25 food) restores all charges at no extra cost.
-
-### Abuse prevention
-- Only activatable at Anchorages. The player cannot relocate the Sanctum mid-battle, in a dungeon corridor, or anywhere arbitrary.
-- 3 charges per expedition creates a hard ceiling on how many times the Sanctum can be relocated per outing.
-- Anchorages are fixed world objects placed intentionally by level design (often near boss approaches but not adjacent to them).
-
-### Acquisition
-- Purchased from merchants in towns.
-- Occasionally found as a exploration reward in the overworld.
-- Starting players do **not** begin with a Sanctum Stone — it is a mid-game upgrade.
+**The Sanctum's value is what it contains:** reliquary access (ring collection management, aggregate XP) and the meditation circle (long-range teleportation). Neither ring recharging nor sleep requires the Sanctum — both are available in the field.
 
 ---
 
@@ -78,7 +54,6 @@ These are placeholders — not yet designed or implemented.
 
 ## 14.5 Open Questions
 
-- What is the merchant gold price for a Sanctum Stone?
-- Is the Sanctum Stone available from the start or gated behind a quest / spirit threshold?
-- Can a player carry multiple Sanctum Stones (for more charges), or is it strictly one necklace slot?
 - Bracelet slot design: number of charm slots, stacking rules, where charms are acquired.
+- Necklace talisman availability: where and when do the Waystone Compass, Spirit Lantern, etc. become obtainable? Merchant purchase, exploration reward, or quest?
+- Should necklace talismans have limited charges that refill on Sanctum sleep (consistent with the design principle in §14.1), or are they passive always-on effects?
