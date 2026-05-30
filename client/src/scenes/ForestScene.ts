@@ -159,7 +159,7 @@ export class ForestScene extends BaseBiomeScene {
       for (const [key, path] of FOREST_HUB_TILESETS) {
         if (!this.textures.exists(key)) this.load.image(key, path);
       }
-    } else if (['forest_deepwood', 'forest_mossy_fen', 'forest_south_path', 'forest_snow_gate', 'forest_north_road', 'forest_east_path'].includes(this.screenId)) {
+    } else if (['forest_deepwood', 'forest_mossy_fen', 'forest_south_path', 'forest_snow_gate', 'forest_north_road', 'forest_east_path', 'forest_crossroads', 'forest_ridge'].includes(this.screenId)) {
       // Hand-authored maps; load the full extra tileset pool — buildTilesets() filters
       // to only what each map's JSON actually declares.
       for (const [key, path] of FOREST_HANDAUTHORED_TILESETS) {
