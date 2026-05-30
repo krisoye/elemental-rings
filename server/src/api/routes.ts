@@ -565,7 +565,9 @@ apiRouter.post('/api/talisman/activate', requireAuth, (req: Request, res: Respon
  * `biome` without `screen` is a 400 (the multi-screen overworld must always name
  * its current screen). `screen` alone (no biome) is permitted as a global lookup.
  */
-const TILE_SIZE = 32;
+// 16px after the #149/#159 Forest/Swamp 16px map migration; spawn tx/ty in
+// NpcSpawns were halved to preserve world-pixel positions.
+const TILE_SIZE = 16;
 apiRouter.get('/api/overworld/npcs', requireAuth, (req: Request, res: Response): void => {
   const playerId = req.playerId as string;
   const biome = typeof req.query.biome === 'string' ? req.query.biome : undefined;

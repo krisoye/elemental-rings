@@ -85,6 +85,8 @@ export class EncounterScene extends Phaser.Scene {
     aiSeed?: number;
     /** Frame index from the overworld NPC roster — determines the battle sprite. */
     spriteFrame?: number;
+    /** Canonical battler key matching the overworld monster sprite (#158). */
+    battleKey?: string;
   } | null = null;
 
   private openBattleHandOnCreate = false;
@@ -96,6 +98,7 @@ export class EncounterScene extends Phaser.Scene {
     aiSeed?: number;
     openBattleHand?: boolean;
     spriteFrame?: number;
+    battleKey?: string;
   }): void {
     this.busy = false;
     this.wonRingModal = null;
@@ -108,6 +111,7 @@ export class EncounterScene extends Phaser.Scene {
             ambush: data.ambush === true,
             aiSeed: data.aiSeed,
             spriteFrame: data.spriteFrame,
+            battleKey: data.battleKey,
           }
         : null;
   }
@@ -352,6 +356,7 @@ export class EncounterScene extends Phaser.Scene {
     ambush?: boolean,
     aiSeedOverride?: number,
     opponentSpriteFrame?: number,
+    battleKey?: string,
   ): Promise<void> {
     const token = localStorage.getItem('er_token') ?? '';
     try {
@@ -380,7 +385,7 @@ export class EncounterScene extends Phaser.Scene {
       if ((state.phase === 'ATTACK_SELECT' || state.phase === 'ENDED') && !transitioned) {
         transitioned = true;
         room.onStateChange.remove(onState);
-        this.scene.start('BattleScene', { opponentSpriteFrame });
+        this.scene.start('BattleScene', { opponentSpriteFrame, battleKey });
       }
     };
     room.onStateChange(onState);

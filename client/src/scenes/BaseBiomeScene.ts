@@ -12,6 +12,10 @@ import { BlinkController } from '../objects/world/BlinkController';
 import { BattleHandOverlay } from '../objects/BattleHandOverlay';
 import { placeDecoration, type DecorationHandle } from '../objects/world/Decoration';
 import {
+  MONSTER_OW_REGISTRY,
+  NPC_OW_DISPLAY_SIZE,
+} from '../objects/world/NpcSpriteRegistry';
+import {
   COMPASS_RANGE,
   SANCTUM_OFFSET,
   SANCTUM_DOOR_OFFSET,
@@ -37,6 +41,9 @@ interface NpcInfo {
   /** Stable loadout seed (= hashNpcId) so the battle-ai room reproduces the
    * same staked element shown on the overworld marker (#111). */
   aiSeed?: number;
+  /** For monsters: canonical battle texture key matching the overworld sprite.
+   *  When present, BattleScene uses it instead of a random variant (#158). */
+  battleKey?: string;
 }
 
 declare const __SERVER_URL__: string;
@@ -1300,13 +1307,21 @@ export abstract class BaseBiomeScene extends Phaser.Scene {
     window.__overworldNpcs = this.overworldNpcs;
   }
 
-  /** Render each NPC as a sprite from the npc-overworld atlas (depth 6). */
+  /** Render each NPC marker (depth 6): monsters use a per-element overworld sprite
+   *  matching the battler (#158); duelists/merchants use the npc-overworld strip. */
   private renderNpcs(): void {
     this.npcGraphics.forEach((g) => g.destroy());
     this.npcGraphics = [];
     for (const npc of this.overworldNpcs) {
-      const sprite = this.add
-        .image(npc.x, npc.y, 'npc-overworld', npc.spriteFrame)
+      let sprite: Phaser.GameObjects.Image;
+      if (npc.type === 'monster' && npc.element <= 4 && MONSTER_OW_REGISTRY[npc.element]) {
+        sprite = this.add
+          .image(npc.x, npc.y, MONSTER_OW_REGISTRY[npc.element].key)
+          .setDisplaySize(NPC_OW_DISPLAY_SIZE, NPC_OW_DISPLAY_SIZE);
+      } else {
+        sprite = this.add.image(npc.x, npc.y, 'npc-overworld', npc.spriteFrame);
+      }
+      sprite
         .setDepth(6)
         .setInteractive({ useHandCursor: true })
         .on('pointerdown', () => this.onNpcClick(npc));
@@ -1336,12 +1351,14 @@ export abstract class BaseBiomeScene extends Phaser.Scene {
       y: this.player.y,
       screenId: this.screenId,
     };
+    const owEntry = npc.type === 'monster' ? MONSTER_OW_REGISTRY[npc.element] : undefined;
     this.scene.start('EncounterScene', {
       npcId: npc.id,
       personality: npc.personality as AIPersonality,
       aiSeed: npc.aiSeed,
       ambush: true,
       spriteFrame: npc.spriteFrame,
+      battleKey: owEntry?.battleKey,
     });
   }
 
