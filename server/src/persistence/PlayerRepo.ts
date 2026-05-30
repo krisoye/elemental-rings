@@ -8,9 +8,6 @@ import {
   SPIRIT_PER_RING_USE,
   SPIRIT_BASE,
   XP_SCALER,
-  TIER1_XP_CAP,
-  TIER2_XP_CAP,
-  TIER2_MAX_USES,
   FORAGE_YIELD,
   FORAGE_RESPAWN_DAYS,
   FOOD_SELL_PRICE,
@@ -631,17 +628,6 @@ export const discardRing = db.transaction(
 );
 
 /**
- * The XP cap a ring of the given tier must reach before it can be fused
- * (GDD §5.1). Tier 1 → 100, Tier 2 → 300. Tiers without a defined cap (Tier 3,
- * the current ceiling) cannot be a fusion parent.
- */
-function xpCapForTier(tier: number): number | null {
-  if (tier === 1) return TIER1_XP_CAP;
-  if (tier === 2) return TIER2_XP_CAP;
-  return null;
-}
-
-/**
  * Null the given ring out of every loadout slot that references it for the
  * player, so a subsequent delete cannot violate the loadout→rings FK. No-op
  * when no loadout exists or no slot holds the ring. Must run inside a
@@ -677,14 +663,18 @@ function clearRingFromLoadout(playerId: string, ringId: string): void {
 }
 
 /**
- * Fuse two maxed parent rings into a single higher-tier fusion ring (GDD §5).
+ * Fuse two parent rings into a single compound-element fusion ring (GDD §4.6).
  *
- * Validates (in order) ownership of both rings, that each parent has reached its
- * tier's XP cap, and that the two base elements form a valid v4 fusion pair. On
- * success it inserts the new fusion ring (element from fusionOf, combined parent
- * XP, tier 2, full Tier 2 uses), then permanently deletes both parents — nulling
- * each out of any loadout slot first so the FK constraint holds. Runs in a single
- * transaction, so any thrown validation error leaves the inventory untouched.
+ * Validates (in order): ownership of both distinct rings, that both parents sit
+ * in the SAME tier (`tierForXp(r1.xp) === tierForXp(r2.xp)`), that the shared
+ * tier is at least Tier 2, and that the two base elements form a valid fusion
+ * pair. On success it inserts the new fusion ring — element from `fusionOf`, XP
+ * the sum of both parents, tier recomputed from that summed XP via {@link
+ * tierForXp}, and `max_uses = max(1, min(parent uses) − 1)` (a fusion ring lands
+ * one use shy of its weaker parent, floored at 1; `current_uses` starts full).
+ * It then permanently deletes both parents, nulling each out of any loadout slot
+ * first so the FK constraint holds. Runs in a single transaction, so any thrown
+ * validation error leaves the inventory untouched.
  *
  * @returns the new fusion ring's id.
  * @throws Error with a caller-displayable message on any validation failure.
@@ -700,16 +690,15 @@ export const fuseRings = db.transaction(
       throw new Error('Ring not found or not owned');
     }
 
-    for (const ring of [r1, r2]) {
-      const cap = xpCapForTier(ring.tier);
-      if (cap === null) {
-        throw new Error(`Ring ${ring.id} cannot be fused at its tier`);
-      }
-      if (ring.xp < cap) {
-        throw new Error(
-          `Ring ${ring.id} has not reached XP cap (needs ${cap}, has ${ring.xp})`,
-        );
-      }
+    // §4.6 — both parents must be the same XP-derived tier, and that tier must
+    // be at least Tier 2. Tier is derived live from XP (not the cached column).
+    const tier1 = tierForXp(r1.xp);
+    const tier2 = tierForXp(r2.xp);
+    if (tier1 !== tier2) {
+      throw new Error('Rings must be the same tier to fuse');
+    }
+    if (tier1 < 2) {
+      throw new Error('Both rings must reach Tier 2 to fuse');
     }
 
     const fusionElement = fusionOf(r1.element, r2.element);
@@ -717,15 +706,21 @@ export const fuseRings = db.transaction(
       throw new Error('These two elements do not form a valid fusion');
     }
 
+    // §4.6 — XP additive; tier from the summed XP; uses = min(parents) − 1,
+    // floored at 1 so a fusion always has at least one use.
+    const fusedXp = r1.xp + r2.xp;
+    const fusedTier = tierForXp(fusedXp);
+    const fusedMaxUses = Math.max(1, Math.min(r1.max_uses, r2.max_uses) - 1);
+
     const newRingId = uuidv4();
     insertRing.run({
       id: newRingId,
       owner_id: playerId,
       element: fusionElement,
-      tier: 2,
-      max_uses: TIER2_MAX_USES,
-      current_uses: TIER2_MAX_USES,
-      xp: r1.xp + r2.xp,
+      tier: fusedTier,
+      max_uses: fusedMaxUses,
+      current_uses: fusedMaxUses,
+      xp: fusedXp,
     });
 
     // Consume both parents: null them out of any loadout slot, then delete.
