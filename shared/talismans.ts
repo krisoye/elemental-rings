@@ -24,17 +24,13 @@ export interface TalismanDef {
   description: string;
 }
 
-/** The canonical talisman catalog (8C.1 — Sanctum Stone only). */
-export const TALISMANS: TalismanDef[] = [
-  {
-    id: 'sanctum_stone',
-    name: 'Sanctum Stone',
-    slot: 'necklace',
-    maxCharges: 3,
-    description:
-      'Permanently anchors your Sanctum to the current Anchorage. 3 charges; refills on sleep.',
-  },
-];
+/**
+ * The canonical talisman catalog. The Sanctum Stone (#81, GDD §14.3) has been
+ * retired: re-anchoring is now a natural ability via POST /api/sanctum/summon
+ * (#180, GDD §12 / §14). The framework (TalismanDef, getTalisman, necklace slot)
+ * is preserved for future talisman items; the catalog is intentionally empty.
+ */
+export const TALISMANS: TalismanDef[] = [];
 
 /** Look up a talisman definition by id, or undefined if the id is unknown. */
 export function getTalisman(id: string): TalismanDef | undefined {

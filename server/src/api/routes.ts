@@ -33,7 +33,6 @@ import {
   setAnchor,
   getTalismanLoadout,
   equipTalisman,
-  spendTalismanCharge,
   rechargeNecklace,
   getDefeatedNpcs,
   forage,
@@ -182,6 +181,12 @@ apiRouter.get('/api/me', requireAuth, (req: Request, res: Response): void => {
  * POST /api/camp/sleep — spend food to rest: advance game_day by 1 and fully
  * restore the spirit gauge (#41 replaces the old gold cost). 400 if the player
  * has fewer than FOOD_PER_SLEEP food units. Requires auth.
+ *
+ * CB2 (#180) — this endpoint backs BOTH Sanctum campfire rest AND Anchorage
+ * campfire rest. It is location-agnostic: the client calls it wherever the
+ * player rests (Sanctum reliquary, Forest/Swamp Anchorage). The
+ * reliquary/teleport restriction visible in the Sanctum UI is client-only;
+ * the server does not distinguish the rest location.
  */
 apiRouter.post('/api/camp/sleep', requireAuth, (req: Request, res: Response): void => {
   const playerId = req.playerId as string;
@@ -484,6 +489,53 @@ apiRouter.post('/api/teleport', requireAuth, (req: Request, res: Response): void
 });
 
 /**
+ * POST /api/sanctum/summon — summon the player's Sanctum to an attuned Anchorage
+ * (#180, GDD §12 / §14). Body: { anchorageId: string }. Re-anchoring is now a
+ * natural ability — no talisman or item required.
+ *
+ * Cost model: the Sanctum travels FROM its current anchor to the destination, so
+ * the player pays the CURRENT anchor's spirit cost. If the Sanctum is already at
+ * the destination the cost is 0 (a no-op journey). Spending is atomic (single
+ * guarded UPDATE) to prevent concurrent calls from pushing spirit negative.
+ *
+ * Rejection cases (400):
+ *   - anchorageId is not in the waystone catalog
+ *   - anchorageId is not attuned by this player
+ *   - insufficient spirit (anchor unchanged)
+ *
+ * Requires auth.
+ */
+apiRouter.post('/api/sanctum/summon', requireAuth, (req: Request, res: Response): void => {
+  const playerId = req.playerId as string;
+  const { anchorageId } = req.body ?? {};
+  // Validate anchorageId is a known waystone.
+  if (typeof anchorageId !== 'string' || !getWaystone(anchorageId)) {
+    res.status(400).json({ error: 'unknown anchorage' });
+    return;
+  }
+  // Validate the player is attuned to the destination.
+  if (!getAttunements(playerId).includes(anchorageId)) {
+    res.status(400).json({ error: 'not attuned' });
+    return;
+  }
+  // Cost: the current anchor's spiritCost — the Sanctum travels from there.
+  // If already at the destination the cost is 0 (no travel).
+  const currentAnchor = getAnchor(playerId);
+  const cost = currentAnchor === anchorageId ? 0 : (getWaystone(currentAnchor)?.spiritCost ?? 0);
+  // Atomic check-and-spend — false means insufficient spirit; anchor stays put.
+  if (!spendSpiritAtomic(playerId, cost)) {
+    res.status(400).json({ error: `requires ${cost} spirit` });
+    return;
+  }
+  setAnchor(playerId, anchorageId);
+  res.status(200).json({
+    anchor: anchorageId,
+    spirit_current: getSpiritAndFood(playerId).spirit_current,
+    spiritCost: cost,
+  });
+});
+
+/**
  * GET /api/talisman-loadout — the player's equipped necklace talisman id and its
  * remaining charges (#81, GDD §14.2/§14.3). A fresh player reports
  * { necklaceId: null, necklaceCharges: 0 }. Requires auth.
@@ -512,43 +564,6 @@ apiRouter.post('/api/talisman/equip', requireAuth, (req: Request, res: Response)
     return;
   }
   res.status(200).json(equipTalisman(playerId, talismanlId, 'necklace'));
-});
-
-/**
- * POST /api/talisman/activate — activate the equipped Sanctum Stone at an attuned
- * Anchorage (#81, GDD §14.3). Body: { talismanlId: 'sanctum_stone', anchorageId }.
- * Validates the necklace is equipped (matches talismanlId), has charges left, and
- * that anchorageId is attuned. On success spends one charge and re-anchors the
- * Sanctum. Returns { anchor, necklaceCharges }. 400 on no charges / not equipped /
- * not attuned. Requires auth.
- */
-apiRouter.post('/api/talisman/activate', requireAuth, (req: Request, res: Response): void => {
-  const playerId = req.playerId as string;
-  const { talismanlId, anchorageId } = req.body ?? {};
-  if (typeof talismanlId !== 'string' || typeof anchorageId !== 'string' || !anchorageId) {
-    res.status(400).json({ error: 'talismanlId and anchorageId are required' });
-    return;
-  }
-  const { necklaceId, necklaceCharges } = getTalismanLoadout(playerId);
-  if (necklaceId !== talismanlId) {
-    res.status(400).json({ error: 'Talisman not equipped' });
-    return;
-  }
-  if (necklaceCharges <= 0) {
-    res.status(400).json({ error: 'No charges remaining' });
-    return;
-  }
-  if (!getAttunements(playerId).includes(anchorageId)) {
-    res.status(400).json({ error: 'Anchorage not attuned' });
-    return;
-  }
-  const newCount = spendTalismanCharge(playerId);
-  if (newCount < 0) {
-    res.status(400).json({ error: 'No charges remaining' });
-    return;
-  }
-  setAnchor(playerId, anchorageId);
-  res.status(200).json({ anchor: anchorageId, necklaceCharges: newCount });
 });
 
 /**

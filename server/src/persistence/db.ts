@@ -94,6 +94,14 @@ db.exec(`UPDATE players SET spirit_current = spirit_max WHERE spirit_current < $
 // behaviour per the EPIC; A4 (#178) owns the fusion crafting path going forward.
 recomputeRingTiers();
 
+// #180 — retire the Sanctum Stone. Re-anchoring is now a natural ability
+// (POST /api/sanctum/summon). Null out any equipped Stone so no player row
+// references a talisman id that no longer exists in the catalog. Idempotent:
+// WHERE guards ensure a second run touches 0 rows when the Stone is already gone.
+db.exec(
+  "UPDATE talisman_loadout SET necklace_id = NULL, necklace_charges = 0 WHERE necklace_id = 'sanctum_stone'",
+);
+
 // #127 — forage_nodes: per-player node depletion tracking (GDD §10.10). The
 // table is created here with IF NOT EXISTS so it is idempotent on every boot.
 // An explicit anchored_waystone migration guard above already ran, so forage
