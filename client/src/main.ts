@@ -211,6 +211,12 @@ declare global {
       food_units: number;
       // Aggregate XP across the player's Reliquary rings (server-computed).
       aggregate_xp: number;
+      // #182 — Reliquary cap fields, read from /api/me player sub-object.
+      reliquaryCap?: number;
+      reliquaryShards?: number;
+      reliquaryCount?: number;
+      // #171 — spare ring capacity (floor(aggregate_xp/100)), from /api/me.
+      spareCapacity?: number;
       // #78 ④ — Thumb passive reminder. null when no Thumb ring is staked; a base
       // element yields { name, effect }; a fusion yields { name: null, effect: '…
       // no passive' }.

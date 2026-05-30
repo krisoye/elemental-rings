@@ -1590,22 +1590,109 @@ export class CampScene extends Phaser.Scene {
     if (this.overlayName === 'bed') this.closeOverlay();
   }
 
-  /** Eat (at the table): shows food count + "Cooking coming soon". */
+  /**
+   * Campfire overlay (#181): two actions — [Rest] (25 food via /api/camp/sleep)
+   * and [Summon Sanctum] (POST /api/sanctum/summon using the player's current
+   * anchorage from window.__teleportState).
+   */
   private openCampfireOverlay(): void {
-    const c = this.beginOverlay('eat', 'EAT');
+    const c = this.beginOverlay('eat', 'CAMPFIRE');
     const food = window.__campState?.food_units ?? 0;
+
     c.add(
       this.add
-        .text(CANVAS_W / 2, 200, `Food stores: ${food} units`, { fontSize: '16px', color: '#ffdd88' })
+        .text(CANVAS_W / 2, 150, `Food stores: ${food} units`, { fontSize: '14px', color: '#ffdd88' })
         .setOrigin(0.5)
         .setScrollFactor(0),
     );
+
+    // Status label for results/errors.
+    const statusLbl = this.add
+      .text(CANVAS_W / 2, 370, '', { fontSize: '12px', color: '#ff8888' })
+      .setOrigin(0.5)
+      .setScrollFactor(0)
+      .setName('campfire-status');
+    c.add(statusLbl);
+
+    const setFireStatus = (msg: string, color = '#ff8888'): void => {
+      statusLbl.setText(msg).setColor(color);
+    };
+
+    // [Rest — 25 food] button.
     c.add(
       this.add
-        .text(CANVAS_W / 2, 250, 'Cooking coming soon', { fontSize: '14px', color: '#888888' })
+        .text(CANVAS_W / 2, 220, '[Rest — 25 food]', { fontSize: '17px', color: '#88ccff' })
         .setOrigin(0.5)
-        .setScrollFactor(0),
+        .setScrollFactor(0)
+        .setInteractive({ useHandCursor: true })
+        .on('pointerdown', () => {
+          void (async () => {
+            await this.doSleep();
+            // doSleep calls loadData on success; surface errors via status label.
+            if (this.overlayName === 'eat') setFireStatus('');
+          })();
+        }),
     );
+
+    // [Summon Sanctum] button.
+    const anchorId = window.__teleportState?.anchor ?? null;
+    const summonColor = anchorId ? '#aaffcc' : '#888888';
+    const summonLabel = anchorId
+      ? '[Summon Sanctum]'
+      : '[Summon Sanctum] — no anchorage attuned';
+    c.add(
+      this.add
+        .text(CANVAS_W / 2, 295, summonLabel, { fontSize: '17px', color: summonColor })
+        .setOrigin(0.5)
+        .setScrollFactor(0)
+        .setInteractive({ useHandCursor: true })
+        .on('pointerdown', () => {
+          if (!anchorId) {
+            setFireStatus('You are not attuned to any Anchorage');
+            return;
+          }
+          void (async () => {
+            await this.doSummonSanctum(anchorId, setFireStatus);
+          })();
+        }),
+    );
+  }
+
+  /**
+   * POST /api/sanctum/summon with the player's current anchorage. On success
+   * shows the cost and reloads state; on 400 shows the error message.
+   */
+  private async doSummonSanctum(
+    anchorageId: string,
+    setStatus: (msg: string, color?: string) => void,
+  ): Promise<void> {
+    const token = localStorage.getItem('er_token');
+    if (!token) {
+      this.scene.start('LoginScene');
+      return;
+    }
+    try {
+      const res = await fetch(`${API_BASE}/api/sanctum/summon`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ anchorageId }),
+      });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        const errMsg: string = body?.error ?? `Summon failed (${res.status})`;
+        // "requires N spirit" → "Need N spirit — rest first"
+        const spiritMatch = errMsg.match(/requires?\s+(\d+)\s+spirit/i);
+        setStatus(
+          spiritMatch ? `Need ${spiritMatch[1]} spirit — rest first` : errMsg,
+        );
+        return;
+      }
+      const cost: number = body?.spiritCost ?? 0;
+      setStatus(`Sanctum summoned! (cost: ${cost} spirit)`, '#aaffcc');
+      await this.loadData();
+    } catch {
+      setStatus('Network error during summon');
+    }
   }
 
   // ── Reusable panels (parked off-screen; overlays use them in 8A.2) ────────
@@ -1718,7 +1805,7 @@ export class CampScene extends Phaser.Scene {
     const { player, rings, loadout } = data;
     this.rings = rings;
     this.loadout = loadout ?? {};
-    this.carryCap = player.carry_cap ?? 10;
+    this.carryCap = player.carry_cap ?? 5;
     this.ringMap = new Map(rings.map((r) => [r.id, r]));
 
     this.refreshPools(player);
@@ -1775,6 +1862,12 @@ export class CampScene extends Phaser.Scene {
       food_units: player.food_units ?? 0,
       aggregate_xp: player.aggregate_xp ?? 0,
       staked_passive: this.stakedPassive,
+      // #182 — reliquary cap fields from /api/me
+      reliquaryCap: player.reliquaryCap,
+      reliquaryShards: player.reliquaryShards,
+      reliquaryCount: player.reliquaryCount,
+      // #171 — spare capacity derived from carry_cap and base 5
+      spareCapacity: player.carry_cap != null ? (player.carry_cap as number) - 5 : undefined,
     };
 
     // #85 Fix 2A — refreshPools rebuilds __campState wholesale, which can happen
