@@ -745,13 +745,8 @@ export class CampScene extends Phaser.Scene {
     this.adoptPanel(c, this.loadoutPanel, LOADOUT_GRID_X, 165);
     this.adoptPanel(c, this.loadoutGrid, COL_LOADOUT_X, 390);
 
-    // Pin the mask origin to the exact screen-space position of each grid before
-    // calling setVisibleRows. This bypasses getWorldTransformMatrix(), which can
-    // report stale or camera-adjusted coordinates in a nested Container / multi-
-    // camera setup, causing the clip rect to land above or below the visible window.
-    this.sanctumGrid.setMaskOrigin(COL_RELIQUARY_X, 148);
-    this.loadoutGrid.setMaskOrigin(COL_LOADOUT_X, 390);
-    // Now cap the grids at their visible-row windows.
+    // Cap the grids at their visible-row windows. Clipping is now done by
+    // visibility-windowing (cards outside the window are hidden), not GeometryMask.
     this.sanctumGrid.setVisibleRows(RINGWALL_VISIBLE_ROWS);
     this.loadoutGrid.setVisibleRows(1);
     // Mouse wheel over a scrollable grid scrolls it; elsewhere is a no-op.
