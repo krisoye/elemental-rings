@@ -293,6 +293,11 @@ export class BattleRoom extends Room<{ state: BattleState }> {
       // Kindling/Bulwark thumb XP: 1 per ring buffed at seat time.
       if (buffed > 0) this.addXp(sessionId, 'thumb', XP_THUMB_BUFF * buffed);
 
+      // #171 — seed spareCapacity from the live Reliquary XP so the client HUD
+      // reflects the correct carry headroom as soon as the battle room opens.
+      const ps = this.state.players.get(sessionId);
+      if (ps) ps.spareCapacity = PlayerRepo.getSpareCapacity(playerId);
+
       // Escrow the thumb ring for staking.
       if (ringIds.thumb) {
         PlayerRepo.setEscrowed(ringIds.thumb, true);
@@ -528,6 +533,14 @@ export class BattleRoom extends Room<{ state: BattleState }> {
       // the new cap. AI players have no DB record and are skipped.
       if (winnerPlayerId) PlayerRepo.refreshSpiritMax(winnerPlayerId);
       if (loserPlayerId) PlayerRepo.refreshSpiritMax(loserPlayerId);
+
+      // #171 — sync spareCapacity on the live PlayerState after XP changes so the
+      // client receives the updated carry headroom without a round-trip to /api/me.
+      for (const [sessionId, ps] of this.state.players) {
+        const pid = this.sessionToPlayerId.get(sessionId);
+        if (!pid) continue; // AI / no-token: skip
+        ps.spareCapacity = PlayerRepo.getSpareCapacity(pid);
+      }
 
       // Release escrow on every human thumb ring still escrowed.
       for (const sessionId of sessions) {
@@ -855,11 +868,12 @@ export class BattleRoom extends Room<{ state: BattleState }> {
       this.clearAllGauges(defenderPlayer);
     } else {
       //   hitGaugeElements — uncontested-hit components +1 each (case 1)
-      //   blockGaugeElement — the defending ring's own gauge +1 (case 2)
+      //   blockGaugeDeltas — each tracked parent of the defending ring += its
+      //     tier-reduced delta (case 2; full rate per tracked parent, §7.1)
       //   blockedGaugeElement — strong-block beaten gauge(s) −1 (case 3)
       for (const el of result.hitGaugeElements) this.adjustGauge(defenderPlayer, el, +1);
-      if (result.blockGaugeElement !== null) {
-        this.adjustGauge(defenderPlayer, result.blockGaugeElement, +1);
+      for (const { element, delta } of result.blockGaugeDeltas) {
+        this.adjustGauge(defenderPlayer, element, delta);
       }
       for (const el of result.blockedGaugeElement) this.adjustGauge(defenderPlayer, el, -1);
     }

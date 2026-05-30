@@ -145,6 +145,9 @@ declare global {
       target: 'reliquary' | 'spare' | 'thumb' | 'a1' | 'a2' | 'd1' | 'd2',
     ) => Promise<void>;
     __reliquaryLocked?: boolean;
+    // #182 — true when the Reliquary is at its cap (reliquaryCount >= reliquaryCap).
+    // Distinct from __reliquaryLocked which guards carry-cap. Set by applyReliquaryLockState.
+    __reliquaryFull?: boolean;
     // #81 — talisman loadout snapshot (the GET /api/talisman-loadout payload).
     // Published by CampScene (on ring-wall overlay open) and OverworldScene (on
     // create) so E2E can assert the equipped necklace + remaining charges. null
@@ -211,6 +214,12 @@ declare global {
       food_units: number;
       // Aggregate XP across the player's Reliquary rings (server-computed).
       aggregate_xp: number;
+      // #182 — Reliquary cap fields, read from /api/me player sub-object.
+      reliquaryCap?: number;
+      reliquaryShards?: number;
+      reliquaryCount?: number;
+      // #171 — spare ring capacity (floor(aggregate_xp/100)), from /api/me.
+      spareCapacity?: number;
       // #78 ④ — Thumb passive reminder. null when no Thumb ring is staked; a base
       // element yields { name, effect }; a fusion yields { name: null, effect: '…
       // no passive' }.

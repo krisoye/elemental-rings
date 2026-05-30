@@ -48,7 +48,7 @@ export class BattleHandOverlay {
   private manageLoadout: Record<string, string | null> = {};
   /** Full /api/me ring list (carried or not) — needed to show a pending won ring. */
   private allRings: RingData[] = [];
-  private managePlayer: { game_day?: number; gold?: number; food_units?: number; spirit_current?: number; spirit_max?: number; aggregate_xp?: number } | null = null;
+  private managePlayer: { game_day?: number; gold?: number; food_units?: number; spirit_current?: number; spirit_max?: number; aggregate_xp?: number; carry_cap?: number; spareCapacity?: number } | null = null;
   private manageStatusText: Phaser.GameObjects.Text | null = null;
 
   /**
@@ -269,28 +269,49 @@ export class BattleHandOverlay {
     // the player only sees spare carried rings available for assignment.
     const slottedIds = new Set(Object.values(this.manageLoadout).filter(Boolean) as string[]);
     const availableRings = this.manageRings.filter((r) => !slottedIds.has(r.id));
+    // #171 — spare capacity from the API response (server-computed, no client
+    // arithmetic). When full, the spare row is greyed-out and non-interactive;
+    // the server enforces the cap with 400 too.
+    const spareCapacity = this.managePlayer?.spareCapacity ?? 0;
+    const usedSpares = availableRings.length;
+    const spareFull = usedSpares >= spareCapacity && spareCapacity >= 0;
+
     // #85 Fix 3 — push the carried-rings section down 49px so the label + row clear
     // the (now uncapped) Thumb passive strip below the battle slots.
     const ringY = CANVAS_H / 2 + 94;
+    const spareLabelText = `Spare rings — select to assign, or click two slots to swap:   Spare: ${usedSpares} / ${spareCapacity}`;
+    const spareLabelColor = spareFull ? '#ff8888' : '#aaccff';
     const carriedLbl = this.scene.add
-      .text(CANVAS_W / 2, CANVAS_H / 2 + 44, 'Spare rings — select to assign, or click two slots to swap:', {
+      .text(CANVAS_W / 2, CANVAS_H / 2 + 44, spareLabelText, {
         fontSize: '12px',
-        color: '#aaccff',
+        color: spareLabelColor,
       })
       .setScrollFactor(0)
       .setOrigin(0.5);
     container.add(carriedLbl);
+    if (spareFull) {
+      const fullLbl = this.scene.add
+        .text(CANVAS_W / 2, CANVAS_H / 2 + 62, 'Spare full — discard a carried ring or move one to a battle slot', {
+          fontSize: '11px',
+          color: '#ff8888',
+        })
+        .setScrollFactor(0)
+        .setOrigin(0.5);
+      container.add(fullLbl);
+    }
     availableRings.forEach((ring, i) => {
       const col = i % 6;
       const row = Math.floor(i / 6);
       const rx = CANVAS_W / 2 - 250 + col * 90;
       const ry = ringY + row * 90;
       const selected = this.manageSelectedRingId === ring.id && this.manageSelectedFromSlot === null;
+      const cardAlpha = spareFull ? 0.45 : 1;
       const rect = this.scene.add
         .rectangle(rx, ry, 72, 80, ELEMENT_COLORS[ring.element] ?? 0x444444)
         .setScrollFactor(0)
         .setStrokeStyle(selected ? 3 : 2, selected ? 0xffff00 : 0x888888)
-        .setInteractive({ useHandCursor: true })
+        .setAlpha(cardAlpha)
+        .setInteractive({ useHandCursor: !spareFull })
         .on('pointerdown', () => {
           const selSlot = this.manageSelectedFromSlot;
           const selId = this.manageSelectedRingId;

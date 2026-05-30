@@ -10,8 +10,9 @@ import { defineConfig } from '@playwright/test';
 //   client-battle-flow, client-connect, client-touch, encounter-vs-ai, staking,
 //   status-effects
 // Solo — single context (incl. driveAiDuel vs AI):
-//   auth, camp, carry, compass, fusion, overworld-transition, sanctum-movement,
-//   sanctum-zones, spirit, swamp, talisman, teleport, waystones
+//   auth, camp, carry, compass, fusion, overworld-transition, reliquary-cap,
+//   sanctum-movement, sanctum-summon, sanctum-zones, spare-carry, spirit, swamp,
+//   talisman, teleport, waystones
 const PVP_SPECS = [
   'client-battle-flow.spec.ts',
   'client-connect.spec.ts',
@@ -41,10 +42,13 @@ const SOLO_SPECS = [
   'npc-population.spec.ts',
   'overworld-battlehand.spec.ts',
   'overworld-transition.spec.ts',
+  'reliquary-cap.spec.ts',   // #182
   'reliquary-modal.spec.ts',
   'ring-storage-ux.spec.ts',
   'sanctum-movement.spec.ts',
+  'sanctum-summon.spec.ts',  // #180/#174
   'sanctum-zones.spec.ts',
+  'spare-carry.spec.ts',     // #171
   'spirit.spec.ts',
   'swamp.spec.ts',
   'talisman.spec.ts',

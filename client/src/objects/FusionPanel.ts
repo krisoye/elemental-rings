@@ -4,27 +4,28 @@ import {
   CANVAS_H,
   ELEMENT_NAMES,
   FUSION_RECIPES,
-  TIER1_XP_CAP,
   type FusionRecipe,
 } from '../Constants';
 import type { RingData } from './InventoryGrid';
 
 /**
- * A maxed Tier-1 parent ring chosen for a recipe slot, paired with whether the
- * recipe can currently be fused (both parents owned & at the XP cap).
+ * A pair of fusion-eligible parent rings chosen for a recipe slot, paired with
+ * whether the recipe can currently be fused (both parents owned, at least Tier 2,
+ * and sharing the same tier per GDD §4.6). The server is the authority; this is a
+ * display-only preview.
  */
 interface RecipeAvailability {
   recipe: FusionRecipe;
-  parentA: RingData | null; // a maxed ring of parents[0], if owned
-  parentB: RingData | null; // a maxed ring of parents[1], if owned
-  ready: boolean; // both parents present
+  parentA: RingData | null; // a Tier ≥ 2 ring of parents[0], if owned
+  parentB: RingData | null; // a same-tier ring of parents[1], if owned
+  ready: boolean; // both parents present and same tier
 }
 
 /**
- * Modal overlay listing all 10 Tier 2 fusion recipes (GDD §5.2). For each it
- * shows which maxed parent rings (Tier 1, xp >= cap) the player owns; when both
- * are available a [Fuse] button POSTs the pair via the supplied callback. The
- * server is the authority — this panel only previews availability.
+ * Modal overlay listing all 10 fusion recipes (GDD §4.6 / §5.2). For each it
+ * shows which eligible parent rings (same tier, Tier 2 or higher) the player
+ * owns; when both are available a [Fuse] button POSTs the pair via the supplied
+ * callback. The server is the authority — this panel only previews availability.
  *
  * Purely presentational: it never mutates rings itself. `onFuse(ringId1,
  * ringId2)` returns a result message that the panel surfaces inline; the owning
@@ -83,7 +84,7 @@ export class FusionPanel {
       .text(CANVAS_W / 2, 50, 'FUSE RINGS', { fontSize: '20px', color: '#ffffff' })
       .setOrigin(0.5);
     const subtitle = this.scene.add
-      .text(CANVAS_W / 2, 76, 'Combine two maxed Tier 1 rings into a Tier 2 fusion', {
+      .text(CANVAS_W / 2, 76, 'Both rings must be the same tier and reach Tier 2', {
         fontSize: '12px',
         color: '#aaaaaa',
       })
@@ -133,23 +134,42 @@ export class FusionPanel {
   }
 
   /**
-   * For each recipe, pick the first owned maxed (Tier 1, xp >= cap) ring of each
-   * parent element. The two parents must be distinct ring instances even when
-   * the elements differ (always true here since all recipes are cross-element).
+   * For each recipe, pick a pair of fusion-eligible (Tier ≥ 2) parent rings — one
+   * of each parent element — that share the SAME tier (GDD §4.6). Eligible rings
+   * are grouped by element; for a recipe we pick the lowest shared tier for which
+   * both parent elements have an owned ring. The two parents are always distinct
+   * instances (all recipes are cross-element). The server is the authority; this
+   * only previews availability.
    */
   private computeAvailability(rings: RingData[]): RecipeAvailability[] {
-    const maxedByElement = new Map<number, RingData[]>();
+    // Eligible rings grouped by element, then by tier, so a recipe can pick a
+    // same-tier pair across its two parent elements.
+    const byElement = new Map<number, Map<number, RingData[]>>();
     for (const r of rings) {
-      if (r.tier === 1 && r.xp >= TIER1_XP_CAP) {
-        const list = maxedByElement.get(r.element) ?? [];
-        list.push(r);
-        maxedByElement.set(r.element, list);
-      }
+      if (r.tier < 2) continue;
+      const byTier = byElement.get(r.element) ?? new Map<number, RingData[]>();
+      const list = byTier.get(r.tier) ?? [];
+      list.push(r);
+      byTier.set(r.tier, list);
+      byElement.set(r.element, byTier);
     }
     return FUSION_RECIPES.map((recipe) => {
       const [ea, eb] = recipe.parents;
-      const parentA = maxedByElement.get(ea)?.[0] ?? null;
-      const parentB = maxedByElement.get(eb)?.[0] ?? null;
+      const tiersA = byElement.get(ea);
+      const tiersB = byElement.get(eb);
+      let parentA: RingData | null = null;
+      let parentB: RingData | null = null;
+      if (tiersA && tiersB) {
+        // Pick the lowest tier both parent elements share an eligible ring at.
+        const sharedTiers = [...tiersA.keys()]
+          .filter((t) => tiersB.has(t))
+          .sort((x, y) => x - y);
+        const tier = sharedTiers[0];
+        if (tier !== undefined) {
+          parentA = tiersA.get(tier)![0];
+          parentB = tiersB.get(tier)![0];
+        }
+      }
       return { recipe, parentA, parentB, ready: parentA !== null && parentB !== null };
     });
   }

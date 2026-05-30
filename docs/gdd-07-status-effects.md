@@ -30,9 +30,9 @@ A **weak catch** loses a heart but moves **no gauge** — heart loss and gauge g
 
 **Server implementation:** Gauge deltas are computed by the Colyseus BattleRoom after each exchange. The `resolveBlock` result carries:
 - `hitGaugeElements: number[]` — tracked element indices to increment on an uncontested hit (+1 each, full rate regardless of tier)
-- `blockGaugeDeltas: Array<{ element: number, delta: number }>` — gauge increments for the defending ring on a block; `delta = 1 / 2^tier`, split equally across each tracked-element parent for fusion rings; empty on no-block
-- `blockedGaugeElement: number | null` — the blocked gauge index (−1) when a strong block fires; null otherwise
-- `clearAllGauges: boolean` — true on a parry; server sets all four gauges to 0
+- `blockGaugeDeltas: Array<{ element: number, delta: number }>` — gauge increments for the defending ring on a block; one entry per tracked-element parent, each at the full tier-reduced rate `delta = 1 / 2^tier`; empty on no-block
+- `blockedGaugeElement: number[]` — gauge index(es) to decrement (−1) when a strong block fires; empty otherwise
+- `clearAllGauges: boolean` — true on a STRONG parry (case 4); server sets all four gauges to 0
 
 Attack gauge increments are always +1 per tracked component (tier-reduction applies only to defense). Gauges are stored as floats server-side and broadcast to both clients as part of the state update.
 
@@ -68,9 +68,9 @@ A ring's tier (§4.2) determines how much its gauge fills when used to block. Th
 
 Gauge values are accumulated as fractions server-side; the HUD displays the integer floor. A status triggers when the accumulated value reaches or exceeds the threshold.
 
-**Fusion ring defense gauge split:**
+**Fusion ring defense gauge:**
 
-When a fusion ring is used to block, the gauge cost is **split equally across both parent tracked-element gauges** (at the tier-reduced rate). Wind and Earth components contribute nothing to gauges.
+When a fusion ring is used to block, each tracked-element parent fills its own gauge at the **full tier-reduced rate** (`delta = 1 / 2^tier`) — the deltas are independent, not split. Wind and Earth components contribute nothing to gauges.
 
 | Defense ring (Tier 2) | Gauge per block |
 |---|---|
@@ -80,9 +80,11 @@ When a fusion ring is used to block, the gauge cost is **split equally across bo
 | Inferno (Fire + Wind) | Fire +0.250 (Wind: nothing) |
 | Dust (Wind + Earth) | No gauge (both non-tracked) |
 
-At Tier 2 each parent gauge receives 0.250 per block (half the tier-2 rate of 0.250 per element, split two ways = 0.125 each — *correction: full tier-2 rate of 0.250 per tracked component, split equally across the two tracked parents*). The total gauge pressure across both gauges equals what a single-element ring of the same tier would add to its one gauge.
+Each tracked parent receives the **full tier-reduced rate** per block — there is no halving for fusion rings. At Tier 2 a Steam ring fills Fire +0.250 **and** Water +0.250 as two separate, independent entries.
 
-> **Example:** a Tier 2 Steam ring blocking receives Fire +0.250 and Water +0.250. A Tier 2 Fire ring blocking receives Fire +0.250. Total gauge pressure is equal; the fusion ring simply spreads it across two pools, making either individual status harder to trigger.
+**Implementation note:** `resolveBlock` emits `blockGaugeDeltas: Array<{element, delta}>` with one entry per tracked-element parent of the defending ring, each `delta = 1 / 2^tier`. A base ring emits a single entry; a Tier-2 Steam ring emits `[{fire, 0.250}, {water, 0.250}]`.
+
+> **Example:** a Tier 2 Steam ring blocking receives Fire +0.250 and Water +0.250 as two independent entries. A Tier 2 Fire ring blocking receives Fire +0.250. The fusion ring applies the full rate to each of its two gauge pools, making either individual status harder to trigger.
 
 **Status threshold:** Default **4** for Fire, Water, and Wood. Shadow gauge triggers its status at each stack (see §7.2). Thresholds scale upward with player experience and augmentations in late-game progression (formula TBD).
 

@@ -656,6 +656,7 @@ export class CampScene extends Phaser.Scene {
       window.__reliquaryMove = undefined;
       window.__reliquarySelect = undefined;
       window.__reliquaryLocked = undefined;
+      window.__reliquaryFull = undefined;
     }, { width: MODAL_W, height: MODAL_H });
 
     // Clicking empty modal space (the panel background, behind all content)
@@ -675,6 +676,24 @@ export class CampScene extends Phaser.Scene {
       .setScrollFactor(0)
       .setName('reliquary-header');
     c.add(this.reliquaryHeader);
+    // #182 — "Add Shard" expansion button: only shown when player has ≥ 1 shard.
+    const reliquaryShards: number = window.__campState?.reliquaryShards ?? 0;
+    if (reliquaryShards > 0) {
+      c.add(
+        this.add
+          .text(
+            CONTENT_RIGHT,
+            92,
+            `[Add Shard (+10)] (${reliquaryShards} available)`,
+            { fontSize: '11px', color: '#ffcc44' },
+          )
+          .setOrigin(1, 0)
+          .setScrollFactor(0)
+          .setName('add-shard-btn')
+          .setInteractive({ useHandCursor: true })
+          .on('pointerdown', () => void this.doExpandReliquary()),
+      );
+    }
     // Thin divider beneath the header separating it from the columns.
     c.add(
       this.add.rectangle(CANVAS_W / 2, 118, CONTENT_RIGHT - CONTENT_LEFT, 1, 0x6082aa).setScrollFactor(0),
@@ -825,10 +844,15 @@ export class CampScene extends Phaser.Scene {
   private renderReliquaryHeader(): void {
     const s = window.__campState;
     if (this.reliquaryHeader && s) {
-      // #154 — concise centered header: "XP: 1,450    spirit: 50 / 79". The
-      // spirit_max column is dropped (current/max already conveys it).
+      // #182 — header: XP / spirit / Loadout / Reliquary counts.
+      const carried = s.rings.filter((r: RingData) => r.in_carry === 1).length;
+      const reliquaryCount: number =
+        s.reliquaryCount ??
+        s.rings.filter((r: RingData) => r.in_carry === 0 && !(r as any).escrowed).length;
+      const reliquaryCap: number = s.reliquaryCap ?? 20;
       this.reliquaryHeader.setText(
-        `XP: ${s.aggregate_xp.toLocaleString()}    spirit: ${s.spirit_current} / ${s.spirit_max}`,
+        `XP: ${s.aggregate_xp.toLocaleString()}    spirit: ${s.spirit_current} / ${s.spirit_max}` +
+        `    Loadout: ${carried}/${s.carry_cap}  |  Reliquary: ${reliquaryCount}/${reliquaryCap}`,
       );
     }
     if (this.loadoutBadge && s) {
@@ -842,21 +866,33 @@ export class CampScene extends Phaser.Scene {
   }
 
   /**
-   * Dim and lock the Reliquary cards when the carry cap is full — clicking a
-   * locked card is a no-op (the player must free a carried slot first). Each
-   * locked card is greyed and shows a small lock glyph; clearing the lock removes
-   * the glyph and restores full alpha. Driven from the cached snapshot.
+   * Dim and lock the Reliquary grid cards when the carry cap is full (the
+   * player cannot pull more rings from the Reliquary into carry). Also tracks
+   * the Reliquary-full condition (#182) via __reliquaryFull so the drop-to-
+   * Reliquary path can surface the right error. Both caps are enforced
+   * server-side with 400 as well.
    */
   private applyReliquaryLockState(): void {
     const s = window.__campState;
     if (!s) return;
     const carried = s.rings.filter((r: RingData) => r.in_carry === 1).length;
     const locked = carried >= s.carry_cap;
+    // #182 — track Reliquary-full state for the drop-label hint.
+    const reliquaryCount: number =
+      s.reliquaryCount ??
+      s.rings.filter((r: RingData) => r.in_carry === 0 && !(r as any).escrowed).length;
+    const reliquaryCap: number = s.reliquaryCap ?? 20;
+    window.__reliquaryFull = reliquaryCount >= reliquaryCap;
     for (const ring of s.atSanctum as RingData[]) {
       const bg = this.sanctumGrid.getCardBg(ring.id);
       if (bg) bg.setAlpha(locked ? 0.45 : 1);
     }
     window.__reliquaryLocked = locked;
+    // Update the RELIQUARY drop-label color to signal when the Reliquary is full.
+    if (this.overlay) {
+      const lbl = this.overlay.getByName('reliquary-label') as Phaser.GameObjects.Text | null;
+      if (lbl) lbl.setColor(window.__reliquaryFull ? '#ff5555' : '#cccccc');
+    }
   }
 
   /**
@@ -1590,22 +1626,109 @@ export class CampScene extends Phaser.Scene {
     if (this.overlayName === 'bed') this.closeOverlay();
   }
 
-  /** Eat (at the table): shows food count + "Cooking coming soon". */
+  /**
+   * Campfire overlay (#181): two actions — [Rest] (25 food via /api/camp/sleep)
+   * and [Summon Sanctum] (POST /api/sanctum/summon using the player's current
+   * anchorage from window.__teleportState).
+   */
   private openCampfireOverlay(): void {
-    const c = this.beginOverlay('eat', 'EAT');
+    const c = this.beginOverlay('eat', 'CAMPFIRE');
     const food = window.__campState?.food_units ?? 0;
+
     c.add(
       this.add
-        .text(CANVAS_W / 2, 200, `Food stores: ${food} units`, { fontSize: '16px', color: '#ffdd88' })
+        .text(CANVAS_W / 2, 150, `Food stores: ${food} units`, { fontSize: '14px', color: '#ffdd88' })
         .setOrigin(0.5)
         .setScrollFactor(0),
     );
+
+    // Status label for results/errors.
+    const statusLbl = this.add
+      .text(CANVAS_W / 2, 370, '', { fontSize: '12px', color: '#ff8888' })
+      .setOrigin(0.5)
+      .setScrollFactor(0)
+      .setName('campfire-status');
+    c.add(statusLbl);
+
+    const setFireStatus = (msg: string, color = '#ff8888'): void => {
+      statusLbl.setText(msg).setColor(color);
+    };
+
+    // [Rest — 25 food] button.
     c.add(
       this.add
-        .text(CANVAS_W / 2, 250, 'Cooking coming soon', { fontSize: '14px', color: '#888888' })
+        .text(CANVAS_W / 2, 220, '[Rest — 25 food]', { fontSize: '17px', color: '#88ccff' })
         .setOrigin(0.5)
-        .setScrollFactor(0),
+        .setScrollFactor(0)
+        .setInteractive({ useHandCursor: true })
+        .on('pointerdown', () => {
+          void (async () => {
+            await this.doSleep();
+            // doSleep calls loadData on success; surface errors via status label.
+            if (this.overlayName === 'eat') setFireStatus('');
+          })();
+        }),
     );
+
+    // [Summon Sanctum] button.
+    const anchorId = window.__teleportState?.anchor ?? null;
+    const summonColor = anchorId ? '#aaffcc' : '#888888';
+    const summonLabel = anchorId
+      ? '[Summon Sanctum]'
+      : '[Summon Sanctum] — no anchorage attuned';
+    c.add(
+      this.add
+        .text(CANVAS_W / 2, 295, summonLabel, { fontSize: '17px', color: summonColor })
+        .setOrigin(0.5)
+        .setScrollFactor(0)
+        .setInteractive({ useHandCursor: true })
+        .on('pointerdown', () => {
+          if (!anchorId) {
+            setFireStatus('You are not attuned to any Anchorage');
+            return;
+          }
+          void (async () => {
+            await this.doSummonSanctum(anchorId, setFireStatus);
+          })();
+        }),
+    );
+  }
+
+  /**
+   * POST /api/sanctum/summon with the player's current anchorage. On success
+   * shows the cost and reloads state; on 400 shows the error message.
+   */
+  private async doSummonSanctum(
+    anchorageId: string,
+    setStatus: (msg: string, color?: string) => void,
+  ): Promise<void> {
+    const token = localStorage.getItem('er_token');
+    if (!token) {
+      this.scene.start('LoginScene');
+      return;
+    }
+    try {
+      const res = await fetch(`${API_BASE}/api/sanctum/summon`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ anchorageId }),
+      });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        const errMsg: string = body?.error ?? `Summon failed (${res.status})`;
+        // "requires N spirit" → "Need N spirit — rest first"
+        const spiritMatch = errMsg.match(/requires?\s+(\d+)\s+spirit/i);
+        setStatus(
+          spiritMatch ? `Need ${spiritMatch[1]} spirit — rest first` : errMsg,
+        );
+        return;
+      }
+      const cost: number = body?.spiritCost ?? 0;
+      setStatus(`Sanctum summoned! (cost: ${cost} spirit)`, '#aaffcc');
+      await this.loadData();
+    } catch {
+      setStatus('Network error during summon');
+    }
   }
 
   // ── Reusable panels (parked off-screen; overlays use them in 8A.2) ────────
@@ -1718,7 +1841,7 @@ export class CampScene extends Phaser.Scene {
     const { player, rings, loadout } = data;
     this.rings = rings;
     this.loadout = loadout ?? {};
-    this.carryCap = player.carry_cap ?? 10;
+    this.carryCap = player.carry_cap ?? 5;
     this.ringMap = new Map(rings.map((r) => [r.id, r]));
 
     this.refreshPools(player);
@@ -1775,6 +1898,12 @@ export class CampScene extends Phaser.Scene {
       food_units: player.food_units ?? 0,
       aggregate_xp: player.aggregate_xp ?? 0,
       staked_passive: this.stakedPassive,
+      // #182 — reliquary cap fields from /api/me
+      reliquaryCap: player.reliquaryCap,
+      reliquaryShards: player.reliquaryShards,
+      reliquaryCount: player.reliquaryCount,
+      // #171 — spare capacity from the API response (server-computed, no client arithmetic)
+      spareCapacity: player.spareCapacity ?? undefined,
     };
 
     // #85 Fix 2A — refreshPools rebuilds __campState wholesale, which can happen
@@ -2053,6 +2182,37 @@ export class CampScene extends Phaser.Scene {
     } catch {
       return 'Network error during fusion';
     }
+  }
+
+  // ── Reliquary expansion (#182) ──────────────────────────────────────────────
+
+  /**
+   * POST /api/sanctum/expand-reliquary — spend a Reliquary Shard to raise the
+   * cap by 10. On success reloads state and re-renders the header/lock. On error
+   * surfaces the message via setStatus.
+   */
+  private async doExpandReliquary(): Promise<void> {
+    const token = localStorage.getItem('er_token');
+    if (!token) {
+      this.scene.start('LoginScene');
+      return;
+    }
+    try {
+      const res = await fetch(`${API_BASE}/api/sanctum/expand-reliquary`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        this.setStatus(body?.error ?? `Expand failed (${res.status})`);
+        return;
+      }
+    } catch {
+      this.setStatus('Network error during Shard expansion');
+      return;
+    }
+    await this.loadData();
+    this.afterReliquaryReload();
   }
 
   // ── Navigation / helpers ────────────────────────────────────────────────────

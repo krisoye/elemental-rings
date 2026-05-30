@@ -32,14 +32,6 @@ export const STARTER_GOLD = 200;
 // (floored at 0 so a balance never goes negative).
 export const GOLD_FORFEIT_PENALTY = 25;
 
-// #47 — Fusion crafting (GDD §5). A parent ring must reach its tier's XP cap
-// before it can be fused; the resulting fusion ring resets to the new tier's
-// full uses and inherits the combined XP of both parents.
-export const TIER1_XP_CAP = 100;
-export const TIER2_XP_CAP = 300;
-export const TIER2_MAX_USES = 5;
-export const TIER3_MAX_USES = 7;
-
 // Outcome-based ring XP. Rings earn XP from exchange results, not per use.
 // spirit_max = SPIRIT_BASE + floor(aggregate_xp / XP_SCALER).
 export const XP_SCALER = 50;
@@ -93,5 +85,11 @@ export const MERCHANT_RING_BUY_PRICE_T1 = 30;       // GP to buy a Tier 1 triang
 export const MERCHANT_RING_BUY_PRICE_NEUTRAL = 25;   // GP to buy a Tier 1 Wind/Earth ring
 export const MERCHANT_RING_SELL_PRICE_T1 = 10;       // GP when player sells Tier 1 triangle ring
 export const MERCHANT_RING_SELL_PRICE_NEUTRAL = 8;   // GP when player sells Tier 1 Wind/Earth ring
+
+// #182 — Reliquary capacity cap. Resting rings (in_carry=0 AND escrowed=0) consume
+// Reliquary slots. Players start with RELIQUARY_BASE_CAP slots; each Shard consumed
+// via POST /api/sanctum/expand-reliquary grants RELIQUARY_SHARD_INCREMENT more.
+export const RELIQUARY_BASE_CAP = 20;
+export const RELIQUARY_SHARD_INCREMENT = 10;
 
 

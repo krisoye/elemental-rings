@@ -2,14 +2,12 @@ import { v4 as uuidv4 } from 'uuid';
 import { db } from './db';
 import { ElementEnum } from '../../../shared/types';
 import { fusionOf } from '../game/Fusions';
+import { tierForXp } from '../game/Tiers';
 import { getTalisman } from '../../../shared/talismans';
 import {
   SPIRIT_PER_RING_USE,
   SPIRIT_BASE,
   XP_SCALER,
-  TIER1_XP_CAP,
-  TIER2_XP_CAP,
-  TIER2_MAX_USES,
   FORAGE_YIELD,
   FORAGE_RESPAWN_DAYS,
   FOOD_SELL_PRICE,
@@ -18,6 +16,8 @@ import {
   MERCHANT_RING_BUY_PRICE_NEUTRAL,
   MERCHANT_RING_SELL_PRICE_T1,
   MERCHANT_RING_SELL_PRICE_NEUTRAL,
+  RELIQUARY_BASE_CAP,
+  RELIQUARY_SHARD_INCREMENT,
 } from '../game/constants';
 
 /** A persisted player row (no password hash exposed to callers of read helpers). */
@@ -30,6 +30,10 @@ export interface PlayerRow {
   spirit_max: number;
   spirit_current: number;
   food_units: number;
+  /** #182 — current Reliquary capacity (starts at RELIQUARY_BASE_CAP=20). */
+  reliquary_cap: number;
+  /** #182 — unspent Reliquary Shards held by the player. */
+  reliquary_shards: number;
 }
 
 /** A persisted ring row. */
@@ -72,7 +76,9 @@ const STARTER_ELEMENTS: number[] = [
   ElementEnum.EARTH,
 ];
 
-const STARTER_TIER = 1;
+// GDD §4.2 / EPIC #173 C8 — starter rings begin at tier 0 with 3 max uses (xp=0).
+// Tier is XP-derived; a fresh ring at 0 XP is tier 0, and naturalMaxUses(0) = 3.
+const STARTER_TIER = 0;
 const STARTER_MAX_USES = 3;
 
 const insertPlayer = db.prepare(
@@ -134,7 +140,8 @@ const updateAnchor = db.prepare(
 
 const selectByUsername = db.prepare(`SELECT * FROM players WHERE username = ?`);
 const selectById = db.prepare(
-  `SELECT id, username, gold, game_day, carry_cap, spirit_max, spirit_current, food_units
+  `SELECT id, username, gold, game_day, carry_cap, spirit_max, spirit_current, food_units,
+          reliquary_cap, reliquary_shards
    FROM players WHERE id = ?`,
 );
 const selectRingsByOwner = db.prepare(`SELECT * FROM rings WHERE owner_id = ?`);
@@ -235,6 +242,11 @@ const updateRingUses = db.prepare(
   `UPDATE rings SET current_uses = MIN(?, max_uses) WHERE id = ?`,
 );
 const updateRingXP = db.prepare(`UPDATE rings SET xp = xp + ? WHERE id = ?`);
+// EPIC #173 C2 — awardXP applies XP, the recomputed cached tier, and any
+// natural-crossing max_uses bonus in one statement so they never desync.
+const applyXpAndTierGrant = db.prepare(
+  `UPDATE rings SET xp = ?, tier = ?, max_uses = ? WHERE id = ?`,
+);
 const setRingXPAbsolute = db.prepare(`UPDATE rings SET xp = ? WHERE id = ? AND owner_id = ?`);
 const updatePlayerGold = db.prepare(`UPDATE players SET gold = gold + ? WHERE id = ?`);
 const updateRingEscrowed = db.prepare(`UPDATE rings SET escrowed = ? WHERE id = ?`);
@@ -248,7 +260,7 @@ const updateGameDay = db.prepare(`UPDATE players SET game_day = game_day + 1 WHE
 const selectCarryByOwner = db.prepare(`SELECT * FROM rings WHERE owner_id = ? AND in_carry = 1`);
 const updateRingCarry = db.prepare(`UPDATE rings SET in_carry = ? WHERE id = ?`);
 const clearCarryForOwner = db.prepare(`UPDATE rings SET in_carry = 0 WHERE owner_id = ?`);
-const selectCarryCap = db.prepare(`SELECT carry_cap FROM players WHERE id = ?`);
+// selectCarryCap removed (#171): getCarryCap is now XP-derived, not read from the DB column.
 
 // #41 — spirit / food economy.
 const selectSpiritFood = db.prepare(
@@ -292,6 +304,14 @@ export const saveLoadout = db.transaction(
   (playerId: string, partial: Partial<Record<'thumb' | 'a1' | 'a2' | 'd1' | 'd2', string | null>>): LoadoutRow => {
     const current = selectLoadout.get(playerId) as LoadoutRow | undefined;
     if (!current) throw new Error(`No loadout for player ${playerId}`);
+    // #171 — carry-cap guard: reject if the player is currently carrying more
+    // rings than the XP-derived cap (5 + floor(aggregate_xp / 100)). Single-
+    // sourced via getCarryCap so the limit matches packLoadout and the route check.
+    const carriedCount = (selectCarryByOwner.all(playerId) as RingRow[]).length;
+    const cap = getCarryCap(playerId);
+    if (carriedCount > cap) {
+      throw new Error(`carry cap exceeded (${carriedCount} > ${cap})`);
+    }
 
     const ownerRings = new Set((selectRingsByOwner.all(playerId) as RingRow[]).map((r) => r.id));
 
@@ -339,10 +359,27 @@ export function saveRingUses(ringId: string, currentUses: number): void {
   updateRingUses.run(currentUses, ringId);
 }
 
-/** Award XP to a ring. */
-export function awardXP(ringId: string, xpAmount: number): void {
-  updateRingXP.run(xpAmount, ringId);
-}
+/**
+ * Award XP to a ring and apply any natural tier-crossing (GDD §4.2, EPIC #173 C2).
+ *
+ * Recomputes the tier from the new XP total via {@link tierForXp} and always
+ * refreshes the cached `tier` column. When the award pushes the ring across one
+ * or more tier thresholds, `max_uses` is permanently incremented by the number of
+ * tiers crossed (the natural +1-per-tier grant). `current_uses` is left untouched
+ * — the grant raises the ceiling; recharge fills it. A non-positive `xpAmount` is
+ * a no-op (no XP change can cross a threshold). Runs as a single transaction so
+ * the xp/tier/max_uses writes can never desync.
+ */
+export const awardXP = db.transaction((ringId: string, xpAmount: number): void => {
+  if (xpAmount <= 0) return;
+  const ring = selectRingById.get(ringId) as RingRow | undefined;
+  if (!ring) return;
+  const newXp = ring.xp + xpAmount;
+  const oldTier = tierForXp(ring.xp);
+  const newTier = tierForXp(newXp);
+  const grant = newTier > oldTier ? newTier - oldTier : 0;
+  applyXpAndTierGrant.run(newXp, newTier, ring.max_uses + grant, ringId);
+});
 
 /**
  * Set a ring's XP to an absolute value (only when owned by the player). Used by
@@ -606,17 +643,6 @@ export const discardRing = db.transaction(
 );
 
 /**
- * The XP cap a ring of the given tier must reach before it can be fused
- * (GDD §5.1). Tier 1 → 100, Tier 2 → 300. Tiers without a defined cap (Tier 3,
- * the current ceiling) cannot be a fusion parent.
- */
-function xpCapForTier(tier: number): number | null {
-  if (tier === 1) return TIER1_XP_CAP;
-  if (tier === 2) return TIER2_XP_CAP;
-  return null;
-}
-
-/**
  * Null the given ring out of every loadout slot that references it for the
  * player, so a subsequent delete cannot violate the loadout→rings FK. No-op
  * when no loadout exists or no slot holds the ring. Must run inside a
@@ -652,14 +678,18 @@ function clearRingFromLoadout(playerId: string, ringId: string): void {
 }
 
 /**
- * Fuse two maxed parent rings into a single higher-tier fusion ring (GDD §5).
+ * Fuse two parent rings into a single compound-element fusion ring (GDD §4.6).
  *
- * Validates (in order) ownership of both rings, that each parent has reached its
- * tier's XP cap, and that the two base elements form a valid v4 fusion pair. On
- * success it inserts the new fusion ring (element from fusionOf, combined parent
- * XP, tier 2, full Tier 2 uses), then permanently deletes both parents — nulling
- * each out of any loadout slot first so the FK constraint holds. Runs in a single
- * transaction, so any thrown validation error leaves the inventory untouched.
+ * Validates (in order): ownership of both distinct rings, that both parents sit
+ * in the SAME tier (`tierForXp(r1.xp) === tierForXp(r2.xp)`), that the shared
+ * tier is at least Tier 2, and that the two base elements form a valid fusion
+ * pair. On success it inserts the new fusion ring — element from `fusionOf`, XP
+ * the sum of both parents, tier recomputed from that summed XP via {@link
+ * tierForXp}, and `max_uses = max(1, min(parent uses) − 1)` (a fusion ring lands
+ * one use shy of its weaker parent, floored at 1; `current_uses` starts full).
+ * It then permanently deletes both parents, nulling each out of any loadout slot
+ * first so the FK constraint holds. Runs in a single transaction, so any thrown
+ * validation error leaves the inventory untouched.
  *
  * @returns the new fusion ring's id.
  * @throws Error with a caller-displayable message on any validation failure.
@@ -675,16 +705,15 @@ export const fuseRings = db.transaction(
       throw new Error('Ring not found or not owned');
     }
 
-    for (const ring of [r1, r2]) {
-      const cap = xpCapForTier(ring.tier);
-      if (cap === null) {
-        throw new Error(`Ring ${ring.id} cannot be fused at its tier`);
-      }
-      if (ring.xp < cap) {
-        throw new Error(
-          `Ring ${ring.id} has not reached XP cap (needs ${cap}, has ${ring.xp})`,
-        );
-      }
+    // §4.6 — both parents must be the same XP-derived tier, and that tier must
+    // be at least Tier 2. Tier is derived live from XP (not the cached column).
+    const tier1 = tierForXp(r1.xp);
+    const tier2 = tierForXp(r2.xp);
+    if (tier1 !== tier2) {
+      throw new Error('Rings must be the same tier to fuse');
+    }
+    if (tier1 < 2) {
+      throw new Error('Both rings must reach Tier 2 to fuse');
     }
 
     const fusionElement = fusionOf(r1.element, r2.element);
@@ -692,15 +721,21 @@ export const fuseRings = db.transaction(
       throw new Error('These two elements do not form a valid fusion');
     }
 
+    // §4.6 — XP additive; tier from the summed XP; uses = min(parents) − 1,
+    // floored at 1 so a fusion always has at least one use.
+    const fusedXp = r1.xp + r2.xp;
+    const fusedTier = tierForXp(fusedXp);
+    const fusedMaxUses = Math.max(1, Math.min(r1.max_uses, r2.max_uses) - 1);
+
     const newRingId = uuidv4();
     insertRing.run({
       id: newRingId,
       owner_id: playerId,
       element: fusionElement,
-      tier: 2,
-      max_uses: TIER2_MAX_USES,
-      current_uses: TIER2_MAX_USES,
-      xp: r1.xp + r2.xp,
+      tier: fusedTier,
+      max_uses: fusedMaxUses,
+      current_uses: fusedMaxUses,
+      xp: fusedXp,
     });
 
     // Consume both parents: null them out of any loadout slot, then delete.
@@ -713,16 +748,36 @@ export const fuseRings = db.transaction(
   },
 );
 
-/** The player's carry cap (rings carryable on an expedition). */
+/**
+ * The player's spare carry capacity (#171, GDD §4.1).
+ * spare_slots = floor(aggregate_xp / 100), where aggregate_xp = SUM(xp) WHERE
+ * in_carry = 0 (Reliquary rings only — same filter as spirit_max derivation).
+ * Returns 0 for a fresh player with no Reliquary XP.
+ */
+export function getSpareCapacity(playerId: string): number {
+  const { aggregateXp } = getSpiritStats(playerId);
+  return Math.floor(aggregateXp / 100);
+}
+
+/**
+ * The player's carry cap (rings carryable on an expedition). XP-derived (#171):
+ * carry_cap = 5 + floor(aggregate_xp / 100). Base = 5 spare slots for a fresh
+ * player; each 100 aggregate Reliquary XP grants one additional spare slot.
+ * Single-sourced here so packLoadout, merchantBuyRing, and route validation
+ * all agree on the same cap.
+ */
 export function getCarryCap(playerId: string): number {
-  const row = selectCarryCap.get(playerId) as { carry_cap: number } | undefined;
-  return row?.carry_cap ?? 0;
+  return 5 + getSpareCapacity(playerId);
 }
 
 /**
  * Atomically set the carried set to EXACTLY the given ring ids. Validates that
  * the count is within the player's carry_cap and that every id is owned by the
  * player; throws otherwise. All other rings have their in_carry flag cleared.
+ *
+ * #182 — Reliquary cap guard: after setting the new carry set, the number of
+ * resting (non-carried, non-escrowed) rings must not exceed reliquary_cap.
+ * Throws 'Reliquary full' when the resulting resting count would exceed the cap.
  */
 export const packLoadout = db.transaction(
   (playerId: string, ringIds: string[]): void => {
@@ -732,14 +787,98 @@ export const packLoadout = db.transaction(
     if (unique.length > cap) {
       throw new Error(`carry cap exceeded (${unique.length} > ${cap})`);
     }
-    const ownerRings = new Set(
-      (selectRingsByOwner.all(playerId) as RingRow[]).map((r) => r.id),
-    );
+    const ownerRings = (selectRingsByOwner.all(playerId) as RingRow[]);
+    const ownerRingSet = new Set(ownerRings.map((r) => r.id));
     for (const id of unique) {
-      if (!ownerRings.has(id)) throw new Error(`ring ${id} not owned by player`);
+      if (!ownerRingSet.has(id)) throw new Error(`ring ${id} not owned by player`);
     }
+
+    // #182 — Reliquary cap guard: count owned non-escrowed rings; the ones NOT
+    // in the new carry set will rest in the Reliquary.
+    const ownedNonEscrowed = (
+      db.prepare('SELECT COUNT(*) as cnt FROM rings WHERE owner_id = ? AND escrowed = 0')
+        .get(playerId) as { cnt: number }
+    ).cnt;
+    const resultingReliquary = ownedNonEscrowed - unique.length;
+    const reliquaryCap =
+      (db.prepare('SELECT reliquary_cap FROM players WHERE id = ?').get(playerId) as
+        | { reliquary_cap: number }
+        | undefined)?.reliquary_cap ?? RELIQUARY_BASE_CAP;
+    if (resultingReliquary > reliquaryCap) {
+      throw new Error('Reliquary full');
+    }
+
     clearCarryForOwner.run(playerId);
     for (const id of unique) updateRingCarry.run(1, id);
+  },
+);
+
+// ---------------------------------------------------------------------------
+// #182 — Reliquary capacity + Shard expansion
+// ---------------------------------------------------------------------------
+
+/**
+ * Count of rings currently resting in the Reliquary for this player.
+ * Definition: in_carry=0 AND escrowed=0. Carried rings (in_carry=1) and
+ * staked rings (escrowed=1) do NOT consume Reliquary slots.
+ */
+export function getReliquaryCount(playerId: string): number {
+  const row = db
+    .prepare(
+      'SELECT COUNT(*) as cnt FROM rings WHERE owner_id = ? AND in_carry = 0 AND escrowed = 0',
+    )
+    .get(playerId) as { cnt: number } | undefined;
+  return row?.cnt ?? 0;
+}
+
+/** Current Reliquary capacity for this player (reads reliquary_cap column). */
+export function getReliquaryCap(playerId: string): number {
+  const row = db
+    .prepare('SELECT reliquary_cap FROM players WHERE id = ?')
+    .get(playerId) as { reliquary_cap: number } | undefined;
+  return row?.reliquary_cap ?? RELIQUARY_BASE_CAP;
+}
+
+/** Unspent Reliquary Shards held by this player. */
+export function getReliquaryShards(playerId: string): number {
+  const row = db
+    .prepare('SELECT reliquary_shards FROM players WHERE id = ?')
+    .get(playerId) as { reliquary_shards: number } | undefined;
+  return row?.reliquary_shards ?? 0;
+}
+
+/**
+ * Grant the player one Reliquary Shard (from NPC reward / loot drop).
+ * Does NOT expand the cap directly — the player must spend the Shard via
+ * addReliquaryShardToReliquary(). No player-facing route; called by server hooks.
+ */
+export function grantShard(playerId: string): void {
+  db.prepare('UPDATE players SET reliquary_shards = reliquary_shards + 1 WHERE id = ?').run(
+    playerId,
+  );
+}
+
+/**
+ * Spend one Reliquary Shard to expand the Reliquary by RELIQUARY_SHARD_INCREMENT
+ * slots. Atomic: the SELECT and UPDATE run in the same transaction so two
+ * concurrent calls cannot both consume the same Shard.
+ *
+ * @returns true when the expansion succeeded; false when the player held 0 Shards
+ * (caller should return 400 'no Reliquary Shards').
+ */
+export const addReliquaryShardToReliquary = db.transaction(
+  (playerId: string): boolean => {
+    const row = db
+      .prepare('SELECT reliquary_shards FROM players WHERE id = ?')
+      .get(playerId) as { reliquary_shards: number } | undefined;
+    if (!row || row.reliquary_shards < 1) return false;
+    db.prepare(
+      `UPDATE players
+         SET reliquary_shards = reliquary_shards - 1,
+             reliquary_cap    = reliquary_cap    + ${RELIQUARY_SHARD_INCREMENT}
+       WHERE id = ?`,
+    ).run(playerId);
+    return true;
   },
 );
 
@@ -1223,9 +1362,10 @@ export const merchantBuyRing = db.transaction(
       return { ok: false, reason: `Insufficient gold (need ${price}, have ${player.gold})` };
     }
 
-    // Carry cap check: count rings currently in carry.
+    // Carry cap check: use getCarryCap (XP-derived) so the limit stays in sync
+    // with packLoadout and the PUT /api/loadout validation.
     const carried = (selectCarryByOwner.all(playerId) as RingRow[]).length;
-    if (carried >= player.carry_cap) {
+    if (carried >= getCarryCap(playerId)) {
       return { ok: false, reason: 'Carry cap full' };
     }
 
