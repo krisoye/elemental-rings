@@ -8,7 +8,7 @@
 
 | Concept | Description | Cap | Grows via |
 |---|---|---|---|
-| Reliquary | All rings stored in the Sanctum; not in carry loadout; sum of their XP = `aggregate_xp` | No hard limit | — |
+| Reliquary | All rings stored in the Sanctum; not in carry loadout; sum of their XP = `aggregate_xp` | 20 | Reliquary Shard (+10, see §4.1.1) |
 | Loadout (carry) | Rings taken on expedition; excluded from `aggregate_xp` | 5 + spare | `aggregate_xp` |
 | Battle hand | 5 named slots (Thumb/A1/A2/D1/D2) used in combat | 5 (fixed) | No |
 | Spare | Carried rings not assigned to battle slots; swappable between encounters | `floor(aggregate_xp / 100)` | Automatic |
@@ -17,6 +17,22 @@
 - Rings in the Reliquary recharge uses on the game day timer
 - Rings on your person do **not** recharge in the field — only at camp (sleep or paid recharge)
 - Rings in the Reliquary do **not** earn XP — battle use is the only XP source (see §4.4)
+
+#### 4.1.1 Reliquary Capacity and Expansion
+
+The Reliquary holds a **bounded** number of rings so the protagonist cannot stockpile hundreds of low-XP rings. The cap counts only rings **resting in the Sanctum** — `in_carry = 0` and **not** out on a stake (`escrowed = 0`). Carried rings and staked rings do not consume Reliquary slots.
+
+| Property | Value |
+|---|---|
+| Default Reliquary capacity | **20** rings |
+| Expansion increment | **+10** rings per Reliquary Shard added |
+| Effective maximum | Bounded by the number of major bosses (each yields one Shard) — no separate hard cap |
+
+**How the Reliquary fills.** Won rings do **not** go to the Reliquary — a won ring is added to the **loadout** (carried), or discarded, via the post-battle prompt. The Reliquary grows only when the player, at the Sanctum, **moves a carried ring back onto the Sanctum walls** (loadout → Reliquary). This is the single fill path.
+
+**Behaviour when full.** When the Reliquary is at capacity, the loadout → Reliquary move is **blocked**: the player cannot return a carried ring to the Sanctum until they free a slot by discarding a resting Reliquary ring. The Reliquary panel locks the drop action and shows the cap, mirroring the existing carry-cap lock. (Won rings are unaffected — they only ever enter the loadout or are discarded.)
+
+**Reliquary Shard.** A consumable dropped by **major bosses** (one per major boss), held as a per-character counter (`reliquary_shards`). At the Sanctum the player **adds a Shard to the Reliquary**: this consumes one Shard (`reliquary_shards − 1`) and permanently expands capacity by +10 (`reliquary_cap + 10`). Because Shards come only from finite major bosses, the maximum Reliquary size is naturally bounded by how many major bosses the campaign contains.
 
 ### 4.2 Ring Tiers
 
