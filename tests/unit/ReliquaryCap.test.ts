@@ -3,6 +3,7 @@ import path from 'path';
 import fs from 'fs';
 import { describe, test, expect, beforeAll } from 'vitest';
 import { ElementEnum } from '../../shared/types';
+import { TALISMANS, getTalisman } from '../../shared/talismans';
 
 // ---------------------------------------------------------------------------
 // #182 — Reliquary capacity cap + Shard expansion.
@@ -217,6 +218,55 @@ describe('addReliquaryShardToReliquary', () => {
 });
 
 // ---------------------------------------------------------------------------
+// packLoadout — transaction atomicity (spec AC: "carry set is unchanged after
+// a rejected full-reliquary move")
+// ---------------------------------------------------------------------------
+
+describe('packLoadout — Reliquary cap guard is transactional (rollback)', () => {
+  test('failed reliquary-full guard leaves the carry set completely unchanged', () => {
+    // Construct a player with:
+    //   - RELIQUARY_BASE_CAP resting rings (exactly at cap)
+    //   - 3 carried rings
+    // Then attempt packLoadout([only 1 of those carried rings]) which would make
+    // resting = RELIQUARY_BASE_CAP + 2 → over cap → must throw.
+    // AFTER the throw, all 3 rings must still be in_carry = 1 (rolled back).
+    const p = makePlayer(dbInstance);
+
+    // Seed RELIQUARY_BASE_CAP resting rings.
+    for (let i = 0; i < RELIQUARY_BASE_CAP; i++) {
+      makeRing(dbInstance, p, ElementEnum.FIRE, 0, 0); // resting
+    }
+
+    // Seed 3 carried rings.
+    const carried: string[] = [];
+    for (let i = 0; i < 3; i++) {
+      const id = makeRing(dbInstance, p, ElementEnum.WATER, 1, 0); // in_carry=1
+      carried.push(id);
+    }
+
+    // Sanity: reliquary is exactly at cap before the bad call.
+    expect(repo.getReliquaryCount(p)).toBe(RELIQUARY_BASE_CAP);
+
+    // Attempt to drop 2 carried rings into the Reliquary (carry only 1 of the 3).
+    // Resulting resting = RELIQUARY_BASE_CAP + 2 → over cap → must throw.
+    expect(() => repo.packLoadout(p, [carried[0]])).toThrow('Reliquary full');
+
+    // After the throw, the carry set must be completely rolled back.
+    // All 3 rings must still be in_carry = 1.
+    const afterCarried = dbInstance
+      .prepare('SELECT id FROM rings WHERE owner_id = ? AND in_carry = 1')
+      .all(p) as Array<{ id: string }>;
+    const afterCarriedIds = new Set(afterCarried.map((r) => r.id));
+    for (const id of carried) {
+      expect(afterCarriedIds.has(id)).toBe(true);
+    }
+
+    // And the reliquary count must still be exactly RELIQUARY_BASE_CAP.
+    expect(repo.getReliquaryCount(p)).toBe(RELIQUARY_BASE_CAP);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // getReliquaryCap — reads from DB column (not hardcoded)
 // ---------------------------------------------------------------------------
 
@@ -231,5 +281,30 @@ describe('getReliquaryCap', () => {
     repo.grantShard(p);
     repo.addReliquaryShardToReliquary(p);
     expect(repo.getReliquaryCap(p)).toBe(RELIQUARY_BASE_CAP + RELIQUARY_SHARD_INCREMENT);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// CB3 — Sanctum Stone removal (GDD §14.3 / #180).
+// The TALISMANS catalog must be empty; the sanctum_stone id must not be
+// findable by getTalisman. The talisman framework (TalismanDef, getTalisman,
+// slot types) stays — only the Stone entry was removed.
+// ---------------------------------------------------------------------------
+
+describe('CB3 — Sanctum Stone removal (shared/talismans.ts)', () => {
+  test('TALISMANS catalog is empty (Sanctum Stone removed, framework preserved)', () => {
+    // Spec CB3: "TALISMANS = []". Any non-empty catalog means the Stone was not removed.
+    expect(TALISMANS).toHaveLength(0);
+  });
+
+  test('getTalisman("sanctum_stone") returns undefined — stone id is gone', () => {
+    // A player previously holding sanctum_stone should find no definition.
+    expect(getTalisman('sanctum_stone')).toBeUndefined();
+  });
+
+  test('getTalisman with any unknown id returns undefined (not null, not throws)', () => {
+    // Framework is preserved — unknown lookups must be graceful regardless of input.
+    expect(getTalisman('')).toBeUndefined();
+    expect(getTalisman('nonexistent_talisman')).toBeUndefined();
   });
 });

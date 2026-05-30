@@ -227,6 +227,21 @@ describe('fuseRings — DB transaction (§4.6)', () => {
     expect(rings.find((r) => r.id === earth)).toBeUndefined();
   });
 
+  test('max_uses = min(parents) - 1 when parents differ: max_uses 4 and 6 → result 3', () => {
+    // Spec (C7): max_uses = min(parents) − 1. min(4, 6) − 1 = 3.
+    // This catches an off-by-one if the implementation uses max() instead of min(),
+    // or subtracts from the wrong operand.
+    const p = makePlayer(db);
+    const fire = makeRing(db, p, FIRE, T2_XP, 4);
+    const water = makeRing(db, p, WATER, T2_XP, 6);
+
+    const newId = repo.fuseRings(p, fire, water);
+    const result = repo.getRingsByOwner(p).find((r) => r.id === newId);
+
+    expect(result!.max_uses).toBe(3); // min(4, 6) − 1 = 3
+    expect(result!.current_uses).toBe(3);
+  });
+
   test('parent assigned to a loadout slot → slot nulled, fusion proceeds', () => {
     const p = makePlayer(db);
     const wood = makeRing(db, p, WOOD, T2_XP);

@@ -197,6 +197,87 @@ describe('awardXP — natural tier crossings (#173 C2)', () => {
     expect(ring.max_uses).toBe(5); // 4 + 1, preserves the lower fusion base
   });
 
+  // -------------------------------------------------------------------------
+  // #171 — XP-driven spare carry capacity (GDD §4.1). spare_slots = floor(
+  // aggregate_xp / 100) counting ONLY Reliquary (in_carry=0) rings.
+  // These tests live inside this describe so they share the same DB singleton.
+  // -------------------------------------------------------------------------
+
+  test('fresh player with no Reliquary rings has spare capacity 0 and carry cap 5', () => {
+    const p = makePlayer();
+    expect(repo.getSpareCapacity(p)).toBe(0);
+    expect(repo.getCarryCap(p)).toBe(5);
+  });
+
+  test('exactly 100 aggregate Reliquary XP → spare capacity 1, carry cap 6', () => {
+    // floor(100/100) = 1 spare slot → cap = 5+1 = 6.
+    const p = makePlayer();
+    db.prepare(
+      `INSERT INTO rings (id, owner_id, element, tier, max_uses, current_uses, xp, in_carry)
+       VALUES (?, ?, 0, 0, 3, 3, 100, 0)`,
+    ).run(`ring_sp1_${Math.random().toString(36).slice(2)}`, p);
+    expect(repo.getSpareCapacity(p)).toBe(1);
+    expect(repo.getCarryCap(p)).toBe(6);
+  });
+
+  test('99 aggregate Reliquary XP → spare capacity 0 (floor boundary — one below threshold)', () => {
+    // floor(99/100) = 0. No extra slot until 100 is reached.
+    const p = makePlayer();
+    db.prepare(
+      `INSERT INTO rings (id, owner_id, element, tier, max_uses, current_uses, xp, in_carry)
+       VALUES (?, ?, 0, 0, 3, 3, 99, 0)`,
+    ).run(`ring_sp99_${Math.random().toString(36).slice(2)}`, p);
+    expect(repo.getSpareCapacity(p)).toBe(0);
+  });
+
+  test('carried rings (in_carry=1) do NOT count toward aggregate XP for spare capacity', () => {
+    // Spec #171: aggregate_xp = SUM(xp) WHERE in_carry = 0 (Reliquary only).
+    // A carried ring with 1000 XP must contribute nothing.
+    const p = makePlayer();
+    db.prepare(
+      `INSERT INTO rings (id, owner_id, element, tier, max_uses, current_uses, xp, in_carry)
+       VALUES (?, ?, 0, 0, 3, 3, 1000, 1)`,
+    ).run(`ring_spcarry_${Math.random().toString(36).slice(2)}`, p);
+    expect(repo.getSpareCapacity(p)).toBe(0); // carried XP excluded
+    expect(repo.getCarryCap(p)).toBe(5);
+  });
+
+  test('200 aggregate Reliquary XP → spare capacity 2, carry cap 7', () => {
+    const p = makePlayer();
+    for (let i = 0; i < 2; i++) {
+      db.prepare(
+        `INSERT INTO rings (id, owner_id, element, tier, max_uses, current_uses, xp, in_carry)
+         VALUES (?, ?, 0, 0, 3, 3, 100, 0)`,
+      ).run(`ring_sp200_${i}_${Math.random().toString(36).slice(2)}`, p);
+    }
+    expect(repo.getSpareCapacity(p)).toBe(2);
+    expect(repo.getCarryCap(p)).toBe(7);
+  });
+
+  test('awardXP with amount=0 at the exact threshold boundary is a strict no-op', () => {
+    // Adversarial: a ring at exactly 1499 XP (one below T2). Awarding 0 must leave
+    // every column untouched — no tier upgrade, no max_uses change.
+    const p = makePlayer();
+    const r = makeRing(p, ElementEnum.WATER, 1, 4, 1499);
+    repo.awardXP(r, 0);
+    const ring = getRing(p, r);
+    expect(ring.xp).toBe(1499); // XP unchanged
+    expect(ring.tier).toBe(1);  // still Tier 1 — threshold NOT crossed
+    expect(ring.max_uses).toBe(4);
+  });
+
+  test('awardXP crossing T0→T3 in one jump grants exactly +3 max uses', () => {
+    // Spec C2: one +1 grant per natural tier crossed. A 0→3000 XP jump crosses
+    // T1 (500), T2 (1500), T3 (3000) — exactly 3 crossings.
+    const p = makePlayer();
+    const r = makeRing(p, ElementEnum.FIRE, 0, 3, 0); // Tier 0, natural max_uses 3
+    repo.awardXP(r, 3000);
+    const ring = getRing(p, r);
+    expect(ring.tier).toBe(3);
+    expect(ring.max_uses).toBe(6); // 3 + 3 crossings = 6, matching naturalMaxUses(3)
+    expect(ring.current_uses).toBe(3); // current_uses is never touched by awardXP
+  });
+
   test('recomputeRingTiers recomputes tier/max_uses and is idempotent (#173 C8)', () => {
     const p = makePlayer();
     // Stale rows from the old model: wrong tier, fixed-5 max_uses.
@@ -221,3 +302,4 @@ describe('awardXP — natural tier crossings (#173 C2)', () => {
     expect(after2).toEqual(after1);
   });
 });
+

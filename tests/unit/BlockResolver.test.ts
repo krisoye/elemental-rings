@@ -183,6 +183,121 @@ describe('resolveBlock — STRONG parry (case 4) + WEAK catch', () => {
   });
 });
 
+// ---------------------------------------------------------------------------
+// Regression / adversarial tests — QA pass (post-implementation, post-E2E).
+// These lock in spec-level guarantees that the happy-path suites above exercise
+// only implicitly, and probe edge cases that would be silent in E2E scenarios.
+// ---------------------------------------------------------------------------
+
+describe('resolveBlock — use-spend asymmetry (C5 adversarial)', () => {
+  // Spec (C5): MISTIME burns exactly 1 DEFENDER use; NO_BLOCK burns 0 on both sides.
+  // The attacker never has uses deducted by resolveBlock — that is the game's
+  // responsibility after the exchange (spend on attack-fire, not on landing).
+
+  test('MISTIME burns exactly 1 defender use, never touches attacker uses', () => {
+    const atk = makeRing(FIRE, 3);
+    const def = makeRing(WATER, 3);
+    resolveBlock(atk, def, 'MISTIME');
+    expect(def.currentUses).toBe(2);
+    // Attacker uses are untouched by the resolver — the caller manages attack-fire cost.
+    expect(atk.currentUses).toBe(3);
+  });
+
+  test('NO_BLOCK burns 0 uses on both attacker and defender', () => {
+    const atk = makeRing(FIRE, 3);
+    const def = makeRing(WATER, 3);
+    resolveBlock(atk, def, 'NO_BLOCK');
+    expect(atk.currentUses).toBe(3); // attacker untouched
+    expect(def.currentUses).toBe(3); // defender never committed a ring — untouched
+  });
+
+  test('MISTIME with 2 uses burns to 1, NOT extinguished', () => {
+    const def = makeRing(WATER, 2);
+    resolveBlock(makeRing(FIRE, 3), def, 'MISTIME');
+    expect(def.currentUses).toBe(1);
+    expect(def.isExtinguished).toBe(false);
+  });
+});
+
+describe('resolveBlock — STRONG+BLOCK simultaneous case-2 AND case-3 (C5 adversarial)', () => {
+  // Spec (C5): STRONG + BLOCK produces BOTH the case-2 blockGaugeDeltas AND the
+  // case-3 blockedGaugeElement in the SAME BlockResult. These must co-exist, not
+  // replace each other. This test uses FIRE strong-blocking WOOD so that the
+  // STRONG_BLOCK_DECREMENT table produces two entries (WOOD and SHADOW) — the
+  // hardest case because the spec says Fire beats BOTH Wood and Shadow simultaneously.
+
+  test('FIRE strong-blocks WOOD → blockGaugeDeltas [FIRE] AND blockedGaugeElement [WOOD, SHADOW] simultaneously', () => {
+    // WOOD attacks (FIRE is its weak element); FIRE defends → FIRE is STRONG vs WOOD.
+    const def = makeRing(FIRE, 3); // Tier 0, delta = 1/2^0 = 1.0
+    const r = resolveBlock(makeRing(WOOD, 3), def, 'BLOCK');
+    // Both structures must be populated at once — neither replaces the other.
+    expect(r.relationship).toBe('STRONG');
+    expect(r.defenderHeartLost).toBe(false);
+    expect(r.blockGaugeDeltas).toEqual([{ element: FIRE, delta: 1.0 }]);
+    expect(r.blockedGaugeElement.sort()).toEqual([ElementEnum.WOOD, ElementEnum.SHADOW].sort());
+    // And rally does NOT trigger on a BLOCK (only PARRY triggers rally).
+    expect(r.rallyContinues).toBe(false);
+    expect(r.clearAllGauges).toBe(false);
+  });
+
+  test('WOOD strong-blocks WATER → case-2 delta [{WOOD,1.0}] AND case-3 decrement [WATER]', () => {
+    const def = makeRing(WOOD, 3);
+    const r = resolveBlock(makeRing(WATER, 3), def, 'BLOCK');
+    expect(r.relationship).toBe('STRONG');
+    expect(r.blockGaugeDeltas).toEqual([{ element: WOOD, delta: 1.0 }]);
+    expect(r.blockedGaugeElement).toEqual([WATER]);
+  });
+});
+
+describe('resolveBlock — WEAK catch invariants (C5 adversarial)', () => {
+  // Spec (C5): a WEAK catch → defenderHeartLost=true, blockGaugeDeltas=[], rallyContinues=false.
+  // All three must hold on BOTH BLOCK and PARRY timing for a weak pair.
+
+  test('PARRY timing on a WEAK pair → heart lost, no gauge, no rally, no clearAllGauges', () => {
+    // FIRE attacks WOOD — WOOD is WEAK to FIRE in the triangle.
+    const def = makeRing(WOOD, 3);
+    const r = resolveBlock(makeRing(FIRE, 3), def, 'PARRY');
+    expect(r.relationship).toBe('WEAK');
+    expect(r.defenderHeartLost).toBe(true);
+    expect(r.blockGaugeDeltas).toEqual([]);
+    expect(r.blockedGaugeElement).toEqual([]);
+    expect(r.rallyContinues).toBe(false);
+    expect(r.clearAllGauges).toBe(false);
+  });
+});
+
+describe('resolveBlock — fractional tier deltas (C5/C6 regression)', () => {
+  // C5 mandates delta = 1/2^tier per tracked parent.
+  // Tier-1 base ring → delta 0.5; Tier-2 Steam → each parent delta 0.25.
+  // The Tier-2 Steam case is already in the NEUTRAL block suite above; this
+  // suite adds Tier-1 base and Tier-2 STEAM strong-block to complete the tier
+  // ladder and lock in the formula.
+
+  test('Tier-1 WATER base neutral block → blockGaugeDeltas [{WATER, 0.5}]', () => {
+    // Tier 1 starts at 500 XP; delta = 1/2^1 = 0.5.
+    const def = makeRing(WATER, 3, tierStartXp(1));
+    // WIND attack vs WATER defense → NEUTRAL (Wind is always neutral).
+    const r = resolveBlock(makeRing(WIND, 3), def, 'BLOCK');
+    expect(r.relationship).toBe('NEUTRAL');
+    expect(r.blockGaugeDeltas).toEqual([{ element: WATER, delta: 0.5 }]);
+  });
+
+  test('Tier-2 STEAM strong-blocks WOOD → case-2 [{FIRE,0.25},{WATER,0.25}] AND case-3 [WOOD,SHADOW]', () => {
+    // WOOD attack vs STEAM defense: STEAM has FIRE+WATER parents. FIRE strongly
+    // beats Wood (fusionBeats), so the defense is STRONG. Tier 2 → delta 0.25 each.
+    // Case 3: FIRE beats WOOD → WOOD+SHADOW decremented.
+    const def = makeRing(STEAM, 3, tierStartXp(2));
+    const r = resolveBlock(makeRing(WOOD, 3), def, 'BLOCK');
+    expect(r.relationship).toBe('STRONG');
+    expect(r.blockGaugeDeltas).toEqual([
+      { element: FIRE, delta: 0.25 },
+      { element: WATER, delta: 0.25 },
+    ]);
+    expect(r.blockedGaugeElement.sort()).toEqual([ElementEnum.WOOD, ElementEnum.SHADOW].sort());
+    expect(r.defenderHeartLost).toBe(false);
+  });
+});
+
 // A fusion ring is a single compound element: 1 heart per use, no per-component
 // heart loss, fused-vs-fused is always NEUTRAL.
 describe('resolveBlock — compound fusion behaviour', () => {
