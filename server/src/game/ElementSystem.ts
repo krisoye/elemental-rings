@@ -1,5 +1,5 @@
 import { ElementEnum } from '../../../shared/types';
-import { TRIANGLE, NEUTRAL } from './Fusions';
+import { TRIANGLE, NEUTRAL, isFusion, triangleComponentsOf } from './Fusions';
 
 export { isFusion, fusionParents, componentsOf, triangleComponentsOf } from './Fusions';
 
@@ -20,6 +20,23 @@ const BEATS: Record<number, number> = {
 /** True when `a` (triangle) beats `b` (triangle) in the cycle. */
 function triangleBeats(a: number, b: number): boolean {
   return BEATS[a] === b;
+}
+
+/**
+ * Compound offensive matchup (GDD §3.4). A fusion ring resolves as a single
+ * compound element whose offensive profile is the UNION of its triangle
+ * parents' strengths. Wind/Earth parents carry no triangle relationship, so
+ * they contribute nothing; Dust (Wind+Earth) beats nothing.
+ *
+ * @param fusionEl a fusion element index (5–14).
+ * @param targetEl the element under attack.
+ * @returns true iff `targetEl` is a base element and is beaten by at least one
+ *   of `fusionEl`'s triangle parents. False for any fusion target (fusions have
+ *   no weakness) and for any base target none of the parents beat.
+ */
+export function fusionBeats(fusionEl: number, targetEl: number): boolean {
+  if (isFusion(targetEl)) return false; // fusions have no weakness — only base targets fall
+  return triangleComponentsOf(fusionEl).some((parent) => triangleBeats(parent, targetEl));
 }
 
 // Shadow's asymmetric matchup (GDD §3.5), independent of the triangle:
@@ -68,6 +85,30 @@ function shadowRelationship(
  * @param role whose standing to report ('attack' or 'defense')
  */
 export function resolve(attackerEl: number, defenderEl: number, role: 'attack' | 'defense'): Relationship {
+  // Compound fusion matchup (§3.4) takes precedence over the base/Shadow logic.
+  const attackerFusion = isFusion(attackerEl);
+  const defenderFusion = isFusion(defenderEl);
+
+  if (attackerFusion && defenderFusion) {
+    return 'NEUTRAL'; // fused-vs-fused is always Neutral, both roles (incl. mirror).
+  }
+
+  if (attackerFusion) {
+    // Attacker is a fusion, defender is a base element.
+    const beats = fusionBeats(attackerEl, defenderEl);
+    if (role === 'attack') return beats ? 'STRONG' : 'NEUTRAL';
+    return beats ? 'WEAK' : 'NEUTRAL'; // defender's standing when the fusion beats it.
+  }
+
+  if (defenderFusion) {
+    // Defender is a fusion, attacker is a base element. A fusion has no weakness:
+    // it is STRONG when its compound profile beats the base attacker, else NEUTRAL —
+    // never WEAK.
+    const beats = fusionBeats(defenderEl, attackerEl);
+    if (role === 'defense') return beats ? 'STRONG' : 'NEUTRAL';
+    return beats ? 'WEAK' : 'NEUTRAL'; // attacker's mirror standing.
+  }
+
   // Shadow (§3.5) sits outside the triangle/neutral sets; resolve its asymmetric
   // matchup first when either side is Shadow, then fall through otherwise.
   const shadow = shadowRelationship(attackerEl, defenderEl, role);

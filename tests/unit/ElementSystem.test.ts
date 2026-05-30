@@ -3,6 +3,7 @@ import {
   resolve,
   counterOf,
   isFusion,
+  fusionBeats,
   fusionParents,
   componentsOf,
   triangleComponentsOf,
@@ -213,4 +214,100 @@ describe('fusion helpers', () => {
     expect(triangleComponentsOf(WOOD)).toEqual([WOOD]));
   test('triangleComponentsOf: base neutral → []', () =>
     expect(triangleComponentsOf(WIND)).toEqual([]));
+});
+
+// #176 (EPIC #173 C3) — Compound element matchup (GDD §3.4). A fusion ring
+// resolves as a single compound element: offensive profile = union of its
+// triangle parents' strengths; no weakness; fused-vs-fused always Neutral.
+const ALL_FUSIONS = [STEAM, WILDFIRE, INFERNO, MAGMA, TIDAL, STORM, MUD, THORNADO, BLOOM, DUST];
+
+// §3.4 reference table: fusion → the base elements it beats.
+const FUSION_BEATS_TABLE: Record<number, number[]> = {
+  [STEAM]: [WOOD, FIRE], // Fire→Wood, Water→Fire
+  [WILDFIRE]: [WOOD, WATER], // Fire→Wood, Wood→Water
+  [TIDAL]: [FIRE, WATER], // Water→Fire, Wood→Water
+  [INFERNO]: [WOOD], // Fire→Wood (Wind contributes nothing)
+  [MAGMA]: [WOOD], // Fire→Wood (Earth contributes nothing)
+  [STORM]: [FIRE], // Water→Fire (Wind contributes nothing)
+  [MUD]: [FIRE], // Water→Fire (Earth contributes nothing)
+  [THORNADO]: [WATER], // Wood→Water (Wind contributes nothing)
+  [BLOOM]: [WATER], // Wood→Water (Earth contributes nothing)
+  [DUST]: [], // Wind+Earth — beats nothing
+};
+
+const FUSION_NAME: Record<number, string> = {
+  [STEAM]: 'STEAM',
+  [WILDFIRE]: 'WILDFIRE',
+  [INFERNO]: 'INFERNO',
+  [MAGMA]: 'MAGMA',
+  [TIDAL]: 'TIDAL',
+  [STORM]: 'STORM',
+  [MUD]: 'MUD',
+  [THORNADO]: 'THORNADO',
+  [BLOOM]: 'BLOOM',
+  [DUST]: 'DUST',
+};
+
+describe('fusionBeats — §3.4 compound matchup table', () => {
+  for (const fusion of ALL_FUSIONS) {
+    const beaten = new Set(FUSION_BEATS_TABLE[fusion]);
+    test(`${FUSION_NAME[fusion]} beats exactly [${FUSION_BEATS_TABLE[fusion]
+      .map((e) => NAME[e])
+      .join(', ')}]`, () => {
+      for (const base of [FIRE, WATER, EARTH, WIND, WOOD, SHADOW]) {
+        expect(fusionBeats(fusion, base)).toBe(beaten.has(base));
+      }
+    });
+  }
+
+  test('a fusion never beats another fusion (no weakness on either side)', () => {
+    for (const a of ALL_FUSIONS) {
+      for (const b of ALL_FUSIONS) {
+        expect(fusionBeats(a, b)).toBe(false);
+      }
+    }
+  });
+});
+
+describe('resolve — compound fusion vs base (§3.4)', () => {
+  for (const fusion of ALL_FUSIONS) {
+    const beaten = new Set(FUSION_BEATS_TABLE[fusion]);
+    for (const base of [FIRE, WATER, EARTH, WIND, WOOD]) {
+      const hit = beaten.has(base);
+
+      // Fusion attacks a base defender.
+      test(`${FUSION_NAME[fusion]} attack vs ${NAME[base]} → ${hit ? 'STRONG/WEAK' : 'NEUTRAL'}`, () => {
+        expect(resolve(fusion, base, 'attack')).toBe(hit ? 'STRONG' : 'NEUTRAL');
+        expect(resolve(fusion, base, 'defense')).toBe(hit ? 'WEAK' : 'NEUTRAL');
+      });
+
+      // Base attacks a fusion defender — fusion has NO weakness.
+      test(`${NAME[base]} attack vs ${FUSION_NAME[fusion]} defense → ${
+        hit ? 'STRONG' : 'NEUTRAL'
+      } (never WEAK)`, () => {
+        const def = resolve(base, fusion, 'defense');
+        expect(def).toBe(hit ? 'STRONG' : 'NEUTRAL');
+        expect(def).not.toBe('WEAK'); // fusion defender is never punished
+        expect(resolve(base, fusion, 'attack')).toBe(hit ? 'WEAK' : 'NEUTRAL');
+      });
+    }
+
+    // A fusion defender is never WEAK against ANY base attacker (incl. Shadow).
+    test(`${FUSION_NAME[fusion]} defender is never WEAK vs any base attacker`, () => {
+      for (const att of [FIRE, WATER, EARTH, WIND, WOOD, SHADOW]) {
+        expect(resolve(att, fusion, 'defense')).not.toBe('WEAK');
+      }
+    });
+  }
+});
+
+describe('resolve — fused-vs-fused is always NEUTRAL (§3.4)', () => {
+  for (const a of ALL_FUSIONS) {
+    for (const b of ALL_FUSIONS) {
+      test(`${FUSION_NAME[a]} vs ${FUSION_NAME[b]} → NEUTRAL (both roles)`, () => {
+        expect(resolve(a, b, 'attack')).toBe('NEUTRAL');
+        expect(resolve(a, b, 'defense')).toBe('NEUTRAL');
+      });
+    }
+  }
 });
