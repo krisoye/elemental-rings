@@ -108,7 +108,7 @@ test('reliquary: opens at the wall and renders the live stats header', async ({ 
 
   // The LOADOUT badge shows carried / cap.
   const badge = await campTextByName(page, 'loadout-badge');
-  expect(badge).toBe(`${carriedCount(me)} / ${me.player.carry_cap}`);
+  expect(badge).toBe(`(${carriedCount(me)}/${me.player.carry_cap})`);
   await ctx.close();
 });
 

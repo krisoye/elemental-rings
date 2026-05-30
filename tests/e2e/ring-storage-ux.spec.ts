@@ -178,23 +178,23 @@ test('reliquary-redesign: two-panel labels + live stats header are present', asy
 test('scroll: overflowing sanctum grid clips at 3 rows and scrolls by row', async ({ browser }) => {
   const token = await registerAndToken();
   const { rings } = await getMe(token);
-  // 10 starter rings; carry only 2 so 8 remain At Sanctum (3 grid rows at 3-col width).
-  await putCarry(token, rings.slice(0, 2).map((r: any) => r.id));
+  // 10 starter rings; carry 0 so all 10 remain in Reliquary (4 grid rows at 3-col width).
+  await putCarry(token, []);
 
   const ctx = await browser.newContext();
   await ctx.addInitScript(`localStorage.setItem('er_token', ${JSON.stringify(token)})`);
   const page = await ctx.newPage();
   await loadSanctum(page);
-  await page.waitForFunction(() => (window as any).__campState.atSanctum.length === 8, {
+  await page.waitForFunction(() => (window as any).__campState.atSanctum.length === 10, {
     timeout: 8000,
   });
   await openReliquary(page);
 
-  await page.waitForFunction(() => (window as any).__campState.sanctumTotalRows === 3, {
+  await page.waitForFunction(() => (window as any).__campState.sanctumTotalRows === 4, {
     timeout: 5000,
   });
   let cs = await page.evaluate(() => (window as any).__campState);
-  expect(cs.sanctumTotalRows).toBe(3);
+  expect(cs.sanctumTotalRows).toBe(4);
   expect(cs.sanctumVisibleRows).toBe(3);
   expect(cs.sanctumScrollRow).toBe(0);
 
@@ -211,7 +211,7 @@ test('scroll: overflowing sanctum grid clips at 3 rows and scrolls by row', asyn
       .getAll()
       .flatMap((c: any) => (c.getAll ? [c, ...c.getAll()] : [c]))
       .filter((g: any) => typeof g.getCardContainer === 'function')
-      .find((g: any) => g.getTotalRows() === 3);
+      .find((g: any) => g.getTotalRows() === 4);
     return grid ? grid.getCardContainer().y : null;
   });
   expect(cardY).toBe(-92);
@@ -271,17 +271,17 @@ test('reliquary-redesign: move a Reliquary ring into Spare carries it', async ({
 test('scroll: closing (Esc) and reopening resets scroll to row 0', async ({ browser }) => {
   const token = await registerAndToken();
   const { rings } = await getMe(token);
-  await putCarry(token, rings.slice(0, 2).map((r: any) => r.id)); // 8 at sanctum
+  await putCarry(token, []); // all 10 in Reliquary
 
   const ctx = await browser.newContext();
   await ctx.addInitScript(`localStorage.setItem('er_token', ${JSON.stringify(token)})`);
   const page = await ctx.newPage();
   await loadSanctum(page);
-  await page.waitForFunction(() => (window as any).__campState.atSanctum.length === 8, {
+  await page.waitForFunction(() => (window as any).__campState.atSanctum.length === 10, {
     timeout: 8000,
   });
   await openReliquary(page);
-  await page.waitForFunction(() => (window as any).__campState.sanctumTotalRows === 3, {
+  await page.waitForFunction(() => (window as any).__campState.sanctumTotalRows === 4, {
     timeout: 5000,
   });
 
@@ -294,7 +294,7 @@ test('scroll: closing (Esc) and reopening resets scroll to row 0', async ({ brow
   await page.waitForFunction(() => (window as any).__sanctumOverlayOpen === null, { timeout: 5000 });
 
   await openReliquary(page);
-  await page.waitForFunction(() => (window as any).__campState.sanctumTotalRows === 3, {
+  await page.waitForFunction(() => (window as any).__campState.sanctumTotalRows === 4, {
     timeout: 5000,
   });
   const row = await page.evaluate(() => (window as any).__campState.sanctumScrollRow);
