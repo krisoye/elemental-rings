@@ -267,3 +267,32 @@ To add collision to a tile, add `collides: true` to its tile ID in the relevant 
 - `bed` → sleep
 - `eat` → food / cooking (was `campfire`, zone moved to the table)
 - `door` → touch-to-exit (fires automatically, no E press needed)
+
+---
+
+## Generated Screen Convention (16px)
+
+Generated screens — **all Forest/Swamp except `forest_anchorage`** — are produced
+by `gen-forest-screens.mjs` and `gen-swamp-map.mjs` (sharing `lib/map-builders.mjs`),
+NOT hand-authored in Tiled. They use the 6-tileset fixed-firstgid GID contract from
+`client/scripts/lib/forest-gid-map.mjs`:
+
+| Tileset (texture key) | firstgid | Contents |
+|---|---|---|
+| `autotile_grass_16` | 1 | Grass variants 0–47 (ground base; forest background) |
+| `autotile_dirt_16` | 49 | Dirt/road variants (paths / swamp walkways) |
+| `autotile_water_16` | 97 | Water variants — all 48 collide (forest ponds; swamp background) |
+| `autotile_cliff_16` | 145 | Cliff variants — all 48 collide (perimeter + groves/outcrops) |
+| `ModernEra_GreenForest_Tileset` | 193 | Tree trunks (behind), canopy (in-front), rocks |
+| `berry_and_trees` | 313 | Bush / flower detail |
+
+Layers follow the three-layer convention: `ground` (depth 0), `behind` (depth 2,
+non-empty collision — trunks/outcrops block), `in-front` (depth 5, no collision —
+canopy the player walks under), plus an `objects` group (spawn / anchorage /
+waystone / biome_exit).
+
+**Do NOT open generated maps in Tiled to edit them** — they are overwritten by
+`npm run gen:forest-screens` / `npm run gen:swamp` (deterministic output). To change
+a generated screen, edit the generator or the manifest (`shared/world/forest.ts`,
+`shared/world/swamp.ts`) and regenerate. Only `forest_anchorage.json` is
+hand-authored and safe to open in Tiled.
