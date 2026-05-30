@@ -325,6 +325,46 @@ test('reliquary: Escape closes the modal', async ({ browser }) => {
   await ctx.close();
 });
 
+// ── Scenario 6b: the [×] close button closes the modal ───────────────────────
+// Regression for the deselect-zone z-order bug: the full-modal transparent
+// deselect rectangle was added on TOP of the [×] button, so a click at the
+// button's location was swallowed by the deselect handler and the modal never
+// closed. Reproduce the click the way the input system resolves it — the
+// top-most (last-rendered) interactive child overlapping the [×] point wins —
+// and assert that winner is the close button, which closes the overlay.
+test('reliquary: the [×] button closes the modal', async ({ browser }) => {
+  const token = await registerAndToken();
+  const ctx = await browser.newContext();
+  await ctx.addInitScript(`localStorage.setItem('er_token', ${JSON.stringify(token)})`);
+  const page = await ctx.newPage();
+  await loadSanctum(page);
+  await openReliquary(page);
+
+  const winner = await page.evaluate(() => {
+    const scene = (window as any).__scene;
+    const kids = scene.overlay.getAll();
+    const closeBtn = kids.find((o: any) => o.text === '[×]');
+    const px = closeBtn.x;
+    const py = closeBtn.y;
+    // Interactive children whose bounds contain the [×] center; the click resolves
+    // to the last one (highest child index = rendered on top).
+    const contenders = kids.filter((o: any) => {
+      if (!o.input?.enabled) return false;
+      const b = o.getBounds();
+      return px >= b.x && px <= b.x + b.width && py >= b.y && py <= b.y + b.height;
+    });
+    const top = contenders[contenders.length - 1];
+    top.emit('pointerdown');
+    return top.name || top.text;
+  });
+
+  // The [×] button — not the deselect zone — must be the click winner.
+  expect(winner).toBe('[×]');
+  await page.waitForFunction(() => (window as any).__sanctumOverlayOpen === null, { timeout: 5000 });
+  expect(await page.evaluate(() => (window as any).__sanctumOverlayOpen)).toBeNull();
+  await ctx.close();
+});
+
 // ── Scenario 7: Within-loadout move (Spare ↔ Battle Hand) leaves aggregate_xp ─
 test('reliquary: moving within the loadout does not change aggregate_xp', async ({ browser }) => {
   const token = await registerAndToken();
