@@ -20,6 +20,9 @@ export class StakePanel extends Phaser.GameObjects.Container {
   private readonly hintLbl: Phaser.GameObjects.Text;
 
   private escrowed = false;
+  // #154 — whether the Thumb is the active swap selection (yellow border). The
+  // selection stroke overrides the normal/escrow stroke and survives refreshes.
+  private selected = false;
 
   constructor(
     scene: Phaser.Scene,
@@ -95,17 +98,10 @@ export class StakePanel extends Phaser.GameObjects.Container {
       this.hintLbl.setText('');
 
       this.escrowed = ring.escrowed === 1;
-      if (this.escrowed) {
-        this.lockLbl.setText('LOCKED');
-        this.bg.setStrokeStyle(2, 0xff6666);
-      } else {
-        this.lockLbl.setText('');
-        this.bg.setStrokeStyle(2, 0xaa8800);
-      }
+      this.lockLbl.setText(this.escrowed ? 'LOCKED' : '');
     } else {
       this.escrowed = false;
       this.bg.setFillStyle(0x333333);
-      this.bg.setStrokeStyle(2, 0xaa8800);
       this.elemLbl.setText('—').setColor('#888888');
       this.usesLbl.setText('');
       this.xpLbl.setText('');
@@ -113,5 +109,22 @@ export class StakePanel extends Phaser.GameObjects.Container {
       this.lockLbl.setText('');
       this.hintLbl.setText('click to stake');
     }
+    this.applyStroke();
+  }
+
+  /**
+   * Highlight the Thumb card as the active swap selection (yellow border), or
+   * clear it. The selection stroke overrides the normal/escrow stroke. #154.
+   */
+  setSelected(selected: boolean): void {
+    this.selected = selected;
+    this.applyStroke();
+  }
+
+  /** Draw the border: yellow when selected, red when escrowed, else gold. */
+  private applyStroke(): void {
+    if (this.selected) this.bg.setStrokeStyle(3, 0xffff00);
+    else if (this.escrowed) this.bg.setStrokeStyle(2, 0xff6666);
+    else this.bg.setStrokeStyle(2, 0xaa8800);
   }
 }

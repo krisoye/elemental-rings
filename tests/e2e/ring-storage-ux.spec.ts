@@ -164,13 +164,12 @@ test('reliquary-redesign: two-panel labels + live stats header are present', asy
       hasFuse: !!all.find((o: any) => o.type === 'Text' && o.text === '[Fuse Rings]'),
     };
   });
-  expect(labels.reliquary).toBe('RELIQUARY');
+  expect(labels.reliquary).toContain('RELIQUARY'); // label is 'RELIQUARY  ↓'
   expect(labels.loadout).toBe('LOADOUT');
   expect(labels.battleHand).toBe('BATTLE HAND');
-  expect(labels.spare).toBe('SPARE');
-  expect(labels.hasFuse).toBe(true);
-  expect(labels.header).toContain('aggregate_xp:');
-  expect(labels.header).toContain('spirit_max:');
+  expect(labels.spare).toContain('SPARE'); // label is 'SPARE  ↓'
+  expect(labels.hasFuse).toBe(false); // Fuse Rings moved out of this overlay
+  expect(labels.header).toContain('XP:'); // renamed from aggregate_xp
   expect(labels.header).toContain('spirit:');
   await ctx.close();
 });
@@ -179,14 +178,14 @@ test('reliquary-redesign: two-panel labels + live stats header are present', asy
 test('scroll: overflowing sanctum grid clips at 3 rows and scrolls by row', async ({ browser }) => {
   const token = await registerAndToken();
   const { rings } = await getMe(token);
-  // 10 starter rings; carry only 2 so 8 remain At Sanctum (4 grid rows).
-  await putCarry(token, rings.slice(0, 2).map((r: any) => r.id));
+  // 10 starter rings; carry 0 so all 10 remain in Reliquary (4 grid rows at 3-col width).
+  await putCarry(token, []);
 
   const ctx = await browser.newContext();
   await ctx.addInitScript(`localStorage.setItem('er_token', ${JSON.stringify(token)})`);
   const page = await ctx.newPage();
   await loadSanctum(page);
-  await page.waitForFunction(() => (window as any).__campState.atSanctum.length === 8, {
+  await page.waitForFunction(() => (window as any).__campState.atSanctum.length === 10, {
     timeout: 8000,
   });
   await openReliquary(page);
@@ -272,13 +271,13 @@ test('reliquary-redesign: move a Reliquary ring into Spare carries it', async ({
 test('scroll: closing (Esc) and reopening resets scroll to row 0', async ({ browser }) => {
   const token = await registerAndToken();
   const { rings } = await getMe(token);
-  await putCarry(token, rings.slice(0, 2).map((r: any) => r.id)); // 8 at sanctum
+  await putCarry(token, []); // all 10 in Reliquary
 
   const ctx = await browser.newContext();
   await ctx.addInitScript(`localStorage.setItem('er_token', ${JSON.stringify(token)})`);
   const page = await ctx.newPage();
   await loadSanctum(page);
-  await page.waitForFunction(() => (window as any).__campState.atSanctum.length === 8, {
+  await page.waitForFunction(() => (window as any).__campState.atSanctum.length === 10, {
     timeout: 8000,
   });
   await openReliquary(page);
