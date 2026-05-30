@@ -32,12 +32,22 @@ export const STARTER_GOLD = 200;
 // (floored at 0 so a balance never goes negative).
 export const GOLD_FORFEIT_PENALTY = 25;
 
+// @deprecated EPIC #173 — the hard-cap tier model is replaced by XP-derived tiers
+// (see server/src/game/Tiers.ts: tierForXp / naturalMaxUses). These constants are
+// retained only so the legacy fuseRings XP-cap gate keeps compiling until A4
+// (#178) rewrites fusion crafting to the §4.6 same-tier / min(parents)−1 rules and
+// removes them. Do NOT use them in new code — tier and max_uses now derive from XP.
+//
 // #47 — Fusion crafting (GDD §5). A parent ring must reach its tier's XP cap
 // before it can be fused; the resulting fusion ring resets to the new tier's
 // full uses and inherits the combined XP of both parents.
+/** @deprecated removed in A4 (#178); use tierForXp/naturalMaxUses (Tiers.ts). */
 export const TIER1_XP_CAP = 100;
+/** @deprecated removed in A4 (#178); use tierForXp/naturalMaxUses (Tiers.ts). */
 export const TIER2_XP_CAP = 300;
+/** @deprecated removed in A4 (#178); fusion uses = min(parents)−1 per §4.6. */
 export const TIER2_MAX_USES = 5;
+/** @deprecated removed in A4 (#178); fusion uses = min(parents)−1 per §4.6. */
 export const TIER3_MAX_USES = 7;
 
 // Outcome-based ring XP. Rings earn XP from exchange results, not per use.

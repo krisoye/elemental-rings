@@ -2,6 +2,7 @@ import Database from 'better-sqlite3';
 import fs from 'fs';
 import path from 'path';
 import { SPIRIT_BASE, XP_SCALER } from '../game/constants';
+import { tierForXp, naturalMaxUses } from '../game/Tiers';
 
 // DB path is env-driven so production can point at a persistent volume
 // (DB_PATH=/var/lib/elemental-rings/elemental.db via the systemd unit) while
@@ -77,6 +78,21 @@ db.exec(
 );
 db.exec('UPDATE players SET spirit_current = MIN(spirit_current, spirit_max)');
 db.exec(`UPDATE players SET spirit_current = spirit_max WHERE spirit_current < ${SPIRIT_BASE}`);
+
+// EPIC #173 C8 — recompute every existing ring's tier and max_uses from XP, so a
+// DB created under the old hard-cap model (tier stored independently, starter
+// tier 1, fixed per-tier max_uses) lines up with the XP-derived model in
+// Tiers.ts. Runs on every boot and is fully idempotent: tier and max_uses are
+// pure functions of the (unchanged) xp column, so re-running recomputes the same
+// values. Unlike the guarded one-time backfills below, there is no flag to gate —
+// the computation is its own fixed point.
+//
+// CAVEAT (fusion history): a fused ring's natural max_uses is min(parents)−1, not
+// 3+tier, and that history is not reconstructable from the persisted row. This
+// migration therefore recomputes EVERY ring as if natural (max_uses = 3+tier),
+// which can over-grant uses to a pre-existing fused ring. Accepted as pre-release
+// behaviour per the EPIC; A4 (#178) owns the fusion crafting path going forward.
+recomputeRingTiers();
 
 // #127 — forage_nodes: per-player node depletion tracking (GDD §10.10). The
 // table is created here with IF NOT EXISTS so it is idempotent on every boot.
@@ -168,6 +184,38 @@ function backfillCarry(): void {
         carried.add(ring.id);
       }
       for (const id of carried) setCarry.run(id);
+    }
+  });
+  run();
+}
+
+/**
+ * EPIC #173 C8 — recompute `tier = tierForXp(xp)` and `max_uses = naturalMaxUses
+ * (tier)` for every ring, aligning a legacy DB with the XP-derived tier model.
+ * Idempotent: both targets are pure functions of the unchanged `xp` column, so a
+ * second run produces identical values. Runs in a single transaction.
+ *
+ * Fusion caveat: every ring is recomputed as if natural (max_uses = 3+tier).
+ * A pre-existing fused ring's true natural max (min(parents)−1) cannot be
+ * reconstructed from its row, so it may be over-granted uses here — accepted as
+ * pre-release behaviour (see the call site comment).
+ */
+export function recomputeRingTiers(): void {
+  const rings = db.prepare('SELECT id, xp FROM rings').all() as Array<{
+    id: string;
+    xp: number;
+  }>;
+  // Recompute tier/max_uses, then clamp current_uses to the (possibly lowered)
+  // new max in the same statement so the migration never leaves current_uses
+  // above max_uses (e.g. an old fixed-5-use Tier-2 ring recomputed to 3).
+  const update = db.prepare(
+    'UPDATE rings SET tier = ?, max_uses = ?, current_uses = MIN(current_uses, ?) WHERE id = ?',
+  );
+  const run = db.transaction(() => {
+    for (const ring of rings) {
+      const tier = tierForXp(ring.xp);
+      const max = naturalMaxUses(tier);
+      update.run(tier, max, max, ring.id);
     }
   });
   run();

@@ -2,6 +2,7 @@ import { v4 as uuidv4 } from 'uuid';
 import { db } from './db';
 import { ElementEnum } from '../../../shared/types';
 import { fusionOf } from '../game/Fusions';
+import { tierForXp } from '../game/Tiers';
 import { getTalisman } from '../../../shared/talismans';
 import {
   SPIRIT_PER_RING_USE,
@@ -72,7 +73,9 @@ const STARTER_ELEMENTS: number[] = [
   ElementEnum.EARTH,
 ];
 
-const STARTER_TIER = 1;
+// GDD §4.2 / EPIC #173 C8 — starter rings begin at tier 0 with 3 max uses (xp=0).
+// Tier is XP-derived; a fresh ring at 0 XP is tier 0, and naturalMaxUses(0) = 3.
+const STARTER_TIER = 0;
 const STARTER_MAX_USES = 3;
 
 const insertPlayer = db.prepare(
@@ -235,6 +238,11 @@ const updateRingUses = db.prepare(
   `UPDATE rings SET current_uses = MIN(?, max_uses) WHERE id = ?`,
 );
 const updateRingXP = db.prepare(`UPDATE rings SET xp = xp + ? WHERE id = ?`);
+// EPIC #173 C2 — awardXP applies XP, the recomputed cached tier, and any
+// natural-crossing max_uses bonus in one statement so they never desync.
+const applyXpAndTierGrant = db.prepare(
+  `UPDATE rings SET xp = ?, tier = ?, max_uses = ? WHERE id = ?`,
+);
 const setRingXPAbsolute = db.prepare(`UPDATE rings SET xp = ? WHERE id = ? AND owner_id = ?`);
 const updatePlayerGold = db.prepare(`UPDATE players SET gold = gold + ? WHERE id = ?`);
 const updateRingEscrowed = db.prepare(`UPDATE rings SET escrowed = ? WHERE id = ?`);
@@ -339,10 +347,27 @@ export function saveRingUses(ringId: string, currentUses: number): void {
   updateRingUses.run(currentUses, ringId);
 }
 
-/** Award XP to a ring. */
-export function awardXP(ringId: string, xpAmount: number): void {
-  updateRingXP.run(xpAmount, ringId);
-}
+/**
+ * Award XP to a ring and apply any natural tier-crossing (GDD §4.2, EPIC #173 C2).
+ *
+ * Recomputes the tier from the new XP total via {@link tierForXp} and always
+ * refreshes the cached `tier` column. When the award pushes the ring across one
+ * or more tier thresholds, `max_uses` is permanently incremented by the number of
+ * tiers crossed (the natural +1-per-tier grant). `current_uses` is left untouched
+ * — the grant raises the ceiling; recharge fills it. A non-positive `xpAmount` is
+ * a no-op (no XP change can cross a threshold). Runs as a single transaction so
+ * the xp/tier/max_uses writes can never desync.
+ */
+export const awardXP = db.transaction((ringId: string, xpAmount: number): void => {
+  if (xpAmount <= 0) return;
+  const ring = selectRingById.get(ringId) as RingRow | undefined;
+  if (!ring) return;
+  const newXp = ring.xp + xpAmount;
+  const oldTier = tierForXp(ring.xp);
+  const newTier = tierForXp(newXp);
+  const grant = newTier > oldTier ? newTier - oldTier : 0;
+  applyXpAndTierGrant.run(newXp, newTier, ring.max_uses + grant, ringId);
+});
 
 /**
  * Set a ring's XP to an absolute value (only when owned by the player). Used by
