@@ -634,7 +634,9 @@ export class CampScene extends Phaser.Scene {
       // clip nothing but leak a Graphics object).
       this.input.off('wheel', this.onRingwallWheel, this);
       this.sanctumGrid.setVisibleRows(0);
+      this.sanctumGrid.setMaskOrigin(null, null);
       this.loadoutGrid.setVisibleRows(0);
+      this.loadoutGrid.setMaskOrigin(null, null);
       window.__campSanctumScroll = undefined;
       window.__campLoadoutScroll = undefined;
       this.releasePanel(c, this.sanctumGrid);
@@ -743,8 +745,13 @@ export class CampScene extends Phaser.Scene {
     this.adoptPanel(c, this.loadoutPanel, LOADOUT_GRID_X, 165);
     this.adoptPanel(c, this.loadoutGrid, COL_LOADOUT_X, 390);
 
-    // #85 Fix 2A — cap the grids now that they are positioned (the mask geometry
-    // needs the live world position). The Reliquary shows 3 rows; Spare shows 1.
+    // Pin the mask origin to the exact screen-space position of each grid before
+    // calling setVisibleRows. This bypasses getWorldTransformMatrix(), which can
+    // report stale or camera-adjusted coordinates in a nested Container / multi-
+    // camera setup, causing the clip rect to land above or below the visible window.
+    this.sanctumGrid.setMaskOrigin(COL_RELIQUARY_X, 148);
+    this.loadoutGrid.setMaskOrigin(COL_LOADOUT_X, 390);
+    // Now cap the grids at their visible-row windows.
     this.sanctumGrid.setVisibleRows(RINGWALL_VISIBLE_ROWS);
     this.loadoutGrid.setVisibleRows(1);
     // Mouse wheel over a scrollable grid scrolls it; elsewhere is a no-op.

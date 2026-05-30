@@ -61,6 +61,12 @@ export class InventoryGrid extends Phaser.GameObjects.Container {
   private visibleRows = 0; // 0 → masking/scroll disabled (unbounded grid)
   private totalRows = 0;
   private scrollRow = 0;
+  // Explicit screen-space mask origin set by the owning scene after adoptPanel.
+  // When set, applyMask uses these coordinates directly instead of the potentially
+  // unreliable getWorldTransformMatrix() (which can disagree with actual render
+  // position when the grid is inside a multi-camera nested Container hierarchy).
+  private maskOriginX: number | null = null;
+  private maskOriginY: number | null = null;
   // #154 — number of columns the grid wraps at. The Reliquary/Spare grids in the
   // Reliquary modal are 3-wide; legacy callers default to 2. Drives populate()'s
   // col wrap, the clip-mask width, and the scroll-arrow x.
@@ -79,6 +85,18 @@ export class InventoryGrid extends Phaser.GameObjects.Container {
     this.cardContainer = scene.add.container(0, 0);
     this.add(this.cardContainer);
     scene.add.existing(this);
+  }
+
+  /**
+   * Pin the mask clip rectangle to an explicit screen-space position. Call this
+   * after adoptPanel() positions the grid in the overlay so applyMask() doesn't
+   * have to infer the position from getWorldTransformMatrix(), which can diverge
+   * from the actual render position in a multi-camera nested Container hierarchy.
+   * Pass null/null to revert to the world-transform fallback.
+   */
+  setMaskOrigin(screenX: number | null, screenY: number | null): void {
+    this.maskOriginX = screenX;
+    this.maskOriginY = screenY;
   }
 
   /**
@@ -277,13 +295,15 @@ export class InventoryGrid extends Phaser.GameObjects.Container {
     const g = this.maskGraphics;
     g.clear();
     g.fillStyle(0xffffff);
-    // The grid lives inside the camera-pinned overlay container, so its world
-    // transform tx/ty is its top-left in screen space. The clip rect is the
-    // visible numCols-column × `rows`-row window, inset so selection strokes survive.
-    const m = this.getWorldTransformMatrix();
+    // Prefer the explicitly-set screen origin (from setMaskOrigin) over the world
+    // transform, which can diverge from the actual render position when the grid is
+    // inside a multi-camera nested Container hierarchy. The world-transform fallback
+    // works when both cameras have zero scroll and the container hierarchy is flat.
+    const ox = this.maskOriginX ?? this.getWorldTransformMatrix().tx;
+    const oy = this.maskOriginY ?? this.getWorldTransformMatrix().ty;
     g.fillRect(
-      m.tx - MASK_INSET,
-      m.ty - MASK_INSET,
+      ox - MASK_INSET,
+      oy - MASK_INSET,
       (this.numCols - 1) * COL_GAP + CARD_W + MASK_INSET * 2,
       rows * ROW_GAP + MASK_INSET * 2,
     );
