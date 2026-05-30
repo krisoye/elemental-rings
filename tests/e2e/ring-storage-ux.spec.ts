@@ -164,13 +164,12 @@ test('reliquary-redesign: two-panel labels + live stats header are present', asy
       hasFuse: !!all.find((o: any) => o.type === 'Text' && o.text === '[Fuse Rings]'),
     };
   });
-  expect(labels.reliquary).toBe('RELIQUARY');
+  expect(labels.reliquary).toContain('RELIQUARY'); // label is 'RELIQUARY  ↓'
   expect(labels.loadout).toBe('LOADOUT');
   expect(labels.battleHand).toBe('BATTLE HAND');
-  expect(labels.spare).toBe('SPARE');
-  expect(labels.hasFuse).toBe(true);
-  expect(labels.header).toContain('aggregate_xp:');
-  expect(labels.header).toContain('spirit_max:');
+  expect(labels.spare).toContain('SPARE'); // label is 'SPARE  ↓'
+  expect(labels.hasFuse).toBe(false); // Fuse Rings moved out of this overlay
+  expect(labels.header).toContain('XP:'); // renamed from aggregate_xp
   expect(labels.header).toContain('spirit:');
   await ctx.close();
 });
@@ -179,7 +178,7 @@ test('reliquary-redesign: two-panel labels + live stats header are present', asy
 test('scroll: overflowing sanctum grid clips at 3 rows and scrolls by row', async ({ browser }) => {
   const token = await registerAndToken();
   const { rings } = await getMe(token);
-  // 10 starter rings; carry only 2 so 8 remain At Sanctum (4 grid rows).
+  // 10 starter rings; carry only 2 so 8 remain At Sanctum (3 grid rows at 3-col width).
   await putCarry(token, rings.slice(0, 2).map((r: any) => r.id));
 
   const ctx = await browser.newContext();
@@ -191,11 +190,11 @@ test('scroll: overflowing sanctum grid clips at 3 rows and scrolls by row', asyn
   });
   await openReliquary(page);
 
-  await page.waitForFunction(() => (window as any).__campState.sanctumTotalRows === 4, {
+  await page.waitForFunction(() => (window as any).__campState.sanctumTotalRows === 3, {
     timeout: 5000,
   });
   let cs = await page.evaluate(() => (window as any).__campState);
-  expect(cs.sanctumTotalRows).toBe(4);
+  expect(cs.sanctumTotalRows).toBe(3);
   expect(cs.sanctumVisibleRows).toBe(3);
   expect(cs.sanctumScrollRow).toBe(0);
 
@@ -212,7 +211,7 @@ test('scroll: overflowing sanctum grid clips at 3 rows and scrolls by row', asyn
       .getAll()
       .flatMap((c: any) => (c.getAll ? [c, ...c.getAll()] : [c]))
       .filter((g: any) => typeof g.getCardContainer === 'function')
-      .find((g: any) => g.getTotalRows() === 4);
+      .find((g: any) => g.getTotalRows() === 3);
     return grid ? grid.getCardContainer().y : null;
   });
   expect(cardY).toBe(-92);
@@ -282,7 +281,7 @@ test('scroll: closing (Esc) and reopening resets scroll to row 0', async ({ brow
     timeout: 8000,
   });
   await openReliquary(page);
-  await page.waitForFunction(() => (window as any).__campState.sanctumTotalRows === 4, {
+  await page.waitForFunction(() => (window as any).__campState.sanctumTotalRows === 3, {
     timeout: 5000,
   });
 
@@ -295,7 +294,7 @@ test('scroll: closing (Esc) and reopening resets scroll to row 0', async ({ brow
   await page.waitForFunction(() => (window as any).__sanctumOverlayOpen === null, { timeout: 5000 });
 
   await openReliquary(page);
-  await page.waitForFunction(() => (window as any).__campState.sanctumTotalRows === 4, {
+  await page.waitForFunction(() => (window as any).__campState.sanctumTotalRows === 3, {
     timeout: 5000,
   });
   const row = await page.evaluate(() => (window as any).__campState.sanctumScrollRow);

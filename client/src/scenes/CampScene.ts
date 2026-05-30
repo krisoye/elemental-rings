@@ -1001,15 +1001,15 @@ export class CampScene extends Phaser.Scene {
     inSource: 'reliquary' | 'spare',
   ): Promise<void> {
     if (inSource === 'reliquary') {
-      // inId enters carry, outId leaves carry (and its slot). One carry PUT then
-      // one loadout PUT assigning the slot to inId.
+      // Assign the slot first so outId is cleared atomically by saveLoadout. Only
+      // then update carry — this order is safe under partial failure (if the carry
+      // PUT fails, the slot already shows inId which is uncarried but recoverable,
+      // vs the old order where the slot referenced an uncarried outId).
+      if (!(await this.putLoadout({ [slot]: inId }))) return;
       const carried = new Set(this.rings.filter((r) => r.in_carry === 1).map((r) => r.id));
       carried.add(inId);
       carried.delete(outId);
       if (!(await this.putCarry(Array.from(carried), false))) return;
-      // outId is no longer carried, so the server has already cleared it from the
-      // slot; assign inId to the now-free slot.
-      if (!(await this.putLoadout({ [slot]: inId }))) return;
     } else {
       // Spare source — both stay carried; inId takes the slot, outId falls to Spare.
       if (!(await this.putLoadout({ [slot]: inId }))) return;

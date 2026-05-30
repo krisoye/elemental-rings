@@ -103,8 +103,7 @@ test('reliquary: opens at the wall and renders the live stats header', async ({ 
   // computation. Assert each value appears verbatim.
   const header = await campTextByName(page, 'reliquary-header');
   expect(header).toBeTruthy();
-  expect(header).toContain(`aggregate_xp: ${me.player.aggregate_xp}`);
-  expect(header).toContain(`spirit_max: ${me.player.spirit_max}`);
+  expect(header).toContain(`XP: ${me.player.aggregate_xp}`);
   expect(header).toContain(`spirit: ${me.player.spirit_current} / ${me.player.spirit_max}`);
 
   // The LOADOUT badge shows carried / cap.
@@ -151,8 +150,7 @@ test('reliquary: moving a ring into Spare drops aggregate_xp and updates spirit_
   expect(after.player.spirit_max).toBeLessThanOrEqual(before.player.spirit_max);
   // The header re-renders from the new authoritative state.
   const header = await campTextByName(page, 'reliquary-header');
-  expect(header).toContain(`aggregate_xp: ${after.player.aggregate_xp}`);
-  expect(header).toContain(`spirit_max: ${after.player.spirit_max}`);
+  expect(header).toContain(`XP: ${after.player.aggregate_xp}`);
   await ctx.close();
 });
 
