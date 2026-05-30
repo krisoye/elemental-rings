@@ -86,4 +86,10 @@ export const MERCHANT_RING_BUY_PRICE_NEUTRAL = 25;   // GP to buy a Tier 1 Wind/
 export const MERCHANT_RING_SELL_PRICE_T1 = 10;       // GP when player sells Tier 1 triangle ring
 export const MERCHANT_RING_SELL_PRICE_NEUTRAL = 8;   // GP when player sells Tier 1 Wind/Earth ring
 
+// #182 — Reliquary capacity cap. Resting rings (in_carry=0 AND escrowed=0) consume
+// Reliquary slots. Players start with RELIQUARY_BASE_CAP slots; each Shard consumed
+// via POST /api/sanctum/expand-reliquary grants RELIQUARY_SHARD_INCREMENT more.
+export const RELIQUARY_BASE_CAP = 20;
+export const RELIQUARY_SHARD_INCREMENT = 10;
+
 

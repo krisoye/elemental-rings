@@ -46,6 +46,10 @@ import {
   merchantSellRing,
   ringBuyPrice,
   ringSellPrice,
+  getReliquaryCap,
+  getReliquaryShards,
+  getReliquaryCount,
+  addReliquaryShardToReliquary,
 } from '../persistence/PlayerRepo';
 import { NPC_SPAWNS, hashNpcId } from '../persistence/NpcSpawns';
 import {
@@ -174,9 +178,18 @@ apiRouter.get('/api/me', requireAuth, (req: Request, res: Response): void => {
   // derived from it. Both served live so the HUD always reflects current state.
   // #171 — carry_cap is now XP-derived (5 + floor(aggregate_xp/100)); override the
   // DB column so the client always receives the enforced cap, not the stale default.
+  // #182 — reliquary fields: cap (from DB column), shards held, and current count.
   const { aggregateXp, spiritMax } = getSpiritStats(playerId);
   res.status(200).json({
-    player: { ...player, spirit_max: spiritMax, aggregate_xp: aggregateXp, carry_cap: getCarryCap(playerId) },
+    player: {
+      ...player,
+      spirit_max: spiritMax,
+      aggregate_xp: aggregateXp,
+      carry_cap: getCarryCap(playerId),
+      reliquaryCap: getReliquaryCap(playerId),
+      reliquaryShards: getReliquaryShards(playerId),
+      reliquaryCount: getReliquaryCount(playerId),
+    },
     rings: getRingsByOwner(playerId),
     loadout: getLoadout(playerId) ?? null,
   });
@@ -553,6 +566,28 @@ apiRouter.post('/api/sanctum/summon', requireAuth, (req: Request, res: Response)
     anchor: anchorageId,
     spirit_current: getSpiritAndFood(playerId).spirit_current,
     spiritCost: cost,
+  });
+});
+
+/**
+ * POST /api/sanctum/expand-reliquary — spend one Reliquary Shard to expand the
+ * Reliquary capacity by RELIQUARY_SHARD_INCREMENT (#182). Atomic: the Shard is
+ * consumed and the cap raised in a single transaction; a second concurrent call
+ * for the same Shard cannot succeed. Requires auth.
+ *
+ * 400 { error: 'no Reliquary Shards' } when the player holds 0 Shards.
+ * 200 { reliquaryCap, reliquaryShards } on success.
+ */
+apiRouter.post('/api/sanctum/expand-reliquary', requireAuth, (req: Request, res: Response): void => {
+  const playerId = req.playerId as string;
+  const expanded = addReliquaryShardToReliquary(playerId);
+  if (!expanded) {
+    res.status(400).json({ error: 'no Reliquary Shards' });
+    return;
+  }
+  res.status(200).json({
+    reliquaryCap: getReliquaryCap(playerId),
+    reliquaryShards: getReliquaryShards(playerId),
   });
 });
 

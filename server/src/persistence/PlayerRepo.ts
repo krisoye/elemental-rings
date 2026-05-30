@@ -16,6 +16,8 @@ import {
   MERCHANT_RING_BUY_PRICE_NEUTRAL,
   MERCHANT_RING_SELL_PRICE_T1,
   MERCHANT_RING_SELL_PRICE_NEUTRAL,
+  RELIQUARY_BASE_CAP,
+  RELIQUARY_SHARD_INCREMENT,
 } from '../game/constants';
 
 /** A persisted player row (no password hash exposed to callers of read helpers). */
@@ -28,6 +30,10 @@ export interface PlayerRow {
   spirit_max: number;
   spirit_current: number;
   food_units: number;
+  /** #182 — current Reliquary capacity (starts at RELIQUARY_BASE_CAP=20). */
+  reliquary_cap: number;
+  /** #182 — unspent Reliquary Shards held by the player. */
+  reliquary_shards: number;
 }
 
 /** A persisted ring row. */
@@ -134,7 +140,8 @@ const updateAnchor = db.prepare(
 
 const selectByUsername = db.prepare(`SELECT * FROM players WHERE username = ?`);
 const selectById = db.prepare(
-  `SELECT id, username, gold, game_day, carry_cap, spirit_max, spirit_current, food_units
+  `SELECT id, username, gold, game_day, carry_cap, spirit_max, spirit_current, food_units,
+          reliquary_cap, reliquary_shards
    FROM players WHERE id = ?`,
 );
 const selectRingsByOwner = db.prepare(`SELECT * FROM rings WHERE owner_id = ?`);
@@ -767,6 +774,10 @@ export function getCarryCap(playerId: string): number {
  * Atomically set the carried set to EXACTLY the given ring ids. Validates that
  * the count is within the player's carry_cap and that every id is owned by the
  * player; throws otherwise. All other rings have their in_carry flag cleared.
+ *
+ * #182 — Reliquary cap guard: after setting the new carry set, the number of
+ * resting (non-carried, non-escrowed) rings must not exceed reliquary_cap.
+ * Throws 'Reliquary full' when the resulting resting count would exceed the cap.
  */
 export const packLoadout = db.transaction(
   (playerId: string, ringIds: string[]): void => {
@@ -776,14 +787,98 @@ export const packLoadout = db.transaction(
     if (unique.length > cap) {
       throw new Error(`carry cap exceeded (${unique.length} > ${cap})`);
     }
-    const ownerRings = new Set(
-      (selectRingsByOwner.all(playerId) as RingRow[]).map((r) => r.id),
-    );
+    const ownerRings = (selectRingsByOwner.all(playerId) as RingRow[]);
+    const ownerRingSet = new Set(ownerRings.map((r) => r.id));
     for (const id of unique) {
-      if (!ownerRings.has(id)) throw new Error(`ring ${id} not owned by player`);
+      if (!ownerRingSet.has(id)) throw new Error(`ring ${id} not owned by player`);
     }
+
+    // #182 — Reliquary cap guard: count owned non-escrowed rings; the ones NOT
+    // in the new carry set will rest in the Reliquary.
+    const ownedNonEscrowed = (
+      db.prepare('SELECT COUNT(*) as cnt FROM rings WHERE owner_id = ? AND escrowed = 0')
+        .get(playerId) as { cnt: number }
+    ).cnt;
+    const resultingReliquary = ownedNonEscrowed - unique.length;
+    const reliquaryCap =
+      (db.prepare('SELECT reliquary_cap FROM players WHERE id = ?').get(playerId) as
+        | { reliquary_cap: number }
+        | undefined)?.reliquary_cap ?? RELIQUARY_BASE_CAP;
+    if (resultingReliquary > reliquaryCap) {
+      throw new Error('Reliquary full');
+    }
+
     clearCarryForOwner.run(playerId);
     for (const id of unique) updateRingCarry.run(1, id);
+  },
+);
+
+// ---------------------------------------------------------------------------
+// #182 — Reliquary capacity + Shard expansion
+// ---------------------------------------------------------------------------
+
+/**
+ * Count of rings currently resting in the Reliquary for this player.
+ * Definition: in_carry=0 AND escrowed=0. Carried rings (in_carry=1) and
+ * staked rings (escrowed=1) do NOT consume Reliquary slots.
+ */
+export function getReliquaryCount(playerId: string): number {
+  const row = db
+    .prepare(
+      'SELECT COUNT(*) as cnt FROM rings WHERE owner_id = ? AND in_carry = 0 AND escrowed = 0',
+    )
+    .get(playerId) as { cnt: number } | undefined;
+  return row?.cnt ?? 0;
+}
+
+/** Current Reliquary capacity for this player (reads reliquary_cap column). */
+export function getReliquaryCap(playerId: string): number {
+  const row = db
+    .prepare('SELECT reliquary_cap FROM players WHERE id = ?')
+    .get(playerId) as { reliquary_cap: number } | undefined;
+  return row?.reliquary_cap ?? RELIQUARY_BASE_CAP;
+}
+
+/** Unspent Reliquary Shards held by this player. */
+export function getReliquaryShards(playerId: string): number {
+  const row = db
+    .prepare('SELECT reliquary_shards FROM players WHERE id = ?')
+    .get(playerId) as { reliquary_shards: number } | undefined;
+  return row?.reliquary_shards ?? 0;
+}
+
+/**
+ * Grant the player one Reliquary Shard (from NPC reward / loot drop).
+ * Does NOT expand the cap directly — the player must spend the Shard via
+ * addReliquaryShardToReliquary(). No player-facing route; called by server hooks.
+ */
+export function grantShard(playerId: string): void {
+  db.prepare('UPDATE players SET reliquary_shards = reliquary_shards + 1 WHERE id = ?').run(
+    playerId,
+  );
+}
+
+/**
+ * Spend one Reliquary Shard to expand the Reliquary by RELIQUARY_SHARD_INCREMENT
+ * slots. Atomic: the SELECT and UPDATE run in the same transaction so two
+ * concurrent calls cannot both consume the same Shard.
+ *
+ * @returns true when the expansion succeeded; false when the player held 0 Shards
+ * (caller should return 400 'no Reliquary Shards').
+ */
+export const addReliquaryShardToReliquary = db.transaction(
+  (playerId: string): boolean => {
+    const row = db
+      .prepare('SELECT reliquary_shards FROM players WHERE id = ?')
+      .get(playerId) as { reliquary_shards: number } | undefined;
+    if (!row || row.reliquary_shards < 1) return false;
+    db.prepare(
+      `UPDATE players
+         SET reliquary_shards = reliquary_shards - 1,
+             reliquary_cap    = reliquary_cap    + ${RELIQUARY_SHARD_INCREMENT}
+       WHERE id = ?`,
+    ).run(playerId);
+    return true;
   },
 );
 

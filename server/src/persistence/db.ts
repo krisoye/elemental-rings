@@ -1,7 +1,7 @@
 import Database from 'better-sqlite3';
 import fs from 'fs';
 import path from 'path';
-import { SPIRIT_BASE, XP_SCALER } from '../game/constants';
+import { SPIRIT_BASE, XP_SCALER, RELIQUARY_BASE_CAP } from '../game/constants';
 import { tierForXp, naturalMaxUses } from '../game/Tiers';
 
 // DB path is env-driven so production can point at a persistent volume
@@ -61,6 +61,19 @@ if (!hasPlayerCol('food_units')) {
 // waystone so existing players (and fresh ones) start anchored there.
 if (!hasPlayerCol('anchored_waystone')) {
   db.exec("ALTER TABLE players ADD COLUMN anchored_waystone TEXT NOT NULL DEFAULT 'forest_entry'");
+}
+
+// #182 — Reliquary cap + Shard expansion.
+// reliquary_cap: how many resting (in_carry=0, escrowed=0) rings the player can
+// hold. Defaults to RELIQUARY_BASE_CAP (20). Expansions via Shards raise this.
+// Legacy over-cap players are grandfathered — we only block ADDING more rings.
+if (!hasPlayerCol('reliquary_cap')) {
+  db.exec(`ALTER TABLE players ADD COLUMN reliquary_cap INTEGER NOT NULL DEFAULT ${RELIQUARY_BASE_CAP}`);
+}
+// reliquary_shards: unspent Shards held by the player. Grants from NPCs/loot call
+// grantShard(); spending them calls addReliquaryShardToReliquary().
+if (!hasPlayerCol('reliquary_shards')) {
+  db.exec('ALTER TABLE players ADD COLUMN reliquary_shards INTEGER NOT NULL DEFAULT 0');
 }
 
 // Recompute spirit_max on every boot using the same formula as computeSpiritMax()
