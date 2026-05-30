@@ -191,6 +191,7 @@ apiRouter.get('/api/me', requireAuth, (req: Request, res: Response): void => {
       reliquaryCap: getReliquaryCap(playerId),
       reliquaryShards: getReliquaryShards(playerId),
       reliquaryCount: getReliquaryCount(playerId),
+      spareCapacity: getSpareCapacity(playerId),
     },
     rings: getRingsByOwner(playerId),
     loadout: getLoadout(playerId) ?? null,

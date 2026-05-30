@@ -1902,8 +1902,8 @@ export class CampScene extends Phaser.Scene {
       reliquaryCap: player.reliquaryCap,
       reliquaryShards: player.reliquaryShards,
       reliquaryCount: player.reliquaryCount,
-      // #171 — spare capacity derived from carry_cap and base 5
-      spareCapacity: player.carry_cap != null ? (player.carry_cap as number) - 5 : undefined,
+      // #171 — spare capacity from the API response (server-computed, no client arithmetic)
+      spareCapacity: player.spareCapacity ?? undefined,
     };
 
     // #85 Fix 2A — refreshPools rebuilds __campState wholesale, which can happen

@@ -23,6 +23,7 @@ export function tierStartXp(n: number): number {
  * one XP below lands in the lower).
  */
 export function tierForXp(xp: number): number {
+  if (xp < 0) return 0;
   // 250·n·(n+1) ≤ xp  ⇒  n ≤ (-1 + sqrt(1 + xp/62.5)) / 2
   let n = Math.floor((-1 + Math.sqrt(1 + xp / 62.5)) / 2);
   while (tierStartXp(n + 1) <= xp) n++; // correct float undershoot

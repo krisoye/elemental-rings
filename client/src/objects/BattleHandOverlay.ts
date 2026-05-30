@@ -48,7 +48,7 @@ export class BattleHandOverlay {
   private manageLoadout: Record<string, string | null> = {};
   /** Full /api/me ring list (carried or not) — needed to show a pending won ring. */
   private allRings: RingData[] = [];
-  private managePlayer: { game_day?: number; gold?: number; food_units?: number; spirit_current?: number; spirit_max?: number; aggregate_xp?: number; carry_cap?: number } | null = null;
+  private managePlayer: { game_day?: number; gold?: number; food_units?: number; spirit_current?: number; spirit_max?: number; aggregate_xp?: number; carry_cap?: number; spareCapacity?: number } | null = null;
   private manageStatusText: Phaser.GameObjects.Text | null = null;
 
   /**
@@ -269,12 +269,10 @@ export class BattleHandOverlay {
     // the player only sees spare carried rings available for assignment.
     const slottedIds = new Set(Object.values(this.manageLoadout).filter(Boolean) as string[]);
     const availableRings = this.manageRings.filter((r) => !slottedIds.has(r.id));
-    // #171 — spare capacity: carry_cap - 5 (base slots). UsedSpares = spare rings
-    // (carried but not in any battle slot). When full, the spare row is greyed-out
-    // and non-interactive; the server enforces the cap with 400 too.
-    const spareCapacity = this.managePlayer?.carry_cap != null
-      ? (this.managePlayer.carry_cap) - 5
-      : 0;
+    // #171 — spare capacity from the API response (server-computed, no client
+    // arithmetic). When full, the spare row is greyed-out and non-interactive;
+    // the server enforces the cap with 400 too.
+    const spareCapacity = this.managePlayer?.spareCapacity ?? 0;
     const usedSpares = availableRings.length;
     const spareFull = usedSpares >= spareCapacity && spareCapacity >= 0;
 

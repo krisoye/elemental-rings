@@ -60,6 +60,19 @@ describe('tierForXp — XP → tier', () => {
       if (start > 0) expect(tierForXp(start - 1)).toBe(n - 1);
     }
   });
+
+  test('negative XP returns 0 (guard against NaN propagation)', () => {
+    expect(tierForXp(-1)).toBe(0);
+    expect(tierForXp(-100)).toBe(0);
+    expect(tierForXp(-Number.MAX_SAFE_INTEGER)).toBe(0);
+  });
+
+  test('multi-tier XP jump: exact thresholds and just-past are classified correctly', () => {
+    // Jump that crosses T1 (500), T2 (1500), T3 (3000) simultaneously from 0.
+    expect(tierForXp(3000)).toBe(3); // exactly at T3
+    expect(tierForXp(3001)).toBe(3); // just past T3, still tier 3
+    expect(tierForXp(5000)).toBe(4); // exactly at T4
+  });
 });
 
 describe('naturalMaxUses — 3 + tier', () => {

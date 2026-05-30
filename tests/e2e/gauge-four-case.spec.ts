@@ -1,4 +1,4 @@
-import { test, expect, type Page } from '@playwright/test';
+import { test, expect, type Page, type BrowserContext } from '@playwright/test';
 import {
   setupBattle,
   attackerDefender,
@@ -193,6 +193,106 @@ test('Drowning: waterGauge>=4 drains the highest-capacity attack ring (a1/a2) at
   // Capacity tie → a1 drained 3 → 2; a2 untouched.
   expect(me.a1.currentUses).toBe(2);
   expect(me.a2.currentUses).toBe(3);
+
+  await closeBattle(h);
+});
+
+// ── Scenario 6: Fractional gauge delta — Tier-1 defender ring produces delta≈0.5
+//
+// The block-gauge delta formula is `1 / 2^tierForXp(defenderRing.xp)`. A Tier-0
+// ring (xp<500) produces delta=1.0. A Tier-1 ring (xp>=500) produces delta=0.5.
+// This test seeds the defender's D2 ring to XP=500 (Tier-1 threshold) via the
+// test-only `set-ring-xp` route BEFORE the battle starts, so the BattleRoom seats
+// it with xp=500 from the DB. The defender then NEUTRAL-catches a FIRE attack with
+// D2 set to FIRE, yielding fireGauge ≈ 0.5 (float32).
+test('Block gauge: Tier-1 D2 ring produces fractional delta ≈ 0.5 on NEUTRAL catch', async ({
+  browser,
+}) => {
+  const API_URL = 'http://localhost:2568';
+
+  // ── Mint two players; set defender's D2 ring to XP=500 before battle starts ──
+  const mintRes1 = await fetch(`${API_URL}/api/test/mint-token`, { method: 'POST' });
+  const { token: token1 } = (await mintRes1.json()) as { token: string };
+
+  const mintRes2 = await fetch(`${API_URL}/api/test/mint-token`, { method: 'POST' });
+  const { token: token2 } = (await mintRes2.json()) as { token: string };
+
+  // Identify the defender (p2) D2 ring id (Earth[0] in the default loadout).
+  const meRes = await fetch(`${API_URL}/api/me`, {
+    headers: { Authorization: `Bearer ${token2}` },
+  });
+  const { loadout } = (await meRes.json()) as { loadout: Record<string, string | null> };
+  const d2RingId = loadout.d2;
+  if (!d2RingId) throw new Error('Defender has no D2 ring in loadout');
+
+  // Set D2 ring XP to 500 (Tier-1 threshold) so BattleRoom seats it with xp=500.
+  const xpRes = await fetch(`${API_URL}/api/test/set-ring-xp`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token2}` },
+    body: JSON.stringify({ ringId: d2RingId, xp: 500 }),
+  });
+  if (!xpRes.ok) throw new Error(`set-ring-xp failed: ${xpRes.status}`);
+
+  // ── Inject tokens and enter a keyed battle room ──
+  const p1ctx: BrowserContext = await browser.newContext({ hasTouch: true });
+  const p2ctx: BrowserContext = await browser.newContext({ hasTouch: true });
+  await p1ctx.addInitScript(`localStorage.setItem('er_token', ${JSON.stringify(token1)})`);
+  await p2ctx.addInitScript(`localStorage.setItem('er_token', ${JSON.stringify(token2)})`);
+
+  const roomRes = await fetch(`${API_URL}/api/test/create-battle-room`, { method: 'POST' });
+  const { roomId } = (await roomRes.json()) as { roomId: string };
+
+  const p1 = await p1ctx.newPage();
+  const p2 = await p2ctx.newPage();
+  const URL = 'http://localhost:8090';
+
+  await p1.goto(URL);
+  await p1.waitForFunction(() => typeof (window as any).__campGoEncounter === 'function', { timeout: 8000 });
+  await p1.evaluate(() => (window as any).__campGoEncounter());
+  await p1.waitForFunction(() => typeof (window as any).__encounterSelectPvP === 'function', { timeout: 10000 });
+  await p1.evaluate((id) => (window as any).__encounterSelectPvP(id), roomId);
+  await p1.waitForFunction(() => (window as any).__room !== null, { timeout: 8000 });
+
+  await p2.goto(URL);
+  await p2.waitForFunction(() => typeof (window as any).__campGoEncounter === 'function', { timeout: 8000 });
+  await p2.evaluate(() => (window as any).__campGoEncounter());
+  await p2.waitForFunction(() => typeof (window as any).__encounterSelectPvP === 'function', { timeout: 10000 });
+  await p2.evaluate((id) => (window as any).__encounterSelectPvP(id), roomId);
+
+  await p1.waitForFunction(() => (window as any).__room?.state?.phase === 'ATTACK_SELECT', { timeout: 10000 });
+  await p2.waitForFunction(() => (window as any).__room?.state?.phase === 'ATTACK_SELECT', { timeout: 10000 });
+
+  const h = { p1, p2, p1ctx, p2ctx };
+  const { attacker, defender } = await attackerDefender(p1, p2);
+
+  // Override both D2 and A1 to FIRE so the matchup is NEUTRAL (FIRE-vs-FIRE).
+  // The defender's D2 ring already has xp=500 from the DB; __testSetState only
+  // patches in-room state (element/uses/gauges), leaving xp untouched.
+  await setState(attacker, { elements: { a1: FIRE } });
+  await setState(defender, { elements: { d2: FIRE }, hearts: 3, fireGauge: 0 });
+
+  await attacker.keyboard.press('1'); // FIRE attack
+  await waitForPhase(defender, 'DEFEND_WINDOW');
+  await defender.waitForTimeout(DEFEND_BLOCK_WAIT_MS);
+  await defender.keyboard.press('4'); // D2 = FIRE → NEUTRAL catch
+
+  await waitForExchangeResult(defender);
+  const result = await defender.evaluate(() => (window as any).__lastExchangeResult);
+  expect(CAUGHT).toContain(result.timing);
+  expect(result.rallyContinues).toBe(false); // NEUTRAL never rallies
+
+  // Wait for the fractional fireGauge update to propagate.
+  await defender.waitForFunction(() => {
+    const room = (window as any).__room;
+    const me = room.state.players.get(room.sessionId);
+    return me.fireGauge > 0;
+  }, { timeout: 4000 });
+
+  const me = await readMe(defender);
+  // Tier-1 ring → delta = 1/2^1 = 0.5. The gauge is broadcast as float32, so
+  // toBeCloseTo(0.5, 5) tolerates any float32 rounding at the 5th decimal place.
+  expect(me.fireGauge).toBeCloseTo(0.5, 5);
+  expect(me.hearts).toBe(3); // NEUTRAL catch loses no heart
 
   await closeBattle(h);
 });
