@@ -656,6 +656,7 @@ export class CampScene extends Phaser.Scene {
       window.__reliquaryMove = undefined;
       window.__reliquarySelect = undefined;
       window.__reliquaryLocked = undefined;
+      window.__reliquaryFull = undefined;
     }, { width: MODAL_W, height: MODAL_H });
 
     // Clicking empty modal space (the panel background, behind all content)
@@ -675,6 +676,24 @@ export class CampScene extends Phaser.Scene {
       .setScrollFactor(0)
       .setName('reliquary-header');
     c.add(this.reliquaryHeader);
+    // #182 — "Add Shard" expansion button: only shown when player has ≥ 1 shard.
+    const reliquaryShards: number = window.__campState?.reliquaryShards ?? 0;
+    if (reliquaryShards > 0) {
+      c.add(
+        this.add
+          .text(
+            CONTENT_RIGHT,
+            92,
+            `[Add Shard (+10)] (${reliquaryShards} available)`,
+            { fontSize: '11px', color: '#ffcc44' },
+          )
+          .setOrigin(1, 0)
+          .setScrollFactor(0)
+          .setName('add-shard-btn')
+          .setInteractive({ useHandCursor: true })
+          .on('pointerdown', () => void this.doExpandReliquary()),
+      );
+    }
     // Thin divider beneath the header separating it from the columns.
     c.add(
       this.add.rectangle(CANVAS_W / 2, 118, CONTENT_RIGHT - CONTENT_LEFT, 1, 0x6082aa).setScrollFactor(0),
@@ -825,10 +844,15 @@ export class CampScene extends Phaser.Scene {
   private renderReliquaryHeader(): void {
     const s = window.__campState;
     if (this.reliquaryHeader && s) {
-      // #154 — concise centered header: "XP: 1,450    spirit: 50 / 79". The
-      // spirit_max column is dropped (current/max already conveys it).
+      // #182 — header: XP / spirit / Loadout / Reliquary counts.
+      const carried = s.rings.filter((r: RingData) => r.in_carry === 1).length;
+      const reliquaryCount: number =
+        s.reliquaryCount ??
+        s.rings.filter((r: RingData) => r.in_carry === 0 && !(r as any).escrowed).length;
+      const reliquaryCap: number = s.reliquaryCap ?? 20;
       this.reliquaryHeader.setText(
-        `XP: ${s.aggregate_xp.toLocaleString()}    spirit: ${s.spirit_current} / ${s.spirit_max}`,
+        `XP: ${s.aggregate_xp.toLocaleString()}    spirit: ${s.spirit_current} / ${s.spirit_max}` +
+        `    Loadout: ${carried}/${s.carry_cap}  |  Reliquary: ${reliquaryCount}/${reliquaryCap}`,
       );
     }
     if (this.loadoutBadge && s) {
@@ -842,21 +866,33 @@ export class CampScene extends Phaser.Scene {
   }
 
   /**
-   * Dim and lock the Reliquary cards when the carry cap is full — clicking a
-   * locked card is a no-op (the player must free a carried slot first). Each
-   * locked card is greyed and shows a small lock glyph; clearing the lock removes
-   * the glyph and restores full alpha. Driven from the cached snapshot.
+   * Dim and lock the Reliquary grid cards when the carry cap is full (the
+   * player cannot pull more rings from the Reliquary into carry). Also tracks
+   * the Reliquary-full condition (#182) via __reliquaryFull so the drop-to-
+   * Reliquary path can surface the right error. Both caps are enforced
+   * server-side with 400 as well.
    */
   private applyReliquaryLockState(): void {
     const s = window.__campState;
     if (!s) return;
     const carried = s.rings.filter((r: RingData) => r.in_carry === 1).length;
     const locked = carried >= s.carry_cap;
+    // #182 — track Reliquary-full state for the drop-label hint.
+    const reliquaryCount: number =
+      s.reliquaryCount ??
+      s.rings.filter((r: RingData) => r.in_carry === 0 && !(r as any).escrowed).length;
+    const reliquaryCap: number = s.reliquaryCap ?? 20;
+    window.__reliquaryFull = reliquaryCount >= reliquaryCap;
     for (const ring of s.atSanctum as RingData[]) {
       const bg = this.sanctumGrid.getCardBg(ring.id);
       if (bg) bg.setAlpha(locked ? 0.45 : 1);
     }
     window.__reliquaryLocked = locked;
+    // Update the RELIQUARY drop-label color to signal when the Reliquary is full.
+    if (this.overlay) {
+      const lbl = this.overlay.getByName('reliquary-label') as Phaser.GameObjects.Text | null;
+      if (lbl) lbl.setColor(window.__reliquaryFull ? '#ff5555' : '#cccccc');
+    }
   }
 
   /**
@@ -2146,6 +2182,37 @@ export class CampScene extends Phaser.Scene {
     } catch {
       return 'Network error during fusion';
     }
+  }
+
+  // ── Reliquary expansion (#182) ──────────────────────────────────────────────
+
+  /**
+   * POST /api/sanctum/expand-reliquary — spend a Reliquary Shard to raise the
+   * cap by 10. On success reloads state and re-renders the header/lock. On error
+   * surfaces the message via setStatus.
+   */
+  private async doExpandReliquary(): Promise<void> {
+    const token = localStorage.getItem('er_token');
+    if (!token) {
+      this.scene.start('LoginScene');
+      return;
+    }
+    try {
+      const res = await fetch(`${API_BASE}/api/sanctum/expand-reliquary`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        this.setStatus(body?.error ?? `Expand failed (${res.status})`);
+        return;
+      }
+    } catch {
+      this.setStatus('Network error during Shard expansion');
+      return;
+    }
+    await this.loadData();
+    this.afterReliquaryReload();
   }
 
   // ── Navigation / helpers ────────────────────────────────────────────────────

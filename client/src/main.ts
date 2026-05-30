@@ -145,6 +145,9 @@ declare global {
       target: 'reliquary' | 'spare' | 'thumb' | 'a1' | 'a2' | 'd1' | 'd2',
     ) => Promise<void>;
     __reliquaryLocked?: boolean;
+    // #182 — true when the Reliquary is at its cap (reliquaryCount >= reliquaryCap).
+    // Distinct from __reliquaryLocked which guards carry-cap. Set by applyReliquaryLockState.
+    __reliquaryFull?: boolean;
     // #81 — talisman loadout snapshot (the GET /api/talisman-loadout payload).
     // Published by CampScene (on ring-wall overlay open) and OverworldScene (on
     // create) so E2E can assert the equipped necklace + remaining charges. null

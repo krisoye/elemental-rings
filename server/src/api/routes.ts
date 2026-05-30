@@ -50,6 +50,8 @@ import {
   getReliquaryShards,
   getReliquaryCount,
   addReliquaryShardToReliquary,
+  grantRing,
+  grantShard,
 } from '../persistence/PlayerRepo';
 import { NPC_SPAWNS, hashNpcId } from '../persistence/NpcSpawns';
 import {
@@ -954,5 +956,42 @@ if (process.env.E2E_TEST_ROUTES === '1') {
     }
     setSpiritCurrent(playerId, spirit);
     res.status(200).json({ spirit_current: getSpiritAndFood(playerId).spirit_current });
+  });
+
+  /**
+   * POST /api/test/grant-shard — credit one Reliquary Shard to the authenticated
+   * player. Used by E2E specs that need to test POST /api/sanctum/expand-reliquary
+   * without a normal-play path to earn a Shard. No body. Test-only.
+   */
+  apiRouter.post('/api/test/grant-shard', requireAuth, (req: Request, res: Response): void => {
+    const playerId = req.playerId as string;
+    grantShard(playerId);
+    res.status(200).json({ ok: true, reliquaryShards: getReliquaryShards(playerId) });
+  });
+
+  /**
+   * POST /api/test/seed-resting-rings — add `count` rings directly to the
+   * authenticated player's Reliquary (in_carry = 0, escrowed = 0). The default
+   * element is 0 (Fire) and default uses/xp match grantRing defaults. Used by
+   * E2E specs that need to fill the Reliquary near or at capacity without
+   * going through normal ring-win mechanics.
+   * Body: { count: number, element?: number }. Test-only.
+   */
+  apiRouter.post('/api/test/seed-resting-rings', requireAuth, (req: Request, res: Response): void => {
+    const playerId = req.playerId as string;
+    const { count, element = 0 } = req.body ?? {};
+    if (typeof count !== 'number' || count < 1 || !Number.isInteger(count)) {
+      res.status(400).json({ error: 'count (positive integer) is required' });
+      return;
+    }
+    if (typeof element !== 'number' || !Number.isInteger(element) || element < 0) {
+      res.status(400).json({ error: 'element must be a non-negative integer' });
+      return;
+    }
+    // grantRing inserts with in_carry = 0 (DB default), so rings land in the Reliquary.
+    for (let i = 0; i < count; i++) {
+      grantRing(playerId, element, 0, 3, 0);
+    }
+    res.status(200).json({ ok: true, reliquaryCount: getReliquaryCount(playerId) });
   });
 }
