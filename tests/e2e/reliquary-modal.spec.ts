@@ -113,6 +113,8 @@ test('reliquary: opens at the wall and renders the live stats header', async ({ 
 });
 
 // ── Scenario 2: Reliquary → Loadout (Spare): carry rises, aggregate_xp drops ──
+// #171: effective cap is 5+spare. A fresh player starts with 5 carried rings (at
+// cap). We free one slot first so the Reliquary→Spare move stays within the cap.
 test('reliquary: moving a ring into Spare drops aggregate_xp and updates spirit_max', async ({
   browser,
 }) => {
@@ -125,10 +127,18 @@ test('reliquary: moving a ring into Spare drops aggregate_xp and updates spirit_
   ) ?? me.rings.find((r: any) => r.in_carry === 0 && !slotted.has(r.id));
   expect(reliquaryRing).toBeDefined();
 
+  // Free one carry slot: carry only 4 of the 5 battle-slot rings so there is room.
+  const carried = me.rings.filter((r: any) => r.in_carry === 1).map((r: any) => r.id);
+  await putCarry(token, carried.slice(0, 4));
+
   const ctx = await browser.newContext();
   await ctx.addInitScript(`localStorage.setItem('er_token', ${JSON.stringify(token)})`);
   const page = await ctx.newPage();
   await loadSanctum(page);
+  await page.waitForFunction(
+    () => (window as any).__campState.rings.filter((r: any) => r.in_carry === 1).length === 4,
+    { timeout: 8000 },
+  );
   await openReliquary(page);
 
   const before = await getMe(token);
@@ -155,17 +165,20 @@ test('reliquary: moving a ring into Spare drops aggregate_xp and updates spirit_
 });
 
 // ── Scenario 3: Loadout (Spare) → Reliquary: aggregate_xp rises ───────────────
+// #171: effective cap is 5. Seed a Spare ring by carrying only 4 battle-slot rings
+// plus 1 extra = 5 total, within cap.
 test('reliquary: moving a Spare ring back to the Reliquary raises aggregate_xp', async ({
   browser,
 }) => {
   const token = await registerAndToken();
   const me = await getMe(token);
   const slotted = new Set(['thumb','a1','a2','d1','d2'].map((s: string) => (me.loadout as any)[s]).filter(Boolean) as string[]);
-  // Seed a carried-but-unslotted (Spare) ring: carry the 5 battle rings plus one
-  // extra Reliquary ring so it sits in Spare.
+  // Seed a carried-but-unslotted (Spare) ring: carry 4 battle-slot rings plus one
+  // Reliquary ring so it sits in Spare (4 + 1 = 5, at cap).
   const extra = me.rings.find((r: any) => r.in_carry === 0 && !slotted.has(r.id));
   expect(extra).toBeDefined();
-  await putCarry(token, [...slotted, extra.id]);
+  const fourSlotted = Array.from(slotted).slice(0, 4);
+  await putCarry(token, [...fourSlotted, extra.id]);
 
   const ctx = await browser.newContext();
   await ctx.addInitScript(`localStorage.setItem('er_token', ${JSON.stringify(token)})`);
@@ -194,6 +207,8 @@ test('reliquary: moving a Spare ring back to the Reliquary raises aggregate_xp',
 });
 
 // ── Scenario 4: Reliquary → Battle Hand slot in one action ────────────────────
+// #171: effective cap is 5. Free one slot first so carrying the Reliquary ring
+// into a Battle Hand slot stays within cap.
 test('reliquary: a Reliquary ring moves directly into a Battle Hand slot', async ({ browser }) => {
   const token = await registerAndToken();
   const me = await getMe(token);
@@ -201,10 +216,19 @@ test('reliquary: a Reliquary ring moves directly into a Battle Hand slot', async
   const reliquaryRing = me.rings.find((r: any) => r.in_carry === 0 && !slotted.has(r.id));
   expect(reliquaryRing).toBeDefined();
 
+  // Free one slot: carry only 4 battle-slot rings so there is room for the
+  // Reliquary ring to be carried into A1.
+  const carried = me.rings.filter((r: any) => r.in_carry === 1).map((r: any) => r.id);
+  await putCarry(token, carried.slice(0, 4));
+
   const ctx = await browser.newContext();
   await ctx.addInitScript(`localStorage.setItem('er_token', ${JSON.stringify(token)})`);
   const page = await ctx.newPage();
   await loadSanctum(page);
+  await page.waitForFunction(
+    () => (window as any).__campState.rings.filter((r: any) => r.in_carry === 1).length === 4,
+    { timeout: 8000 },
+  );
   await openReliquary(page);
 
   // Move it directly into A1 — one action: server carries it then assigns the slot.

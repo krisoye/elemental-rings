@@ -293,6 +293,11 @@ export class BattleRoom extends Room<{ state: BattleState }> {
       // Kindling/Bulwark thumb XP: 1 per ring buffed at seat time.
       if (buffed > 0) this.addXp(sessionId, 'thumb', XP_THUMB_BUFF * buffed);
 
+      // #171 — seed spareCapacity from the live Reliquary XP so the client HUD
+      // reflects the correct carry headroom as soon as the battle room opens.
+      const ps = this.state.players.get(sessionId);
+      if (ps) ps.spareCapacity = PlayerRepo.getSpareCapacity(playerId);
+
       // Escrow the thumb ring for staking.
       if (ringIds.thumb) {
         PlayerRepo.setEscrowed(ringIds.thumb, true);
@@ -528,6 +533,14 @@ export class BattleRoom extends Room<{ state: BattleState }> {
       // the new cap. AI players have no DB record and are skipped.
       if (winnerPlayerId) PlayerRepo.refreshSpiritMax(winnerPlayerId);
       if (loserPlayerId) PlayerRepo.refreshSpiritMax(loserPlayerId);
+
+      // #171 — sync spareCapacity on the live PlayerState after XP changes so the
+      // client receives the updated carry headroom without a round-trip to /api/me.
+      for (const [sessionId, ps] of this.state.players) {
+        const pid = this.sessionToPlayerId.get(sessionId);
+        if (!pid) continue; // AI / no-token: skip
+        ps.spareCapacity = PlayerRepo.getSpareCapacity(pid);
+      }
 
       // Release escrow on every human thumb ring still escrowed.
       for (const sessionId of sessions) {

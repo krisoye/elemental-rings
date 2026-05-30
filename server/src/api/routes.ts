@@ -34,6 +34,8 @@ import {
   getTalismanLoadout,
   equipTalisman,
   rechargeNecklace,
+  getCarryCap,
+  getSpareCapacity,
   getDefeatedNpcs,
   forage,
   getForageStatus,
@@ -319,10 +321,25 @@ apiRouter.post('/api/spirit/blink', requireAuth, (req: Request, res: Response): 
 /**
  * PUT /api/loadout — update one or more loadout slots.
  * Body: partial Record<SlotKey, string | null>
+ * #171 — rejects when the player's carried-ring count already exceeds the
+ * XP-derived carry cap (5 + spareCapacity) so that excess rings cannot be
+ * assigned to battle slots.
  * Requires auth.
  */
 apiRouter.put('/api/loadout', requireAuth, (req: Request, res: Response): void => {
   const playerId = req.playerId as string;
+  // #171 — carry-cap gate: count carried rings and reject if the cap is already
+  // exceeded. This guards against excess carry when spareCapacity has decreased
+  // since the rings were first carried (e.g. XP was lost / transferred).
+  const carriedCount = getRingsByOwner(playerId).filter((r) => r.in_carry === 1).length;
+  const cap = getCarryCap(playerId);
+  if (carriedCount > cap) {
+    const spare = getSpareCapacity(playerId);
+    res
+      .status(400)
+      .json({ error: `carry cap exceeded: ${carriedCount} carried > ${cap} (5 + ${spare} spare)` });
+    return;
+  }
   const body = req.body ?? {};
   const VALID_SLOTS = new Set(['thumb', 'a1', 'a2', 'd1', 'd2']);
   const partial: Record<string, string | null> = {};

@@ -297,6 +297,14 @@ export const saveLoadout = db.transaction(
   (playerId: string, partial: Partial<Record<'thumb' | 'a1' | 'a2' | 'd1' | 'd2', string | null>>): LoadoutRow => {
     const current = selectLoadout.get(playerId) as LoadoutRow | undefined;
     if (!current) throw new Error(`No loadout for player ${playerId}`);
+    // #171 — carry-cap guard: reject if the player is currently carrying more
+    // rings than the XP-derived cap (5 + floor(aggregate_xp / 100)). Single-
+    // sourced via getCarryCap so the limit matches packLoadout and the route check.
+    const carriedCount = (selectCarryByOwner.all(playerId) as RingRow[]).length;
+    const cap = getCarryCap(playerId);
+    if (carriedCount > cap) {
+      throw new Error(`carry cap exceeded (${carriedCount} > ${cap})`);
+    }
 
     const ownerRings = new Set((selectRingsByOwner.all(playerId) as RingRow[]).map((r) => r.id));
 
@@ -733,10 +741,26 @@ export const fuseRings = db.transaction(
   },
 );
 
-/** The player's carry cap (rings carryable on an expedition). */
+/**
+ * The player's spare carry capacity (#171, GDD §4.1).
+ * spare_slots = floor(aggregate_xp / 100), where aggregate_xp = SUM(xp) WHERE
+ * in_carry = 0 (Reliquary rings only — same filter as spirit_max derivation).
+ * Returns 0 for a fresh player with no Reliquary XP.
+ */
+export function getSpareCapacity(playerId: string): number {
+  const { aggregateXp } = getSpiritStats(playerId);
+  return Math.floor(aggregateXp / 100);
+}
+
+/**
+ * The player's carry cap (rings carryable on an expedition). XP-derived (#171):
+ * carry_cap = 5 + floor(aggregate_xp / 100). Base = 5 spare slots for a fresh
+ * player; each 100 aggregate Reliquary XP grants one additional spare slot.
+ * Single-sourced here so packLoadout, merchantBuyRing, and route validation
+ * all agree on the same cap.
+ */
 export function getCarryCap(playerId: string): number {
-  const row = selectCarryCap.get(playerId) as { carry_cap: number } | undefined;
-  return row?.carry_cap ?? 0;
+  return 5 + getSpareCapacity(playerId);
 }
 
 /**
@@ -1243,9 +1267,10 @@ export const merchantBuyRing = db.transaction(
       return { ok: false, reason: `Insufficient gold (need ${price}, have ${player.gold})` };
     }
 
-    // Carry cap check: count rings currently in carry.
+    // Carry cap check: use getCarryCap (XP-derived) so the limit stays in sync
+    // with packLoadout and the PUT /api/loadout validation.
     const carried = (selectCarryByOwner.all(playerId) as RingRow[]).length;
-    if (carried >= player.carry_cap) {
+    if (carried >= getCarryCap(playerId)) {
       return { ok: false, reason: 'Carry cap full' };
     }
 
