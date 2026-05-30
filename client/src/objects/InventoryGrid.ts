@@ -23,9 +23,6 @@ const SELECTED_STROKE = 0xffff00;
 // #85 Fix 2A — scroll UI geometry. The ▲/▼ buttons sit just right of the last
 // column at the visible window's top/bottom. The exact x is computed per-instance
 // from numCols (see arrowX()) so a 3-column grid pushes the arrows further right.
-// A small inset keeps the clip mask from cropping the 3px selection stroke on
-// edge cards.
-const MASK_INSET = 3;
 
 export const GRID_CARD_W = CARD_W;
 export const GRID_COL_GAP = COL_GAP;
@@ -53,23 +50,21 @@ export class InventoryGrid extends Phaser.GameObjects.Container {
   private readonly onSelect: (ring: RingData | null) => void;
 
   // #85 Fix 2A — scroll state. Cards render into cardContainer (scrolled by row);
-  // the arrows and the clip mask live on `this` so they never scroll themselves.
+  // the arrows live on `this` so they never scroll themselves. Clipping is done
+  // by visibility-windowing (show only cards in [scrollRow, scrollRow+visibleRows))
+  // rather than a GeometryMask, which is unreliable in nested Container / multi-
+  // camera setups in Phaser 4 (stencil coordinate system diverges from render).
   private readonly cardContainer: Phaser.GameObjects.Container;
+  // Per-ring row index used to show/hide cards outside the visible window.
+  private readonly cardRows: Map<string, number> = new Map();
   private upArrow: Phaser.GameObjects.Text | null = null;
   private downArrow: Phaser.GameObjects.Text | null = null;
-  private maskGraphics: Phaser.GameObjects.Graphics | null = null;
-  private visibleRows = 0; // 0 → masking/scroll disabled (unbounded grid)
+  private visibleRows = 0; // 0 → scroll/windowing disabled (unbounded grid)
   private totalRows = 0;
   private scrollRow = 0;
-  // Explicit screen-space mask origin set by the owning scene after adoptPanel.
-  // When set, applyMask uses these coordinates directly instead of the potentially
-  // unreliable getWorldTransformMatrix() (which can disagree with actual render
-  // position when the grid is inside a multi-camera nested Container hierarchy).
-  private maskOriginX: number | null = null;
-  private maskOriginY: number | null = null;
   // #154 — number of columns the grid wraps at. The Reliquary/Spare grids in the
   // Reliquary modal are 3-wide; legacy callers default to 2. Drives populate()'s
-  // col wrap, the clip-mask width, and the scroll-arrow x.
+  // col wrap and the scroll-arrow x.
   private readonly numCols: number;
 
   constructor(
@@ -85,18 +80,6 @@ export class InventoryGrid extends Phaser.GameObjects.Container {
     this.cardContainer = scene.add.container(0, 0);
     this.add(this.cardContainer);
     scene.add.existing(this);
-  }
-
-  /**
-   * Pin the mask clip rectangle to an explicit screen-space position. Call this
-   * after adoptPanel() positions the grid in the overlay so applyMask() doesn't
-   * have to infer the position from getWorldTransformMatrix(), which can diverge
-   * from the actual render position in a multi-camera nested Container hierarchy.
-   * Pass null/null to revert to the world-transform fallback.
-   */
-  setMaskOrigin(screenX: number | null, screenY: number | null): void {
-    this.maskOriginX = screenX;
-    this.maskOriginY = screenY;
   }
 
   /**
@@ -117,6 +100,7 @@ export class InventoryGrid extends Phaser.GameObjects.Container {
     this.cards.forEach((c) => c.destroy());
     this.cards.clear();
     this.cardBgs.clear();
+    this.cardRows.clear();
     this.selected = null;
 
     const sorted = [...rings].sort((a, b) =>
@@ -166,15 +150,17 @@ export class InventoryGrid extends Phaser.GameObjects.Container {
       }
 
       // Cards go into the scrolled inner container, not directly on the grid, so
-      // setScrollRow can offset them while the arrows/mask stay put (#85 Fix 2A).
+      // setScrollRow can offset them while the arrows stay put (#85 Fix 2A).
       this.cardContainer.add(container);
       this.cards.set(ring.id, container);
       this.cardBgs.set(ring.id, bg);
+      this.cardRows.set(ring.id, row);
     });
 
     this.totalRows = Math.ceil(sorted.length / this.numCols);
     this.scrollRow = 0;
     this.cardContainer.y = 0;
+    this.updateCardVisibility();
     this.updateScrollUI();
   }
 
@@ -215,21 +201,19 @@ export class InventoryGrid extends Phaser.GameObjects.Container {
   // ── Scroll API (#85 Fix 2A) ───────────────────────────────────────────────
 
   /**
-   * Enable masking + scroll arrows clipped to `rows` visible rows from the grid
-   * origin; pass 0 to disable (unbounded grid, the pre-#85 behavior). The clip
-   * region is (COL_GAP + CARD_W) wide × (rows * ROW_GAP) tall, inset slightly so
-   * selection strokes on edge cards are not cropped. Idempotent.
+   * Enable visibility-windowed scrolling to `rows` visible rows; pass 0 to disable
+   * (unbounded grid, all cards visible). Shows scroll arrows when scrollable.
+   * Cards outside [scrollRow, scrollRow+rows) are hidden rather than masked —
+   * this is reliable across all camera/container configurations in Phaser 4.
    */
   setVisibleRows(rows: number): void {
     this.visibleRows = rows;
     if (rows > 0) {
-      this.applyMask(rows);
       this.ensureArrows(rows);
     } else {
-      this.removeMask();
       this.removeArrows();
     }
-    // Re-clamp the current scroll to the new window and refresh arrow visibility.
+    // Re-clamp scroll, re-apply card visibility, refresh arrow state.
     this.setScrollRow(this.scrollRow);
     this.updateScrollUI();
   }
@@ -249,6 +233,7 @@ export class InventoryGrid extends Phaser.GameObjects.Container {
     const clamped = Phaser.Math.Clamp(row, 0, this.visibleRows > 0 ? maxRow : 0);
     this.scrollRow = clamped;
     this.cardContainer.y = -clamped * ROW_GAP;
+    this.updateCardVisibility();
     this.updateScrollUI();
   }
 
@@ -257,7 +242,7 @@ export class InventoryGrid extends Phaser.GameObjects.Container {
     return this.visibleRows > 0 && this.totalRows > this.visibleRows;
   }
 
-  /** Local-space clip dimensions used for the mask AND wheel hit-testing (#85). */
+  /** Local-space visible-window dimensions used for wheel hit-testing (#85). */
   getMaskSize(): { width: number; height: number } {
     const rows = this.visibleRows > 0 ? this.visibleRows : this.totalRows;
     return {
@@ -283,42 +268,22 @@ export class InventoryGrid extends Phaser.GameObjects.Container {
 
   // ── Scroll internals ──────────────────────────────────────────────────────
 
-  /** Build/refresh the GeometryMask clipping the visible `rows`-row window. */
-  private applyMask(rows: number): void {
-    if (!this.maskGraphics) {
-      this.maskGraphics = this.scene.make.graphics({}, false);
-      // The masked cardContainer is camera-pinned (scrollFactor 0); pin the mask
-      // graphics to match so a GeometryMask drawn in screen space stays aligned
-      // with the cards even if the follow camera lerps after the overlay opens.
-      this.maskGraphics.setScrollFactor(0);
-    }
-    const g = this.maskGraphics;
-    g.clear();
-    g.fillStyle(0xffffff);
-    // Prefer the explicitly-set screen origin (from setMaskOrigin) over the world
-    // transform, which can diverge from the actual render position when the grid is
-    // inside a multi-camera nested Container hierarchy. The world-transform fallback
-    // works when both cameras have zero scroll and the container hierarchy is flat.
-    const ox = this.maskOriginX ?? this.getWorldTransformMatrix().tx;
-    const oy = this.maskOriginY ?? this.getWorldTransformMatrix().ty;
-    g.fillRect(
-      ox - MASK_INSET,
-      oy - MASK_INSET,
-      (this.numCols - 1) * COL_GAP + CARD_W + MASK_INSET * 2,
-      rows * ROW_GAP + MASK_INSET * 2,
-    );
-    // #85 W5 — destroy the prior GeometryMask wrapper before replacing it.
-    // createGeometryMask() allocates a fresh wrapper each call; setMask only swaps
-    // the reference, so without this the old wrapper leaks once per open/close cycle.
-    const prevMask = this.cardContainer.mask;
-    if (prevMask) prevMask.destroy();
-    this.cardContainer.setMask(g.createGeometryMask());
-  }
-
-  private removeMask(): void {
-    this.cardContainer.clearMask(true);
-    this.maskGraphics?.destroy();
-    this.maskGraphics = null;
+  /**
+   * Show only cards whose row falls within [scrollRow, scrollRow + visibleRows).
+   * When visibleRows = 0 (unbounded), all cards are shown. This replaces the
+   * former GeometryMask approach, which was unreliable in nested Container /
+   * multi-camera configurations in Phaser 4 (stencil coordinate space diverged
+   * from actual render position, causing overflow above the visible window).
+   */
+  private updateCardVisibility(): void {
+    this.cards.forEach((container, ringId) => {
+      if (this.visibleRows <= 0) {
+        container.setVisible(true);
+        return;
+      }
+      const row = this.cardRows.get(ringId) ?? 0;
+      container.setVisible(row >= this.scrollRow && row < this.scrollRow + this.visibleRows);
+    });
   }
 
   /** Lazily create the ▲/▼ scroll buttons on the grid (not the cardContainer). */
