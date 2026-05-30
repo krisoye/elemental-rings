@@ -12,6 +12,7 @@ import { FOREST_SCREENS } from '../../../shared/world/forest';
  */
 const FOREST_HUB_TILESETS: ReadonlyArray<readonly [string, string]> = [
   ['forest16', 'assets/terrain/terrain_forest_void.png'],
+  ['terrain_forest_void', 'assets/terrain/terrain_forest_void.png'],
   ['Fantasy Era- Wild plains pack', 'assets/terrain/terrain_plains_fantasy.png'],
   ['ModernEra_GreenForest_Tileset', 'assets/terrain/terrain_forest_modern.png'],
   ['asset_alliance_starter_village_main', 'assets/structures/tileset_village_main_a.png'],
@@ -158,7 +159,7 @@ export class ForestScene extends BaseBiomeScene {
       for (const [key, path] of FOREST_HUB_TILESETS) {
         if (!this.textures.exists(key)) this.load.image(key, path);
       }
-    } else if (['forest_deepwood', 'forest_mossy_fen', 'forest_south_path'].includes(this.screenId)) {
+    } else if (['forest_deepwood', 'forest_mossy_fen', 'forest_south_path', 'forest_snow_gate', 'forest_north_road', 'forest_east_path'].includes(this.screenId)) {
       // Hand-authored maps; load the full extra tileset pool — buildTilesets() filters
       // to only what each map's JSON actually declares.
       for (const [key, path] of FOREST_HANDAUTHORED_TILESETS) {
