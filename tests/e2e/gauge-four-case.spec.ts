@@ -78,6 +78,9 @@ test('Block gauge: a NEUTRAL FIRE-vs-FIRE block fills the defender fireGauge +1,
   }, { timeout: 4000 });
 
   const me = await readMe(defender);
+  // Gauges are float32 since #179, but these rings seed at Tier 0 (no XP) so the
+  // block delta is the full 1.0 — and 1.0 === 1 in JS, so the integer assertion
+  // still holds for the broadcast float value.
   expect(me.fireGauge).toBe(1); // defending ring's element gauge +1 (case 2)
   expect(me.hearts).toBe(3); // a NEUTRAL catch loses no heart
 

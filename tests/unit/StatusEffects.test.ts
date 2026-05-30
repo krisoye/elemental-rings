@@ -79,6 +79,15 @@ describe('status predicates', () => {
     expect(isBurning(makePlayer({ fireGauge: 6 }), 7)).toBe(false);
     expect(isBurning(makePlayer({ fireGauge: 7 }), 7)).toBe(true);
   });
+
+  // #179 (C6): gauges are now float32 — tier-reduced block deltas accumulate
+  // fractionally. The threshold is an inclusive >= compare on the raw float, so
+  // an accumulated 3.75 is still below 4, exactly 4.0 fires, and 4.25 stays on.
+  test('isBurning respects fractional gauge values against the threshold', () => {
+    expect(isBurning(makePlayer({ fireGauge: 3.75 }))).toBe(false);
+    expect(isBurning(makePlayer({ fireGauge: 4.0 }))).toBe(true);
+    expect(isBurning(makePlayer({ fireGauge: 4.25 }))).toBe(true);
+  });
 });
 
 describe('applyTurnStart — Burning', () => {

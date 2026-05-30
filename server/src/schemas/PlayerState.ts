@@ -19,10 +19,12 @@ export class PlayerState extends Schema {
 
   // Elemental gauges — one per triangle element (FIRE/WATER/WOOD). Fill when an
   // attack with that triangle component lands uncontested. Wind/Earth have no
-  // gauge (GDD §7.1).
-  @type('uint8') fireGauge: number = 0;
-  @type('uint8') waterGauge: number = 0;
-  @type('uint8') woodGauge: number = 0;
+  // gauge (GDD §7.1). float32 (not uint8) so tier-reduced block deltas
+  // (delta = 1/2^tier, e.g. 0.25 at Tier 2) accumulate fractionally; the HUD
+  // floors for display and status thresholds compare the raw float (#179, C6).
+  @type('float32') fireGauge: number = 0;
+  @type('float32') waterGauge: number = 0;
+  @type('float32') woodGauge: number = 0;
   // Shadow gauge (#134, GDD §7.1/§3.5). Fills like the triangle gauges (four-case
   // model) but caps at 5 and triggers Blinded at any stack (≥ 1). Shadow sits
   // outside the triangle, so it is tracked separately here.

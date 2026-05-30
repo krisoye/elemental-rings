@@ -98,9 +98,12 @@ export class PlayerDuelist extends Phaser.GameObjects.Container {
     const active: string[] = [];
     GAUGE_KEYS.forEach((key, i) => {
       const val = playerState[key] ?? 0;
+      // Status activates on the raw accumulated float (gauges are float32 since
+      // #179); the HUD floors only for the integer display so fractional
+      // tier-reduced deltas (e.g. 0.25 per Tier-2 block) never leak digits.
       const isActive = val >= GAUGE_THRESHOLD;
       const el = GAUGE_ELEMENTS[i];
-      this.gaugeTexts[i].setText(`${ELEMENT_NAMES[el]}: ${val}${isActive ? '!' : ''}`);
+      this.gaugeTexts[i].setText(`${ELEMENT_NAMES[el]}: ${Math.floor(val)}${isActive ? '!' : ''}`);
       if (isActive) active.push(STATUS_BADGES[i].label);
     });
 
