@@ -151,6 +151,102 @@ describe('Recharge (#124)', () => {
   });
 });
 
+// #188: defense rings (d1/d2) are rechargeable in-duel via the attack-phase
+// double-tap, symmetric to the attack-ring recharge above. The accepted slot
+// domain widens to {a1,a2,d1,d2}; the Thumb stays non-rechargeable. Spirit
+// gating (partial restore on insufficient spirit) is DB-backed → e2e-covered.
+describe('Defense recharge (#188)', () => {
+  test('recharge on d1 restores the ring to max and advances the turn to the opponent', async () => {
+    const { room, c1, c2 } = await joinBattle();
+    const attacker = attackerClient(room, c1, c2);
+    const defenderId = (attacker.sessionId === c1.sessionId ? c2 : c1).sessionId;
+    const ps = room.state.players.get(attacker.sessionId);
+
+    const max = ps.d1.maxUses;
+    ps.d1.currentUses = 0;
+    ps.d1.isExtinguished = true;
+
+    attacker.send('recharge', { slot: 'd1' });
+    await room.waitForNextPatch();
+    await sleep(50);
+
+    const after = room.state.players.get(attacker.sessionId);
+    expect(after.d1.currentUses).toBe(max); // restored to max (free, no-token session)
+    expect(after.d1.isExtinguished).toBe(false);
+    // Turn consumed → opponent is now the attacker, back in ATTACK_SELECT.
+    expect(room.state.currentAttackerId).toBe(defenderId);
+    expect(room.state.phase).toBe('ATTACK_SELECT');
+  });
+
+  test('recharge on a depleted d2 restores uses and still consumes the turn', async () => {
+    const { room, c1, c2 } = await joinBattle();
+    const attacker = attackerClient(room, c1, c2);
+    const defenderId = (attacker.sessionId === c1.sessionId ? c2 : c1).sessionId;
+    const ps = room.state.players.get(attacker.sessionId);
+
+    const max = ps.d2.maxUses;
+    ps.d2.currentUses = 0;
+    ps.d2.isExtinguished = true;
+
+    attacker.send('recharge', { slot: 'd2' });
+    await room.waitForNextPatch();
+    await sleep(50);
+
+    const after = room.state.players.get(attacker.sessionId);
+    expect(after.d2.currentUses).toBe(max);
+    expect(after.d2.isExtinguished).toBe(false);
+    expect(room.state.currentAttackerId).toBe(defenderId); // turn consumed
+  });
+
+  test('recharge of d1 by the wrong sender during ATTACK_SELECT is silently ignored', async () => {
+    const { room, c1, c2 } = await joinBattle();
+    const attacker = attackerClient(room, c1, c2);
+    const defender = attacker.sessionId === c1.sessionId ? c2 : c1;
+    const attackerId = attacker.sessionId;
+
+    defender.send('recharge', { slot: 'd1' });
+    await sleep(50);
+    expect(room.state.phase).toBe('ATTACK_SELECT');
+    expect(room.state.currentAttackerId).toBe(attackerId); // turn did NOT advance
+  });
+
+  test('recharge of d1 during DEFEND_WINDOW (wrong phase) is silently ignored', async () => {
+    const { room, c1, c2 } = await joinBattle();
+    const attacker = attackerClient(room, c1, c2);
+    const attackerId = attacker.sessionId;
+
+    // Open the defend window so the room is no longer in ATTACK_SELECT.
+    attacker.send('selectAttack', { slot: 'a1' });
+    await room.waitForNextPatch();
+    await sleep(50);
+    expect(room.state.phase).toBe('DEFEND_WINDOW');
+
+    attacker.send('recharge', { slot: 'd1' });
+    await sleep(50);
+    // Still in the defend window with the same attacker — recharge was ignored.
+    expect(room.state.phase).toBe('DEFEND_WINDOW');
+    expect(room.state.currentAttackerId).toBe(attackerId);
+  });
+
+  test('recharge of the Thumb slot is rejected (not a combat ring) and does NOT consume the turn', async () => {
+    const { room, c1, c2 } = await joinBattle();
+    const attacker = attackerClient(room, c1, c2);
+    const attackerId = attacker.sessionId;
+    const ps = room.state.players.get(attackerId);
+
+    // Deplete the thumb so a (wrongful) recharge would visibly restore it.
+    ps.thumb.currentUses = 0;
+
+    attacker.send('recharge', { slot: 'thumb' });
+    await sleep(50);
+
+    const after = room.state.players.get(attackerId);
+    expect(after.thumb.currentUses).toBe(0); // unchanged — thumb is non-rechargeable
+    expect(room.state.phase).toBe('ATTACK_SELECT');
+    expect(room.state.currentAttackerId).toBe(attackerId); // turn NOT consumed
+  });
+});
+
 describe('Forfeit (#124)', () => {
   test('forfeit by the attacker → phase ENDED, opponent wins', async () => {
     const { room, c1, c2 } = await joinBattle();

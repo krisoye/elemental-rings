@@ -13,9 +13,9 @@ import { HAND_SLOT_X, HAND_Y, CANVAS_W, CANVAS_H, SLOT_KEYS, SLOT_LABELS, SlotKe
  */
 export class Hand extends Phaser.GameObjects.Container {
   private readonly slots: Record<SlotKey, RingSlot> = {} as Record<SlotKey, RingSlot>;
-  private readonly onPress: (slot: SlotKey) => void;
+  private readonly onPress: (slot: SlotKey, isAlias?: boolean) => void;
 
-  constructor(scene: Phaser.Scene, onPress: (slot: SlotKey) => void) {
+  constructor(scene: Phaser.Scene, onPress: (slot: SlotKey, isAlias?: boolean) => void) {
     super(scene, 0, 0);
     this.onPress = onPress;
 
@@ -55,16 +55,16 @@ export class Hand extends Phaser.GameObjects.Container {
       [KC.C, 'd2'],
     ];
     [...slot1Aliases, ...slot2Aliases].forEach(([code, key]) => {
-      scene.input.keyboard!.addKey(code).on('down', () => this.triggerSlot(key));
+      scene.input.keyboard!.addKey(code).on('down', () => this.triggerSlot(key, true));
     });
 
     this.publishSlotPositions();
     scene.add.existing(this);
   }
 
-  private triggerSlot(key: SlotKey): void {
+  private triggerSlot(key: SlotKey, isAlias = false): void {
     if (key === 'thumb') return;
-    this.onPress(key);
+    this.onPress(key, isAlias);
   }
 
   /** Sync each slot card to the local player's loadout and highlight the active group. */

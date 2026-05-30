@@ -181,7 +181,7 @@ export class BattleScene extends Phaser.Scene {
           : undefined;
     this.opponentDuelist = new OpponentDuelist(this, this.opponentSpriteFrame, monsterTexKey);
     this.hud = new Hud(this);
-    this.hand = new Hand(this, (slot) => this.onSlotPressed(slot));
+    this.hand = new Hand(this, (slot, isAlias) => this.onSlotPressed(slot, isAlias));
 
     // The room outlives this scene, so clear any state-change listeners left by
     // a previous scene (LobbyScene / a prior BattleScene) before adding ours.
@@ -337,7 +337,7 @@ export class BattleScene extends Phaser.Scene {
    *   - the two siblings within FORFEIT_CHORD_MS (Z+C → a1+a2, or 3+4 → d1+d2) →
    *     a forfeit confirm prompt
    */
-  private onSlotPressed(slot: SlotKey): void {
+  private onSlotPressed(slot: SlotKey, isAlias = false): void {
     const state = window.__room?.state;
     const myId = window.__room?.sessionId;
     if (!state || !myId) return;
@@ -350,6 +350,10 @@ export class BattleScene extends Phaser.Scene {
     }
 
     if (state.phase === 'ATTACK_SELECT' && state.currentAttackerId === myId) {
+      // Z/C fire BOTH attack- and defense-slot callbacks; skip the defense-slot alias
+      // during the attack phase so it doesn't pollute lastPressAt or trigger a spurious
+      // defense recharge alongside the intended attack gesture (#188).
+      if (isAlias && DEFENSE_KEYS.has(slot)) return;
       this.handleAttackPhasePress(slot);
     }
   }
@@ -376,7 +380,20 @@ export class BattleScene extends Phaser.Scene {
       }
     }
 
-    if (!ATTACK_KEYS.has(slot)) return; // d1/d2 alone do nothing in attack phase
+    // d1/d2 have no single-press attack to arm, but a same-key double-tap recharges
+    // that defense ring — symmetric to the attack double-tap below. `3 3` / `4 4` or
+    // a double-tap on the D1/D2 card. The forfeit chord (3+4) was already handled above.
+    if (!ATTACK_KEYS.has(slot)) {
+      if (
+        DEFENSE_KEYS.has(slot) &&
+        prev !== undefined &&
+        now - prev <= RECHARGE_DOUBLE_TAP_MS
+      ) {
+        window.__room!.send('recharge', { slot });
+        this.hand.pulseSlot(slot);
+      }
+      return; // first/lone defense press: no action (no first-press cue)
+    }
 
     // Double-tap the SAME attack key inside the window → recharge that slot.
     if (
