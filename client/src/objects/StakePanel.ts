@@ -7,7 +7,8 @@ const CARD_H = 90;
 
 /**
  * Displays the Thumb (staked) ring slot with escrow indicator. Clicking the
- * card (when not escrowed) fires `onAssign()` to trigger ring assignment.
+ * card fires `onAssign()` to trigger ring assignment. If the ring is escrowed,
+ * `onEscrowed()` is called instead so the host can surface a status message.
  */
 export class StakePanel extends Phaser.GameObjects.Container {
   private readonly bg: Phaser.GameObjects.Rectangle;
@@ -29,6 +30,7 @@ export class StakePanel extends Phaser.GameObjects.Container {
     x: number,
     y: number,
     onAssign: () => void,
+    onEscrowed?: () => void,
   ) {
     super(scene, x, y);
 
@@ -71,7 +73,8 @@ export class StakePanel extends Phaser.GameObjects.Container {
 
     this.bg.setInteractive({ useHandCursor: true });
     this.bg.on('pointerdown', () => {
-      if (!this.escrowed) onAssign();
+      if (this.escrowed) onEscrowed?.();
+      else onAssign();
     });
 
     this.add([this.bg, this.titleLbl, this.elemLbl, this.usesLbl, this.xpLbl, this.tierLbl, this.lockLbl, this.hintLbl]);

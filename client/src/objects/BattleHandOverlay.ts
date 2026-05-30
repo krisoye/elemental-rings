@@ -42,6 +42,8 @@ export class BattleHandOverlay {
 
   private manageModal: Phaser.GameObjects.Container | null = null;
   private manageSelectedRingId: string | null = null;
+  /** Slot the selected ring came from, or null when selection is from the spare row. */
+  private manageSelectedFromSlot: BattleSlot | null = null;
   private manageRings: RingData[] = [];
   private manageLoadout: Record<string, string | null> = {};
   /** Full /api/me ring list (carried or not) — needed to show a pending won ring. */
@@ -204,12 +206,36 @@ export class BattleHandOverlay {
       const ringId = this.manageLoadout[slot] ?? null;
       const ring = ringId ? this.manageRings.find((r) => r.id === ringId) : null;
       const color = ring ? ELEMENT_COLORS[ring.element] ?? 0x333333 : 0x333333;
+      const slotSelected = this.manageSelectedFromSlot === slot;
+      const strokeColor = slotSelected ? 0xffff00 : 0x888888;
+      const strokeWidth = slotSelected ? 3 : 2;
       const slotRect = this.scene.add
         .rectangle(sx, slotY, 92, 80, color)
         .setScrollFactor(0)
-        .setStrokeStyle(2, 0x888888)
+        .setStrokeStyle(strokeWidth, strokeColor)
         .setInteractive({ useHandCursor: true })
-        .on('pointerdown', () => void this.assignManageSlot(slot));
+        .on('pointerdown', () => {
+          const selId = this.manageSelectedRingId;
+          const selSlot = this.manageSelectedFromSlot;
+          if (selId !== null && selSlot === null) {
+            // Spare ring selected — assign it to this slot (existing path).
+            void this.assignManageSlot(slot);
+          } else if (selId !== null && selSlot !== null) {
+            // Slot ring selected — swap the two slots or deselect.
+            if (selSlot === slot) {
+              this.manageSelectedRingId = null;
+              this.manageSelectedFromSlot = null;
+              this.renderManageModal();
+            } else {
+              void this.swapManageSlots(selSlot, selId, slot, ringId);
+            }
+          } else if (ringId) {
+            // Nothing selected and slot occupied — select this slot's ring.
+            this.manageSelectedRingId = ringId;
+            this.manageSelectedFromSlot = slot;
+            this.renderManageModal();
+          }
+        });
       const slotLbl = this.scene.add
         .text(sx, slotY - 34, slot.toUpperCase(), { fontSize: '11px', color: '#cccccc' })
         .setScrollFactor(0)
@@ -247,7 +273,7 @@ export class BattleHandOverlay {
     // the (now uncapped) Thumb passive strip below the battle slots.
     const ringY = CANVAS_H / 2 + 94;
     const carriedLbl = this.scene.add
-      .text(CANVAS_W / 2, CANVAS_H / 2 + 44, 'Carried rings (select one, then a slot):', {
+      .text(CANVAS_W / 2, CANVAS_H / 2 + 44, 'Spare rings — select to assign, or click two slots to swap:', {
         fontSize: '12px',
         color: '#aaccff',
       })
@@ -259,15 +285,23 @@ export class BattleHandOverlay {
       const row = Math.floor(i / 6);
       const rx = CANVAS_W / 2 - 250 + col * 90;
       const ry = ringY + row * 90;
-      const selected = this.manageSelectedRingId === ring.id;
+      const selected = this.manageSelectedRingId === ring.id && this.manageSelectedFromSlot === null;
       const rect = this.scene.add
         .rectangle(rx, ry, 72, 80, ELEMENT_COLORS[ring.element] ?? 0x444444)
         .setScrollFactor(0)
         .setStrokeStyle(selected ? 3 : 2, selected ? 0xffff00 : 0x888888)
         .setInteractive({ useHandCursor: true })
         .on('pointerdown', () => {
-          this.manageSelectedRingId = selected ? null : ring.id;
-          this.renderManageModal();
+          const selSlot = this.manageSelectedFromSlot;
+          const selId = this.manageSelectedRingId;
+          if (selSlot !== null && selId !== null) {
+            // Slot ring selected — move it to spare and put this spare ring in its slot.
+            void this.swapSlotWithSpare(selSlot, selId, ring.id);
+          } else {
+            this.manageSelectedRingId = selected ? null : ring.id;
+            this.manageSelectedFromSlot = null;
+            this.renderManageModal();
+          }
         });
       container.add(rect);
       this.addRingInfo(container, rx, ry, ring);
@@ -395,6 +429,70 @@ export class BattleHandOverlay {
       return;
     }
     this.manageSelectedRingId = null;
+    this.manageSelectedFromSlot = null;
+    await this.refreshManageData();
+  }
+
+  /**
+   * Swap two battle slots by PUTting both assignments in one request. If `toBringId`
+   * is null the target slot is empty — the selected ring simply moves there and its
+   * old slot is cleared.
+   */
+  private async swapManageSlots(
+    fromSlot: BattleSlot,
+    fromRingId: string,
+    toSlot: BattleSlot,
+    toBringId: string | null,
+  ): Promise<void> {
+    const token = localStorage.getItem('er_token');
+    if (!token) return;
+    const body: Record<string, string | null> = { [toSlot]: fromRingId, [fromSlot]: toBringId };
+    try {
+      const res = await fetch(`${API_BASE}/api/loadout`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify(body),
+      });
+      if (!res.ok) {
+        this.setManageStatus('Swap failed');
+        return;
+      }
+    } catch {
+      this.setManageStatus('Network error during swap');
+      return;
+    }
+    this.manageSelectedRingId = null;
+    this.manageSelectedFromSlot = null;
+    await this.refreshManageData();
+  }
+
+  /**
+   * Assign `spareRingId` to `fromSlot`, displacing `slotRingId` to spare. The server's
+   * one-slot rule automatically clears the old slot when the spare ring is assigned.
+   */
+  private async swapSlotWithSpare(
+    fromSlot: BattleSlot,
+    _slotRingId: string,
+    spareRingId: string,
+  ): Promise<void> {
+    const token = localStorage.getItem('er_token');
+    if (!token) return;
+    try {
+      const res = await fetch(`${API_BASE}/api/loadout`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ [fromSlot]: spareRingId }),
+      });
+      if (!res.ok) {
+        this.setManageStatus('Swap failed');
+        return;
+      }
+    } catch {
+      this.setManageStatus('Network error during swap');
+      return;
+    }
+    this.manageSelectedRingId = null;
+    this.manageSelectedFromSlot = null;
     await this.refreshManageData();
   }
 
@@ -405,6 +503,7 @@ export class BattleHandOverlay {
       this.manageModal = null;
     }
     this.manageSelectedRingId = null;
+    this.manageSelectedFromSlot = null;
     this.manageStatusText = null;
     delete window.__encounterDiscardRing;
     const cb = this.onCloseCb;

@@ -907,7 +907,7 @@ export class CampScene extends Phaser.Scene {
     // card so the cap message is shown and nothing is selected.
     if (source === 'reliquary' && window.__reliquaryLocked) {
       this.clearReliquarySelection();
-      this.setStatus('Loadout is full — leave a ring at the Reliquary first');
+      this.setStatus('Loadout is full — select a carried ring (Thumb/Spare/Battle) first, then click a Reliquary ring to swap');
       return;
     }
     this.setSelection({ ringId, source });
@@ -1638,8 +1638,10 @@ export class CampScene extends Phaser.Scene {
     // The Battle Hand panels behave as swap targets/sources: clicking a slot
     // either applies the pending swap (if a different ring is selected) or picks
     // up the ring already in that slot as the new selection.
-    this.stakePanel = new StakePanel(this, OFFSCREEN_X + 700, OFFSCREEN_Y, () =>
-      void this.onBattleSlotClicked('thumb'),
+    this.stakePanel = new StakePanel(
+      this, OFFSCREEN_X + 700, OFFSCREEN_Y,
+      () => void this.onBattleSlotClicked('thumb'),
+      () => this.setStatus('Ring is locked in a duel — cannot move while escrowed'),
     );
     this.loadoutPanel = new LoadoutPanel(this, OFFSCREEN_X + 790, OFFSCREEN_Y, (slot: LoadoutSlot) =>
       void this.onBattleSlotClicked(slot),
