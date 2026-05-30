@@ -299,10 +299,15 @@ export abstract class BaseBiomeScene extends Phaser.Scene {
       this.load.image('sanctum-exterior', 'assets/structures/structure_sanctum_exterior.png');
     }
     if (!this.textures.exists('npc-overworld')) {
+      // Kept for duelist/merchant markers (strip frames 5–11); monsters use the registry.
       this.load.spritesheet('npc-overworld', 'assets/sprites/sprite_npc_overworld.png', {
         frameWidth: 32,
         frameHeight: 32,
       });
+    }
+    // Per-element monster overworld sprites (#158) — marker matches the battler.
+    for (const entry of Object.values(MONSTER_OW_REGISTRY)) {
+      if (!this.textures.exists(entry.key)) this.load.image(entry.key, entry.path);
     }
     // #128 — berry bush / fruit tree nodes (GDD §10.10).
     // Spritesheet is 80×176 with 16×16 frames (5 cols × 11 rows).

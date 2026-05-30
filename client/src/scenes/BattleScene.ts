@@ -126,6 +126,9 @@ export class BattleScene extends Phaser.Scene {
 
   /** spriteFrame (0-11) from the overworld NPC that started this duel. */
   private opponentSpriteFrame = 0;
+  /** Canonical battler texture key matching the overworld sprite (#158). When set,
+   *  the opponent uses this variant instead of a random pick. */
+  private battleKey?: string;
 
   preload(): void {
     // Opponent monster battle sprites (80×80, one per element + charset for duelists)

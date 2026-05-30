@@ -125,7 +125,7 @@ export class EncounterScene extends Phaser.Scene {
     // the duel against the detected NPC (scoped by npcId so a win records the
     // defeat server-side). The hub UI/hooks below are skipped on this path.
     if (this.npcDuel) {
-      const { npcId, personality, ambush, aiSeed, spriteFrame } = this.npcDuel;
+      const { npcId, personality, ambush, aiSeed, spriteFrame, battleKey } = this.npcDuel;
       // #88 — defensively consume the launch data so it can never be reused. Phaser
       // retains settings.data across a no-data scene.start, so without this a later
       // re-entry of EncounterScene (e.g. a hub return that forgot explicit `{}`)
@@ -134,7 +134,7 @@ export class EncounterScene extends Phaser.Scene {
       this.scene.settings.data = {};
       this.npcDuel = null;
       // #87 Part C — a double-click NPC launch (ambush) pays for first strike.
-      void this.startAIDuel(personality, undefined, npcId, ambush, aiSeed, spriteFrame);
+      void this.startAIDuel(personality, undefined, npcId, ambush, aiSeed, spriteFrame, battleKey);
       return;
     }
 
