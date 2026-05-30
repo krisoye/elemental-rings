@@ -3,6 +3,7 @@ import path from 'path';
 import { describe, test, it, expect } from 'vitest';
 import { WAYSTONES, getWaystone, canTeleport } from '../../shared/waystones';
 import { FOREST_SCREENS } from '../../shared/world/forest';
+import { SWAMP_SCREENS } from '../../shared/world/swamp';
 
 // ---------------------------------------------------------------------------
 // getWaystone — catalog lookup
@@ -105,7 +106,7 @@ function biomeMapPaths(): string[] {
     .readdirSync(forestDir)
     .filter((f) => f.endsWith('.json'))
     .map((f) => path.join(forestDir, f));
-  return [...forestMaps, path.join(MAPS_DIR, 'swamp.json')];
+  return [...forestMaps, path.join(MAPS_DIR, 'swamp', 'swamp_entry.json')];
 }
 
 /** Collect every `waystoneId` from the anchorage/waystone objects across all maps. */
@@ -137,7 +138,7 @@ describe('waystone catalog ↔ map drift', () => {
   });
 
   test('the Swamp map ships its biome-exit back to the Forest with a target', () => {
-    const swampExit = loadObjectLayerAt(path.join(MAPS_DIR, 'swamp.json')).find(
+    const swampExit = loadObjectLayerAt(path.join(MAPS_DIR, 'swamp', 'swamp_entry.json')).find(
       (o) => o.name === 'biome_exit',
     );
     expect(swampExit).toBeDefined();

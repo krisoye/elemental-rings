@@ -85,6 +85,8 @@ export class EncounterScene extends Phaser.Scene {
     aiSeed?: number;
     /** Frame index from the overworld NPC roster — determines the battle sprite. */
     spriteFrame?: number;
+    /** Canonical battler key matching the overworld monster sprite (#158). */
+    battleKey?: string;
   } | null = null;
 
   private openBattleHandOnCreate = false;
@@ -96,6 +98,7 @@ export class EncounterScene extends Phaser.Scene {
     aiSeed?: number;
     openBattleHand?: boolean;
     spriteFrame?: number;
+    battleKey?: string;
   }): void {
     this.busy = false;
     this.wonRingModal = null;
@@ -108,6 +111,7 @@ export class EncounterScene extends Phaser.Scene {
             ambush: data.ambush === true,
             aiSeed: data.aiSeed,
             spriteFrame: data.spriteFrame,
+            battleKey: data.battleKey,
           }
         : null;
   }
@@ -125,7 +129,7 @@ export class EncounterScene extends Phaser.Scene {
     // the duel against the detected NPC (scoped by npcId so a win records the
     // defeat server-side). The hub UI/hooks below are skipped on this path.
     if (this.npcDuel) {
-      const { npcId, personality, ambush, aiSeed, spriteFrame } = this.npcDuel;
+      const { npcId, personality, ambush, aiSeed, spriteFrame, battleKey } = this.npcDuel;
       // #88 — defensively consume the launch data so it can never be reused. Phaser
       // retains settings.data across a no-data scene.start, so without this a later
       // re-entry of EncounterScene (e.g. a hub return that forgot explicit `{}`)
@@ -134,7 +138,7 @@ export class EncounterScene extends Phaser.Scene {
       this.scene.settings.data = {};
       this.npcDuel = null;
       // #87 Part C — a double-click NPC launch (ambush) pays for first strike.
-      void this.startAIDuel(personality, undefined, npcId, ambush, aiSeed, spriteFrame);
+      void this.startAIDuel(personality, undefined, npcId, ambush, aiSeed, spriteFrame, battleKey);
       return;
     }
 
@@ -352,6 +356,7 @@ export class EncounterScene extends Phaser.Scene {
     ambush?: boolean,
     aiSeedOverride?: number,
     opponentSpriteFrame?: number,
+    battleKey?: string,
   ): Promise<void> {
     const token = localStorage.getItem('er_token') ?? '';
     try {
@@ -380,7 +385,7 @@ export class EncounterScene extends Phaser.Scene {
       if ((state.phase === 'ATTACK_SELECT' || state.phase === 'ENDED') && !transitioned) {
         transitioned = true;
         room.onStateChange.remove(onState);
-        this.scene.start('BattleScene', { opponentSpriteFrame });
+        this.scene.start('BattleScene', { opponentSpriteFrame, battleKey });
       }
     };
     room.onStateChange(onState);

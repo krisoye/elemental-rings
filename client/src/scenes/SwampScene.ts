@@ -1,19 +1,18 @@
+import Phaser from 'phaser';
 import { BaseBiomeScene } from './BaseBiomeScene';
 import { SWAMP_SCREENS } from '../../../shared/world/swamp';
+import { FOREST_GENERATED_TILESETS } from './ForestScene';
 
 /**
  * The Swamp biome (GDD §10.17, Phase 8E.4). Migrated onto BaseBiomeScene alongside
  * the Forest, so it now shares the entire spatial engine (tilemap, Player, camera,
- * compass, waystones, NPC detection, blink, talisman) instead of cloning it. The
- * only Swamp-specific overrides are:
- *   - the dedicated `swamp` tileset + `swamp.json` map (a single entry screen),
- *   - a shorter detection radius (the foggy Swamp reveals NPCs later — GDD §10.5),
- *   - a fog overlay drawn over the tilemap.
+ * compass, waystones, NPC detection, blink, talisman) instead of cloning it.
  *
- * The Forest→Swamp gate (forest_sw_stone) and the Ironbark Rune reveal
- * (swamp_secret_forest → forest_hidden_anchor) remain server rules; the Swamp map
- * still ships those catalog objects (swamp_secret_forest, swamp_anchor_2,
- * swamp_depths) directly, which BaseBiomeScene.loadWaystones renders unchanged.
+ * After EPIC #149 (#161) the Swamp uses the same 16px/3-layer pipeline as the Forest:
+ * 6-tileset GID contract (forest-gid-map.mjs), autotiled terrain (T_WATER background,
+ * T_CLIFF reed clumps, T_DIRT walkways), and the map at swamp/swamp_entry.json.
+ * The only Swamp-specific overrides are the fog overlay, shorter detection radius, and
+ * disabled edge transitions (the biome_exit object drives the return to Forest).
  */
 const SWAMP_DETECTION_RADIUS = 100; // shorter than Forest's DETECTION_RADIUS (160)
 
@@ -28,33 +27,52 @@ export class SwampScene extends BaseBiomeScene {
   }
 
   tilesetKey(): string {
-    return 'swamp-tiles';
+    return 'autotile_grass_16'; // unused — buildTilesets() handles multi-tileset loading
   }
 
   mapKeyForScreen(_id: string): string {
-    return 'swamp';
+    return 'swamp_entry';
+  }
+
+  /** All Swamp screens use 16px tiles at 2× world zoom (#149 / #161). */
+  protected is16pxScreen(): boolean {
+    return true;
+  }
+
+  /** Multi-tileset loader — same 6-tileset GID contract as generated Forest screens. */
+  protected buildTilesets(map: Phaser.Tilemaps.Tilemap): Phaser.Tilemaps.Tileset[] {
+    return map.tilesets
+      .filter((t) => this.textures.exists(t.name))
+      .map((t) => map.addTilesetImage(t.name, t.name))
+      .filter((t): t is Phaser.Tilemaps.Tileset => t !== null);
+  }
+
+  /** 3-layer contract: ground (depth 0) / behind (depth 2) / in-front (depth 5). */
+  protected tileLayerNames(): string[] {
+    return ['ground', 'behind', 'in-front'];
+  }
+
+  /** `behind` uses non-empty collision (trunks/rocks block movement). */
+  protected tileLayerCollisionMode(layerName: string): 'property' | 'non-empty' {
+    if (layerName === 'behind') return 'non-empty';
+    return super.tileLayerCollisionMode(layerName);
+  }
+
+  protected tileLayerDepth(layerName: string): number {
+    if (layerName === 'behind') return 2;
+    if (layerName === 'in-front') return 5;
+    return 0; // ground
   }
 
   preload(): void {
-    if (!this.textures.exists('swamp-tiles')) {
-      this.load.image('swamp-tiles', 'assets/terrain/terrain_swamp_main.png');
+    for (const [key, path] of FOREST_GENERATED_TILESETS) {
+      if (!this.textures.exists(key)) this.load.image(key, path);
     }
     this.loadCommonAssets();
-    this.load.tilemapTiledJSON('swamp', 'assets/maps/swamp.json');
+    this.load.tilemapTiledJSON('swamp_entry', 'assets/maps/swamp/swamp_entry.json');
   }
 
-  /**
-   * The Swamp has no 16px screens (all on 32px single-layer ground maps). Returns
-   * false explicitly so the rendering path is unambiguous when the Swamp is
-   * migrated to BaseBiomeScene features in future phases.
-   */
-  protected is16pxScreen(): boolean {
-    return false;
-  }
-
-  /** The Swamp's single screen reuses the hand-authored swamp.json (solid perimeter
-   *  except its NW biome_exit zone), so edge transitions stay off — the return to
-   *  the Forest is driven by the biome_exit overlap zone, not an edge. */
+  /** The Swamp's biome_exit object drives the return to Forest; no edge transitions. */
   protected edgeTransitionsEnabled(): boolean {
     return false;
   }
