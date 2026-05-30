@@ -14,7 +14,7 @@ import type { ScreenDef } from './forest';
 export const SWAMP_SCREENS: ScreenDef[] = [
   {
     id: 'swamp_entry',
-    size: [28, 30],
+    size: [35, 28],
     exits: { north: 'forest_swamp_gate' },
     danger: 2,
     waystone: 'swamp_entry',

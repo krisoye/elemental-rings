@@ -126,6 +126,9 @@ export class BattleScene extends Phaser.Scene {
 
   /** spriteFrame (0-11) from the overworld NPC that started this duel. */
   private opponentSpriteFrame = 0;
+  /** Canonical battler texture key matching the overworld sprite (#158). When set,
+   *  the opponent uses this variant instead of a random pick. */
+  private battleKey?: string;
 
   preload(): void {
     // Opponent monster battle sprites (80×80, one per element + charset for duelists)
@@ -142,8 +145,9 @@ export class BattleScene extends Phaser.Scene {
     });
   }
 
-  init(data?: { opponentSpriteFrame?: number }): void {
+  init(data?: { opponentSpriteFrame?: number; battleKey?: string }): void {
     this.opponentSpriteFrame = data?.opponentSpriteFrame ?? 0;
+    this.battleKey = data?.battleKey;
     // Reset per-start state (scene may be re-entered on a rematch).
     this.revealedOpponentElements = new Set();
     this.prevPhase = '';
@@ -167,10 +171,14 @@ export class BattleScene extends Phaser.Scene {
     const myId = room.sessionId;
 
     this.playerDuelist = new PlayerDuelist(this);
+    // Prefer the overworld-matched variant (#158) so the battler is the same creature
+    // shown on the map; else roll a random variant for this element.
     const monsterTexKey =
-      this.opponentSpriteFrame <= 4
-        ? `battle-monster-${this.opponentSpriteFrame}-${Math.floor(Math.random() * MONSTER_BATTLERS[this.opponentSpriteFrame].length)}`
-        : undefined;
+      this.battleKey && this.textures.exists(this.battleKey)
+        ? this.battleKey
+        : this.opponentSpriteFrame <= 4
+          ? `battle-monster-${this.opponentSpriteFrame}-${Math.floor(Math.random() * MONSTER_BATTLERS[this.opponentSpriteFrame].length)}`
+          : undefined;
     this.opponentDuelist = new OpponentDuelist(this, this.opponentSpriteFrame, monsterTexKey);
     this.hud = new Hud(this);
     this.hand = new Hand(this, (slot) => this.onSlotPressed(slot));

@@ -634,7 +634,9 @@ export class CampScene extends Phaser.Scene {
       // clip nothing but leak a Graphics object).
       this.input.off('wheel', this.onRingwallWheel, this);
       this.sanctumGrid.setVisibleRows(0);
+      this.sanctumGrid.setMaskOrigin(null, null);
       this.loadoutGrid.setVisibleRows(0);
+      this.loadoutGrid.setMaskOrigin(null, null);
       window.__campSanctumScroll = undefined;
       window.__campLoadoutScroll = undefined;
       this.releasePanel(c, this.sanctumGrid);

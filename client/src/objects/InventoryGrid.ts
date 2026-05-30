@@ -62,6 +62,12 @@ export class InventoryGrid extends Phaser.GameObjects.Container {
   private visibleRows = 0; // 0 → scroll/windowing disabled (unbounded grid)
   private totalRows = 0;
   private scrollRow = 0;
+  // Explicit screen-space mask origin set by the owning scene after adoptPanel.
+  // When set, applyMask uses these coordinates directly instead of the potentially
+  // unreliable getWorldTransformMatrix() (which can disagree with actual render
+  // position when the grid is inside a multi-camera nested Container hierarchy).
+  private maskOriginX: number | null = null;
+  private maskOriginY: number | null = null;
   // #154 — number of columns the grid wraps at. The Reliquary/Spare grids in the
   // Reliquary modal are 3-wide; legacy callers default to 2. Drives populate()'s
   // col wrap and the scroll-arrow x.
@@ -80,6 +86,18 @@ export class InventoryGrid extends Phaser.GameObjects.Container {
     this.cardContainer = scene.add.container(0, 0);
     this.add(this.cardContainer);
     scene.add.existing(this);
+  }
+
+  /**
+   * Pin the mask clip rectangle to an explicit screen-space position. Call this
+   * after adoptPanel() positions the grid in the overlay so applyMask() doesn't
+   * have to infer the position from getWorldTransformMatrix(), which can diverge
+   * from the actual render position in a multi-camera nested Container hierarchy.
+   * Pass null/null to revert to the world-transform fallback.
+   */
+  setMaskOrigin(screenX: number | null, screenY: number | null): void {
+    this.maskOriginX = screenX;
+    this.maskOriginY = screenY;
   }
 
   /**

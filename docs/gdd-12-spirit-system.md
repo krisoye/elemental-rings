@@ -55,28 +55,52 @@ Recharging a ring restores its `current_uses` by channeling the protagonist's sp
 
 ### 12.4 Restoring Spirit (Sleep)
 
-| Parameter | Value |
-|---|---|
-| Where | Sanctum only (sleep in the sleeping area; meditate in the circle) |
-| Cost | 25 food units |
-| Effect | Spirit gauge fully restored to current maximum |
+The protagonist can rest at two locations: the Sanctum or any Anchorage campfire in the field. Both restore spirit fully for the same food cost. The Sanctum provides access to the reliquary and long-range teleportation; a campfire provides neither.
 
-The protagonist cannot sleep or restore spirit in the open overworld. The Sanctum's sleeping area and meditation circle are required.
+| Where | Food cost | Spirit restored | Reliquary access | Teleportation |
+|---|---|---|---|---|
+| **Sanctum sleeping area** | 25 | 100% (full gauge) | Yes | Yes (meditation circle) |
+| **Anchorage campfire** | 25 | 100% (full gauge) | No | No |
+
+Ring recharging is always available anywhere in the overworld (§12.3) — it does not require the Sanctum.
+
+**Why return to the Sanctum:** not for sleep or ring recharging (both available in the field), but for reliquary access (swap carried rings, retire rings to grow aggregate_xp) and long-range teleportation (meditation circle). A protagonist who only campfire-rests cannot manage their ring collection or travel across biomes.
 
 **If no food is available:**
 - Buy food from a merchant at 2× forage value
-- If no food and no gold: cannot sleep, spirit stays depleted
+- If no food and no gold: cannot rest anywhere; spirit stays depleted
 - Rings stay at their current uses; the protagonist continues with whatever spirit and uses remain
 
-### 12.5 Teleportation Cost
+### 12.5 Long-Range Teleportation (Meditation Circle)
 
-Teleporting the Sanctum to a distant Anchorage **spends current spirit** (8D, #87 — GDD §10.8). Each destination carries a `spiritCost` (`shared/waystones.ts`) that scales with spiritual distance: nearby/familiar Anchorages are cheap (0–5), distant or newly discovered ones cost more (8–15). The protagonist must hold at least `spiritCost`; on teleport that spirit is deducted.
+From the Sanctum's meditation circle, the protagonist folds space to any attuned Anchorage. The protagonist and the Sanctum move together — the Sanctum relocates to the destination.
 
-- **Spirit gauge (`spirit_current`)** = the resource teleporting now spends, alongside ring recharging; restored to `spirit_max` by sleeping (25 food)
-- **Aggregate ring XP** = the permanent level that raises `spirit_max` (the reserve ceiling) and gates *attunement* (whether a destination is reachable at all)
-- This creates the intended **preparation loop**: explore → return → sleep to restore spirit → teleport. A depleted protagonist must rest before a long trip even if their `spirit_max` is large.
+Each destination carries a `spiritCost` (`shared/waystones.ts`) that scales with spiritual distance: nearby/familiar Anchorages are cheap (0–5), distant or newly discovered ones cost more (8–15). The protagonist must hold at least `spiritCost`; on teleport that spirit is deducted.
+
+- **Spirit gauge (`spirit_current`)** = the resource spent on teleportation and ring recharging; restored to `spirit_max` by sleeping (25 food at Sanctum or campfire)
+- **Aggregate ring XP** = the permanent level that raises `spirit_max` (the reserve ceiling) and gates attunement (whether a destination is reachable at all)
+- This creates the intended **preparation loop**: explore → rest → restore spirit → teleport. A depleted protagonist must rest before a long trip even if their `spirit_max` is large.
 
 > **Earlier model (superseded):** Through 8B–8C the teleport gate used `aggregate_xp >= threshold` (no spend). 8D (#87) replaced it with the `spirit_current >= spiritCost` spend model described above, per §10.8.
+
+### 12.5c Sanctum Summoning (Field Ability)
+
+From any **discovered Anchorage** in the field, the protagonist can summon the Sanctum to their current location without returning to it physically. This is a natural spiritual ability — no talisman or item required.
+
+**How it works:** the protagonist activates a campfire interaction at any Anchorage. If they have sufficient spirit, the Sanctum folds space from its current location to the protagonist's Anchorage. The Sanctum **stays** at the new Anchorage until summoned elsewhere or moved via the meditation circle.
+
+**Cost:** equal to the `spiritCost` of the Anchorage where the Sanctum currently sits. Summoning the Sanctum from far away costs the same as if you had teleported there yourself — because the Sanctum is doing the same journey.
+
+| Sanctum's current location | Summoning cost |
+|---|---|
+| Same Anchorage (already here) | 0 |
+| Nearby Anchorage (same biome, low `spiritCost`) | 0–5 |
+| Far Anchorage (same biome, high `spiritCost`) | 5–10 |
+| Different biome | 8–15 |
+
+**Insufficient spirit:** if the protagonist cannot afford the cost, the summon fails. They must campfire-rest at the current Anchorage (restoring full spirit for 25 food), then summon. The campfire rest → Sanctum summon sequence is always available as long as food exists — there is no death spiral.
+
+**Unlock:** available from the moment the protagonist discovers their first Anchorage. There is no gate, no item to acquire. The ability reflects the protagonist's permanent spiritual bond with the Sanctum.
 
 ### 12.5a Short-Range Blink (the first non-recharge spirit sink)
 

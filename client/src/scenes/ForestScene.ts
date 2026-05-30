@@ -18,6 +18,18 @@ const FOREST_HUB_TILESETS: ReadonlyArray<readonly [string, string]> = [
   ['berry_and_trees', 'assets/flora/flora_berries_trees.png'],
 ];
 
+// Tilesets loaded for generated (non-hub) 16px Forest screens (EPIC #149 / #157).
+// Keys MUST match the `name` fields in GENERATED_TILESETS (forest-gid-map.mjs) so
+// the firstgid contract baked into each generated map JSON resolves correctly.
+export const FOREST_GENERATED_TILESETS: ReadonlyArray<readonly [string, string]> = [
+  ['autotile_grass_16', 'assets/terrain/autotile_grass_16.png'],
+  ['autotile_dirt_16', 'assets/terrain/autotile_dirt_16.png'],
+  ['autotile_water_16', 'assets/terrain/autotile_water_16.png'],
+  ['autotile_cliff_16', 'assets/terrain/autotile_cliff_16.png'],
+  ['ModernEra_GreenForest_Tileset', 'assets/terrain/terrain_forest_modern.png'],
+  ['berry_and_trees', 'assets/flora/flora_berries_trees.png'],
+];
+
 /**
  * The Forest region (GDD §10.15/§10.17, Phase 8E.1). A BaseBiomeScene subclass that
  * drives the multi-screen Forest manifest (FOREST_SCREENS): walking into a screen
@@ -48,7 +60,10 @@ export class ForestScene extends BaseBiomeScene {
    * Sanctum) reads this method rather than repeating the id literal.
    */
   protected is16pxScreen(): boolean {
-    return this.screenId === 'forest_anchorage';
+    // All Forest screens use 16px tiles + 2× zoom after #149/#159. The hub
+    // (forest_anchorage) is hand-authored with the hub tilesets; every generated
+    // screen uses FOREST_GENERATED_TILESETS (forked in preload()).
+    return true;
   }
 
   tilesetKey(): string {
@@ -125,13 +140,16 @@ export class ForestScene extends BaseBiomeScene {
   }
 
   preload(): void {
-    if (this.is16pxScreen()) {
-      // The hub composes several tilesets; load each under a key equal to its map name.
+    if (this.screenId === 'forest_anchorage') {
+      // Hub: hand-authored multi-tileset map; load each under a key equal to its map name.
       for (const [key, path] of FOREST_HUB_TILESETS) {
         if (!this.textures.exists(key)) this.load.image(key, path);
       }
-    } else if (!this.textures.exists('forest')) {
-      this.load.image('forest', 'assets/terrain/terrain_forest_main.png');
+    } else {
+      // Generated screens: the 6-tileset GID contract from #157/#159.
+      for (const [key, path] of FOREST_GENERATED_TILESETS) {
+        if (!this.textures.exists(key)) this.load.image(key, path);
+      }
     }
     this.loadCommonAssets();
     // Every screen — including the hub — loads its deterministic generated map (#107).
@@ -153,7 +171,10 @@ export class ForestScene extends BaseBiomeScene {
    * enough to trigger the exit.
    */
   onEnterScreen(): void {
-    if (!this.is16pxScreen()) return;
+    // Hub-only: the hand-authored hub perimeter needs invisible wall zones to close
+    // its visually-walled-but-physically-open gaps. Generated screens have a real
+    // T_CLIFF perimeter with carved exit gaps and need none.
+    if (this.screenId !== 'forest_anchorage') return;
     const W = 28; // wider than EDGE=24 so blocked players don't trip the exit
     const addWall = (yTop: number, yBottom: number): void => {
       const h = yBottom - yTop;
