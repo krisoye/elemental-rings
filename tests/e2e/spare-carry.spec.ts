@@ -122,13 +122,19 @@ test('spare-carry: retiring 200 XP to Reliquary raises carry cap from 5 to 7', a
   expect(after.aggregate_xp).toBe(200);
 
   // Carry cap is now 7 (5 + 2 spare). We can carry 7 rings without error.
+  // NOTE: the 7-ring putCarry will include the 2 XP rings (making them in_carry=1).
+  // After the call, aggregate_xp WHERE in_carry=0 drops back toward 0, so the cap
+  // reverts to 5 for subsequent calls. The cap check inside packLoadout uses the
+  // PRE-carry aggregate_xp (before clearCarryForOwner runs), so 7 passes correctly.
   const allRings = (await getMe(token)).rings;
   const sevenIds = allRings.slice(0, 7).map((r: any) => r.id);
   const carryRes = await putCarry(token, sevenIds);
-  // packLoadout now allows 7 because getCarryCap returns 7.
+  // packLoadout allows 7 because getCarryCap computed 7 before the carry flags changed.
   expect(carryRes.status).toBe(200);
 
-  // 8 rings exceeds the new cap (7 + 1 = 8 > 7).
+  // After the 7-ring carry, the 2 XP rings are now in_carry=1.
+  // aggregate_xp WHERE in_carry=0 is now ~0 → getCarryCap() ≈ 5.
+  // 8 rings still exceeds even the pre-carry cap of 7, so 400.
   const eightIds = allRings.slice(0, 8).map((r: any) => r.id);
   const overRes = await putCarry(token, eightIds);
   expect(overRes.status).toBe(400);

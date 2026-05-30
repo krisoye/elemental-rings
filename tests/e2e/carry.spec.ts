@@ -29,14 +29,13 @@ async function me(token: string): Promise<{ player: any; rings: Ring[]; loadout:
   return res.json();
 }
 
-// ── GET /api/me exposes carry_cap (DB column default, still 10) ──────────────
-// Note: the enforced cap is now XP-derived (5 + floor(aggregate_xp/100)) and
-// accessed via getCarryCap(). The player.carry_cap DB column is preserved for
-// backward compatibility; new enforcement is via getCarryCap only (#171).
-test('carry: GET /api/me returns carry_cap default 10', async () => {
+// ── GET /api/me exposes the computed carry_cap (5 for a fresh player) ────────
+// #171: /api/me now returns the XP-derived carry_cap (5 + floor(aggregate_xp/100)),
+// NOT the stale DB column. Fresh player has aggregate_xp=0 → cap=5.
+test('carry: GET /api/me returns computed carry_cap 5 for a fresh player', async () => {
   const { token } = await register();
   const { player } = await me(token);
-  expect(player.carry_cap).toBe(10);
+  expect(player.carry_cap).toBe(5);
 });
 
 // ── PUT /api/carry sets in_carry flags correctly ──────────────────────────────
@@ -107,7 +106,9 @@ test('carry: __campState separates atSanctum / loadout / battleHand', async ({ b
   });
   const state = await page.evaluate(() => (window as any).__campState);
 
-  expect(state.carry_cap).toBe(10);
+  // #171: carry_cap is now XP-derived. Fresh player has aggregate_xp=0 → cap=5.
+  // /api/me now returns the computed cap, so CampScene's __campState reflects it.
+  expect(state.carry_cap).toBe(5);
   expect(Array.isArray(state.atSanctum)).toBe(true);
   expect(Array.isArray(state.loadout_pool)).toBe(true);
   expect(Array.isArray(state.battleHand)).toBe(true);

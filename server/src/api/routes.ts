@@ -34,6 +34,7 @@ import {
   getTalismanLoadout,
   equipTalisman,
   rechargeNecklace,
+  getCarry,
   getCarryCap,
   getSpareCapacity,
   getDefeatedNpcs,
@@ -171,9 +172,11 @@ apiRouter.get('/api/me', requireAuth, (req: Request, res: Response): void => {
   }
   // One query, both values — aggregate_xp is the raw ring XP sum; spirit_max is
   // derived from it. Both served live so the HUD always reflects current state.
+  // #171 — carry_cap is now XP-derived (5 + floor(aggregate_xp/100)); override the
+  // DB column so the client always receives the enforced cap, not the stale default.
   const { aggregateXp, spiritMax } = getSpiritStats(playerId);
   res.status(200).json({
-    player: { ...player, spirit_max: spiritMax, aggregate_xp: aggregateXp },
+    player: { ...player, spirit_max: spiritMax, aggregate_xp: aggregateXp, carry_cap: getCarryCap(playerId) },
     rings: getRingsByOwner(playerId),
     loadout: getLoadout(playerId) ?? null,
   });
@@ -331,7 +334,8 @@ apiRouter.put('/api/loadout', requireAuth, (req: Request, res: Response): void =
   // #171 — carry-cap gate: count carried rings and reject if the cap is already
   // exceeded. This guards against excess carry when spareCapacity has decreased
   // since the rings were first carried (e.g. XP was lost / transferred).
-  const carriedCount = getRingsByOwner(playerId).filter((r) => r.in_carry === 1).length;
+  // Use getCarry() (indexed selectCarryByOwner) rather than a full ring scan.
+  const carriedCount = getCarry(playerId).length;
   const cap = getCarryCap(playerId);
   if (carriedCount > cap) {
     const spare = getSpareCapacity(playerId);

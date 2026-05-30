@@ -253,7 +253,7 @@ const updateGameDay = db.prepare(`UPDATE players SET game_day = game_day + 1 WHE
 const selectCarryByOwner = db.prepare(`SELECT * FROM rings WHERE owner_id = ? AND in_carry = 1`);
 const updateRingCarry = db.prepare(`UPDATE rings SET in_carry = ? WHERE id = ?`);
 const clearCarryForOwner = db.prepare(`UPDATE rings SET in_carry = 0 WHERE owner_id = ?`);
-const selectCarryCap = db.prepare(`SELECT carry_cap FROM players WHERE id = ?`);
+// selectCarryCap removed (#171): getCarryCap is now XP-derived, not read from the DB column.
 
 // #41 — spirit / food economy.
 const selectSpiritFood = db.prepare(

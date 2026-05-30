@@ -253,8 +253,8 @@ test('reliquary: at carry cap, Reliquary cards are locked and clicking does noth
   const me = await getMe(token);
   const cap = me.player.carry_cap as number;
   // Requires more rings than carry_cap to fill carry while keeping Reliquary
-  // non-empty. With 10 starter rings and carry_cap=10 there is no headroom.
-  // Skip until a test-only ring-mint route is available.
+  // non-empty. #171: cap = 5 for a fresh player, and there are 10 starter rings,
+  // so 10 > 5 — there IS headroom. The test no longer skips for fresh players.
   test.skip(
     me.rings.length <= cap,
     `Need > ${cap} rings to fill carry while keeping Reliquary non-empty (have ${me.rings.length})`,
