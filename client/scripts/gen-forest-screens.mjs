@@ -1,22 +1,18 @@
-// Deterministic generator for the Phase 8E Forest region screens (GDD §10.17).
+// Deterministic generator for the Forest region screens (GDD §10.17), 16px/3-layer
+// (EPIC #149 / #159).
 //
 // Reads the Forest screen manifest (FOREST_SCREENS, mirrored inline below from
 // shared/world/forest.ts — a Node .mjs cannot import the TS module) and writes one
-// Tiled 1.10 JSON map per screen to client/public/assets/maps/forest/<id>.json.
-// Pure, reproducible output: re-running produces no spurious diff (the only
-// randomness, grove placement on open screens, is seeded by a hash of the screen
-// id). Uses the shared forest tileset + a Tiled 1.10 ground/objects layer structure.
+// Tiled 1.10 JSON map per NON-HUB screen to
+// client/public/assets/maps/forest/<id>.json. The hand-authored hub
+// (forest_anchorage) is SKIPPED — it ships its own 6-tileset hub config and must
+// not be overwritten.
 //
-// Tile GIDs into the shared forest tileset (firstgid = 1, forest.png is 128×32 = 4
-// tiles wide): GID 1 = void (never placed), GID 2 = floor (walkable), GID 3 =
-// wall/tree (collides: true), GID 4 = accent/dirt path (walkable).
-//
-// Every screen — including the hub `forest_anchorage` — is generated here and loaded
-// by ForestScene uniformly (the legacy overworld.json exception was removed in #107).
-// Each screen with cardinal exits gets a 4-tile-wide OPEN GAP carved into its
-// perimeter wall at each exit's edge midpoint, so walking into that edge triggers the
-// BaseBiomeScene edge transition to the neighbouring screen. The hub is the `safe`
-// screen and is kept grove-free so the seeded NPC roster never lands inside a tree.
+// Each generated map is 16px/3-layer (ground / behind / in-front / objects) with
+// autotiled terrain (grass / dirt roads / water ponds / cliff groves) resolved by
+// the shared blob autotile resolver. Pure & reproducible: re-running produces no
+// spurious diff (the only randomness — feature placement on open danger screens —
+// is seeded by a hash of the screen id).
 //
 // Run from the client/ directory:  node scripts/gen-forest-screens.mjs
 // (or `npm run gen:forest-screens`).
@@ -24,12 +20,24 @@
 import { writeFileSync, mkdirSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import {
+  GENERATED_TILESETS,
+  GID_GRASS_BASE,
+  GID_DIRT_BASE,
+  GID_WATER_BASE,
+  GID_CLIFF_BASE,
+  GID_TREE_TRUNK,
+  GID_TREE_CANOPY_A,
+} from './lib/forest-gid-map.mjs';
+import { resolveAutotileVariant } from './lib/autotile-resolver.mjs';
 
-const TILE = 32;
+const TILE = 16; // 16px tiles (was 32)
 
-const GID_FLOOR = 2;
-const GID_WALL = 3;
-const GID_ACCENT = 4;
+// Terrain types — determine GID base + autotile variant on the ground layer.
+const T_GRASS = 0;
+const T_DIRT = 1;
+const T_WATER = 2;
+const T_CLIFF = 3;
 
 // ── Inlined copy of shared/world/forest.ts FOREST_SCREENS (kept in sync; a Vitest
 // drift test guards the TS manifest's reciprocity + catalog parity). ────────────
@@ -73,8 +81,9 @@ const FOREST_SCREENS = [
 
 /** A short axis (< this many tiles) marks a corridor screen (tree-walled sides). */
 const CORRIDOR_THRESHOLD = 20;
-/** Half-width (tiles) of the clear gap opened in a corridor wall at an exit. */
-const GAP_HALF = 2;
+/** Half-width (tiles) of the clear gap opened in a perimeter/corridor wall at an
+ *  exit. 4 tiles at 16px ≈ the old 2-tile gap at 32px physical width. */
+const GAP_HALF = 4;
 
 /** Deterministic 32-bit hash of a string (FNV-1a) → a stable per-screen seed. */
 function hashSeed(s) {
@@ -86,53 +95,13 @@ function hashSeed(s) {
   return h >>> 0;
 }
 
-/** A tiny seeded LCG PRNG → reproducible grove placement. */
+/** A tiny seeded LCG PRNG → reproducible feature placement. */
 function makeRng(seed) {
   let state = seed || 1;
   return () => {
     state = (Math.imul(state, 1664525) + 1013904223) >>> 0;
     return state / 0xffffffff;
   };
-}
-
-/**
- * Draw a Bresenham line from (x0,y0) to (x1,y1), painting GID_ACCENT (dirt path)
- * with a 1-tile cross brush so the path reads ~3 tiles wide.
- */
-function bresenhamPath(data, w, h, x0, y0, x1, y1) {
-  const at = (tx, ty) => ty * w + tx;
-  const dx = Math.abs(x1 - x0);
-  const dy = Math.abs(y1 - y0);
-  const sx = x0 < x1 ? 1 : -1;
-  const sy = y0 < y1 ? 1 : -1;
-  let err = dx - dy;
-  let x = x0;
-  let y = y0;
-  while (true) {
-    for (const [ox, oy] of [
-      [0, 0],
-      [1, 0],
-      [-1, 0],
-      [0, 1],
-      [0, -1],
-    ]) {
-      const px = x + ox;
-      const py = y + oy;
-      if (px > 0 && py > 0 && px < w - 1 && py < h - 1) {
-        data[at(px, py)] = GID_ACCENT;
-      }
-    }
-    if (x === x1 && y === y1) break;
-    const e2 = 2 * err;
-    if (e2 > -dy) {
-      err -= dy;
-      x += sx;
-    }
-    if (e2 < dx) {
-      err += dx;
-      y += sy;
-    }
-  }
 }
 
 /** Clamp a tile index to the interior span [1, dim-2] (never a corner tile). */
@@ -156,140 +125,239 @@ function edgeMidpoint(dir, w, h) {
   }
 }
 
-/** Build the flat ground-layer GID array (row-major, top-down) for one screen. */
-function buildGround(screen) {
+/**
+ * Bresenham line from (x0,y0) to (x1,y1) painting `terrainType` with a 1-tile cross
+ * brush (centre + 4 cardinals) so the path reads ~3 tiles wide. NEVER overwrites
+ * T_CLIFF/T_WATER (cliffs and ponds break roads, not the other way around).
+ */
+function bresenhamTerrain(grid, w, h, x0, y0, x1, y1, terrainType) {
+  const at = (tx, ty) => ty * w + tx;
+  const dx = Math.abs(x1 - x0);
+  const dy = Math.abs(y1 - y0);
+  const sx = x0 < x1 ? 1 : -1;
+  const sy = y0 < y1 ? 1 : -1;
+  let err = dx - dy;
+  let x = x0;
+  let y = y0;
+  while (true) {
+    for (const [ox, oy] of [
+      [0, 0],
+      [1, 0],
+      [-1, 0],
+      [0, 1],
+      [0, -1],
+    ]) {
+      const px = x + ox;
+      const py = y + oy;
+      if (px > 0 && py > 0 && px < w - 1 && py < h - 1) {
+        if (grid[at(px, py)] === T_GRASS) grid[at(px, py)] = terrainType;
+      }
+    }
+    if (x === x1 && y === y1) break;
+    const e2 = 2 * err;
+    if (e2 > -dy) {
+      err -= dy;
+      x += sx;
+    }
+    if (e2 < dx) {
+      err += dx;
+      y += sy;
+    }
+  }
+}
+
+/**
+ * 8-neighbour same-terrain bitmask for an autotiled cell. Bit order matches the
+ * resolver: bit0=N, bit1=NE, bit2=E, bit3=SE, bit4=S, bit5=SW, bit6=W, bit7=NW.
+ * Out-of-bounds neighbours count as NOT same-terrain (0).
+ */
+function neighborMaskForTerrain(grid, w, h, tx, ty, terrainType) {
+  const same = (nx, ny) =>
+    nx >= 0 && ny >= 0 && nx < w && ny < h && grid[ny * w + nx] === terrainType ? 1 : 0;
+  let mask = 0;
+  mask |= same(tx, ty - 1) << 0; // N
+  mask |= same(tx + 1, ty - 1) << 1; // NE
+  mask |= same(tx + 1, ty) << 2; // E
+  mask |= same(tx + 1, ty + 1) << 3; // SE
+  mask |= same(tx, ty + 1) << 4; // S
+  mask |= same(tx - 1, ty + 1) << 5; // SW
+  mask |= same(tx - 1, ty) << 6; // W
+  mask |= same(tx - 1, ty - 1) << 7; // NW
+  return mask;
+}
+
+/** Carve a GAP_HALF*2-wide T_GRASS gap in the perimeter at `dir`'s edge midpoint. */
+function carveExitGap(grid, w, h, dir) {
+  const at = (tx, ty) => ty * w + tx;
+  const m = edgeMidpoint(dir, w, h);
+  for (let d = -GAP_HALF + 1; d <= GAP_HALF; d++) {
+    if (dir === 'north') grid[at(clampTile(m.tx + d, w), 0)] = T_GRASS;
+    else if (dir === 'south') grid[at(clampTile(m.tx + d, w), h - 1)] = T_GRASS;
+    else if (dir === 'west') grid[at(0, clampTile(m.ty + d, h))] = T_GRASS;
+    else if (dir === 'east') grid[at(w - 1, clampTile(m.ty + d, h))] = T_GRASS;
+  }
+}
+
+/**
+ * Pass 1: build the per-tile terrain-type grid (T_* values, row-major top-down).
+ */
+function buildTerrainGrid(screen) {
   const [w, h] = screen.size;
   const at = (tx, ty) => ty * w + tx;
-  const data = new Array(w * h).fill(GID_FLOOR);
+  const grid = new Uint8Array(w * h).fill(T_GRASS);
 
-  // 1. Perimeter walls.
+  // Perimeter → T_CLIFF (blocks edges; exit gaps are re-opened to T_GRASS below).
   for (let x = 0; x < w; x++) {
-    data[at(x, 0)] = GID_WALL;
-    data[at(x, h - 1)] = GID_WALL;
+    grid[at(x, 0)] = T_CLIFF;
+    grid[at(x, h - 1)] = T_CLIFF;
   }
   for (let y = 0; y < h; y++) {
-    data[at(0, y)] = GID_WALL;
-    data[at(w - 1, y)] = GID_WALL;
+    grid[at(0, y)] = T_CLIFF;
+    grid[at(w - 1, y)] = T_CLIFF;
   }
 
-  const dirs = Object.keys(screen.exits);
+  const dirs = Object.keys(screen.exits ?? {});
   const isCorridor = Math.min(w, h) < CORRIDOR_THRESHOLD;
 
   if (isCorridor) {
-    // Corridor: tree walls flank the long axis, leaving a 4-tile path in the center.
+    // Corridor: T_CLIFF flanks the long axis, leaving a clear central path.
     if (w < h) {
-      // Short axis on x → tree walls on x=1..3 and x=w-4..w-2.
       for (let y = 1; y < h - 1; y++) {
         for (const tx of [1, 2, 3, w - 4, w - 3, w - 2]) {
-          if (tx > 0 && tx < w - 1) data[at(tx, y)] = GID_WALL;
+          if (tx > 0 && tx < w - 1) grid[at(tx, y)] = T_CLIFF;
         }
       }
     } else {
-      // Short axis on y → tree walls on y=1..3 and y=h-4..h-2.
       for (let x = 1; x < w - 1; x++) {
         for (const ty of [1, 2, 3, h - 4, h - 3, h - 2]) {
-          if (ty > 0 && ty < h - 1) data[at(x, ty)] = GID_FLOOR; // ensure base
-        }
-        for (const ty of [1, 2, 3, h - 4, h - 3, h - 2]) {
-          if (ty > 0 && ty < h - 1) data[at(x, ty)] = GID_WALL;
+          if (ty > 0 && ty < h - 1) grid[at(x, ty)] = T_CLIFF;
         }
       }
     }
-    // Clear a gap in the corridor walls at each exit so the path is reachable.
+    // Clear a channel near each exit so the central path is reachable.
     for (const dir of dirs) {
       const m = edgeMidpoint(dir, w, h);
       for (let d = -GAP_HALF; d <= GAP_HALF; d++) {
         if (dir === 'north' || dir === 'south') {
-          // Open a vertical channel near the exit's x, clearing the flanking walls.
           for (let y = 1; y < h - 1; y++) {
             const tx = m.tx + d;
-            if (tx > 0 && tx < w - 1) data[at(tx, y)] = GID_FLOOR;
+            if (tx > 0 && tx < w - 1) grid[at(tx, y)] = T_GRASS;
           }
         } else {
           for (let x = 1; x < w - 1; x++) {
             const ty = m.ty + d;
-            if (ty > 0 && ty < h - 1) data[at(x, ty)] = GID_FLOOR;
+            if (ty > 0 && ty < h - 1) grid[at(x, ty)] = T_GRASS;
           }
         }
       }
     }
   } else if (!screen.safe) {
-    // Open screen: scatter 3–5 deterministic grove circles (radius 2–3). The hub
-    // (`safe`) screen is left grove-free so the seeded NPC roster — placed by tile
-    // index, not by map object — never spawns inside a tree.
+    // Open screen: scatter 3–5 deterministic terrain features (radius 2–3). Danger
+    // tier 2 → ponds (water); tiers 1/3 → groves (cliff → trunks + canopy). The hub
+    // (`safe`) screen is never reached here. Features are kept off the centre so the
+    // anchorage clearing / path hub stays clear.
     const rng = makeRng(hashSeed(screen.id));
-    const groveCount = 3 + Math.floor(rng() * 3); // 3..5
-    for (let i = 0; i < groveCount; i++) {
+    const featureCount = 3 + Math.floor(rng() * 3); // 3..5
+    for (let i = 0; i < featureCount; i++) {
       const r = 2 + Math.floor(rng() * 2); // 2..3
-      const cx = 2 + Math.floor(rng() * (w - 4));
-      const cy = 2 + Math.floor(rng() * (h - 4));
+      const cx = 3 + Math.floor(rng() * Math.max(1, w - 6));
+      const cy = 3 + Math.floor(rng() * Math.max(1, h - 6));
+      const fType = screen.danger === 2 ? T_WATER : T_CLIFF;
       for (let dy = -r; dy <= r; dy++) {
         for (let dx = -r; dx <= r; dx++) {
           if (dx * dx + dy * dy > r * r) continue;
           const tx = cx + dx;
           const ty = cy + dy;
           if (tx <= 0 || ty <= 0 || tx >= w - 1 || ty >= h - 1) continue;
-          data[at(tx, ty)] = GID_WALL;
+          grid[at(tx, ty)] = fType;
         }
       }
     }
   }
 
-  // Perimeter gaps: carve a 4-tile-wide (2*GAP_HALF) OPEN FLOOR span out of the
-  // perimeter wall at each exit's edge midpoint, so the player can walk into that
-  // edge and trigger the BaseBiomeScene edge transition. Without this the perimeter
-  // is solid and the manifest exits are unreachable on foot (the #107 hub bug).
-  for (const dir of dirs) {
-    const m = edgeMidpoint(dir, w, h);
-    for (let d = -GAP_HALF + 1; d <= GAP_HALF; d++) {
-      if (dir === 'north') data[at(clampTile(m.tx + d, w), 0)] = GID_FLOOR;
-      else if (dir === 'south') data[at(clampTile(m.tx + d, w), h - 1)] = GID_FLOOR;
-      else if (dir === 'west') data[at(0, clampTile(m.ty + d, h))] = GID_FLOOR;
-      else if (dir === 'east') data[at(w - 1, clampTile(m.ty + d, h))] = GID_FLOOR;
-    }
-  }
+  // Re-open perimeter exit gaps to T_GRASS so the player can walk into each edge.
+  for (const dir of dirs) carveExitGap(grid, w, h, dir);
+  if (screen.biomeExit) carveExitGap(grid, w, h, screen.biomeExit.dir);
 
-  // Dirt paths connecting every exit's edge midpoint to the screen center, so all
-  // exits are joined by a walkable path (carved through any groves/corridor walls).
-  const cx = (w / 2) | 0;
-  const cy = (h / 2) | 0;
+  // Dirt paths: from every exit (and the biome exit) edge midpoint to the centre,
+  // joining all exits with a walkable T_DIRT road (carved only through T_GRASS).
+  const ccx = (w / 2) | 0;
+  const ccy = (h / 2) | 0;
   for (const dir of dirs) {
     const m = edgeMidpoint(dir, w, h);
-    bresenhamPath(data, w, h, m.tx, m.ty, cx, cy);
+    bresenhamTerrain(grid, w, h, m.tx, m.ty, ccx, ccy, T_DIRT);
   }
-  // The biome_exit edge also gets a path so it is reachable on foot.
   if (screen.biomeExit) {
     const m = edgeMidpoint(screen.biomeExit.dir, w, h);
-    bresenhamPath(data, w, h, m.tx, m.ty, cx, cy);
+    bresenhamTerrain(grid, w, h, m.tx, m.ty, ccx, ccy, T_DIRT);
   }
 
-  // Anchorage clearing: a 5×5 floor area at center + a small accent campfire ring.
+  // Anchorage clearing: a 5×5 T_GRASS area at centre so the seeded NPC roster and
+  // the anchorage marker never land on a blocking tile.
   if (screen.anchorage) {
     for (let dy = -2; dy <= 2; dy++) {
       for (let dx = -2; dx <= 2; dx++) {
-        const tx = cx + dx;
-        const ty = cy + dy;
+        const tx = ccx + dx;
+        const ty = ccy + dy;
         if (tx <= 0 || ty <= 0 || tx >= w - 1 || ty >= h - 1) continue;
-        data[at(tx, ty)] = GID_FLOOR;
+        grid[at(tx, ty)] = T_GRASS;
       }
-    }
-    // Accent ring (4 cardinals around the center) — a campfire ring highlight.
-    for (const [ox, oy] of [
-      [0, -1],
-      [0, 1],
-      [-1, 0],
-      [1, 0],
-    ]) {
-      const tx = cx + ox;
-      const ty = cy + oy;
-      if (tx > 0 && ty > 0 && tx < w - 1 && ty < h - 1) data[at(tx, ty)] = GID_ACCENT;
     }
   }
 
+  return grid;
+}
+
+/** Ground-layer GID array: grass = interior variant 0; dirt/water/cliff autotiled. */
+function buildGroundLayer(screen, terrainGrid) {
+  const [w, h] = screen.size;
+  const at = (tx, ty) => ty * w + tx;
+  const data = new Array(w * h).fill(0);
+  for (let ty = 0; ty < h; ty++) {
+    for (let tx = 0; tx < w; tx++) {
+      const t = terrainGrid[at(tx, ty)];
+      if (t === T_GRASS) {
+        // Grass fills the background; grass-to-grass is always interior (variant 0).
+        data[at(tx, ty)] = GID_GRASS_BASE + 0;
+      } else {
+        const mask = neighborMaskForTerrain(terrainGrid, w, h, tx, ty, t);
+        const variant = resolveAutotileVariant(mask);
+        const base =
+          t === T_DIRT ? GID_DIRT_BASE : t === T_WATER ? GID_WATER_BASE : GID_CLIFF_BASE;
+        data[at(tx, ty)] = base + variant;
+      }
+    }
+  }
   return data;
 }
 
-/** Build the `objects` layer for one screen. */
+/** Behind layer: T_CLIFF → tree trunk (non-empty collision blocks movement). */
+function buildBehindLayer(screen, terrainGrid) {
+  const [w, h] = screen.size;
+  const at = (tx, ty) => ty * w + tx;
+  const data = new Array(w * h).fill(0);
+  for (let ty = 0; ty < h; ty++) {
+    for (let tx = 0; tx < w; tx++) {
+      if (terrainGrid[at(tx, ty)] === T_CLIFF) data[at(tx, ty)] = GID_TREE_TRUNK;
+    }
+  }
+  return data;
+}
+
+/** In-front layer: T_CLIFF → tree canopy (no collision; player walks under). */
+function buildInFrontLayer(screen, terrainGrid) {
+  const [w, h] = screen.size;
+  const at = (tx, ty) => ty * w + tx;
+  const data = new Array(w * h).fill(0);
+  for (let ty = 0; ty < h; ty++) {
+    for (let tx = 0; tx < w; tx++) {
+      if (terrainGrid[at(tx, ty)] === T_CLIFF) data[at(tx, ty)] = GID_TREE_CANOPY_A;
+    }
+  }
+  return data;
+}
+
+/** Build the `objects` layer for one screen. Pixel coords auto-scale via TILE=16. */
 function buildObjects(screen) {
   const [w, h] = screen.size;
   const mapW = w * TILE;
@@ -316,7 +384,6 @@ function buildObjects(screen) {
       visible: true,
     });
   } else {
-    // No exits (the hidden alcove) — spawn at center.
     objects.push({
       id: nextId++,
       name: 'spawn',
@@ -330,7 +397,7 @@ function buildObjects(screen) {
     });
   }
 
-  // Anchorage object at the clearing center (+ sanctum_return on the hub).
+  // Anchorage object at the clearing centre (+ sanctum_return on the hub).
   if (screen.anchorage) {
     objects.push({
       id: nextId++,
@@ -375,8 +442,7 @@ function buildObjects(screen) {
     });
   }
 
-  // Biome-exit at its edge midpoint. Carries `target` (destination scene key) and,
-  // when gated, `gate` (the attunement waystoneId that unlocks it).
+  // Biome-exit at its edge midpoint. Carries `target` and, when gated, `gate`.
   if (screen.biomeExit) {
     const m = edgeMidpoint(screen.biomeExit.dir, w, h);
     const props = [{ name: 'target', type: 'string', value: screen.biomeExit.target }];
@@ -400,8 +466,38 @@ function buildObjects(screen) {
   return objects;
 }
 
+/** Emit the 6 generated tilesets; water + cliff carry `collides:true` on all 48. */
+function buildTilesetDescriptors() {
+  const collideTiles = (count) =>
+    Array.from({ length: count }, (_, i) => ({
+      id: i,
+      properties: [{ name: 'collides', type: 'bool', value: true }],
+    }));
+
+  return GENERATED_TILESETS.map((ts) => {
+    const base = {
+      firstgid: ts.firstgid,
+      name: ts.name,
+      image: ts.image,
+      imagewidth: ts.imagewidth,
+      imageheight: ts.imageheight,
+      tilewidth: 16,
+      tileheight: 16,
+      tilecount: ts.tilecount,
+      columns: ts.columns,
+      margin: 0,
+      spacing: 0,
+    };
+    if (ts.name === 'autotile_water_16' || ts.name === 'autotile_cliff_16') {
+      return { ...base, tiles: collideTiles(ts.tilecount) };
+    }
+    return base;
+  });
+}
+
 function buildMap(screen) {
   const [w, h] = screen.size;
+  const terrainGrid = buildTerrainGrid(screen);
   return {
     compressionlevel: -1,
     width: w,
@@ -414,48 +510,14 @@ function buildMap(screen) {
     type: 'map',
     version: '1.10',
     tiledversion: '1.10.2',
-    nextlayerid: 3,
+    nextlayerid: 5,
     nextobjectid: 99,
-    tilesets: [
-      {
-        firstgid: 1,
-        name: 'forest',
-        image: '../../tiles/forest.png',
-        imagewidth: 128,
-        imageheight: 32,
-        tilewidth: 32,
-        tileheight: 32,
-        tilecount: 4,
-        columns: 4,
-        margin: 0,
-        spacing: 0,
-        tiles: [{ id: 2, properties: [{ name: 'collides', type: 'bool', value: true }] }],
-      },
-    ],
+    tilesets: buildTilesetDescriptors(),
     layers: [
-      {
-        id: 1,
-        name: 'ground',
-        type: 'tilelayer',
-        x: 0,
-        y: 0,
-        width: w,
-        height: h,
-        opacity: 1,
-        visible: true,
-        data: buildGround(screen),
-      },
-      {
-        id: 2,
-        name: 'objects',
-        type: 'objectgroup',
-        x: 0,
-        y: 0,
-        opacity: 1,
-        visible: true,
-        draworder: 'topdown',
-        objects: buildObjects(screen),
-      },
+      { id: 1, name: 'ground', type: 'tilelayer', x: 0, y: 0, width: w, height: h, opacity: 1, visible: true, data: buildGroundLayer(screen, terrainGrid) },
+      { id: 2, name: 'behind', type: 'tilelayer', x: 0, y: 0, width: w, height: h, opacity: 1, visible: true, data: buildBehindLayer(screen, terrainGrid) },
+      { id: 3, name: 'in-front', type: 'tilelayer', x: 0, y: 0, width: w, height: h, opacity: 1, visible: true, data: buildInFrontLayer(screen, terrainGrid) },
+      { id: 4, name: 'objects', type: 'objectgroup', x: 0, y: 0, opacity: 1, visible: true, draworder: 'topdown', objects: buildObjects(screen) },
     ],
   };
 }
@@ -463,9 +525,12 @@ function buildMap(screen) {
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const outDir = resolve(__dirname, '..', 'public', 'assets', 'maps', 'forest');
 mkdirSync(outDir, { recursive: true });
+let count = 0;
 for (const screen of FOREST_SCREENS) {
+  if (screen.id === 'forest_anchorage') continue; // hand-authored hub; do NOT overwrite
   const map = buildMap(screen);
   const outPath = resolve(outDir, `${screen.id}.json`);
   writeFileSync(outPath, JSON.stringify(map, null, 2) + '\n');
+  count++;
 }
-console.log(`Wrote ${FOREST_SCREENS.length} Forest region screen maps → ${outDir}`);
+console.log(`Wrote ${count} Forest region screen maps → ${outDir}`);
