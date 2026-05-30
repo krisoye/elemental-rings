@@ -21,9 +21,15 @@ const SLOT_DEFS: { slot: LoadoutSlot; label: string; col: number; row: number }[
  * slot card while a ring is selected triggers `onAssign(slot)`. Briefly
  * highlights the slot yellow on click for feedback.
  */
+const SELECTED_STROKE = 0xffff00;
+const DESELECTED_STROKE = 0x666666;
+
 export class LoadoutPanel extends Phaser.GameObjects.Container {
   private readonly slotBgs: Map<LoadoutSlot, Phaser.GameObjects.Rectangle> = new Map();
   private readonly slotLabels: Map<LoadoutSlot, Phaser.GameObjects.Text[]> = new Map();
+  // #154 — the slot currently highlighted as the active swap selection (yellow
+  // border), or null. updateFromLoadout preserves this stroke across refreshes.
+  private selectedSlot: LoadoutSlot | null = null;
 
   constructor(
     scene: Phaser.Scene,
@@ -60,11 +66,7 @@ export class LoadoutPanel extends Phaser.GameObjects.Container {
         .text(cx, cy + 32, '', { fontSize: '9px', color: '#000000' })
         .setOrigin(0.5);
 
-      bg.on('pointerdown', () => {
-        bg.setStrokeStyle(3, 0xffff00);
-        scene.time.delayedCall(150, () => bg.setStrokeStyle(2, 0x666666));
-        onAssign(def.slot);
-      });
+      bg.on('pointerdown', () => onAssign(def.slot));
 
       this.slotBgs.set(def.slot, bg);
       this.slotLabels.set(def.slot, [slotLbl, elemLbl, usesLbl, xpLbl, tierLbl]);
@@ -89,7 +91,6 @@ export class LoadoutPanel extends Phaser.GameObjects.Container {
 
       if (ring) {
         bg.setFillStyle(ELEMENT_COLORS[ring.element] ?? 0x333333);
-        bg.setStrokeStyle(2, 0x666666);
         elemLbl.setText(ELEMENT_NAMES[ring.element] ?? '?').setColor('#000000');
         const used = ring.max_uses - ring.current_uses;
         usesLbl
@@ -99,12 +100,32 @@ export class LoadoutPanel extends Phaser.GameObjects.Container {
         tierLbl.setText(`T${ring.tier}`).setColor('#000000');
       } else {
         bg.setFillStyle(0x333333);
-        bg.setStrokeStyle(2, 0x666666);
         elemLbl.setText('—').setColor('#888888');
         usesLbl.setText('');
         xpLbl.setText('');
         tierLbl.setText('');
       }
+      // Preserve the yellow selection border across refreshes (#154).
+      this.applySlotStroke(def.slot);
     }
+  }
+
+  /**
+   * Highlight `slot` as the active swap selection (yellow border), or pass null
+   * to clear any selection. Re-applies the stroke immediately. #154.
+   */
+  setSelectedSlot(slot: LoadoutSlot | null): void {
+    const prev = this.selectedSlot;
+    this.selectedSlot = slot;
+    if (prev && prev !== slot) this.applySlotStroke(prev);
+    if (slot) this.applySlotStroke(slot);
+  }
+
+  /** Draw a slot's border in the selected (yellow) or deselected (grey) style. */
+  private applySlotStroke(slot: LoadoutSlot): void {
+    const bg = this.slotBgs.get(slot);
+    if (!bg) return;
+    if (this.selectedSlot === slot) bg.setStrokeStyle(3, SELECTED_STROKE);
+    else bg.setStrokeStyle(2, DESELECTED_STROKE);
   }
 }

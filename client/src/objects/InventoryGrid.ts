@@ -20,10 +20,11 @@ const ROW_GAP = 92; // card height + 4px gap
 const DESELECTED_STROKE = 0x888888;
 const SELECTED_STROKE = 0xffff00;
 
-// #85 Fix 2A — scroll UI geometry. The ▲/▼ buttons sit just right of the second
-// column at the visible window's top/bottom. A small inset keeps the clip mask
-// from cropping the 3px selection stroke on edge cards.
-const ARROW_X = COL_GAP + CARD_W + 12;
+// #85 Fix 2A — scroll UI geometry. The ▲/▼ buttons sit just right of the last
+// column at the visible window's top/bottom. The exact x is computed per-instance
+// from numCols (see arrowX()) so a 3-column grid pushes the arrows further right.
+// A small inset keeps the clip mask from cropping the 3px selection stroke on
+// edge cards.
 const MASK_INSET = 3;
 
 export const GRID_CARD_W = CARD_W;
@@ -31,7 +32,8 @@ export const GRID_COL_GAP = COL_GAP;
 export const GRID_ROW_GAP = ROW_GAP;
 
 /**
- * A 2-column grid of ring cards rendered from plain REST API ring data.
+ * A grid of ring cards (numCols-wide, default 2) rendered from plain REST API
+ * ring data.
  * Clicking a card selects it (or deselects if already selected). Escrowed
  * rings are dimmed and not interactive. Fires `onSelect` on every change.
  *
@@ -59,18 +61,33 @@ export class InventoryGrid extends Phaser.GameObjects.Container {
   private visibleRows = 0; // 0 → masking/scroll disabled (unbounded grid)
   private totalRows = 0;
   private scrollRow = 0;
+  // #154 — number of columns the grid wraps at. The Reliquary/Spare grids in the
+  // Reliquary modal are 3-wide; legacy callers default to 2. Drives populate()'s
+  // col wrap, the clip-mask width, and the scroll-arrow x.
+  private readonly numCols: number;
 
   constructor(
     scene: Phaser.Scene,
     x: number,
     y: number,
     onSelect: (ring: RingData | null) => void,
+    numCols = 2,
   ) {
     super(scene, x, y);
     this.onSelect = onSelect;
+    this.numCols = numCols;
     this.cardContainer = scene.add.container(0, 0);
     this.add(this.cardContainer);
     scene.add.existing(this);
+  }
+
+  /**
+   * Local x for the ▲/▼ scroll arrows: just right of the last column. Computed
+   * from numCols so a wider grid pushes the arrows out instead of overlapping the
+   * rightmost card column.
+   */
+  private arrowX(): number {
+    return (this.numCols - 1) * COL_GAP + CARD_W + 12;
   }
 
   /**
@@ -89,8 +106,8 @@ export class InventoryGrid extends Phaser.GameObjects.Container {
     );
 
     sorted.forEach((ring, idx) => {
-      const col = idx % 2;
-      const row = Math.floor(idx / 2);
+      const col = idx % this.numCols;
+      const row = Math.floor(idx / this.numCols);
       const cx = col * COL_GAP + CARD_W / 2;
       const cy = row * ROW_GAP + CARD_H / 2;
 
@@ -137,7 +154,7 @@ export class InventoryGrid extends Phaser.GameObjects.Container {
       this.cardBgs.set(ring.id, bg);
     });
 
-    this.totalRows = Math.ceil(sorted.length / 2);
+    this.totalRows = Math.ceil(sorted.length / this.numCols);
     this.scrollRow = 0;
     this.cardContainer.y = 0;
     this.updateScrollUI();
@@ -225,7 +242,10 @@ export class InventoryGrid extends Phaser.GameObjects.Container {
   /** Local-space clip dimensions used for the mask AND wheel hit-testing (#85). */
   getMaskSize(): { width: number; height: number } {
     const rows = this.visibleRows > 0 ? this.visibleRows : this.totalRows;
-    return { width: COL_GAP + CARD_W, height: Math.max(0, rows * ROW_GAP) };
+    return {
+      width: (this.numCols - 1) * COL_GAP + CARD_W,
+      height: Math.max(0, rows * ROW_GAP),
+    };
   }
 
   /** E2E read accessors for the scroll state (#85 Fix 2A). */
@@ -259,12 +279,12 @@ export class InventoryGrid extends Phaser.GameObjects.Container {
     g.fillStyle(0xffffff);
     // The grid lives inside the camera-pinned overlay container, so its world
     // transform tx/ty is its top-left in screen space. The clip rect is the
-    // visible 2-column × `rows`-row window, inset so selection strokes survive.
+    // visible numCols-column × `rows`-row window, inset so selection strokes survive.
     const m = this.getWorldTransformMatrix();
     g.fillRect(
       m.tx - MASK_INSET,
       m.ty - MASK_INSET,
-      COL_GAP + CARD_W + MASK_INSET * 2,
+      (this.numCols - 1) * COL_GAP + CARD_W + MASK_INSET * 2,
       rows * ROW_GAP + MASK_INSET * 2,
     );
     // #85 W5 — destroy the prior GeometryMask wrapper before replacing it.
@@ -283,9 +303,10 @@ export class InventoryGrid extends Phaser.GameObjects.Container {
 
   /** Lazily create the ▲/▼ scroll buttons on the grid (not the cardContainer). */
   private ensureArrows(rows: number): void {
+    const ax = this.arrowX();
     if (!this.upArrow) {
       this.upArrow = this.scene.add
-        .text(ARROW_X, ROW_GAP / 2 - 8, '▲', { fontSize: '20px', color: '#cfe3ff' })
+        .text(ax, ROW_GAP / 2 - 8, '▲', { fontSize: '20px', color: '#cfe3ff' })
         .setOrigin(0.5)
         .setScrollFactor(0)
         .setName('grid-scroll-up')
@@ -295,7 +316,7 @@ export class InventoryGrid extends Phaser.GameObjects.Container {
     }
     if (!this.downArrow) {
       this.downArrow = this.scene.add
-        .text(ARROW_X, 0, '▼', { fontSize: '20px', color: '#cfe3ff' })
+        .text(ax, 0, '▼', { fontSize: '20px', color: '#cfe3ff' })
         .setOrigin(0.5)
         .setScrollFactor(0)
         .setName('grid-scroll-down')
