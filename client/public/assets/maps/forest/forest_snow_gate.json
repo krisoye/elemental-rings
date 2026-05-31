@@ -642,6 +642,19 @@
          "tilecount":256,
          "tileheight":16,
          "tilewidth":16
+        }, 
+        {
+         "columns":20,
+         "firstgid":620,
+         "image":"..\/..\/terrain\/terrain_forest_modern.png",
+         "imageheight":96,
+         "imagewidth":320,
+         "margin":0,
+         "name":"ModernEra_GreenForest_Tileset",
+         "spacing":0,
+         "tilecount":120,
+         "tileheight":16,
+         "tilewidth":16
         }],
  "tilewidth":16,
  "type":"map",
