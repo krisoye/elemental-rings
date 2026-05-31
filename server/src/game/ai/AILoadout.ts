@@ -1,6 +1,7 @@
 import { AIPersonality, SlotKey } from '../../../../shared/types';
 import { ElementEnum } from '../../../../shared/types';
 import { Rng } from './AIProfiles';
+import { tierForXp, naturalMaxUses } from '../Tiers';
 
 const { FIRE, WATER, EARTH, WIND, WOOD } = ElementEnum;
 
@@ -27,6 +28,29 @@ const PERSONALITY_THUMB_XP: Record<AIPersonality, number> = {
   STATUS_HUNTER: 30,
   RESILIENT: 40,
 };
+
+/**
+ * #196 — per-personality difficulty multiplier applied to the player's aggregate
+ * XP to scale an NPC's effective XP. Tougher personalities field more-seasoned
+ * loadouts (higher ring tiers / uses) so beating them transfers more XP. Tuned so
+ * a matched-difficulty opponent (DEFENSIVE) tracks the player's level 1:1, while
+ * AGGRESSIVE undercuts it and RESILIENT exceeds it.
+ */
+const PERSONALITY_MULTIPLIER: Record<AIPersonality, number> = {
+  AGGRESSIVE: 0.8,
+  DEFENSIVE: 1.0,
+  STATUS_HUNTER: 1.1,
+  RESILIENT: 1.3,
+};
+
+/**
+ * The NPC's effective XP for a personality, scaled to the player's aggregate XP
+ * (#196). A fresh player (aggregate 0) yields 0 here; the per-ring floor at the
+ * old hardcoded PERSONALITY_THUMB_XP keeps such opponents non-trivial.
+ */
+export function npcEffectiveXp(personality: AIPersonality, playerAggregateXp: number): number {
+  return Math.round(playerAggregateXp * PERSONALITY_MULTIPLIER[personality]);
+}
 
 /**
  * Per-personality loadout archetypes. Each entry is a valid, strategically
@@ -80,6 +104,16 @@ const TEMPLATES: Record<AIPersonality, LoadoutTemplate[]> = {
 /**
  * Pick a loadout variant for the given personality using the supplied RNG and
  * convert to a SlotSpec map (tier/uses/xp can be overridden for higher-level AI).
+ *
+ * #196 — when `playerAggregateXp > 0`, the AI's ring tier, max uses, and thumb XP
+ * are scaled to the player's level instead of the fixed `tier`/`maxUses` defaults:
+ *   npcEffectiveXp = round(playerAggregateXp · PERSONALITY_MULTIPLIER)
+ *   perRingXp      = floor(npcEffectiveXp / 5)            (5 rings in a loadout)
+ *   tier           = tierForXp(perRingXp)                 (GDD §4.2)
+ *   maxUses        = naturalMaxUses(tier) = 3 + tier
+ *   thumb XP       = max(PERSONALITY_THUMB_XP, perRingXp) (floor at old hardcoded)
+ * A fresh player (aggregate 0) leaves the defaults untouched, so all existing
+ * call sites that omit `playerAggregateXp` are unaffected.
  */
 export function generateAILoadout(
   personality: AIPersonality,
@@ -88,7 +122,19 @@ export function generateAILoadout(
   maxUses = 3,
   xp = 0,
   thumbElement?: number,
+  playerAggregateXp = 0,
 ): Partial<Record<SlotKey, SlotSpec>> {
+  // #196 — XP-aware scaling. perRingXp distributes the NPC's effective XP across
+  // its five rings; tier/uses follow from it. The thumb's XP is floored at the old
+  // hardcoded value so fresh-player opponents still stake a non-trivial ring.
+  const scaled = playerAggregateXp > 0;
+  const perRingXp = scaled ? Math.floor(npcEffectiveXp(personality, playerAggregateXp) / 5) : 0;
+  const effectiveTier = scaled ? tierForXp(perRingXp) : tier;
+  const effectiveMaxUses = scaled ? naturalMaxUses(effectiveTier) : maxUses;
+  const effectiveThumbXp = scaled
+    ? Math.max(PERSONALITY_THUMB_XP[personality], perRingXp)
+    : PERSONALITY_THUMB_XP[personality];
+
   const all = TEMPLATES[personality];
   // #199 — when the caller knows the intended staked element (threaded from the
   // overworld NPC's spawn data), restrict the variant pool to templates whose
@@ -101,10 +147,17 @@ export function generateAILoadout(
   const template = pool[rng.intBetween(0, pool.length - 1)];
   const spec: Partial<Record<SlotKey, SlotSpec>> = {};
   for (const [slot, element] of Object.entries(template) as [SlotKey, number][]) {
-    // The thumb carries personality-based XP; every other slot stays at `xp`
-    // (0 by default). Beating the AI transfers that thumb XP to the winner.
-    const slotXp = slot === 'thumb' ? PERSONALITY_THUMB_XP[personality] : xp;
-    spec[slot] = { element, tier, currentUses: maxUses, maxUses, xp: slotXp };
+    // The thumb carries personality-based XP (XP-floored when scaled); every other
+    // slot stays at `xp` (0 by default). Beating the AI transfers the thumb XP to
+    // the winner, so a scaled thumb yields a proportionally larger reward.
+    const slotXp = slot === 'thumb' ? effectiveThumbXp : xp;
+    spec[slot] = {
+      element,
+      tier: effectiveTier,
+      currentUses: effectiveMaxUses,
+      maxUses: effectiveMaxUses,
+      xp: slotXp,
+    };
   }
   return spec;
 }
@@ -130,14 +183,29 @@ export function previewStakeElement(personality: AIPersonality, rng: Rng): numbe
 export function previewOpponent(
   personality: AIPersonality,
   rng: Rng,
-): { element: number; stakeTier: number; stakeXp: number; totalXp: number } {
-  const loadout = generateAILoadout(personality, rng);
+  playerAggregateXp = 0,
+): { element: number; stakeTier: number; stakeXp: number; totalXp: number; npcEffectiveXp: number } {
+  const loadout = generateAILoadout(
+    personality,
+    rng,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    playerAggregateXp,
+  );
   const thumb = loadout.thumb;
   const element = thumb?.element ?? 0;
   const stakeTier = thumb?.tier ?? 1;
   const stakeXp = thumb?.xp ?? 0;
   const totalXp = Object.values(loadout).reduce((sum, slot) => sum + (slot?.xp ?? 0), 0);
-  return { element, stakeTier, stakeXp, totalXp };
+  return {
+    element,
+    stakeTier,
+    stakeXp,
+    totalXp,
+    npcEffectiveXp: npcEffectiveXp(personality, playerAggregateXp),
+  };
 }
 
 /** All base personalities in display order (excludes PvP). */

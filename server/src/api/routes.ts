@@ -1,6 +1,6 @@
 import { Router, type Request, type Response } from 'express';
 import bcrypt from 'bcrypt';
-import { signToken, requireAuth } from '../auth/auth';
+import { signToken, requireAuth, verifyToken } from '../auth/auth';
 import { makeRng } from '../game/ai/AIProfiles';
 import { previewOpponent, AI_PERSONALITIES } from '../game/ai/AILoadout';
 import {
@@ -403,15 +403,30 @@ apiRouter.post('/api/stake/unlock', requireAuth, (req: Request, res: Response): 
 
 /**
  * GET /api/encounter/preview — returns each AI personality's randomized staked
- * ring (element + tier + XP) and the loadout's total XP, so the EncounterScene
- * can color each opponent marker and show what beating them transfers, before
- * the player commits to a duel. No auth required.
+ * ring (element + tier + XP), the loadout's total XP, and (since #196) the NPC's
+ * effective XP scaled to the requesting player's level, so the EncounterScene can
+ * color each opponent marker, show what beating them transfers, and render a
+ * relative difficulty label before the player commits to a duel.
  *
- * Response: Record<AIPersonality, {
- *   element: number; aiSeed: number; stakeTier: number; stakeXp: number; totalXp: number
- * }>
+ * Auth is OPTIONAL (#196): a valid Bearer token scales each opponent to the
+ * authenticated player's aggregate XP; no/invalid token falls back to
+ * playerAggregateXp = 0 (a fresh opponent), preserving backwards-compat for
+ * unauthenticated E2E. The response includes the resolved playerAggregateXp so the
+ * client can compute the difficulty label without a second round-trip.
+ *
+ * Response: {
+ *   playerAggregateXp: number,
+ *   [AIPersonality]: { element, aiSeed, stakeTier, stakeXp, totalXp, npcEffectiveXp }
+ * }
  */
-apiRouter.get('/api/encounter/preview', (_req: Request, res: Response): void => {
+apiRouter.get('/api/encounter/preview', (req: Request, res: Response): void => {
+  // Optional auth: read a Bearer token if present and resolve the player's
+  // aggregate XP from the DB. Any missing/invalid token → playerAggregateXp = 0.
+  const header = req.headers.authorization;
+  const token = header?.startsWith('Bearer ') ? header.slice('Bearer '.length).trim() : undefined;
+  const payload = token ? verifyToken(token) : null;
+  const playerAggregateXp = payload ? getSpiritStats(payload.playerId).aggregateXp : 0;
+
   const baseSeed = Date.now() & 0xffffffff;
   // Derive a deterministic per-personality aiSeed from the base seed so the
   // preview and the actual BattleRoom loadout use identical RNG state.
@@ -419,13 +434,25 @@ apiRouter.get('/api/encounter/preview', (_req: Request, res: Response): void => 
   // the same here so intBetween(0, templates.length-1) returns the same index.
   const preview: Record<
     string,
-    { element: number; aiSeed: number; stakeTier: number; stakeXp: number; totalXp: number }
-  > = {};
+    | number
+    | {
+        element: number;
+        aiSeed: number;
+        stakeTier: number;
+        stakeXp: number;
+        totalXp: number;
+        npcEffectiveXp: number;
+      }
+  > = { playerAggregateXp };
   AI_PERSONALITIES.forEach((p, i) => {
     const aiSeed = (baseSeed ^ (i * 0xdeadbeef)) & 0xffffffff;
     const loadoutRng = makeRng(aiSeed ^ 0x1a2b3c4d);
-    const { element, stakeTier, stakeXp, totalXp } = previewOpponent(p, loadoutRng);
-    preview[p] = { element, aiSeed, stakeTier, stakeXp, totalXp };
+    const { element, stakeTier, stakeXp, totalXp, npcEffectiveXp } = previewOpponent(
+      p,
+      loadoutRng,
+      playerAggregateXp,
+    );
+    preview[p] = { element, aiSeed, stakeTier, stakeXp, totalXp, npcEffectiveXp };
   });
   res.status(200).json(preview);
 });
@@ -994,5 +1021,26 @@ if (process.env.E2E_TEST_ROUTES === '1') {
       grantRing(playerId, element, 0, 3, 0);
     }
     res.status(200).json({ ok: true, reliquaryCount: getReliquaryCount(playerId) });
+  });
+
+  /**
+   * POST /api/test/set-aggregate-xp — grant the authenticated player a single
+   * Reliquary ring carrying `xp` XP, so their aggregate_xp (= SUM(xp) WHERE
+   * in_carry = 0) reaches at least `xp` for the #196 NPC-XP-scaling specs. A fresh
+   * E2E player starts at aggregate_xp = 0 (all starter rings have xp = 0), so this
+   * is additive: one call seeds a veteran. There is no normal-play path to a
+   * precise aggregate XP, hence the test hook. Body: { xp: number }. Test-only.
+   */
+  apiRouter.post('/api/test/set-aggregate-xp', requireAuth, (req: Request, res: Response): void => {
+    const playerId = req.playerId as string;
+    const { xp } = req.body ?? {};
+    if (typeof xp !== 'number' || xp < 0 || !Number.isInteger(xp)) {
+      res.status(400).json({ error: 'xp (non-negative integer) is required' });
+      return;
+    }
+    // A Reliquary ring (in_carry = 0) counts toward aggregate_xp; element/tier are
+    // irrelevant to the XP sum, so a Fire ring with the requested XP suffices.
+    grantRing(playerId, 0, 0, 3, xp);
+    res.status(200).json({ ok: true, aggregateXp: getSpiritStats(playerId).aggregateXp });
   });
 }

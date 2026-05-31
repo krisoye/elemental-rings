@@ -41,6 +41,7 @@ const SOLO_SPECS = [
   'merchant-client.spec.ts',
   'npc-population.spec.ts',
   'npc-stake-element-sync.spec.ts', // #199
+  'npc-xp-scaling.spec.ts', // #196
   'overworld-battlehand.spec.ts',
   'overworld-transition.spec.ts',
   'reliquary-cap.spec.ts',   // #182
