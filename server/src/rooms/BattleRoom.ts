@@ -180,7 +180,16 @@ export class BattleRoom extends Room<{ state: BattleState }> {
       // Use a separate RNG stream for loadout generation so the combat RNG
       // (inside AIController) is unaffected by the number of template variants.
       const loadoutRng = makeRng(seed ^ 0x1a2b3c4d);
-      const aiSpec = generateAILoadout(personality, loadoutRng);
+      // #199 — pass the overworld NPC's intended stake element (when supplied) so
+      // the loadout's thumb matches the element shown on the overworld marker.
+      const aiSpec = generateAILoadout(
+        personality,
+        loadoutRng,
+        undefined,
+        undefined,
+        undefined,
+        options.thumbElement,
+      );
       // Deterministic-test AI-strength overrides (see BattleRoomOptions): a weak
       // AI yields a guaranteed protagonist win; a tanky AI a guaranteed loss.
       // Applied to the AI seat ONLY — the human is seated from its real loadout.

@@ -87,9 +87,18 @@ export function generateAILoadout(
   tier = 1,
   maxUses = 3,
   xp = 0,
+  thumbElement?: number,
 ): Partial<Record<SlotKey, SlotSpec>> {
-  const templates = TEMPLATES[personality];
-  const template = templates[rng.intBetween(0, templates.length - 1)];
+  const all = TEMPLATES[personality];
+  // #199 — when the caller knows the intended staked element (threaded from the
+  // overworld NPC's spawn data), restrict the variant pool to templates whose
+  // thumb matches so the duel's stake element equals the overworld marker.
+  // Fall back to all templates if none match (defensive — should not happen with
+  // consistent spawn data).
+  const candidates =
+    thumbElement !== undefined ? all.filter((t) => t.thumb === thumbElement) : all;
+  const pool = candidates.length > 0 ? candidates : all;
+  const template = pool[rng.intBetween(0, pool.length - 1)];
   const spec: Partial<Record<SlotKey, SlotSpec>> = {};
   for (const [slot, element] of Object.entries(template) as [SlotKey, number][]) {
     // The thumb carries personality-based XP; every other slot stays at `xp`

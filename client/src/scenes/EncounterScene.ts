@@ -87,6 +87,10 @@ export class EncounterScene extends Phaser.Scene {
     spriteFrame?: number;
     /** Canonical battler key matching the overworld monster sprite (#158). */
     battleKey?: string;
+    // #199 — the overworld NPC's staked element, threaded into the battle-ai room
+    // so generateAILoadout filters to a thumb-matching variant and the duel's
+    // stake element equals the overworld sprite colour + approach warning.
+    thumbElement?: number;
   } | null = null;
 
   private openBattleHandOnCreate = false;
@@ -99,6 +103,7 @@ export class EncounterScene extends Phaser.Scene {
     openBattleHand?: boolean;
     spriteFrame?: number;
     battleKey?: string;
+    thumbElement?: number;
   }): void {
     this.busy = false;
     this.wonRingModal = null;
@@ -112,6 +117,7 @@ export class EncounterScene extends Phaser.Scene {
             aiSeed: data.aiSeed,
             spriteFrame: data.spriteFrame,
             battleKey: data.battleKey,
+            thumbElement: data.thumbElement,
           }
         : null;
   }
@@ -129,7 +135,8 @@ export class EncounterScene extends Phaser.Scene {
     // the duel against the detected NPC (scoped by npcId so a win records the
     // defeat server-side). The hub UI/hooks below are skipped on this path.
     if (this.npcDuel) {
-      const { npcId, personality, ambush, aiSeed, spriteFrame, battleKey } = this.npcDuel;
+      const { npcId, personality, ambush, aiSeed, spriteFrame, battleKey, thumbElement } =
+        this.npcDuel;
       // #88 — defensively consume the launch data so it can never be reused. Phaser
       // retains settings.data across a no-data scene.start, so without this a later
       // re-entry of EncounterScene (e.g. a hub return that forgot explicit `{}`)
@@ -138,7 +145,16 @@ export class EncounterScene extends Phaser.Scene {
       this.scene.settings.data = {};
       this.npcDuel = null;
       // #87 Part C — a double-click NPC launch (ambush) pays for first strike.
-      void this.startAIDuel(personality, undefined, npcId, ambush, aiSeed, spriteFrame, battleKey);
+      void this.startAIDuel(
+        personality,
+        undefined,
+        npcId,
+        ambush,
+        aiSeed,
+        spriteFrame,
+        battleKey,
+        thumbElement,
+      );
       return;
     }
 
@@ -357,6 +373,7 @@ export class EncounterScene extends Phaser.Scene {
     aiSeedOverride?: number,
     opponentSpriteFrame?: number,
     battleKey?: string,
+    thumbElement?: number,
   ): Promise<void> {
     const token = localStorage.getItem('er_token') ?? '';
     try {
@@ -374,6 +391,10 @@ export class EncounterScene extends Phaser.Scene {
       // #87 Part C — ambush first-strike. The server spends AMBUSH_SPIRIT_COST and
       // grants the opening attack when affordable; ignored otherwise (server guard).
       firstStrike: ambush === true,
+      // #199 — the overworld NPC's staked element; the server filters the AI's
+      // loadout variant pool to a thumb-matching template so the duel stake equals
+      // the overworld sprite colour + approach warning.
+      thumbElement,
       ...aiOverrides,
     });
 
