@@ -399,6 +399,21 @@ export class BattleScene extends Phaser.Scene {
 
     if (state.phase === 'DEFEND_WINDOW' && state.currentAttackerId !== myId) {
       if (!DEFENSE_KEYS.has(slot)) return;
+      // If the ring is exhausted the server will silently drop the defense — give
+      // the player immediate feedback so they know why nothing happened.
+      const me = state.players?.get(myId);
+      if (me?.[slot]?.isExtinguished) {
+        const t = this.add
+          .text(512, 205, 'Ring exhausted!', {
+            fontSize: '22px', color: '#ff8888', fontStyle: 'bold',
+            stroke: '#000000', strokeThickness: 3,
+          })
+          .setOrigin(0.5)
+          .setDepth(1100)
+          .setScrollFactor(0);
+        this.tweens.add({ targets: t, alpha: 0, y: 170, duration: 700, ease: 'Power2', onComplete: () => t.destroy() });
+        return;
+      }
       // pressTime is retained for future lag comp; the server timestamps on arrival.
       window.__room!.send('submitDefense', { slot, pressTime: Date.now() });
       return;

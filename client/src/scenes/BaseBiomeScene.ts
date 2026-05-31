@@ -144,6 +144,8 @@ export abstract class BaseBiomeScene extends Phaser.Scene {
   private compass!: Compass;
   /** Sanctum exterior sprite, placed at the anchored anchorage. */
   private sanctumSprite: Phaser.GameObjects.Image | null = null;
+  /** Sanctum return interaction zone — tracked separately so refreshSanctumZone can replace it. */
+  private sanctumReturnZone: InteractionZone | null = null;
   /** #81 — equipped necklace talisman + remaining charges, fetched on create. */
   private talismanLoadout: { necklaceId: string | null; necklaceCharges: number } | null = null;
   /** The Anchorage zone (by waystone id) the player currently overlaps, or null. */
@@ -561,6 +563,7 @@ export abstract class BaseBiomeScene extends Phaser.Scene {
       this.compass.destroy();
       this.sanctumSprite?.destroy();
       this.sanctumSprite = null;
+      this.sanctumReturnZone = null; // destroyed as part of this.zones above
       this.zones = [];
       this.waystones.clear();
       this.anchorageMarkers.clear();
@@ -1131,19 +1134,7 @@ export abstract class BaseBiomeScene extends Phaser.Scene {
       const sanctumX = anchorCenter.center.x + dirX * SANCTUM_OFFSET;
       const sanctumY = anchorCenter.center.y + dirY * SANCTUM_OFFSET;
 
-      const sanctumObj: Phaser.Types.Tilemaps.TiledObject = {
-        id: -1,
-        type: 'sanctum_return',
-        x: sanctumX - SANCTUM_ZONE_HALF,
-        y: sanctumY - SANCTUM_ZONE_HALF,
-        width: SANCTUM_ZONE_HALF * 2,
-        height: SANCTUM_ZONE_HALF * 2,
-        name: 'sanctum_return',
-      };
-      const returnZone = new InteractionZone(this, sanctumObj, () => this.scene.start('CampScene'));
-      this.physics.add.overlap(this.player, returnZone.overlapZone);
-      this.zones.push(returnZone);
-
+      this.refreshSanctumZone(sanctumX, sanctumY);
       this.drawSanctumExterior(sanctumX, sanctumY);
 
       if (!this.returnedFromDuel) {
@@ -1196,23 +1187,66 @@ export abstract class BaseBiomeScene extends Phaser.Scene {
   }
 
   /**
+   * Create (or replace) the sanctum_return interaction zone at the given world
+   * center. Called both from loadWaystones (initial placement) and from
+   * refreshSanctumPosition (after a summon moves the anchor). Destroying the old
+   * zone and re-creating it keeps the overlap active and publishes the new center
+   * to window.__zoneCenters for E2E.
+   */
+  private refreshSanctumZone(cx: number, cy: number): void {
+    // Remove and destroy the previous zone so the player can't interact with the
+    // old anchor position after the Sanctum is moved.
+    if (this.sanctumReturnZone) {
+      const idx = this.zones.indexOf(this.sanctumReturnZone);
+      if (idx !== -1) this.zones.splice(idx, 1);
+      this.sanctumReturnZone.destroy();
+      this.sanctumReturnZone = null;
+    }
+
+    const sanctumObj: Phaser.Types.Tilemaps.TiledObject = {
+      id: -1,
+      type: 'sanctum_return',
+      x: cx - SANCTUM_ZONE_HALF,
+      y: cy - SANCTUM_ZONE_HALF,
+      width: SANCTUM_ZONE_HALF * 2,
+      height: SANCTUM_ZONE_HALF * 2,
+      name: 'sanctum_return',
+    };
+    const returnZone = new InteractionZone(this, sanctumObj, () => this.scene.start('CampScene'));
+    this.physics.add.overlap(this.player, returnZone.overlapZone);
+    this.zones.push(returnZone);
+    this.sanctumReturnZone = returnZone;
+
+    // Route the new zone's display objects through the world camera only.
+    this.ignoreWorldObjects(returnZone.displayObjects);
+    this.publishZoneCenters();
+  }
+
+  /**
    * Draw the Sanctum exterior sprite (8B.4.1) at the given world center and add a
    * static physics body so the player cannot walk through it.
+   *
+   * On 16px / 2× zoom screens (Swamp, generated Forest) the sprite is scaled
+   * down by 1/worldZoom() so it appears the same on-screen size as it does at
+   * 1× zoom. Physics body dimensions use displayWidth/displayHeight so they
+   * match the visually rendered size rather than the raw texture dimensions.
    */
   private drawSanctumExterior(cx: number, cy: number): void {
     if (!this.shouldDrawSanctumExterior()) return;
     const img = this.add.image(cx, cy, 'sanctum-exterior').setDepth(8);
+    // Scale the sprite so it renders at the same screen size regardless of zoom.
+    img.setScale(1 / this.worldZoom());
     this.sanctumSprite = img;
     // Static physics body sized to the building's lower half (walls + door) so the
-    // player cannot walk through the structure. The roof overhangs above and does not
-    // need collision. Offset downward from the sprite center so the body aligns with
-    // the visible wall area.
+    // player cannot walk through the structure. Use displayWidth/displayHeight
+    // (= texture size × scale) so the body matches the scaled visual, not the
+    // raw 128×160 texture size.
     this.physics.add.existing(img, true /* isStatic */);
     const body = img.body as Phaser.Physics.Arcade.StaticBody;
-    const bw = img.width * 0.8;
-    const bh = img.height * 0.5;
+    const bw = img.displayWidth * 0.8;
+    const bh = img.displayHeight * 0.5;
     body.setSize(bw, bh);
-    body.setOffset((img.width - bw) / 2, img.height * 0.45);
+    body.setOffset((img.displayWidth - bw) / 2, img.displayHeight * 0.45);
     this.physics.add.collider(this.player, img);
   }
 
@@ -1385,6 +1419,10 @@ export abstract class BaseBiomeScene extends Phaser.Scene {
     } else {
       this.drawSanctumExterior(sanctumX, sanctumY);
     }
+    // Always refresh the interaction zone to match the new anchor position — the
+    // zone was created at the OLD anchor in loadWaystones and must be relocated
+    // so the player can actually enter the summoned Sanctum.
+    this.refreshSanctumZone(sanctumX, sanctumY);
     window.__sanctumReturnCenter = { x: sanctumX, y: sanctumY };
   }
 
