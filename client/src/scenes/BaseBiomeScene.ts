@@ -1268,6 +1268,8 @@ export abstract class BaseBiomeScene extends Phaser.Scene {
       for (const info of payload.waystones) {
         this.waystones.get(info.id)?.setAttuned(info.attuned);
       }
+      const attuned = payload.waystones.find((w) => w.id === waystoneId);
+      if (attuned) this.showToast(`${attuned.name} attuned!`, '#49d3e0');
     } catch {
       // Network error — leave the marker unchanged; the next GET will reconcile.
     }
@@ -1330,8 +1332,11 @@ export abstract class BaseBiomeScene extends Phaser.Scene {
         player: { food_units: number; spirit_current: number };
       };
       // Destroy placeholder modal and rebuild with real values.
+      // Don't use overlayOpen to guard here: close() fires onClose which sets
+      // overlayOpen=false, so the check would always bail. User-close was already
+      // caught by the !campfireModal?.isOpen() guard above.
       this.campfireModal.close();
-      if (!this.overlayOpen) return; // player closed it during fetch
+      this.overlayOpen = true;
       this.campfireModal = new CampfireModal(
         this,
         anchorageId,

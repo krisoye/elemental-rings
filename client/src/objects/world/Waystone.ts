@@ -1,26 +1,30 @@
 import Phaser from 'phaser';
 import { InteractionZone } from './InteractionZone';
 
-/** Standing-stone body dimensions (px). */
-const STONE_W = 22;
-const STONE_H = 30;
-/** Fill colors: dim grey-blue when unattuned, glowing cyan when attuned. */
-const COLOR_UNATTUNED = 0x4a5568;
+// Standing-stone silhouette dimensions (px, measured from the stone center).
+const STONE_H = 34;
+const TOP_HALF_W = 7;   // half-width at the top of the stone
+const BASE_HALF_W = 11; // half-width at the base (wider = more monument-like)
+
+// Palette: unattuned = slate grey-blue, attuned = glowing cyan.
+const COLOR_UNATTUNED = 0x5a6a7f;
+const COLOR_UNATTUNED_DARK = 0x374455;
+const COLOR_UNATTUNED_RUNE = 0x7a8fa0;
 const COLOR_ATTUNED = 0x49d3e0;
-/** Outline + glow accent under the stone. */
-const COLOR_OUTLINE = 0x1a1f2b;
+const COLOR_ATTUNED_DARK = 0x1e8a94;
+const COLOR_ATTUNED_RUNE = 0xb0ffff;
 
 /**
  * A persistent, visible overworld waystone marker (GDD §10.7). Draws a
- * standing-stone graphic over its map tile and wraps an {@link InteractionZone}
- * so the player can walk onto it and press E to attune. The stone recolors
- * (dim → glowing) once attuned.
+ * tapered standing-stone graphic with rune marks over its map tile and wraps
+ * an {@link InteractionZone} so the player can press E to attune. The stone
+ * recolors (slate → glowing cyan) once attuned.
  *
  * Purely presentational: pressing E fires the supplied `onInteract` callback,
- * which the owning scene routes to POST /api/waystones/attune (the server is the
- * authority for attunement — see the architecture rule). The `id`/position are
- * read from the Tiled `waystone` object; the scene matches them against the
- * `GET /api/waystones` payload for the attuned color.
+ * which the owning scene routes to POST /api/waystones/attune (the server is
+ * the authority for attunement). The `id`/position are read from the Tiled
+ * `waystone` object; the scene matches them against GET /api/waystones for
+ * the initial attuned state.
  */
 export class Waystone {
   /** Stable waystone id (matches shared/waystones.ts + the server payload). */
@@ -29,7 +33,7 @@ export class Waystone {
   readonly center: { x: number; y: number };
 
   private readonly zone: InteractionZone;
-  private readonly stone: Phaser.GameObjects.Rectangle;
+  private readonly gfx: Phaser.GameObjects.Graphics;
   private readonly glow: Phaser.GameObjects.Ellipse;
   private readonly label: Phaser.GameObjects.Text;
   private attuned = false;
@@ -57,31 +61,35 @@ export class Waystone {
     const h = obj.height ?? 32;
     this.center = { x: x + w / 2, y: y + h / 2 };
 
-    // Soft glow disc under the stone (brightens when attuned).
+    // Soft glow disc under the stone base (only visible when attuned).
     this.glow = scene.add
-      .ellipse(this.center.x, this.center.y + 6, STONE_W + 10, 14, COLOR_ATTUNED, 0.25)
+      .ellipse(
+        this.center.x,
+        this.center.y + BASE_HALF_W - 2,
+        BASE_HALF_W * 2 + 12,
+        14,
+        COLOR_ATTUNED,
+        0.35,
+      )
       .setDepth(5)
       .setVisible(false);
 
-    // The standing stone itself.
-    this.stone = scene.add
-      .rectangle(this.center.x, this.center.y - 4, STONE_W, STONE_H, COLOR_UNATTUNED)
-      .setStrokeStyle(2, COLOR_OUTLINE)
+    // Graphics object: the full stone silhouette + rune marks.
+    this.gfx = scene.add
+      .graphics()
       .setDepth(6)
       .setName(`waystone-${waystoneId}`);
 
-    // Floating name label.
+    // Floating name label above the stone.
     this.label = scene.add
-      .text(this.center.x, this.center.y - STONE_H - 6, name, {
+      .text(this.center.x, this.center.y - STONE_H - 8, name, {
         fontSize: '11px',
         color: '#cfe3ff',
       })
       .setOrigin(0.5, 1)
       .setDepth(6);
 
-    // Reuse the InteractionZone overlap + "Press E" prompt machinery. The zone
-    // is named with the waystone id so the scene's existing zone bookkeeping
-    // (window.__sanctumZones / nearest-zone selection) treats it like any zone.
+    // Reuse the InteractionZone overlap + "Press E" prompt machinery.
     this.zone = new InteractionZone(scene, { ...obj, name: waystoneId }, onInteract);
 
     this.setAttuned(attuned);
@@ -93,19 +101,18 @@ export class Waystone {
   }
 
   /**
-   * The world-space display objects owned by this waystone (the stone sprite, its
-   * glow disc, the name label) plus the wrapped InteractionZone's display objects.
-   * Returned so the owning scene can tell the UI camera to ignore them (#137),
-   * keeping the marker visible only through the world (main) camera.
+   * The world-space display objects owned by this waystone. Returned so the
+   * owning scene can tell the UI camera to ignore them (#137), keeping the
+   * marker visible only through the world (main) camera.
    */
   get displayObjects(): Phaser.GameObjects.GameObject[] {
-    return [this.stone, this.glow, this.label, ...this.zone.displayObjects];
+    return [this.gfx, this.glow, this.label, ...this.zone.displayObjects];
   }
 
-  /** Recolor the stone for the given attuned state (true → glowing). */
+  /** Redraw the stone for the given attuned state (true → glowing cyan). */
   setAttuned(attuned: boolean): void {
     this.attuned = attuned;
-    this.stone.setFillStyle(attuned ? COLOR_ATTUNED : COLOR_UNATTUNED);
+    this.redraw();
     this.glow.setVisible(attuned);
   }
 
@@ -117,8 +124,64 @@ export class Waystone {
   /** Destroy owned game objects + the wrapped zone (on scene shutdown). */
   destroy(): void {
     this.zone.destroy();
-    this.stone.destroy();
+    this.gfx.destroy();
     this.glow.destroy();
     this.label.destroy();
+  }
+
+  // ── Private ─────────────────────────────────────────────────────────────────
+
+  /**
+   * Draw the standing stone: a tapered trapezoid body, a rounded cap at the
+   * top, a right-edge shadow for depth, and two horizontal rune marks. The
+   * graphic is cleared and redrawn on every state change.
+   */
+  private redraw(): void {
+    this.gfx.clear();
+
+    const cx = this.center.x;
+    const cy = this.center.y;
+    const stoneTop = cy - STONE_H;
+    const stoneBase = cy;
+
+    const fillColor = this.attuned ? COLOR_ATTUNED : COLOR_UNATTUNED;
+    const darkColor = this.attuned ? COLOR_ATTUNED_DARK : COLOR_UNATTUNED_DARK;
+    const runeColor = this.attuned ? COLOR_ATTUNED_RUNE : COLOR_UNATTUNED_RUNE;
+
+    // Main body — trapezoid as two triangles: narrower at top, wider at base.
+    this.gfx.fillStyle(fillColor, 1);
+    this.gfx.fillTriangle(
+      cx - TOP_HALF_W, stoneTop,
+      cx + TOP_HALF_W, stoneTop,
+      cx - BASE_HALF_W, stoneBase,
+    );
+    this.gfx.fillTriangle(
+      cx + TOP_HALF_W, stoneTop,
+      cx + BASE_HALF_W, stoneBase,
+      cx - BASE_HALF_W, stoneBase,
+    );
+
+    // Right-edge shadow triangle (gives illusion of depth / rounded volume).
+    this.gfx.fillStyle(darkColor, 1);
+    this.gfx.fillTriangle(
+      cx + TOP_HALF_W, stoneTop,
+      cx + BASE_HALF_W, stoneBase,
+      cx + TOP_HALF_W, stoneBase,
+    );
+
+    // Rounded cap at the top (irregular rock silhouette).
+    this.gfx.fillStyle(fillColor, 1);
+    this.gfx.fillEllipse(cx, stoneTop, TOP_HALF_W * 2, 8);
+
+    // Two horizontal rune marks (at ~35% and ~62% down the stone height).
+    this.gfx.lineStyle(1, runeColor, 0.85);
+    const drawRune = (t: number): void => {
+      // Interpolate half-width at this vertical position along the trapezoid.
+      const hw = Phaser.Math.Linear(TOP_HALF_W, BASE_HALF_W, t) - 3;
+      const ry = stoneTop + STONE_H * t;
+      this.gfx.strokeLineShape(new Phaser.Geom.Line(cx - hw, ry, cx + hw, ry));
+    };
+    drawRune(0.36);
+    drawRune(0.63);
   }
 }
