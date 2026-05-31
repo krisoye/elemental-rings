@@ -27,6 +27,37 @@ interface MarkerSpec {
   fallbackColor: number;
 }
 
+/**
+ * #196 — relative difficulty bucket comparing an NPC's effective XP to the
+ * player's aggregate XP. Buckets are tuned so a 1:1 (DEFENSIVE) opponent reads
+ * "Matched", AGGRESSIVE (×0.8) reads "Easier", and RESILIENT (×1.3) "Stronger".
+ * A fresh player vs a fresh-floored opponent (both 0) reads "Fresh".
+ */
+function difficultyLabel(npcXp: number, playerXp: number): string {
+  if (playerXp === 0 && npcXp === 0) return 'Fresh';
+  const ratio = playerXp > 0 ? npcXp / playerXp : 1;
+  if (ratio < 0.6) return 'Weaker';
+  if (ratio < 0.9) return 'Easier';
+  if (ratio < 1.2) return 'Matched';
+  if (ratio < 1.8) return 'Stronger';
+  return 'Much Stronger';
+}
+
+/** Hex color string for a difficulty label (green→white→orange→red). */
+function difficultyColor(label: string): string {
+  switch (label) {
+    case 'Weaker':
+    case 'Easier':
+      return '#66dd66';
+    case 'Stronger':
+      return '#ffaa44';
+    case 'Much Stronger':
+      return '#ff5555';
+    default: // Matched / Fresh
+      return '#ffffff';
+  }
+}
+
 const MARKERS: MarkerSpec[] = [
   { choice: 'AGGRESSIVE',    label: 'Aggressive',    fallbackColor: 0xff4400 },
   { choice: 'DEFENSIVE',     label: 'Defensive',     fallbackColor: 0x0088ff },
@@ -57,6 +88,10 @@ export class EncounterScene extends Phaser.Scene {
   // ring before selecting another encounter.
   private wonRingModal: Phaser.GameObjects.Container | null = null;
   private wonRings: RingData[] = [];
+  // #196 — the player's aggregate ring XP, resolved from the preview response
+  // (server-authoritative). Threaded into each vsAI room join so the AI loadout
+  // scales to the player's level. 0 until the preview fetch resolves.
+  private playerAggregateXp = 0;
 
   constructor() {
     super({ key: 'EncounterScene' });
@@ -178,6 +213,10 @@ export class EncounterScene extends Phaser.Scene {
 
     const rects: Map<Choice, Phaser.GameObjects.Rectangle> = new Map();
     const stakeLabels: Map<Choice, Phaser.GameObjects.Text> = new Map();
+    // #196 — one color-coded difficulty label per AI marker, rendered below the
+    // stake line. Populated once the preview fetch resolves (npcEffectiveXp +
+    // playerAggregateXp). PVP markers get no difficulty label.
+    const diffLabels: Map<Choice, Phaser.GameObjects.Text> = new Map();
 
     MARKERS.forEach((m, i) => {
       const x = spacing * (i + 1);
@@ -209,6 +248,21 @@ export class EncounterScene extends Phaser.Scene {
         })
         .setOrigin(0.5);
       stakeLabels.set(m.choice, stakeLabel);
+
+      // #196 — difficulty label below the stake line (AI markers only). Empty
+      // until loadPreview() fills it from the scaled npcEffectiveXp.
+      if (m.choice !== 'PVP') {
+        const diffLabel = this.add
+          .text(x, markerY + 62, '', {
+            fontSize: '12px',
+            color: '#ffffff',
+            align: 'center',
+            fontStyle: 'bold',
+            wordWrap: { width: 86 },
+          })
+          .setOrigin(0.5);
+        diffLabels.set(m.choice, diffLabel);
+      }
 
       if (m.choice !== 'PVP') {
         const sprite = this.buildTrainerSprite(x, markerY - 5);
@@ -269,7 +323,7 @@ export class EncounterScene extends Phaser.Scene {
     });
 
     // Fetch stake preview and update marker colors + labels.
-    void this.loadPreview(rects, stakeLabels);
+    void this.loadPreview(rects, stakeLabels, diffLabels);
 
     // Post-battle won-ring prompt: if the just-finished duel granted a ring,
     // resolve it here before the player can pick another encounter (#40).
@@ -292,36 +346,71 @@ export class EncounterScene extends Phaser.Scene {
   private async loadPreview(
     rects: Map<Choice, Phaser.GameObjects.Rectangle>,
     stakeLabels: Map<Choice, Phaser.GameObjects.Text>,
+    diffLabels: Map<Choice, Phaser.GameObjects.Text>,
   ): Promise<void> {
     try {
-      const res = await fetch(`${API_BASE}/api/encounter/preview`);
+      // #196 — send the auth token so the server scales each opponent to this
+      // player's aggregate XP. Anonymous fetches (no token) fall back to 0.
+      const token = localStorage.getItem('er_token') ?? '';
+      const res = await fetch(`${API_BASE}/api/encounter/preview`, {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
       if (!res.ok) return;
+      // The response carries a top-level numeric `playerAggregateXp` alongside the
+      // per-personality preview objects (#196), so the value type is a union.
       const preview: Record<
         string,
-        { element: number; aiSeed: number; stakeTier: number; stakeXp: number; totalXp: number }
+        | number
+        | {
+            element: number;
+            aiSeed: number;
+            stakeTier: number;
+            stakeXp: number;
+            totalXp: number;
+            npcEffectiveXp: number;
+          }
       > = await res.json();
+
+      const rawPlayerXp = preview.playerAggregateXp;
+      this.playerAggregateXp = typeof rawPlayerXp === 'number' ? rawPlayerXp : 0;
 
       const published: Record<
         string,
-        { element: number; stakeTier: number; stakeXp: number; totalXp: number }
+        {
+          element: number;
+          stakeTier: number;
+          stakeXp: number;
+          totalXp: number;
+          npcEffectiveXp: number;
+        }
       > = {};
 
       for (const [personality, entry] of Object.entries(preview)) {
-        const { element, aiSeed, stakeTier, stakeXp, totalXp } = entry;
+        // Skip the top-level playerAggregateXp scalar — only personality objects.
+        if (typeof entry !== 'object') continue;
+        const { element, aiSeed, stakeTier, stakeXp, totalXp, npcEffectiveXp } = entry;
         this.aiSeeds.set(personality as Choice, aiSeed);
-        published[personality] = { element, stakeTier, stakeXp, totalXp };
+        published[personality] = { element, stakeTier, stakeXp, totalXp, npcEffectiveXp };
 
         const rect = rects.get(personality as Choice);
         const label = stakeLabels.get(personality as Choice);
         if (!rect || !label) continue;
         const color = ELEMENT_COLORS[element] ?? 0x888888;
         rect.setFillStyle(color, 0.85);
-        // Three lines: stake element · tier · XP, then the loadout's total XP.
+        // Two lines: stake element · tier · XP, then the loadout's total XP.
         const elementName = ELEMENT_NAMES[element] ?? '?';
         label.setText(
           `Stakes: ${elementName} · T${stakeTier} · ${stakeXp}xp\nTotal XP: ${totalXp}`,
         );
         label.setAlign('center');
+
+        // #196 — color-coded relative difficulty label below the stake line.
+        const diffLabel = diffLabels.get(personality as Choice);
+        if (diffLabel) {
+          const diff = difficultyLabel(npcEffectiveXp, this.playerAggregateXp);
+          diffLabel.setText(diff);
+          diffLabel.setColor(difficultyColor(diff));
+        }
       }
 
       // The preview response only contains AI personalities (no PVP key); publish
@@ -395,6 +484,12 @@ export class EncounterScene extends Phaser.Scene {
       // loadout variant pool to a thumb-matching template so the duel stake equals
       // the overworld sprite colour + approach warning.
       thumbElement,
+      // #196 — the player's aggregate XP (from the preview response) so the AI
+      // loadout scales to the player's level. Only sent when known (> 0); when
+      // omitted (e.g. the NPC-duel path that skips the preview), the server
+      // re-resolves it from the token as the authority. Sending 0 would suppress
+      // that lookup (nullish-coalescing treats 0 as present), so it is left off.
+      ...(this.playerAggregateXp > 0 ? { playerAggregateXp: this.playerAggregateXp } : {}),
       ...aiOverrides,
     });
 

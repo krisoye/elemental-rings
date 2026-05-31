@@ -180,6 +180,14 @@ export class BattleRoom extends Room<{ state: BattleState }> {
       // Use a separate RNG stream for loadout generation so the combat RNG
       // (inside AIController) is unaffected by the number of template variants.
       const loadoutRng = makeRng(seed ^ 0x1a2b3c4d);
+      // #196 — scale the AI loadout to the joining player's aggregate XP. Prefer an
+      // explicitly-supplied value; otherwise resolve it from the token's player id
+      // (server-authoritative — the client cannot inflate it). Absent both, 0 → a
+      // fresh opponent (floored at the old hardcoded thumb XP inside the loadout).
+      const tokenPayload = options.token ? verifyToken(options.token) : null;
+      const playerXp =
+        options.playerAggregateXp ??
+        (tokenPayload ? PlayerRepo.getAggregateXp(tokenPayload.playerId) : 0);
       // #199 — pass the overworld NPC's intended stake element (when supplied) so
       // the loadout's thumb matches the element shown on the overworld marker.
       const aiSpec = generateAILoadout(
@@ -189,6 +197,7 @@ export class BattleRoom extends Room<{ state: BattleState }> {
         undefined,
         undefined,
         options.thumbElement,
+        playerXp,
       );
       // Deterministic-test AI-strength overrides (see BattleRoomOptions): a weak
       // AI yields a guaranteed protagonist win; a tanky AI a guaranteed loss.
