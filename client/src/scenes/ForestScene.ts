@@ -142,17 +142,7 @@ export class ForestScene extends BaseBiomeScene {
     return 0; // ground
   }
 
-  /**
-   * `forest_anchorage` (the hub) has the Sanctum building drawn as hand-authored
-   * tiles in the ground/behind/in-front layers — adding the sprite there would
-   * double-render it. Every other anchorage screen (glade, deepwood, hidden_alcove,
-   * etc.) has no sanctum tiles, so the sprite is needed there just as it is in
-   * the Swamp. (BaseBiomeScene.drawSanctumExterior scales by 1/worldZoom() so
-   * it renders at the correct on-screen size on 2× zoom screens.)
-   */
-  protected shouldDrawSanctumExterior(): boolean {
-    return this.screenId !== 'forest_anchorage';
-  }
+
 
   preload(): void {
     if (this.screenId === 'forest_anchorage') {
