@@ -66,9 +66,9 @@ import { blinkCost } from '../../../shared/blink';
 
 /**
  * Build the /api/waystones payload for a player: the anchorage catalog joined
- * with the player's attunement set and current spirit. `meetsThreshold` is the
- * §10.8 teleport-gate predicate — true when the player holds at least the
- * destination's spiritCost.
+ * with the player's attunement set and current spirit. `spiritCost` and
+ * `meetsThreshold` are relative to the player's current anchor — teleporting
+ * from The Glade to Deepwood costs 3, not 6 (§10.8).
  */
 function buildWaystonePayload(playerId: string): {
   aggregateXp: number;
@@ -85,17 +85,22 @@ function buildWaystonePayload(playerId: string): {
   const { aggregateXp } = getSpiritStats(playerId);
   const { spirit_current } = getSpiritAndFood(playerId);
   const attuned = new Set(getAttunements(playerId));
+  const anchor = getAnchor(playerId);
+  const anchorCost = getWaystone(anchor)?.spiritCost ?? 0;
   return {
     aggregateXp,
     spiritCurrent: spirit_current,
-    anchor: getAnchor(playerId),
-    waystones: WAYSTONES.map((w) => ({
-      id: w.id,
-      name: w.name,
-      spiritCost: w.spiritCost,
-      attuned: attuned.has(w.id),
-      meetsThreshold: spirit_current >= w.spiritCost,
-    })),
+    anchor,
+    waystones: WAYSTONES.map((w) => {
+      const spiritCost = Math.abs(w.spiritCost - anchorCost);
+      return {
+        id: w.id,
+        name: w.name,
+        spiritCost,
+        attuned: attuned.has(w.id),
+        meetsThreshold: spirit_current >= spiritCost,
+      };
+    }),
   };
 }
 
@@ -526,19 +531,23 @@ apiRouter.post('/api/teleport', requireAuth, (req: Request, res: Response): void
     return;
   }
   const def = getWaystone(waystoneId)!;
+  // Cost is relative to the player's current anchor, not absolute. Teleporting
+  // from The Glade (cost 3) to Deepwood (cost 6) costs 3, not 6.
+  const currentAnchor = getAnchor(playerId);
+  const currentAnchorCost = getWaystone(currentAnchor)?.spiritCost ?? 0;
+  const cost = Math.abs(def.spiritCost - currentAnchorCost);
   // Atomic check-and-spend: the guarded UPDATE both verifies affordability and
   // deducts in one statement, so two concurrent teleports can't both spend past
-  // zero. A zero-cost destination is a no-op that still succeeds. (canTeleport is
-  // the pre-check the client mirrors; this is the authoritative deduction.)
-  if (!spendSpiritAtomic(playerId, def.spiritCost)) {
-    res.status(400).json({ error: `requires ${def.spiritCost} spirit` });
+  // zero. A zero-cost destination is a no-op that still succeeds.
+  if (!spendSpiritAtomic(playerId, cost)) {
+    res.status(400).json({ error: `requires ${cost} spirit` });
     return;
   }
   setAnchor(playerId, waystoneId);
   res.status(200).json({
     anchor: waystoneId,
     spirit_current: getSpiritAndFood(playerId).spirit_current,
-    spiritCost: def.spiritCost,
+    spiritCost: cost,
   });
 });
 
