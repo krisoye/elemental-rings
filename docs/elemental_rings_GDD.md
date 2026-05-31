@@ -1,5 +1,5 @@
 # Elemental Rings — Game Design Document
-**Version 5.0 | Stack: Phaser.js + Colyseus | Multiplayer-first**
+**Version 5.1 | Stack: Phaser.js + Colyseus | Multiplayer-first**
 
 ---
 
@@ -23,7 +23,7 @@ Each section lives in its own file. Read only what you need.
 | 11 | UI and Information Display | [gdd-11-ui.md](gdd-11-ui.md) | HUD, ring reveal, status display |
 | 12 | Spirit System | [gdd-12-spirit-system.md](gdd-12-spirit-system.md) | Spirit gauge, carry capacity, ring recharge, food/sleep; §12.7 short-range blink cost; §12.8 ambush premium |
 | 13 | Open Questions | [gdd-13-open-questions.md](gdd-13-open-questions.md) | Unresolved design decisions |
-| 14 | Talisman System | [gdd-14-talismans.md](gdd-14-talismans.md) | Sanctum Stone, necklace/bracelet slots, future talismans |
+| 14 | Talisman System | [gdd-14-talismans.md](gdd-14-talismans.md) | Sanctum summoning (natural ability), necklace/bracelet slots, future talismans |
 | — | Build Sequence (Phases 1–9) | [GitHub Issue #14](https://github.com/krisoye/elemental-rings/issues/14) | Project management — not game design |
 
 ---
@@ -40,6 +40,9 @@ Each section lives in its own file. Read only what you need.
 ---
 
 ## Changelog
+
+*Document version 5.1 — Updated May 2026*
+*v5.1 changes: **Sanctum Stone retired** (PR #184 / EPIC #174). The Sanctum Stone necklace talisman — which permanently transported the Sanctum from the field — no longer exists; the `talisman/activate` route and `TALISMANS` catalog were removed in code (the talisman framework itself is preserved but empty). Field Sanctum access is now a **natural spiritual ability** (summon the Sanctum to any discovered Anchorage by activating its campfire) per §14.3 / §12.5c — already documented there since PR #167. This entry propagates the retirement to the surviving stale cross-references: (1) the navigation-hub §14 description; (2) the EPIC 8C build-decomposition in §10r — the "Sanctum Stone" spec block and the #81 talisman sub-issue were removed from the 8C plan (Swamp + NPC population remain); and (3) the §10.17 `BaseBiomeScene` architecture diagram, where the stale "talisman" core-mechanic entry is corrected to "campfire (rest + Sanctum summon)" to match what shipped (PR #198). No mechanic changed in this entry — docs-only consistency pass.*
 
 *Document version 5.0 — Updated May 2026*
 *v5.0 changes: Spirit gauge becomes the universal teleportation + initiative currency. **§12.7 Short-range Blink** (new) — double-clicking an interaction zone blinks the protagonist onto it and activates it; cost = `max(1, ceil(distance/100))` spirit (BLINK_PX_PER_SPIRIT=100, BLINK_MIN_COST=1, BLINK_MAX_RANGE=600 px); first non-recharge spirit expenditure. **§12.8 Ambush Premium** (new) — spending 5 spirit at duel entry grants first-attack initiative (AMBUSH_SPIRIT_COST=5). **§6.3 Combat hotkeys** updated — Z/C phase-relative aliases added alongside 1/2/3/4 (Z = A1/D1, C = A2/D2). **§6.10 Ambush Initiative** (new) — server-validated at BattleRoom.onJoin; insufficient spirit → default initiative, no spirit spent. **§10.3 Blink approach** added — double-click enemy within range to ambush-initiate a duel. **§10.13 Short-range Blink** (new) — overworld + Sanctum blink mechanics. **§10.14 Overworld Battle-Hand Management** (new) — Tab to open battle-hand overlay from any biome, Esc to close, movement suppressed while open. §10.8 spirit-gate status updated: XP shortcut correction queued in #87. Navigation hub and Quick Reference updated. Implementation tracked in #87.*
