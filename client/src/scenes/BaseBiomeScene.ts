@@ -438,10 +438,14 @@ export abstract class BaseBiomeScene extends Phaser.Scene {
 
     // Biome title (pinned to the camera). #137 — parented into uiRoot so it
     // renders at 1:1 through uiCam, not the zoomed world camera.
+    const biomeName = this.scene.key === 'SwampScene' ? 'Swamp' : 'Forest';
+    const areaName = this.screenDef?.name;
     const biomeTitle = this.add
-      .text(16, 16, this.scene.key === 'SwampScene' ? 'SWAMP' : 'FOREST', {
-        fontSize: '16px',
-        color: '#cfe3ff',
+      .text(16, 16, areaName ? `${biomeName}  –  ${areaName}` : biomeName, {
+        fontSize: '14px',
+        color: '#ddeeff',
+        backgroundColor: '#00000099',
+        padding: { x: 8, y: 5 },
       })
       .setScrollFactor(0)
       .setDepth(500);
