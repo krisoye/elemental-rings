@@ -19,8 +19,8 @@ import {
 } from '../objects/world/NpcSpriteRegistry';
 import {
   COMPASS_RANGE,
-  SANCTUM_OFFSET,
-  SANCTUM_DOOR_OFFSET,
+  SANCTUM_Y_ABOVE,
+  SANCTUM_SPAWN_Y_BELOW,
   SANCTUM_ZONE_HALF,
   ANCHORAGE_GROUND_RADIUS,
   DETECTION_RADIUS,
@@ -1118,29 +1118,25 @@ export abstract class BaseBiomeScene extends Phaser.Scene {
       this.waystones.set(markerId, marker);
     }
 
-    // Anchor-derived spawn (8B.3) + Sanctum exterior (8B.4.1): placed at the anchored
-    // waystone toward map center. Done AFTER markers are built so the anchor center
-    // exists. Skipped on a re-entry that already restored the player (edge step or
-    // post-duel) so it doesn't snap them back to the Sanctum door.
+    // Anchor-derived spawn (8B.3) + Sanctum exterior (8B.4.1): sprite bottom edge
+    // flush with the anchorage bottom edge; player spawns in the tile below.
+    // Done AFTER markers are built so the anchor center exists. Skipped on a
+    // re-entry that already restored the player (edge step or post-duel).
     const anchorCenter = this.anchorageMarkers.get(payload.anchor);
     if (anchorCenter) {
-      const mapCx = map.widthInPixels / 2;
-      const mapCy = map.heightInPixels / 2;
-      const dx = mapCx - anchorCenter.center.x;
-      const dy = mapCy - anchorCenter.center.y;
-      const len = Math.sqrt(dx * dx + dy * dy) || 1;
-      const dirX = dx / len;
-      const dirY = dy / len;
-      const sanctumX = anchorCenter.center.x + dirX * SANCTUM_OFFSET;
-      const sanctumY = anchorCenter.center.y + dirY * SANCTUM_OFFSET;
+      // Sprite center is SANCTUM_Y_ABOVE above the anchorage center so the bottom
+      // of the scaled sprite aligns with the bottom of the anchorage object.
+      const sanctumX = anchorCenter.center.x;
+      const sanctumY = anchorCenter.center.y - SANCTUM_Y_ABOVE;
 
       this.refreshSanctumZone(sanctumX, sanctumY);
       this.drawSanctumExterior(sanctumX, sanctumY);
 
       if (!this.returnedFromDuel) {
+        // Spawn in the tile directly below the anchorage (one 16px tile down).
         this.player.setPosition(
-          sanctumX + dirX * SANCTUM_DOOR_OFFSET,
-          sanctumY + dirY * SANCTUM_DOOR_OFFSET,
+          anchorCenter.center.x,
+          anchorCenter.center.y + SANCTUM_SPAWN_Y_BELOW,
         );
       }
 
@@ -1405,15 +1401,8 @@ export abstract class BaseBiomeScene extends Phaser.Scene {
     // Move the Sanctum exterior to the new anchor.
     const anchorCenter = this.anchorageMarkers.get(newAnchor ?? payload.anchor);
     if (!anchorCenter) return;
-    const map = this.map;
-    if (!map) return;
-    const mapCx = map.widthInPixels / 2;
-    const mapCy = map.heightInPixels / 2;
-    const dx = mapCx - anchorCenter.center.x;
-    const dy = mapCy - anchorCenter.center.y;
-    const len = Math.sqrt(dx * dx + dy * dy) || 1;
-    const sanctumX = anchorCenter.center.x + (dx / len) * SANCTUM_OFFSET;
-    const sanctumY = anchorCenter.center.y + (dy / len) * SANCTUM_OFFSET;
+    const sanctumX = anchorCenter.center.x;
+    const sanctumY = anchorCenter.center.y - SANCTUM_Y_ABOVE;
     if (this.sanctumSprite) {
       this.sanctumSprite.setPosition(sanctumX, sanctumY);
     } else {
