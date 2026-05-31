@@ -49,32 +49,42 @@ const FIRE = 0, WATER = 1, EARTH = 2, WIND = 3, WOOD = 4;
 // Assign by rotating through the range so adjacent duelists look different.
 const D = [5, 6, 7, 8, 9, 10, 11] as const;
 
+// ── Valid personality → thumb element combinations ───────────────────────────
+// Each NPC's `element` MUST be a valid thumb for its personality's loadout
+// templates (AILoadout.ts TEMPLATES). Mismatches cause the battle to fall back
+// to a random template, making the overworld element disagree with the duel thumb.
+//
+//   AGGRESSIVE    → FIRE, WIND only
+//   DEFENSIVE     → EARTH, WOOD only
+//   STATUS_HUNTER → FIRE, WATER, WOOD only (Wind/Earth never fill gauges — GDD §3.3)
+//   RESILIENT     → any base element (5 templates)
+
 export const NPC_SPAWNS: NpcSpawnDef[] = [
   // ── Forest: hub screen (forest_anchorage) ────────────────────────────────────
-  { id: 'forest_npc_1', biome: 'forest', screen: 'forest_anchorage', personality: 'AGGRESSIVE', type: 'monster',  element: WOOD,  spriteFrame: 4,    tx: 7, ty: 6, respawnDays: 1 },
-  { id: 'forest_npc_2', biome: 'forest', screen: 'forest_anchorage', personality: 'DEFENSIVE',  type: 'duelist', element: WIND,  spriteFrame: D[0], tx: 15, ty: 4,  respawnDays: 1 },
+  { id: 'forest_npc_1', biome: 'forest', screen: 'forest_anchorage', personality: 'AGGRESSIVE', type: 'monster',  element: WIND,  spriteFrame: 3,    tx: 7, ty: 6, respawnDays: 1 },
+  { id: 'forest_npc_2', biome: 'forest', screen: 'forest_anchorage', personality: 'DEFENSIVE',  type: 'duelist', element: WOOD,  spriteFrame: D[0], tx: 15, ty: 4,  respawnDays: 1 },
   { id: 'forest_npc_3', biome: 'forest', screen: 'forest_anchorage', personality: 'RESILIENT',  type: 'monster',  element: WOOD,  spriteFrame: 4,    tx: 4,  ty: 11, respawnDays: 0 },
 
   // ── Forest: danger-1 screens (1–2 NPCs) ─────────────────────────────────────
   { id: 'forest_north_road_1', biome: 'forest', screen: 'forest_north_road', personality: 'AGGRESSIVE', type: 'monster',  element: WIND,  spriteFrame: 3,    tx: 4,  ty: 3,  respawnDays: 1 },
-  { id: 'forest_north_road_2', biome: 'forest', screen: 'forest_north_road', personality: 'DEFENSIVE',  type: 'duelist', element: WATER, spriteFrame: D[1], tx: 6, ty: 5, respawnDays: 1 },
+  { id: 'forest_north_road_2', biome: 'forest', screen: 'forest_north_road', personality: 'DEFENSIVE',  type: 'duelist', element: EARTH, spriteFrame: D[1], tx: 6, ty: 5, respawnDays: 1 },
   { id: 'forest_mossy_fen_1',  biome: 'forest', screen: 'forest_mossy_fen',  personality: 'DEFENSIVE',  type: 'monster',  element: WOOD,  spriteFrame: 4,    tx: 4,  ty: 3,  respawnDays: 1 },
-  { id: 'forest_east_path_1',  biome: 'forest', screen: 'forest_east_path',  personality: 'DEFENSIVE',  type: 'duelist', element: WATER, spriteFrame: D[2], tx: 5, ty: 4,  respawnDays: 1 },
+  { id: 'forest_east_path_1',  biome: 'forest', screen: 'forest_east_path',  personality: 'DEFENSIVE',  type: 'duelist', element: WOOD,  spriteFrame: D[2], tx: 5, ty: 4,  respawnDays: 1 },
   { id: 'forest_glade_1',      biome: 'forest', screen: 'forest_glade',      personality: 'AGGRESSIVE', type: 'monster',  element: WIND,  spriteFrame: 3,    tx: 3,  ty: 3,  respawnDays: 1 },
   { id: 'forest_glade_2',      biome: 'forest', screen: 'forest_glade',      personality: 'DEFENSIVE',  type: 'duelist', element: WOOD,  spriteFrame: D[3], tx: 6, ty: 4,  respawnDays: 1 },
   { id: 'forest_crossroads_1', biome: 'forest', screen: 'forest_crossroads', personality: 'RESILIENT',  type: 'monster',  element: EARTH, spriteFrame: 2,    tx: 3,  ty: 3,  respawnDays: 1 },
-  { id: 'forest_crossroads_2', biome: 'forest', screen: 'forest_crossroads', personality: 'STATUS_HUNTER', type: 'duelist', element: WIND, spriteFrame: D[4], tx: 5, ty: 4, respawnDays: 1 },
+  { id: 'forest_crossroads_2', biome: 'forest', screen: 'forest_crossroads', personality: 'STATUS_HUNTER', type: 'duelist', element: WOOD, spriteFrame: D[4], tx: 5, ty: 4, respawnDays: 1 },
   { id: 'forest_crossroads_3', biome: 'forest', screen: 'forest_crossroads', personality: 'AGGRESSIVE', type: 'monster',  element: FIRE,  spriteFrame: 0,    tx: 7, ty: 3,  respawnDays: 1 },
-  { id: 'forest_south_path_1', biome: 'forest', screen: 'forest_south_path', personality: 'AGGRESSIVE', type: 'monster',  element: WOOD,  spriteFrame: 4,    tx: 3,  ty: 4,  respawnDays: 1 },
+  { id: 'forest_south_path_1', biome: 'forest', screen: 'forest_south_path', personality: 'AGGRESSIVE', type: 'monster',  element: WIND,  spriteFrame: 3,    tx: 3,  ty: 4,  respawnDays: 1 },
 
   // ── Forest: danger-2 screens (2–3 NPCs) ─────────────────────────────────────
   { id: 'forest_hollow_1',    biome: 'forest', screen: 'forest_hollow',    personality: 'RESILIENT',     type: 'monster',  element: EARTH, spriteFrame: 2,    tx: 3,  ty: 3,  respawnDays: 1 },
   { id: 'forest_hollow_2',    biome: 'forest', screen: 'forest_hollow',    personality: 'AGGRESSIVE',    type: 'monster',  element: FIRE,  spriteFrame: 0,    tx: 5, ty: 4,  respawnDays: 1 },
-  { id: 'forest_hollow_3',    biome: 'forest', screen: 'forest_hollow',    personality: 'STATUS_HUNTER', type: 'duelist', element: WIND,  spriteFrame: D[5], tx: 7, ty: 3,  respawnDays: 1 },
-  { id: 'forest_briar_pass_1',biome: 'forest', screen: 'forest_briar_pass',personality: 'AGGRESSIVE',    type: 'monster',  element: WOOD,  spriteFrame: 4,    tx: 4,  ty: 3,  respawnDays: 1 },
+  { id: 'forest_hollow_3',    biome: 'forest', screen: 'forest_hollow',    personality: 'STATUS_HUNTER', type: 'duelist', element: WATER, spriteFrame: D[5], tx: 7, ty: 3,  respawnDays: 1 },
+  { id: 'forest_briar_pass_1',biome: 'forest', screen: 'forest_briar_pass',personality: 'AGGRESSIVE',    type: 'monster',  element: FIRE,  spriteFrame: 0,    tx: 4,  ty: 3,  respawnDays: 1 },
   { id: 'forest_briar_pass_2',biome: 'forest', screen: 'forest_briar_pass',personality: 'RESILIENT',     type: 'monster',  element: EARTH, spriteFrame: 2,    tx: 6, ty: 5, respawnDays: 1 },
   { id: 'forest_ridge_1',     biome: 'forest', screen: 'forest_ridge',     personality: 'RESILIENT',     type: 'monster',  element: WIND,  spriteFrame: 3,    tx: 3,  ty: 3,  respawnDays: 1 },
-  { id: 'forest_ridge_2',     biome: 'forest', screen: 'forest_ridge',     personality: 'DEFENSIVE',     type: 'duelist', element: WATER, spriteFrame: D[6], tx: 6, ty: 4,  respawnDays: 1 },
+  { id: 'forest_ridge_2',     biome: 'forest', screen: 'forest_ridge',     personality: 'DEFENSIVE',     type: 'duelist', element: EARTH, spriteFrame: D[6], tx: 6, ty: 4,  respawnDays: 1 },
 
   // ── Forest: danger-3 screen (3 NPCs) ────────────────────────────────────────
   { id: 'forest_deepwood_1', biome: 'forest', screen: 'forest_deepwood', personality: 'AGGRESSIVE', type: 'monster', element: FIRE, spriteFrame: 0, tx: 3,  ty: 3, respawnDays: 1 },
@@ -82,8 +92,8 @@ export const NPC_SPAWNS: NpcSpawnDef[] = [
   { id: 'forest_deepwood_3', biome: 'forest', screen: 'forest_deepwood', personality: 'RESILIENT',  type: 'monster', element: WOOD, spriteFrame: 4, tx: 7, ty: 3, respawnDays: 0 },
 
   // ── Swamp ─────────────────────────────────────────────────────────────────────
-  { id: 'swamp_npc_1', biome: 'swamp', screen: 'swamp_entry', personality: 'AGGRESSIVE',    type: 'monster', element: WATER, spriteFrame: 1, tx: 5, ty: 5, respawnDays: 1 },
-  { id: 'swamp_npc_2', biome: 'swamp', screen: 'swamp_entry', personality: 'STATUS_HUNTER', type: 'monster', element: EARTH, spriteFrame: 2, tx: 10, ty: 7, respawnDays: 1 },
+  { id: 'swamp_npc_1', biome: 'swamp', screen: 'swamp_entry', personality: 'AGGRESSIVE',    type: 'monster', element: WIND,  spriteFrame: 3, tx: 5, ty: 5, respawnDays: 1 },
+  { id: 'swamp_npc_2', biome: 'swamp', screen: 'swamp_entry', personality: 'STATUS_HUNTER', type: 'monster', element: WATER, spriteFrame: 1, tx: 10, ty: 7, respawnDays: 1 },
 
   // ── Underground / cave (Shadow) ─────────────────────────────────────────────
   // #133 — Shadow (ElementEnum.SHADOW=15) is a rare drop ONLY from dark
