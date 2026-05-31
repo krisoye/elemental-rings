@@ -91,6 +91,10 @@ test('spirit readout reflects DB-seeded balance after join', async ({ browser })
   // Set spirit to 30, then re-enter a fresh duel so onJoin re-reads the DB.
   await setSpirit(token, 30);
   await page.evaluate(() => (window as any).__room?.leave());
+  // Leaving the room does NOT return to CampScene, so __campGoEncounter is gone.
+  // Reload the page so BootScene routes to a fresh CampScene that re-exposes the
+  // hook before we navigate Camp → Encounter again.
+  await page.goto(URL);
   await campToEncounter(page);
   await waitForEncounter(page);
   await page.evaluate(() => (window as any).__encounterSelect('AGGRESSIVE'));
@@ -123,14 +127,26 @@ test('recharge decrements spirit and restores ring uses; HUD updates', async ({ 
   const page = await startAIDuel(ctx);
   const token = await tokenOf(page);
 
+  // BattleRoom snapshots spirit_current into broadcast state at onJoin only, so a
+  // DB write mid-duel is invisible to broadcast state. Seed spirit=5 in the DB,
+  // then re-enter a FRESH duel so onJoin re-reads it into the broadcast.
   await setSpirit(token, 5);
+  await page.evaluate(() => (window as any).__room?.leave());
+  await page.goto(URL);
+  await campToEncounter(page);
+  await waitForEncounter(page);
+  await page.evaluate(() => (window as any).__encounterSelect('AGGRESSIVE'));
+  await page.waitForFunction(() => (window as any).__room !== null, { timeout: 8000 });
+  await page.waitForFunction(() => (window as any).__hudView !== undefined, { timeout: 8000 });
   await waitForHumanTurn(page);
 
-  // Deplete a1 to 1 use (cost = maxUses − 1) so a recharge has uses to restore.
-  await setMyUses(page, { a1: 1 });
+  // Fully deplete a1 (cost = maxUses) so a recharge always has uses to restore,
+  // regardless of the seated ring's maxUses (a maxUses=1 ring set to 1 use would
+  // make cost = 0 → recharge is a no-op and the test would hang).
+  await setMyUses(page, { a1: 0 });
   await page.waitForFunction(() => {
     const room = (window as any).__room;
-    return room.state.players.get(room.sessionId).a1.currentUses === 1;
+    return room.state.players.get(room.sessionId).a1.currentUses === 0;
   }, { timeout: 4000 });
   const before = await readMySlot(page, 'a1');
   const beforeSpirit = await readMySpirit(page);

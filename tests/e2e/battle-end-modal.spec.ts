@@ -16,9 +16,10 @@ import { seedAuthToken, campToEncounter, waitForEncounter, E2E_FAST } from './he
 const URL = 'http://localhost:8090';
 const API_URL = 'http://localhost:2568';
 
-/** Forest NPC world center (tile center, from NpcSpawns) used for biome-origin duels. */
-const FOREST_NPC_1 = { id: 'forest_npc_1', x: 15 * 32 + 16, y: 12 * 32 + 16 };
-const SANCTUM_DOOR = { x: 1088, y: 608 };
+/** Forest NPC world center (tile center, from NpcSpawns) used for biome-origin duels.
+ * 16px grid after the #149/#159 map migration (server routes.ts TILE_SIZE=16). */
+const FOREST_NPC_1 = { id: 'forest_npc_1', x: 7 * 16 + 8, y: 6 * 16 + 8 }; // 120, 104
+const SANCTUM_DOOR = { x: 87, y: 152 };
 
 /** Drive the live BattleScene duel to ENDED, leaving the modal up (no routing). */
 async function driveToEndedModal(page: Page): Promise<void> {

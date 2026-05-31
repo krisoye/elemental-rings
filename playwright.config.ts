@@ -62,6 +62,8 @@ const SOLO_SPECS = [
   '16px-foundation.spec.ts',
   'ai-recharge-policy.spec.ts', // #197
   'spirit-hud.spec.ts', // #211
+  'battle-end-modal.spec.ts', // #212
+  'npc-duel-return.spec.ts', // #88 / #212 migration
 ];
 
 export default defineConfig({
