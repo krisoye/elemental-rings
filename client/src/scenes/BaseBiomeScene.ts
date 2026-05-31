@@ -141,6 +141,13 @@ export abstract class BaseBiomeScene extends Phaser.Scene {
   private anchorageAutoAttuned: Set<string> = new Set();
   /** Latest GET /api/waystones payload (mirrored to window.__waystones). */
   private waystonePayload: WaystonesPayload | null = null;
+  /**
+   * True while waiting for loadWaystones to reposition the player after entering
+   * from CampScene. Suppresses checkEdgeTransition so a spawn point placed near
+   * a map edge (e.g. forest_glade x=24 == EDGE) cannot push the player into an
+   * adjacent screen before the sanctum door spawn overrides the position.
+   */
+  private suppressEdgeTransitions = false;
   /** Camera-pinned compass HUD (8B.2) pulling toward unattuned waystones. */
   private compass!: Compass;
   /** Sanctum exterior sprite, placed at the anchored anchorage. */
@@ -346,6 +353,13 @@ export abstract class BaseBiomeScene extends Phaser.Scene {
     // The scene instance is reused across re-entries; reset per-create flags.
     this.returnedFromDuel = false;
     this.isTransitioning = false;
+    // Suppress edge transitions when entering from CampScene so the default
+    // spawn position (which may be at the edge band) cannot fire a screen
+    // transition before loadWaystones repositions the player at the sanctum door.
+    {
+      const sd = this.scene.settings.data as { fromSanctum?: boolean } | undefined;
+      this.suppressEdgeTransitions = sd?.fromSanctum === true;
+    }
 
     const map = this.make.tilemap({ key: this.mapKeyForScreen(this.screenId) });
     this.map = map;
@@ -621,6 +635,7 @@ export abstract class BaseBiomeScene extends Phaser.Scene {
   private checkEdgeTransition(): void {
     if (!this.map || !this.screenDef || this.isTransitioning) return;
     if (!this.edgeTransitionsEnabled()) return;
+    if (this.suppressEdgeTransitions) return;
     const px = this.player.x;
     const py = this.player.y;
     const mapW = this.map.widthInPixels;
@@ -1164,6 +1179,9 @@ export abstract class BaseBiomeScene extends Phaser.Scene {
     // positions dynamically per-screen (anchorages/waystones/biome_exit/sanctum_
     // return) instead of hardcoding pixel coordinates that move between screens.
     this.publishZoneCenters();
+
+    // Player has been (re)positioned — safe to allow edge transitions again.
+    this.suppressEdgeTransitions = false;
   }
 
   /** Mirror each interaction zone's center to window.__zoneCenters for E2E (#107). */
