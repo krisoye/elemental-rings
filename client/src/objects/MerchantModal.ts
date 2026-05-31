@@ -65,9 +65,11 @@ export class MerchantModal {
   private loadout: Record<string, string | null> = {};
   private gold = 0;
   private food = 0;
-  private foodQty = 1; // buy/sell qty for food
   private goldText: Phaser.GameObjects.Text | null = null;
   private statusText: Phaser.GameObjects.Text | null = null;
+  private scrollY = 0;
+  private wheelHandler: ((p: unknown, g: unknown, dx: number, dy: number) => void) | null = null;
+  private contentMaskGfx: Phaser.GameObjects.Graphics | null = null;
 
   constructor(
     scene: Phaser.Scene,
@@ -97,6 +99,13 @@ export class MerchantModal {
   /** Close the modal and destroy all game objects. */
   close(): void {
     if (!this.container) return;
+    if (this.wheelHandler) {
+      this.scene.input.off('wheel', this.wheelHandler);
+      this.wheelHandler = null;
+    }
+    this.scrollY = 0;
+    this.contentMaskGfx?.destroy();
+    this.contentMaskGfx = null;
     this.container.destroy(true);
     this.container = null;
     this.goldText = null;
@@ -181,12 +190,18 @@ export class MerchantModal {
   }
 
   private switchTab(tab: Tab): void {
+    this.scrollY = 0;
     this.activeTab = tab;
     this.renderTabContent();
   }
 
   private renderTabContent(): void {
     if (!this.container) return;
+    // Remove old wheel listener before rebuilding content.
+    if (this.wheelHandler) {
+      this.scene.input.off('wheel', this.wheelHandler);
+      this.wheelHandler = null;
+    }
     // Remove any tab-content objects (above index 7, which is our fixed header group).
     while (this.container.length > 8) {
       const last = this.container.getAt(this.container.length - 1) as Phaser.GameObjects.GameObject;
@@ -201,29 +216,46 @@ export class MerchantModal {
 
   private renderBuyTab(): void {
     if (!this.container || !this.catalog) return;
-    const startY = 160;
+    const ROW_H = 34;
+    const VISIBLE_H = 270;
     const col1 = CANVAS_W / 2 - 280;
-    const col2 = CANVAS_W / 2;
+    const col2a = CANVAS_W / 2 - 10;
+    const col2b = CANVAS_W / 2 + 55;
     const col3 = CANVAS_W / 2 + 200;
+    const CONTENT_TOP = 155;
 
-    // Food row.
+    // Mask: clip to the content rectangle (created once per open; reused across re-renders).
+    if (!this.contentMaskGfx) {
+      this.contentMaskGfx = this.scene.add.graphics();
+      this.contentMaskGfx.fillRect(CANVAS_W / 2 - 350, CONTENT_TOP, 700, VISIBLE_H);
+      this.contentMaskGfx.setVisible(false);
+    }
+
+    // Sub-container for scrollable rows; positioned so row y=0 aligns with CONTENT_TOP.
+    const cc = this.scene.add.container(0, CONTENT_TOP - this.scrollY);
+    cc.setMask(new Phaser.Display.Masks.GeometryMask(this.scene, this.contentMaskGfx));
+
+    // Food row at y=0 in sub-container.
     const foodLabel = this.scene.add
-      .text(col1, startY, `Food  ${this.catalog.food.buyPrice} GP/unit`, {
+      .text(col1, 0, `Food  ${this.catalog.food.buyPrice} GP/unit  (have: ${this.food})`, {
         fontSize: '14px', color: '#e8e0d0',
       })
       .setScrollFactor(0);
-    const foodQtyBtn = this.makeQtyBtn(col2, startY, () => this.cycleQty());
-    const buyFoodBtn = this.makeActionBtn('Buy', col3, startY, async () => {
-      await this.executeBuyFood(this.foodQty);
+    const buyFood1Btn = this.makeActionBtn('[×1]', col2a, 0, async () => {
+      await this.executeBuyFood(1);
+    });
+    const buyFood25Btn = this.makeActionBtn('[×25]', col2b, 0, async () => {
+      await this.executeBuyFood(25);
     });
 
-    // Ring rows.
-    const rows: Phaser.GameObjects.GameObject[] = [foodLabel, foodQtyBtn, buyFoodBtn];
-    let yOff = startY + 40;
+    const rows: Phaser.GameObjects.GameObject[] = [foodLabel, buyFood1Btn, buyFood25Btn];
+    let yOff = ROW_H + 6;
+    let rowCount = 1;
     for (const entry of this.catalog.rings) {
       const name = ELEMENT_NAMES[entry.elementIndex] ?? entry.element;
+      const ownedCount = this.allRings.filter((r) => r.element === entry.elementIndex).length;
       const rowLabel = this.scene.add
-        .text(col1, yOff, `${name} Ring T${entry.tier}  ${entry.buyPrice} GP`, {
+        .text(col1, yOff, `${name} Ring T${entry.tier}  ${entry.buyPrice} GP  (own: ${ownedCount})`, {
           fontSize: '14px', color: '#e8e0d0',
         })
         .setScrollFactor(0);
@@ -231,27 +263,52 @@ export class MerchantModal {
         await this.executeBuyRing(entry.elementIndex);
       });
       rows.push(rowLabel, buyRingBtn);
-      yOff += 34;
+      yOff += ROW_H;
+      rowCount++;
     }
-    this.container.add(rows);
+    cc.add(rows);
+    this.container.add(cc);
+
+    // Wheel scroll.
+    const maxScroll = Math.max(0, rowCount * ROW_H - VISIBLE_H);
+    this.wheelHandler = (_p: unknown, _g: unknown, _dx: number, dy: number) => {
+      this.scrollY = Phaser.Math.Clamp(this.scrollY + dy * 0.5, 0, maxScroll);
+      cc.setY(CONTENT_TOP - this.scrollY);
+    };
+    this.scene.input.on('wheel', this.wheelHandler);
   }
 
   private renderSellTab(): void {
     if (!this.container || !this.catalog) return;
-    const startY = 160;
+    const ROW_H = 34;
+    const VISIBLE_H = 270;
     const col1 = CANVAS_W / 2 - 280;
-    const col2 = CANVAS_W / 2;
+    const col2a = CANVAS_W / 2 - 10;
+    const col2b = CANVAS_W / 2 + 55;
     const col3 = CANVAS_W / 2 + 200;
+    const CONTENT_TOP = 155;
 
-    // Food sell row.
+    // Mask: reuse or create.
+    if (!this.contentMaskGfx) {
+      this.contentMaskGfx = this.scene.add.graphics();
+      this.contentMaskGfx.fillRect(CANVAS_W / 2 - 350, CONTENT_TOP, 700, VISIBLE_H);
+      this.contentMaskGfx.setVisible(false);
+    }
+
+    const cc = this.scene.add.container(0, CONTENT_TOP - this.scrollY);
+    cc.setMask(new Phaser.Display.Masks.GeometryMask(this.scene, this.contentMaskGfx));
+
+    // Food sell row at y=0.
     const foodLabel = this.scene.add
-      .text(col1, startY, `Food  ${this.catalog.food.sellPrice} GP/unit`, {
+      .text(col1, 0, `Food  ${this.catalog.food.sellPrice} GP/unit  (have: ${this.food})`, {
         fontSize: '14px', color: '#e8e0d0',
       })
       .setScrollFactor(0);
-    const foodQtyBtn = this.makeQtyBtn(col2, startY, () => this.cycleQty());
-    const sellFoodBtn = this.makeActionBtn('Sell', col3, startY, async () => {
-      await this.executeSellFood(this.foodQty);
+    const sellFood1Btn = this.makeActionBtn('[×1]', col2a, 0, async () => {
+      await this.executeSellFood(1);
+    });
+    const sellFood25Btn = this.makeActionBtn('[×25]', col2b, 0, async () => {
+      await this.executeSellFood(25);
     });
 
     // Carried rings NOT in battle slots.
@@ -260,15 +317,15 @@ export class MerchantModal {
       (r) => r.element <= 4 && !loadoutIds.has(r.id) && r.element !== undefined,
     );
 
-    const rows: Phaser.GameObjects.GameObject[] = [foodLabel, foodQtyBtn, sellFoodBtn];
-    let yOff = startY + 40;
+    const rows: Phaser.GameObjects.GameObject[] = [foodLabel, sellFood1Btn, sellFood25Btn];
+    let yOff = ROW_H + 6;
+    let rowCount = 1;
     for (const ring of sellableRings) {
-      if (yOff > CANVAS_H - 80) break; // prevent overflow
       const sellEntry = this.catalog.rings.find((e) => e.elementIndex === ring.element);
       const price = sellEntry?.sellPrice ?? 0;
       const name = ELEMENT_NAMES[ring.element] ?? `Element ${ring.element}`;
       const ringLabel = this.scene.add
-        .text(col1, yOff, `${name} Ring T${ring.tier}  ${price} GP`, {
+        .text(col1, yOff, `${name} Ring T${ring.tier}  ${price} GP  (${ring.current_uses}/${ring.max_uses} uses)`, {
           fontSize: '14px', color: '#e8e0d0',
         })
         .setScrollFactor(0);
@@ -276,10 +333,18 @@ export class MerchantModal {
         await this.executeSellRing(ring.id);
       });
       rows.push(ringLabel, sellRingBtn);
-      yOff += 34;
+      yOff += ROW_H;
+      rowCount++;
     }
-    this.container?.add(rows);
-    void col2; // referenced above for qty button
+    cc.add(rows);
+    this.container.add(cc);
+
+    const maxScroll = Math.max(0, rowCount * ROW_H - VISIBLE_H);
+    this.wheelHandler = (_p: unknown, _g: unknown, _dx: number, dy: number) => {
+      this.scrollY = Phaser.Math.Clamp(this.scrollY + dy * 0.5, 0, maxScroll);
+      cc.setY(CONTENT_TOP - this.scrollY);
+    };
+    this.scene.input.on('wheel', this.wheelHandler);
   }
 
   // ── Transaction helpers ────────────────────────────────────────────────────
@@ -368,23 +433,6 @@ export class MerchantModal {
   }
 
   // ── UI helpers ──────────────────────────────────────────────────────────────
-
-  private cycleQty(): void {
-    this.foodQty = this.foodQty >= 10 ? 1 : this.foodQty + 1;
-    this.renderTabContent();
-  }
-
-  private makeQtyBtn(
-    x: number,
-    y: number,
-    onClick: () => void,
-  ): Phaser.GameObjects.Text {
-    return this.scene.add
-      .text(x, y, `Qty: ${this.foodQty}`, { fontSize: '13px', color: '#aaddff' })
-      .setScrollFactor(0)
-      .setInteractive({ useHandCursor: true })
-      .on('pointerdown', onClick);
-  }
 
   private makeActionBtn(
     label: string,

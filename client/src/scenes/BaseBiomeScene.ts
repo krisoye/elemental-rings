@@ -4,6 +4,8 @@ import type { ScreenDef } from '../../../shared/world/forest';
 import { Player } from '../objects/world/Player';
 import { InteractionZone } from '../objects/world/InteractionZone';
 import { Waystone } from '../objects/world/Waystone';
+import { Campfire } from '../objects/world/Campfire';
+import { CampfireModal } from '../objects/CampfireModal';
 import { ForageNode } from '../objects/world/ForageNode';
 import { MerchantNpc } from '../objects/world/MerchantNpc';
 import { MerchantModal } from '../objects/MerchantModal';
@@ -73,6 +75,7 @@ interface WaystoneInfo {
   id: string;
   name: string;
   xpThreshold: number;
+  spiritCost?: number;
   attuned: boolean;
   meetsThreshold: boolean;
 }
@@ -129,6 +132,10 @@ export abstract class BaseBiomeScene extends Phaser.Scene {
   private waystones: Map<string, Waystone> = new Map();
   /** Centers of Anchorage locations (keyed by waystoneId), for compass + spawn logic. */
   private anchorageMarkers: Map<string, { center: { x: number; y: number } }> = new Map();
+  /** Campfire graphics markers keyed by anchorage id (#191). */
+  private campfires: Map<string, Campfire> = new Map();
+  /** Open campfire modal singleton (#191); null when closed. */
+  private campfireModal: CampfireModal | null = null;
   /** Anchorage ids already auto-attuned (or attuned on load) — fire onAttune once. */
   private anchorageAutoAttuned: Set<string> = new Set();
   /** Latest GET /api/waystones payload (mirrored to window.__waystones). */
@@ -153,6 +160,9 @@ export abstract class BaseBiomeScene extends Phaser.Scene {
     y: number;
     aiSeed?: number;
     spriteFrame: number;
+    /** #199 — the NPC's staked element, threaded into the duel so the battle
+     *  thumb matches the overworld sprite colour + approach warning. */
+    element: number;
   } | null = null;
   /** Camera-pinned Approach [E] detection prompt; created lazily, reused/hidden. */
   private npcPrompt: Phaser.GameObjects.Text | null = null;
@@ -313,17 +323,16 @@ export abstract class BaseBiomeScene extends Phaser.Scene {
       });
     }
     // Per-element monster overworld sprites (#158) — marker matches the battler.
+    // The PNGs are 72×96 spritesheets (3×3 = 9 frames at 24×32); load them as
+    // spritesheets so we can render a single frame, not the whole grid (#192).
     for (const entry of Object.values(MONSTER_OW_REGISTRY)) {
-      if (!this.textures.exists(entry.key)) this.load.image(entry.key, entry.path);
+      if (!this.textures.exists(entry.key)) {
+        this.load.spritesheet(entry.key, entry.path, { frameWidth: 24, frameHeight: 32 });
+      }
     }
-    // #128 — berry bush / fruit tree nodes (GDD §10.10).
-    // Spritesheet is 80×176 with 16×16 frames (5 cols × 11 rows).
-    if (!this.textures.exists('berry-nodes')) {
-      this.load.spritesheet('berry-nodes', 'assets/flora/flora_berries_trees.png', {
-        frameWidth: 16,
-        frameHeight: 16,
-      });
-    }
+    // #195 — forage-node plants are tilemap tiles (behind/in-front layers via the
+    // `berry_and_trees` Tiled tileset), not a standalone sprite. ForageNode toggles
+    // those tiles, so no `berry-nodes` spritesheet load is needed here anymore.
   }
 
   // ── Lifecycle ─────────────────────────────────────────────────────────────
@@ -517,6 +526,9 @@ export abstract class BaseBiomeScene extends Phaser.Scene {
       window.__decorationCount = undefined;
       window.__forestScreenId = undefined;
       window.__zoneCenters = undefined;
+      window.__campfireModal = null;
+      window.__campfireRest = undefined;
+      window.__campfireSummon = undefined;
       this.decorHandle?.destroy();
       this.decorHandle = null;
       this.decorationGroup?.destroy(true);
@@ -542,6 +554,10 @@ export abstract class BaseBiomeScene extends Phaser.Scene {
       this.merchantNpcs = [];
       this.merchantModal?.close();
       this.merchantModal = null;
+      this.campfireModal?.close();
+      this.campfireModal = null;
+      this.campfires.forEach((cf) => cf.destroy());
+      this.campfires.clear();
       this.compass.destroy();
       this.sanctumSprite?.destroy();
       this.sanctumSprite = null;
@@ -732,6 +748,9 @@ export abstract class BaseBiomeScene extends Phaser.Scene {
         personality: this.detectedNpc.personality as AIPersonality,
         aiSeed: this.detectedNpc.aiSeed,
         spriteFrame: this.detectedNpc.spriteFrame,
+        // #199 — thread the NPC's staked element so the battle thumb matches the
+        // overworld sprite colour + approach warning.
+        thumbElement: this.detectedNpc.element,
       });
       return;
     }
@@ -841,6 +860,7 @@ export abstract class BaseBiomeScene extends Phaser.Scene {
         if (!nodeId) continue;
         const node = new ForageNode(
           this,
+          this.map,
           o,
           nodeId,
           (food_units) => {
@@ -1041,7 +1061,7 @@ export abstract class BaseBiomeScene extends Phaser.Scene {
     const byId = new Map(payload.waystones.map((w) => [w.id, w]));
     const objs = map.getObjectLayer('objects')?.objects ?? [];
 
-    // Loop A — Anchorage objects: register center + interaction zone for attunement.
+    // Loop A — Anchorage objects: register center, campfire graphic, and campfire modal zone.
     for (const o of objs) {
       if (o.name !== 'anchorage') continue;
       const id = this.waystoneIdOf(o);
@@ -1050,10 +1070,25 @@ export abstract class BaseBiomeScene extends Phaser.Scene {
       const cy = (o.y ?? 0) + (o.height ?? 32) / 2;
       this.anchorageMarkers.set(id, { center: { x: cx, y: cy } });
 
+      // Campfire graphic offset south-east of the anchorage center (#191).
+      const campfire = new Campfire(this, { x: cx, y: cy });
+      this.campfires.set(id, campfire);
+
+      // InteractionZone must be co-located with the campfire graphic, which
+      // draws at (cx+24, cy+24). Shift the object origin so the zone center
+      // lands on the visible fire rather than the invisible anchorage center.
+      const zw = o.width ?? 32;
+      const zh = o.height ?? 32;
+      const campfireZoneObj = {
+        ...o,
+        name: id,
+        x: cx + 24 - zw / 2,
+        y: cy + 24 - zh / 2,
+      } as Phaser.Types.Tilemaps.TiledObject;
       const zone = new InteractionZone(
         this,
-        { ...o, name: id } as Phaser.Types.Tilemaps.TiledObject,
-        () => void this.onAttune(id),
+        campfireZoneObj,
+        () => this.openCampfireModal(id),
       );
       this.physics.add.overlap(this.player, zone.overlapZone);
       this.zones.push(zone);
@@ -1125,12 +1160,13 @@ export abstract class BaseBiomeScene extends Phaser.Scene {
     // (after the synchronous create() collection), so route them to uiCam.ignore
     // now: every Waystone marker's display objects, every InteractionZone built in
     // this method (anchorage zones + the sanctum_return zone are all in this.zones),
-    // and the Sanctum exterior sprite. Re-ignoring an object already ignored is a
-    // harmless no-op (it just re-sets the same cameraFilter bit).
+    // the Sanctum exterior sprite, and the campfire graphics. Re-ignoring an object
+    // already ignored is a harmless no-op (it just re-sets the same cameraFilter bit).
     {
       const worldObjects: Phaser.GameObjects.GameObject[] = [];
       this.zones.forEach((z) => worldObjects.push(...z.displayObjects));
       this.waystones.forEach((w) => worldObjects.push(...w.displayObjects));
+      this.campfires.forEach((cf) => worldObjects.push(...cf.displayObjects));
       if (this.sanctumSprite) worldObjects.push(this.sanctumSprite);
       this.ignoreWorldObjects(worldObjects);
     }
@@ -1237,6 +1273,116 @@ export abstract class BaseBiomeScene extends Phaser.Scene {
     }
   }
 
+  // ── Campfire overlay (#191) ─────────────────────────────────────────────────
+
+  /**
+   * Open the campfire Rest + Summon overlay for the given Anchorage. Called when
+   * the player presses E on an Anchorage zone. Auto-attunement still fires via
+   * checkAnchorageAutoAttune on proximity, so the player is already attuned before
+   * they can press E.
+   */
+  private openCampfireModal(anchorageId: string): void {
+    if (this.campfireModal?.isOpen()) return;
+    const info = this.waystonePayload?.waystones.find((w) => w.id === anchorageId);
+    const anchorageName = info?.name ?? anchorageId;
+    // Read current food/spirit from the HUD text or fall back to a live fetch.
+    const food = 0;   // will be refreshed after action; shown as placeholder
+    const spirit = 0; // same
+    const spiritCost = info?.spiritCost ?? 0;
+
+    this.overlayOpen = true;
+    this.campfireModal = new CampfireModal(
+      this,
+      anchorageId,
+      anchorageName,
+      food,
+      spirit,
+      spiritCost,
+      () => void this.refreshHud(),
+      () => {
+        this.campfireModal = null;
+        this.overlayOpen = false;
+        window.__campfireModal = null;
+        window.__campfireRest = undefined;
+        window.__campfireSummon = undefined;
+      },
+      (newAnchor) => void this.refreshSanctumPosition(newAnchor),
+      (container) => this.cameras.main.ignore(container),
+    );
+    // Fetch live values and re-open with accurate numbers.
+    void this.fetchAndReopenCampfireModal(anchorageId, anchorageName, spiritCost);
+  }
+
+  /** Fetch live food/spirit and reopen the campfire modal with accurate values. */
+  private async fetchAndReopenCampfireModal(
+    anchorageId: string,
+    anchorageName: string,
+    spiritCost: number,
+  ): Promise<void> {
+    const token = localStorage.getItem('er_token');
+    if (!token) return;
+    try {
+      const res = await fetch(`${API_BASE}/api/me`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!res.ok || !this.campfireModal?.isOpen()) return;
+      const data = (await res.json()) as {
+        player: { food_units: number; spirit_current: number };
+      };
+      // Destroy placeholder modal and rebuild with real values.
+      this.campfireModal.close();
+      if (!this.overlayOpen) return; // player closed it during fetch
+      this.campfireModal = new CampfireModal(
+        this,
+        anchorageId,
+        anchorageName,
+        data.player.food_units,
+        data.player.spirit_current,
+        spiritCost,
+        () => void this.refreshHud(),
+        () => {
+          this.campfireModal = null;
+          this.overlayOpen = false;
+          window.__campfireModal = null;
+          window.__campfireRest = undefined;
+          window.__campfireSummon = undefined;
+        },
+        (newAnchor) => void this.refreshSanctumPosition(newAnchor),
+        (container) => this.cameras.main.ignore(container),
+      );
+    } catch {
+      // Leave the placeholder modal open.
+    }
+  }
+
+  /**
+   * After a successful Summon, re-fetch /api/waystones to get the updated anchor,
+   * then move the Sanctum exterior sprite to the new position.
+   */
+  private async refreshSanctumPosition(newAnchor: string): Promise<void> {
+    const payload = await this.fetchWaystones();
+    if (!payload) return;
+    this.cachePayload(payload);
+    // Move the Sanctum exterior to the new anchor.
+    const anchorCenter = this.anchorageMarkers.get(newAnchor ?? payload.anchor);
+    if (!anchorCenter) return;
+    const map = this.map;
+    if (!map) return;
+    const mapCx = map.widthInPixels / 2;
+    const mapCy = map.heightInPixels / 2;
+    const dx = mapCx - anchorCenter.center.x;
+    const dy = mapCy - anchorCenter.center.y;
+    const len = Math.sqrt(dx * dx + dy * dy) || 1;
+    const sanctumX = anchorCenter.center.x + (dx / len) * SANCTUM_OFFSET;
+    const sanctumY = anchorCenter.center.y + (dy / len) * SANCTUM_OFFSET;
+    if (this.sanctumSprite) {
+      this.sanctumSprite.setPosition(sanctumX, sanctumY);
+    } else {
+      this.drawSanctumExterior(sanctumX, sanctumY);
+    }
+    window.__sanctumReturnCenter = { x: sanctumX, y: sanctumY };
+  }
+
   /** #81 — GET /api/talisman-loadout and cache it (also published for E2E). */
   private async loadTalismanLoadout(): Promise<void> {
     const token = localStorage.getItem('er_token');
@@ -1313,10 +1459,11 @@ export abstract class BaseBiomeScene extends Phaser.Scene {
     this.npcGraphics.forEach((g) => g.destroy());
     this.npcGraphics = [];
     for (const npc of this.overworldNpcs) {
-      let sprite: Phaser.GameObjects.Image;
+      let sprite: Phaser.GameObjects.Image | Phaser.GameObjects.Sprite;
       if (npc.type === 'monster' && npc.element <= 4 && MONSTER_OW_REGISTRY[npc.element]) {
+        // Monster markers are spritesheets (#192) — render frame 0, not the whole grid.
         sprite = this.add
-          .image(npc.x, npc.y, MONSTER_OW_REGISTRY[npc.element].key)
+          .sprite(npc.x, npc.y, MONSTER_OW_REGISTRY[npc.element].key, 0)
           .setDisplaySize(NPC_OW_DISPLAY_SIZE, NPC_OW_DISPLAY_SIZE);
       } else {
         sprite = this.add.image(npc.x, npc.y, 'npc-overworld', npc.spriteFrame);
@@ -1359,6 +1506,9 @@ export abstract class BaseBiomeScene extends Phaser.Scene {
       ambush: true,
       spriteFrame: npc.spriteFrame,
       battleKey: owEntry?.battleKey,
+      // #199 — thread the NPC's staked element so the battle thumb matches the
+      // overworld sprite colour + approach warning.
+      thumbElement: npc.element,
     });
   }
 
@@ -1389,6 +1539,7 @@ export abstract class BaseBiomeScene extends Phaser.Scene {
         y: nearest.y,
         aiSeed: nearest.aiSeed,
         spriteFrame: nearest.spriteFrame,
+        element: nearest.element,
       };
       const elementName = ELEMENT_NAMES[nearest.element] ?? '?';
       this.showNpcPrompt(`${elementName} duelist — Approach [E]`);

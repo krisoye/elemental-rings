@@ -40,6 +40,7 @@ const SOLO_SPECS = [
   'merchant.spec.ts',
   'merchant-client.spec.ts',
   'npc-population.spec.ts',
+  'npc-stake-element-sync.spec.ts', // #199
   'overworld-battlehand.spec.ts',
   'overworld-transition.spec.ts',
   'reliquary-cap.spec.ts',   // #182
@@ -49,6 +50,9 @@ const SOLO_SPECS = [
   'sanctum-summon.spec.ts',  // #180/#174
   'sanctum-zones.spec.ts',
   'spare-carry.spec.ts',     // #171
+  'spare-ring-scroll.spec.ts',  // #194
+  'merchant-qty-scroll.spec.ts', // #193
+  'anchorage-campfire.spec.ts',  // #191
   'spirit.spec.ts',
   'swamp.spec.ts',
   'talisman.spec.ts',

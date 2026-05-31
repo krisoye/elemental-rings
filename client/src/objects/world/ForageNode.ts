@@ -5,23 +5,42 @@ declare const __SERVER_URL__: string;
 const _WS_FN = __SERVER_URL__ || `ws://${window.location.hostname}:2567`;
 const API_BASE_FN = _WS_FN.replace(/^ws/, 'http');
 
-// berry_and_trees.png is 80×176, frame size 16×16 → 5 cols × 11 rows.
-//   Frame  0 (row 0, col 0): green berry bush — available state.
-//   Frame 10 (row 2, col 0): bare/brown plant — depleted state.
-// Adjust these indices once the exact layout is verified in-engine.
-const FRAME_AVAILABLE = 0;
-const FRAME_DEPLETED = 10;
+/** The Tiled tileset name carrying the berry/fruit-tree plant frames. */
+const BERRY_TILESET = 'berry_and_trees';
+/**
+ * The berry sheet is 5 columns wide; within every 2-row food-source block the
+ * column meaning is fixed: cols 0–1 = without-food (depleted), cols 2–3 =
+ * with-food (available), col 4 = item icon. So a with-food tile is one whose
+ * local column ∈ {2,3}, and depleting it = subtract 2 (col 2→0, 3→1, same row,
+ * same tileset). This holds for EVERY type — no per-type table needed (#195).
+ */
+const BERRY_COLS = 5;
+/** Layers whose tiles compose the 2×2 plant (trunk/lower + canopy/upper). */
+const PLANT_LAYERS = ['behind', 'in-front'] as const;
+
+/** One with-food plant tile recorded for toggling (#195). */
+interface FoodTile {
+  layerName: string;
+  tileX: number;
+  tileY: number;
+  /** The with-food (available) global gid as authored in the map. */
+  availableGid: number;
+}
 
 /**
  * A forageable berry / fruit-tree node in the overworld (GDD §10.10).
  *
- * Renders a sprite from the `berry-nodes` spritesheet at the Tiled object
- * position. Two visual states: **available** (full green bush) and **depleted**
- * (bare/brown frame). Wraps an {@link InteractionZone} so the player can walk
- * up and press E to forage via POST /api/overworld/forage. After a successful
- * forage the sprite immediately switches to the depleted frame; a 409 response
- * shows an "Already foraged" toast. The initial state is set by the owning
- * scene from the GET /api/overworld/forage-status response on load.
+ * The plant itself is NOT a sprite — it is the 2×2 with-food block the map author
+ * paints into the `behind` (trunk/lower, depth 2, collides) + `in-front` (canopy,
+ * depth 5) tile layers. ForageNode toggles those tiles between the with-food
+ * (available) and without-food (depleted) variants by a fixed −2 column gid shift
+ * (#195), so it is fully type-agnostic. Maps ship in the with-food state;
+ * `loadForageNodeStatus()` swaps a node to depleted on load when the server says
+ * so. A successful forage POST swaps it live; a 409 shows "Already foraged".
+ *
+ * **Map convention:** the available state of a node is whatever 2×2 with-food
+ * plant the author paints into behind+in-front over the object's footprint; the
+ * node auto-derives its type and depleted visual via the −2 offset.
  *
  * Purely presentational — all economy logic lives on the authoritative server.
  */
@@ -32,11 +51,14 @@ export class ForageNode {
   readonly center: { x: number; y: number };
 
   private readonly zone: InteractionZone;
-  private readonly sprite: Phaser.GameObjects.Image;
+  private readonly map: Phaser.Tilemaps.Tilemap;
+  /** The with-food plant tiles this node toggles (recorded from the map). */
+  private readonly foodTiles: FoodTile[] = [];
   private depleted = false;
 
   /**
    * @param scene owning spatial scene
+   * @param map the live tilemap (whose behind/in-front layers carry the plant)
    * @param obj the Tiled `forage_node` object (x/y top-left, in px)
    * @param nodeId stable node id from the object's `node_id` custom property
    * @param onForage callback fired after a successful forage (passes food_units)
@@ -44,35 +66,65 @@ export class ForageNode {
    */
   constructor(
     scene: Phaser.Scene,
+    map: Phaser.Tilemaps.Tilemap,
     obj: Phaser.Types.Tilemaps.TiledObject,
     nodeId: string,
     onForage: (food_units: number) => void,
     onToast: (msg: string, color?: string) => void,
   ) {
     this.nodeId = nodeId;
+    this.map = map;
     const x = obj.x ?? 0;
     const y = obj.y ?? 0;
     const w = obj.width ?? 32;
     const h = obj.height ?? 32;
     this.center = { x: x + w / 2, y: y + h / 2 };
 
-    // Sprite at the tile center (depth 6 — same as waystone standing stones).
-    this.sprite = scene.add
-      .image(this.center.x, this.center.y, 'berry-nodes', FRAME_AVAILABLE)
-      .setDepth(6)
-      .setName(`forage-${nodeId}`);
+    // Resolve the berry tileset and scan the object's tile footprint for with-food
+    // tiles in the plant layers, recording them for later toggling.
+    const ts = map.getTileset(BERRY_TILESET);
+    if (ts) {
+      const firstgid = ts.firstgid;
+      const lastgid = firstgid + ts.total; // exclusive
+      const tw = map.tileWidth;
+      const tx0 = Math.floor(x / tw);
+      const ty0 = Math.floor(y / tw);
+      const cols = Math.max(1, Math.round(w / tw));
+      const rows = Math.max(1, Math.round(h / tw));
+      for (const layerName of PLANT_LAYERS) {
+        if (!map.getLayer(layerName)) continue;
+        for (let dy = 0; dy < rows; dy++) {
+          for (let dx = 0; dx < cols; dx++) {
+            const tile = map.getTileAt(tx0 + dx, ty0 + dy, false, layerName);
+            if (!tile) continue;
+            const gid = tile.index;
+            if (gid < firstgid || gid >= lastgid) continue; // not a berry tile
+            const localCol = (gid - firstgid) % BERRY_COLS;
+            if (localCol === 2 || localCol === 3) {
+              this.foodTiles.push({
+                layerName,
+                tileX: tx0 + dx,
+                tileY: ty0 + dy,
+                availableGid: gid,
+              });
+            }
+          }
+        }
+      }
+    }
+    if (this.foodTiles.length === 0) {
+      // Mis-authored (no with-food tiles painted) or a screen without the berry
+      // tileset — fail safe: the visual toggle becomes a no-op (empty foodTiles),
+      // but the node stays interactable so foraging still works server-side.
+      // eslint-disable-next-line no-console
+      console.warn(`ForageNode ${nodeId}: no with-food plant tiles found — visual toggle disabled`);
+    }
 
-    // InteractionZone: covers the Tiled object rectangle, prompt text is "Forage [E]".
-    const zoneObj: Phaser.Types.Tilemaps.TiledObject = {
-      ...obj,
-      name: nodeId,
-    };
+    // InteractionZone: covers the Tiled object rectangle; "Press E" prompt.
+    const zoneObj: Phaser.Types.Tilemaps.TiledObject = { ...obj, name: nodeId };
     this.zone = new InteractionZone(scene, zoneObj, () => {
       void this.interact(onForage, onToast);
     });
-    // Override the default "Press E" prompt with a more descriptive label.
-    // InteractionZone always shows "Press E"; we rely on the zone being active
-    // to signal the player — no additional prompt text needed here.
   }
 
   /** The InteractionZone wrapping this node (for overlap + nearest selection). */
@@ -81,22 +133,27 @@ export class ForageNode {
   }
 
   /**
-   * The world-space display objects owned by this forage node (the bush/tree
-   * sprite) plus the wrapped InteractionZone's display objects. Returned so the
-   * owning scene can tell the UI camera to ignore them (#137) — ForageNode is a
-   * WORLD object that must zoom with the main camera, not the 1:1 UI camera.
+   * World-space display objects owned by this node. The plant lives in the tilemap
+   * layers (already routed to the world camera), so only the wrapped
+   * InteractionZone's objects are returned for the #137 UI-camera ignore.
    */
   get displayObjects(): Phaser.GameObjects.GameObject[] {
-    return [this.sprite, ...this.zone.displayObjects];
+    return [...this.zone.displayObjects];
   }
 
   /**
-   * Set the available / depleted visual state (called on scene load from
-   * GET /api/overworld/forage-status, and after a successful forage POST).
+   * Set the available / depleted visual state by swapping each food tile between
+   * the with-food gid and the without-food gid (a fixed −2 column shift). Called on
+   * scene load from GET /api/overworld/forage-status and after a forage POST.
+   * `behind` tiles stay non-empty after −2 (still a solid trunk) so collision is
+   * preserved; putTileAt recalculates collision faces by default.
    */
   setDepleted(depleted: boolean): void {
     this.depleted = depleted;
-    this.sprite.setFrame(depleted ? FRAME_DEPLETED : FRAME_AVAILABLE);
+    for (const t of this.foodTiles) {
+      const gid = depleted ? t.availableGid - 2 : t.availableGid;
+      this.map.putTileAt(gid, t.tileX, t.tileY, true, t.layerName);
+    }
   }
 
   /** Whether this node is currently shown as depleted. */
@@ -104,10 +161,9 @@ export class ForageNode {
     return this.depleted;
   }
 
-  /** Destroy owned game objects + the wrapped zone (on scene shutdown). */
+  /** Destroy the wrapped zone (on scene shutdown). The plant tiles belong to the map. */
   destroy(): void {
     this.zone.destroy();
-    this.sprite.destroy();
   }
 
   private async interact(
