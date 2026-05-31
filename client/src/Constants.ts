@@ -127,8 +127,14 @@ export const COMPASS_ARROW_SIZE = 24; // px — half-length of the arrow triangl
 // than the map's static sanctum_return rectangle, so the player always spawns
 // beside a visible building they can walk back into. Pure presentation — the
 // anchor waystone id comes from the server (window.__waystones.anchor).
-export const SANCTUM_OFFSET = 0; // px — Sanctum body center sits AT the Anchorage center (offset toward map center)
-export const SANCTUM_DOOR_OFFSET = 96; // px — player spawns outside the door (building half-height 80px + 16px clearance)
+// Sanctum sprite center sits this many px ABOVE the anchorage center so the
+// sprite's bottom edge (half-height = 40 at 0.5× scale on 2× zoom maps) aligns
+// flush with the anchorage object's bottom edge (half = 8): 40 − 8 = 32.
+export const SANCTUM_Y_ABOVE = 32;
+// Player spawns in the tile directly below the anchorage object. In 16px-tile
+// maps the tile below starts at anchorage bottom (center + 8) and its center
+// is one half-tile further down: 8 + 8 = 16 below the anchorage center.
+export const SANCTUM_SPAWN_Y_BELOW = 16;
 export const SANCTUM_ZONE_HALF = 32; // px — half-width/height of the sanctum_return interaction zone
 
 // #73 — Phase 8B.4.3 Anchorage ground treatment. A soft worn-ground ring beneath
