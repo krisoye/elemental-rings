@@ -47,6 +47,8 @@ interface NpcInfo {
   /** For monsters: canonical battle texture key matching the overworld sprite.
    *  When present, BattleScene uses it instead of a random variant (#158). */
   battleKey?: string;
+  /** Pre-computed thumb (stake) XP the player would win — shown in the approach prompt. */
+  stakeXp?: number;
 }
 
 declare const __SERVER_URL__: string;
@@ -173,6 +175,8 @@ export abstract class BaseBiomeScene extends Phaser.Scene {
     /** #199 — the NPC's staked element, threaded into the duel so the battle
      *  thumb matches the overworld sprite colour + approach warning. */
     element: number;
+    /** Pre-computed thumb XP shown in the approach prompt so the player can decide. */
+    stakeXp?: number;
   } | null = null;
   /** Camera-pinned Approach [E] detection prompt; created lazily, reused/hidden. */
   private npcPrompt: Phaser.GameObjects.Text | null = null;
@@ -1577,9 +1581,12 @@ export abstract class BaseBiomeScene extends Phaser.Scene {
         aiSeed: nearest.aiSeed,
         spriteFrame: nearest.spriteFrame,
         element: nearest.element,
+        stakeXp: nearest.stakeXp,
       };
       const elementName = ELEMENT_NAMES[nearest.element] ?? '?';
-      this.showNpcPrompt(`${elementName} duelist — Approach [E]`);
+      const npcType = nearest.type === 'monster' ? 'monster' : 'duelist';
+      const xpPart = nearest.stakeXp !== undefined ? `  ${nearest.stakeXp.toLocaleString()} XP` : '';
+      this.showNpcPrompt(`${elementName} ${npcType}${xpPart}  —  Approach [E]`);
       window.__detectedNpc = { id: nearest.id, personality: nearest.personality };
     } else {
       this.detectedNpc = null;

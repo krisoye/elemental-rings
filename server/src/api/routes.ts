@@ -3,6 +3,7 @@ import bcrypt from 'bcrypt';
 import { signToken, requireAuth, verifyToken } from '../auth/auth';
 import { makeRng } from '../game/ai/AIProfiles';
 import { previewOpponent, AI_PERSONALITIES } from '../game/ai/AILoadout';
+import type { AIPersonality } from '../../../shared/types';
 import {
   createPlayer,
   getPlayerByUsername,
@@ -687,8 +688,13 @@ apiRouter.get('/api/overworld/npcs', requireAuth, (req: Request, res: Response):
 
   // Element is now fixed in the spawn table (npc.element) — no longer derived from
   // the personality RNG. aiSeed is still returned for BattleRoom loadout seeding.
+  // stakeXp is pre-computed via previewOpponent so the overworld approach prompt
+  // can show the player what thumb XP they'd win without an extra round-trip.
+  const { aggregateXp: playerAggregateXp } = getSpiritStats(playerId);
   const npcs = visible.map((npc) => {
     const aiSeed = hashNpcId(npc.id);
+    const rng = makeRng(aiSeed ^ 0x1a2b3c4d);
+    const { stakeXp } = previewOpponent(npc.personality as AIPersonality, rng, playerAggregateXp);
     return {
       id: npc.id,
       personality: npc.personality,
@@ -698,6 +704,7 @@ apiRouter.get('/api/overworld/npcs', requireAuth, (req: Request, res: Response):
       x: npc.tx * TILE_SIZE + TILE_SIZE / 2,
       y: npc.ty * TILE_SIZE + TILE_SIZE / 2,
       aiSeed,
+      stakeXp,
     };
   });
 
