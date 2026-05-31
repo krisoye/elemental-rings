@@ -9,6 +9,7 @@ import { LobbyScene } from './scenes/LobbyScene';
 import { BattleScene } from './scenes/BattleScene';
 import type {
   ExchangeResultPayload,
+  RechargeResultPayload,
   AIPersonality,
   BattleRoomOptions,
   BattleSummaryPayload,
@@ -89,7 +90,19 @@ declare global {
     __forfeitPromptOpen?: boolean;
     // #135 — the LOCAL player's rendered HUD (Blinded `?` substitution applied).
     // E2E asserts own-HUD hiding against this without reading pixels.
-    __hudView?: { a1: string; a2: string; d1: string; d2: string; hearts: string };
+    // #211 — `spirit` is the rendered ⚡ readout as 'current/max' (or undefined
+    // when hidden: AI / no-token local sessions with spiritMax 0).
+    __hudView?: {
+      a1: string;
+      a2: string;
+      d1: string;
+      d2: string;
+      hearts: string;
+      spirit?: string;
+    };
+    // #211 — the latest per-client recharge result, published by BattleScene so
+    // E2E can assert partial/insufficient feedback without reading pixels.
+    __lastRechargeResult?: RechargeResultPayload | null;
     connectToRoom: (roomName: string, opts?: BattleRoomOptions) => Promise<void>;
     // Deterministic E2E hook: triggers the same code path as clicking an
     // EncounterScene marker. Set by EncounterScene.create(). 'PVP' starts the
@@ -296,6 +309,7 @@ declare global {
 window.__room = null;
 window.__scene = null;
 window.__lastExchangeResult = null;
+window.__lastRechargeResult = null;
 window.__lastBattleSummary = null;
 window.__slotPositions = [];
 window.__orbLaunchCount = 0;

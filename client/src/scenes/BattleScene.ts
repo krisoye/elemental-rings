@@ -4,7 +4,11 @@ import { Orb } from '../objects/Orb';
 import { PlayerDuelist } from '../objects/PlayerDuelist';
 import { OpponentDuelist } from '../objects/OpponentDuelist';
 import { Hud } from '../objects/Hud';
-import type { ExchangeResultPayload, BattleSummaryPayload } from '../../../shared/types';
+import type {
+  ExchangeResultPayload,
+  RechargeResultPayload,
+  BattleSummaryPayload,
+} from '../../../shared/types';
 import {
   PLAYER_X,
   PLAYER_Y,
@@ -230,10 +234,20 @@ export class BattleScene extends Phaser.Scene {
       this.renderBattleSummary();
     });
 
+    // #211 — per-client recharge result. The turn is consumed regardless (server
+    // rule); this only surfaces a PARTIAL or INSUFFICIENT-spirit outcome. A full
+    // success (restored === requested) flashes nothing — the HUD readout already
+    // reflects the spend. Published to window for E2E.
+    const offRecharge = room.onMessage('rechargeResult', (p: RechargeResultPayload) => {
+      window.__lastRechargeResult = p;
+      this.showRechargeFeedback(p);
+    });
+
     this.events.once('shutdown', () => {
       room.onStateChange.remove(onState);
       offExchange();
       offSummary();
+      offRecharge();
       this.cancelPendingAttack();
       this.dismissForfeitPrompt();
       window.__scene = null;
@@ -254,6 +268,8 @@ export class BattleScene extends Phaser.Scene {
       d1: this.hand.displayedUses('d1'),
       d2: this.hand.displayedUses('d2'),
       hearts: this.playerDuelist.displayedHearts,
+      // #211 — rendered ⚡ current/max (undefined when hidden: AI / no-token).
+      spirit: this.hud.displayedSpirit,
     };
   }
 
@@ -307,6 +323,36 @@ export class BattleScene extends Phaser.Scene {
     this.tweens.add({
       targets: t, alpha: 0, y: 165,
       duration: 750, ease: 'Power2',
+      onComplete: () => t.destroy(),
+    });
+  }
+
+  /**
+   * #211 — flash a brief recharge-spend label near the player's slots when the
+   * spend was less than requested. The turn is consumed either way (server rule),
+   * so this only communicates the spirit shortfall:
+   *   - restored === 0 && requested > 0 → "Not enough spirit!" (red)
+   *   - 0 < restored < requested        → "Restored X/Y — low spirit" (amber)
+   *   - restored === requested (full)   → no flash
+   * Reuses the showExchangeOutcome rise-and-fade tween pattern.
+   */
+  private showRechargeFeedback(p: RechargeResultPayload): void {
+    if (p.requested <= 0 || p.restored >= p.requested) return;
+    const { label, color } =
+      p.restored === 0
+        ? { label: 'Not enough spirit!', color: '#ff4444' }
+        : { label: `Restored ${p.restored}/${p.requested} — low spirit`, color: '#ffaa33' };
+    // Positioned just above the player's slot row (the bottom hand), low on screen.
+    const t = this.add
+      .text(512, 470, label, {
+        fontSize: '24px', color, fontStyle: 'bold',
+        stroke: '#000000', strokeThickness: 4,
+      })
+      .setOrigin(0.5)
+      .setDepth(1100);
+    this.tweens.add({
+      targets: t, alpha: 0, y: 430,
+      duration: 900, ease: 'Power2',
       onComplete: () => t.destroy(),
     });
   }

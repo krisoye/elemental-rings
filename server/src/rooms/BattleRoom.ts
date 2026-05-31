@@ -39,6 +39,7 @@ import {
   SelectAttackPayload,
   SubmitDefensePayload,
   RechargePayload,
+  RechargeResultPayload,
   ExchangeResultPayload,
   BattleRoomOptions,
   SlotKey,
@@ -316,7 +317,16 @@ export class BattleRoom extends Room<{ state: BattleState }> {
       // #171 — seed spareCapacity from the live Reliquary XP so the client HUD
       // reflects the correct carry headroom as soon as the battle room opens.
       const ps = this.state.players.get(sessionId);
-      if (ps) ps.spareCapacity = PlayerRepo.getSpareCapacity(playerId);
+      if (ps) {
+        ps.spareCapacity = PlayerRepo.getSpareCapacity(playerId);
+        // #211 — seed the spirit gauge from the DB so the local HUD shows the
+        // ⚡ current/max readout immediately (and recharge feedback has a baseline).
+        // Only token sessions reach this branch; AI / no-token sessions leave
+        // spiritCurrent/spiritMax at 0, which the HUD treats as "hide".
+        const { spirit_current, spirit_max } = PlayerRepo.getSpiritAndFood(playerId);
+        ps.spiritCurrent = spirit_current;
+        ps.spiritMax = spirit_max;
+      }
 
       // Escrow the thumb ring for staking.
       if (ringIds.thumb) {
@@ -679,11 +689,11 @@ export class BattleRoom extends Room<{ state: BattleState }> {
     const ring = attacker.getSlot(payload.slot);
     const cost = Math.max(0, ring.maxUses - ring.currentUses);
 
+    // Spirit is a DB-backed resource; humans (token sessions) have a balance,
+    // the AI / no-token sessions recharge "for free" (no DB row to read).
+    const playerId = this.sessionToPlayerId.get(id);
+    let affordable = cost;
     if (cost > 0) {
-      // Spirit is a DB-backed resource; humans (token sessions) have a balance,
-      // the AI / no-token sessions recharge "for free" (no DB row to read).
-      const playerId = this.sessionToPlayerId.get(id);
-      let affordable = cost;
       if (playerId) {
         const { spirit_current } = PlayerRepo.getSpiritAndFood(playerId);
         // Affordable in USES: spirit covers SPIRIT_PER_RING_USE per restored use.
@@ -700,6 +710,23 @@ export class BattleRoom extends Room<{ state: BattleState }> {
         ring.currentUses = Math.min(ring.maxUses, ring.currentUses + affordable);
         ring.isExtinguished = ring.currentUses === 0;
       }
+    }
+
+    // #211 — for token sessions, re-read the authoritative post-spend balance and
+    // mirror it into broadcast state (spiritMax is XP-derived, static mid-duel) so
+    // the HUD updates live; then send a per-client result so the client can flash
+    // partial/insufficient-spirit feedback. AI / no-token sessions recharge "for
+    // free" — skip the DB re-read and the message (no playerId, nothing to surface).
+    if (playerId) {
+      const { spirit_current } = PlayerRepo.getSpiritAndFood(playerId);
+      attacker.spiritCurrent = spirit_current;
+      const client = this.clients.find((c) => c.sessionId === id);
+      client?.send('rechargeResult', {
+        slot: payload.slot,
+        restored: affordable, // uses actually restored
+        requested: cost, // uses the ring was missing
+        spiritCurrent: spirit_current, // post-spend balance
+      } satisfies RechargeResultPayload);
     }
 
     // Recharge consumes the turn → swap to the opponent and run the turn-start tick.

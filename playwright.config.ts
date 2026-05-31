@@ -61,6 +61,7 @@ const SOLO_SPECS = [
   'waystones.spec.ts',
   '16px-foundation.spec.ts',
   'ai-recharge-policy.spec.ts', // #197
+  'spirit-hud.spec.ts', // #211
 ];
 
 export default defineConfig({

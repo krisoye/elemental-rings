@@ -91,6 +91,17 @@ export interface SelectAttackPayload {
 export interface RechargePayload {
   slot: AttackSlot | DefenseSlot;
 }
+// #211 — Sent per-client (to the recharging attacker only) after handleRecharge
+// resolves, so the client can flash partial/insufficient-spirit feedback. The
+// turn is consumed regardless (existing server rule, GDD §6.3) — this only
+// surfaces the outcome of the spend; affordability is computed server-side.
+export interface RechargeResultPayload {
+  // The combat ring the recharge targeted (never the Thumb).
+  slot: AttackSlot | DefenseSlot;
+  restored: number; // uses actually restored this action (0 = none)
+  requested: number; // uses the ring was missing (cost = maxUses − currentUses)
+  spiritCurrent: number; // post-spend spirit balance
+}
 // pressTime is retained for future client-side lag compensation, but the server
 // IGNORES it for timing authority — it timestamps on message arrival instead.
 export interface SubmitDefensePayload {
