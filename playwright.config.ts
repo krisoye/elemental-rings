@@ -59,6 +59,7 @@ const SOLO_SPECS = [
   'teleport.spec.ts',
   'waystones.spec.ts',
   '16px-foundation.spec.ts',
+  'ai-recharge-policy.spec.ts', // #197
 ];
 
 export default defineConfig({
