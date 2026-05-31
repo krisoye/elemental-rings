@@ -21,6 +21,7 @@ import {
   COMPASS_RANGE,
   SANCTUM_Y_ABOVE,
   SANCTUM_SPAWN_Y_BELOW,
+  SANCTUM_SPRITE_HALF_H,
   SANCTUM_ZONE_HALF,
   ANCHORAGE_GROUND_RADIUS,
   DETECTION_RADIUS,
@@ -140,6 +141,13 @@ export abstract class BaseBiomeScene extends Phaser.Scene {
   private anchorageAutoAttuned: Set<string> = new Set();
   /** Latest GET /api/waystones payload (mirrored to window.__waystones). */
   private waystonePayload: WaystonesPayload | null = null;
+  /**
+   * True while waiting for loadWaystones to reposition the player after entering
+   * from CampScene. Suppresses checkEdgeTransition so a spawn point placed near
+   * a map edge (e.g. forest_glade x=24 == EDGE) cannot push the player into an
+   * adjacent screen before the sanctum door spawn overrides the position.
+   */
+  private suppressEdgeTransitions = false;
   /** Camera-pinned compass HUD (8B.2) pulling toward unattuned waystones. */
   private compass!: Compass;
   /** Sanctum exterior sprite, placed at the anchored anchorage. */
@@ -345,6 +353,13 @@ export abstract class BaseBiomeScene extends Phaser.Scene {
     // The scene instance is reused across re-entries; reset per-create flags.
     this.returnedFromDuel = false;
     this.isTransitioning = false;
+    // Suppress edge transitions when entering from CampScene so the default
+    // spawn position (which may be at the edge band) cannot fire a screen
+    // transition before loadWaystones repositions the player at the sanctum door.
+    {
+      const sd = this.scene.settings.data as { fromSanctum?: boolean } | undefined;
+      this.suppressEdgeTransitions = sd?.fromSanctum === true;
+    }
 
     const map = this.make.tilemap({ key: this.mapKeyForScreen(this.screenId) });
     this.map = map;
@@ -620,6 +635,7 @@ export abstract class BaseBiomeScene extends Phaser.Scene {
   private checkEdgeTransition(): void {
     if (!this.map || !this.screenDef || this.isTransitioning) return;
     if (!this.edgeTransitionsEnabled()) return;
+    if (this.suppressEdgeTransitions) return;
     const px = this.player.x;
     const py = this.player.y;
     const mapW = this.map.widthInPixels;
@@ -1129,7 +1145,8 @@ export abstract class BaseBiomeScene extends Phaser.Scene {
       const sanctumX = anchorCenter.center.x;
       const sanctumY = anchorCenter.center.y - SANCTUM_Y_ABOVE;
 
-      this.refreshSanctumZone(sanctumX, sanctumY);
+      // Interaction zone centered on the door (sprite bottom edge).
+      this.refreshSanctumZone(sanctumX, sanctumY + SANCTUM_SPRITE_HALF_H);
       this.drawSanctumExterior(sanctumX, sanctumY);
 
       if (!this.returnedFromDuel) {
@@ -1162,6 +1179,9 @@ export abstract class BaseBiomeScene extends Phaser.Scene {
     // positions dynamically per-screen (anchorages/waystones/biome_exit/sanctum_
     // return) instead of hardcoding pixel coordinates that move between screens.
     this.publishZoneCenters();
+
+    // Player has been (re)positioned — safe to allow edge transitions again.
+    this.suppressEdgeTransitions = false;
   }
 
   /** Mirror each interaction zone's center to window.__zoneCenters for E2E (#107). */
@@ -1411,7 +1431,7 @@ export abstract class BaseBiomeScene extends Phaser.Scene {
     // Always refresh the interaction zone to match the new anchor position — the
     // zone was created at the OLD anchor in loadWaystones and must be relocated
     // so the player can actually enter the summoned Sanctum.
-    this.refreshSanctumZone(sanctumX, sanctumY);
+    this.refreshSanctumZone(sanctumX, sanctumY + SANCTUM_SPRITE_HALF_H);
     window.__sanctumReturnCenter = { x: sanctumX, y: sanctumY };
   }
 
