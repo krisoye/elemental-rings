@@ -12,6 +12,7 @@ import { MerchantModal } from '../objects/MerchantModal';
 import { Compass } from '../objects/world/Compass';
 import { BlinkController } from '../objects/world/BlinkController';
 import { BattleHandOverlay } from '../objects/BattleHandOverlay';
+import { OverworldMapModal } from '../objects/OverworldMapModal';
 import { placeDecoration, type DecorationHandle } from '../objects/world/Decoration';
 import {
   MONSTER_OW_REGISTRY,
@@ -137,6 +138,8 @@ export abstract class BaseBiomeScene extends Phaser.Scene {
   private campfires: Map<string, Campfire> = new Map();
   /** Open campfire modal singleton (#191); null when closed. */
   private campfireModal: CampfireModal | null = null;
+  /** World-map overlay (M key); null when not open. */
+  private overworldMap: OverworldMapModal | null = null;
   /** Anchorage ids already auto-attuned (or attuned on load) — fire onAttune once. */
   private anchorageAutoAttuned: Set<string> = new Set();
   /** Latest GET /api/waystones payload (mirrored to window.__waystones). */
@@ -512,10 +515,14 @@ export abstract class BaseBiomeScene extends Phaser.Scene {
     this.input.keyboard!.on('keydown-ESC', () => {
       if (this.merchantModal?.isOpen()) {
         this.merchantModal.close();
+      } else if (this.overworldMap?.isOpen()) {
+        this.overworldMap.hide();
+        this.overworldMap = null;
       } else if (this.overlayOpen) {
         this.closeBattleHand();
       }
     });
+    this.input.keyboard!.on('keydown-M', () => this.toggleOverworldMap());
     window.__overworldBattleHandOpen = false;
     window.__overworldToggleBattleHand = (): void => this.toggleBattleHand();
 
@@ -554,6 +561,8 @@ export abstract class BaseBiomeScene extends Phaser.Scene {
       this.blink = null;
       this.battleHand?.destroy();
       this.battleHand = null;
+      this.overworldMap?.hide();
+      this.overworldMap = null;
       this.overlayOpen = false;
       this.npcLastClick.clear();
       this.npcGraphics.forEach((g) => g.destroy());
@@ -723,6 +732,25 @@ export abstract class BaseBiomeScene extends Phaser.Scene {
     this.battleHand.close();
     this.overlayOpen = false;
     window.__overworldBattleHandOpen = false;
+  }
+
+  /** Toggle the M-key world-map overlay. Blocked while any other overlay is open. */
+  private toggleOverworldMap(): void {
+    if (this.overworldMap?.isOpen()) {
+      this.overworldMap.hide();
+      this.overworldMap = null;
+      return;
+    }
+    if (this.overlayOpen) return; // battle hand, merchant, etc. takes priority
+    const attuned = new Set(
+      (this.waystonePayload?.waystones ?? [])
+        .filter((w) => w.attuned)
+        .map((w) => w.id),
+    );
+    this.overworldMap = new OverworldMapModal(this, () => {
+      this.overworldMap = null;
+    });
+    this.overworldMap.show(this.screenId, attuned, (c) => this.cameras.main.ignore(c));
   }
 
   // ── Anchorage / interact dispatch ───────────────────────────────────────────
