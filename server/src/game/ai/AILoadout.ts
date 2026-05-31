@@ -70,7 +70,7 @@ export function npcEffectiveXp(personality: AIPersonality, playerAggregateXp: nu
  *                Dangerous at low health (handled by AIPolicy). Stakes vary
  *                across all 5 base elements.
  */
-const TEMPLATES: Record<AIPersonality, LoadoutTemplate[]> = {
+export const TEMPLATES: Record<AIPersonality, LoadoutTemplate[]> = {
   AGGRESSIVE: [
     // Fire-Aggressor: Kindling +1 use on Fire a1; Wind a2 uncounterable
     { thumb: FIRE, a1: FIRE, a2: WIND, d1: EARTH, d2: WATER },
