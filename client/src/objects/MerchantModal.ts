@@ -26,6 +26,7 @@ interface RingRecord {
   tier: number;
   current_uses: number;
   max_uses: number;
+  in_carry: number;
 }
 
 /**
@@ -69,7 +70,6 @@ export class MerchantModal {
   private statusText: Phaser.GameObjects.Text | null = null;
   private scrollY = 0;
   private wheelHandler: ((p: unknown, g: unknown, dx: number, dy: number) => void) | null = null;
-  private contentMaskGfx: Phaser.GameObjects.Graphics | null = null;
 
   constructor(
     scene: Phaser.Scene,
@@ -104,8 +104,6 @@ export class MerchantModal {
       this.wheelHandler = null;
     }
     this.scrollY = 0;
-    this.contentMaskGfx?.destroy();
-    this.contentMaskGfx = null;
     this.container.destroy(true);
     this.container = null;
     this.goldText = null;
@@ -224,56 +222,62 @@ export class MerchantModal {
     const col3 = CANVAS_W / 2 + 200;
     const CONTENT_TOP = 155;
 
-    // Mask: clip to the content rectangle (created once per open; reused across re-renders).
-    if (!this.contentMaskGfx) {
-      this.contentMaskGfx = this.scene.add.graphics();
-      this.contentMaskGfx.fillRect(CANVAS_W / 2 - 350, CONTENT_TOP, 700, VISIBLE_H);
-      this.contentMaskGfx.setVisible(false);
-    }
+    // Visibility-windowed scroll (replaces GeometryMask — unreliable in nested
+    // Container / multi-camera Phaser 4 setups; same fix as BattleHandOverlay).
+    const scrollContainer = this.scene.add.container(0, CONTENT_TOP - this.scrollY);
+    const rowGroups: Phaser.GameObjects.Container[] = [];
 
-    // Sub-container for scrollable rows; positioned so row y=0 aligns with CONTENT_TOP.
-    const cc = this.scene.add.container(0, CONTENT_TOP - this.scrollY);
-    cc.setMask(new Phaser.Display.Masks.GeometryMask(this.scene, this.contentMaskGfx));
-
-    // Food row at y=0 in sub-container.
-    const foodLabel = this.scene.add
-      .text(col1, 0, `Food  ${this.catalog.food.buyPrice} GP/unit  (have: ${this.food})`, {
+    // Food row at relative y=0.
+    const foodGroup = this.scene.add.container(0, 0);
+    foodGroup.add([
+      this.scene.add.text(col1, 0, `Food  ${this.catalog.food.buyPrice} GP/unit  (have: ${this.food})`, {
         fontSize: '14px', color: '#e8e0d0',
-      })
-      .setScrollFactor(0);
-    const buyFood1Btn = this.makeActionBtn('[×1]', col2a, 0, async () => {
-      await this.executeBuyFood(1);
-    });
-    const buyFood25Btn = this.makeActionBtn('[×25]', col2b, 0, async () => {
-      await this.executeBuyFood(25);
-    });
+      }).setScrollFactor(0),
+      this.makeActionBtn('[×1]', col2a, 0, async () => { await this.executeBuyFood(1); }),
+      this.makeActionBtn('[×25]', col2b, 0, async () => { await this.executeBuyFood(25); }),
+    ]);
+    scrollContainer.add(foodGroup);
+    rowGroups.push(foodGroup);
 
-    const rows: Phaser.GameObjects.GameObject[] = [foodLabel, buyFood1Btn, buyFood25Btn];
     let yOff = ROW_H + 6;
-    let rowCount = 1;
     for (const entry of this.catalog.rings) {
       const name = ELEMENT_NAMES[entry.elementIndex] ?? entry.element;
       const ownedCount = this.allRings.filter((r) => r.element === entry.elementIndex).length;
-      const rowLabel = this.scene.add
-        .text(col1, yOff, `${name} Ring T${entry.tier}  ${entry.buyPrice} GP  (own: ${ownedCount})`, {
+      const rowGroup = this.scene.add.container(0, yOff);
+      rowGroup.add([
+        this.scene.add.text(col1, 0, `${name} Ring T${entry.tier}  ${entry.buyPrice} GP  (own: ${ownedCount})`, {
           fontSize: '14px', color: '#e8e0d0',
-        })
-        .setScrollFactor(0);
-      const buyRingBtn = this.makeActionBtn('Buy', col3, yOff, async () => {
-        await this.executeBuyRing(entry.elementIndex);
-      });
-      rows.push(rowLabel, buyRingBtn);
+        }).setScrollFactor(0),
+        this.makeActionBtn('Buy', col3, 0, async () => { await this.executeBuyRing(entry.elementIndex); }),
+      ]);
+      scrollContainer.add(rowGroup);
+      rowGroups.push(rowGroup);
       yOff += ROW_H;
-      rowCount++;
     }
-    cc.add(rows);
-    this.container.add(cc);
 
-    // Wheel scroll.
-    const maxScroll = Math.max(0, rowCount * ROW_H - VISIBLE_H);
+    this.container.add(scrollContainer);
+
+    const maxScroll = Math.max(0, yOff - VISIBLE_H);
+
+    const updateVisibility = (): void => {
+      rowGroups.forEach((grp) => {
+        grp.setVisible(grp.y + ROW_H > this.scrollY && grp.y < this.scrollY + VISIBLE_H);
+      });
+      scrollContainer.setY(CONTENT_TOP - this.scrollY);
+    };
+    updateVisibility();
+
+    if (maxScroll > 0) {
+      this.container.add(
+        this.scene.add.text(CANVAS_W / 2, CONTENT_TOP + VISIBLE_H + 2, '▼ scroll', {
+          fontSize: '11px', color: '#556677',
+        }).setScrollFactor(0).setOrigin(0.5, 0),
+      );
+    }
+
     this.wheelHandler = (_p: unknown, _g: unknown, _dx: number, dy: number) => {
       this.scrollY = Phaser.Math.Clamp(this.scrollY + dy * 0.5, 0, maxScroll);
-      cc.setY(CONTENT_TOP - this.scrollY);
+      updateVisibility();
     };
     this.scene.input.on('wheel', this.wheelHandler);
   }
@@ -288,61 +292,69 @@ export class MerchantModal {
     const col3 = CANVAS_W / 2 + 200;
     const CONTENT_TOP = 155;
 
-    // Mask: reuse or create.
-    if (!this.contentMaskGfx) {
-      this.contentMaskGfx = this.scene.add.graphics();
-      this.contentMaskGfx.fillRect(CANVAS_W / 2 - 350, CONTENT_TOP, 700, VISIBLE_H);
-      this.contentMaskGfx.setVisible(false);
-    }
+    // Visibility-windowed scroll (replaces GeometryMask — unreliable in nested
+    // Container / multi-camera Phaser 4 setups; same fix as BattleHandOverlay).
+    const scrollContainer = this.scene.add.container(0, CONTENT_TOP - this.scrollY);
+    const rowGroups: Phaser.GameObjects.Container[] = [];
 
-    const cc = this.scene.add.container(0, CONTENT_TOP - this.scrollY);
-    cc.setMask(new Phaser.Display.Masks.GeometryMask(this.scene, this.contentMaskGfx));
-
-    // Food sell row at y=0.
-    const foodLabel = this.scene.add
-      .text(col1, 0, `Food  ${this.catalog.food.sellPrice} GP/unit  (have: ${this.food})`, {
+    // Food sell row at relative y=0.
+    const foodGroup = this.scene.add.container(0, 0);
+    foodGroup.add([
+      this.scene.add.text(col1, 0, `Food  ${this.catalog.food.sellPrice} GP/unit  (have: ${this.food})`, {
         fontSize: '14px', color: '#e8e0d0',
-      })
-      .setScrollFactor(0);
-    const sellFood1Btn = this.makeActionBtn('[×1]', col2a, 0, async () => {
-      await this.executeSellFood(1);
-    });
-    const sellFood25Btn = this.makeActionBtn('[×25]', col2b, 0, async () => {
-      await this.executeSellFood(25);
-    });
+      }).setScrollFactor(0),
+      this.makeActionBtn('[×1]', col2a, 0, async () => { await this.executeSellFood(1); }),
+      this.makeActionBtn('[×25]', col2b, 0, async () => { await this.executeSellFood(25); }),
+    ]);
+    scrollContainer.add(foodGroup);
+    rowGroups.push(foodGroup);
 
-    // Carried rings NOT in battle slots.
+    // Only carried rings (in_carry=1) not currently slotted in battle slots.
     const loadoutIds = new Set(Object.values(this.loadout).filter(Boolean) as string[]);
     const sellableRings = this.allRings.filter(
-      (r) => r.element <= 4 && !loadoutIds.has(r.id) && r.element !== undefined,
+      (r) => r.in_carry === 1 && r.element <= 4 && !loadoutIds.has(r.id),
     );
 
-    const rows: Phaser.GameObjects.GameObject[] = [foodLabel, sellFood1Btn, sellFood25Btn];
     let yOff = ROW_H + 6;
-    let rowCount = 1;
     for (const ring of sellableRings) {
       const sellEntry = this.catalog.rings.find((e) => e.elementIndex === ring.element);
       const price = sellEntry?.sellPrice ?? 0;
       const name = ELEMENT_NAMES[ring.element] ?? `Element ${ring.element}`;
-      const ringLabel = this.scene.add
-        .text(col1, yOff, `${name} Ring T${ring.tier}  ${price} GP  (${ring.current_uses}/${ring.max_uses} uses)`, {
+      const rowGroup = this.scene.add.container(0, yOff);
+      rowGroup.add([
+        this.scene.add.text(col1, 0, `${name} Ring T${ring.tier}  ${price} GP  (${ring.current_uses}/${ring.max_uses} uses)`, {
           fontSize: '14px', color: '#e8e0d0',
-        })
-        .setScrollFactor(0);
-      const sellRingBtn = this.makeActionBtn('Sell', col3, yOff, async () => {
-        await this.executeSellRing(ring.id);
-      });
-      rows.push(ringLabel, sellRingBtn);
+        }).setScrollFactor(0),
+        this.makeActionBtn('Sell', col3, 0, async () => { await this.executeSellRing(ring.id); }),
+      ]);
+      scrollContainer.add(rowGroup);
+      rowGroups.push(rowGroup);
       yOff += ROW_H;
-      rowCount++;
     }
-    cc.add(rows);
-    this.container.add(cc);
 
-    const maxScroll = Math.max(0, rowCount * ROW_H - VISIBLE_H);
+    this.container.add(scrollContainer);
+
+    const maxScroll = Math.max(0, yOff - VISIBLE_H);
+
+    const updateVisibility = (): void => {
+      rowGroups.forEach((grp) => {
+        grp.setVisible(grp.y + ROW_H > this.scrollY && grp.y < this.scrollY + VISIBLE_H);
+      });
+      scrollContainer.setY(CONTENT_TOP - this.scrollY);
+    };
+    updateVisibility();
+
+    if (maxScroll > 0) {
+      this.container.add(
+        this.scene.add.text(CANVAS_W / 2, CONTENT_TOP + VISIBLE_H + 2, '▼ scroll', {
+          fontSize: '11px', color: '#556677',
+        }).setScrollFactor(0).setOrigin(0.5, 0),
+      );
+    }
+
     this.wheelHandler = (_p: unknown, _g: unknown, _dx: number, dy: number) => {
       this.scrollY = Phaser.Math.Clamp(this.scrollY + dy * 0.5, 0, maxScroll);
-      cc.setY(CONTENT_TOP - this.scrollY);
+      updateVisibility();
     };
     this.scene.input.on('wheel', this.wheelHandler);
   }
@@ -473,4 +485,3 @@ export class MerchantModal {
     });
   }
 }
-
