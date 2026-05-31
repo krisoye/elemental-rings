@@ -313,8 +313,12 @@ export abstract class BaseBiomeScene extends Phaser.Scene {
       });
     }
     // Per-element monster overworld sprites (#158) — marker matches the battler.
+    // The PNGs are 72×96 spritesheets (3×3 = 9 frames at 24×32); load them as
+    // spritesheets so we can render a single frame, not the whole grid (#192).
     for (const entry of Object.values(MONSTER_OW_REGISTRY)) {
-      if (!this.textures.exists(entry.key)) this.load.image(entry.key, entry.path);
+      if (!this.textures.exists(entry.key)) {
+        this.load.spritesheet(entry.key, entry.path, { frameWidth: 24, frameHeight: 32 });
+      }
     }
     // #128 — berry bush / fruit tree nodes (GDD §10.10).
     // Spritesheet is 80×176 with 16×16 frames (5 cols × 11 rows).
@@ -1313,10 +1317,11 @@ export abstract class BaseBiomeScene extends Phaser.Scene {
     this.npcGraphics.forEach((g) => g.destroy());
     this.npcGraphics = [];
     for (const npc of this.overworldNpcs) {
-      let sprite: Phaser.GameObjects.Image;
+      let sprite: Phaser.GameObjects.Image | Phaser.GameObjects.Sprite;
       if (npc.type === 'monster' && npc.element <= 4 && MONSTER_OW_REGISTRY[npc.element]) {
+        // Monster markers are spritesheets (#192) — render frame 0, not the whole grid.
         sprite = this.add
-          .image(npc.x, npc.y, MONSTER_OW_REGISTRY[npc.element].key)
+          .sprite(npc.x, npc.y, MONSTER_OW_REGISTRY[npc.element].key, 0)
           .setDisplaySize(NPC_OW_DISPLAY_SIZE, NPC_OW_DISPLAY_SIZE);
       } else {
         sprite = this.add.image(npc.x, npc.y, 'npc-overworld', npc.spriteFrame);
