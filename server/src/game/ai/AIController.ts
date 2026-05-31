@@ -2,6 +2,7 @@ import {
   AIPersonality,
   SelectAttackPayload,
   SubmitDefensePayload,
+  RechargePayload,
   SlotKey,
 } from '../../../../shared/types';
 import { BattleState } from '../../schemas/BattleState';
@@ -9,6 +10,7 @@ import { AI_PROFILES, AIProfile, makeRng, Rng, isLowHearts } from './AIProfiles'
 import {
   decideAttack,
   decideDefense,
+  decideRecharge,
   BoardView,
   AttackSlotView,
   DefenseSlotView,
@@ -24,6 +26,7 @@ export interface AIRoomHandle {
   readonly currentImpactTime: number;
   handleSelectAttack(id: string, payload: SelectAttackPayload): void;
   handleSubmitDefense(id: string, payload: SubmitDefensePayload): void;
+  handleRecharge(id: string, payload: RechargePayload): void;
   handleForfeit(id: string): void;
 }
 
@@ -85,11 +88,27 @@ export class AIController {
 
     const attackSlots: AttackSlotView[] = (['a1', 'a2'] as const).map((key) => {
       const r = me.getSlot(key);
-      return { key, ring: { element: r.element, currentUses: r.currentUses, isExtinguished: r.isExtinguished } };
+      return {
+        key,
+        ring: {
+          element: r.element,
+          currentUses: r.currentUses,
+          maxUses: r.maxUses,
+          isExtinguished: r.isExtinguished,
+        },
+      };
     });
     const defenseSlots: DefenseSlotView[] = (['d1', 'd2'] as const).map((key) => {
       const r = me.getSlot(key);
-      return { key, ring: { element: r.element, currentUses: r.currentUses, isExtinguished: r.isExtinguished } };
+      return {
+        key,
+        ring: {
+          element: r.element,
+          currentUses: r.currentUses,
+          maxUses: r.maxUses,
+          isExtinguished: r.isExtinguished,
+        },
+      };
     });
 
     // Incoming element when defending: the current attacker's firing ring.
@@ -124,15 +143,18 @@ export class AIController {
   private scheduleAttack(): void {
     const view = this.readBoard();
 
-    // GDD §6.3/§6.6 (PR #120): ring exhaustion no longer auto-loses. When the AI
-    // has no usable attack ring it must take a non-attack turn action. The AI has
-    // no spirit-recharge policy yet, so it forfeits — concluding the duel exactly
-    // where the old auto-forfeit did, but now via the explicit forfeit path.
-    if (view.attackSlots.every((s) => s.ring.isExtinguished || s.ring.currentUses <= 0)) {
+    // GDD §6.3 (#197): recharge policy. Before attacking, the AI checks whether it
+    // should spend the turn restoring a combat ring instead. When both attack rings
+    // are spent it MUST recharge (forfeiting is no longer the fallback); some
+    // personalities also recharge a depleted defense ring. handleRecharge consumes
+    // the turn, so the opponent attacks next and the AI re-enters ATTACK_SELECT with
+    // restored uses — a natural loop, no forfeit.
+    const rechargeDecision = decideRecharge(view, this.profile);
+    if (rechargeDecision) {
       const delay = process.env.E2E_FAST === '1' ? 20 : 300;
       this.pending = setTimeout(() => {
         this.pending = null;
-        this.room.handleForfeit(this.aiId);
+        this.room.handleRecharge(this.aiId, { slot: rechargeDecision.slot });
       }, delay);
       return;
     }

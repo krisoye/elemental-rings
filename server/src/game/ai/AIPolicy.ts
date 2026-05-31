@@ -7,6 +7,7 @@ import { AIProfile, Rng, isLowHearts } from './AIProfiles';
 export interface RingView {
   element: number;
   currentUses: number;
+  maxUses: number;
   isExtinguished: boolean;
 }
 
@@ -59,6 +60,11 @@ export interface DefenseDecision {
   slot: DefenseSlot | null;
   /** Intended press offset from impact in ms, or null for a deliberate no-block. */
   pressOffsetMs: number | null;
+}
+
+/** A turn-consuming recharge action: restore uses to one combat slot (a1/a2/d1/d2). */
+export interface RechargeDecision {
+  slot: AttackSlot | DefenseSlot;
 }
 
 /** Attack slots whose ring can still be thrown. */
@@ -152,6 +158,64 @@ function aggressiveAttackSlot(view: BoardView, usable: AttackSlotView[]): Attack
     }
   }
   return mostUsesAttack(usable).key;
+}
+
+/** Uses missing from a slot's ring (how much a full recharge would restore). */
+function depletion(slot: AttackSlotView | DefenseSlotView): number {
+  return Math.max(0, slot.ring.maxUses - slot.ring.currentUses);
+}
+
+/** True when a slot's ring is fully spent (no uses left). */
+function isSlotDepleted(slot: AttackSlotView | DefenseSlotView): boolean {
+  return slot.ring.isExtinguished || slot.ring.currentUses <= 0;
+}
+
+/** The slot with the highest depletion (most uses missing); ties → first in order. */
+function mostDepleted<T extends AttackSlotView | DefenseSlotView>(slots: T[]): T {
+  let best = slots[0];
+  for (const s of slots) if (depletion(s) > depletion(best)) best = s;
+  return best;
+}
+
+/**
+ * Pure recharge decision, evaluated before decideAttack(). Returns the combat
+ * slot to recharge (consuming the turn), or null to attack normally instead.
+ *
+ * Priority:
+ *   1. Both attack rings spent → MUST recharge the most-depleted attack slot.
+ *      Forfeiting is no longer an option, so this never returns null.
+ *   2. Attack rings available but a defense ring is at 0 uses → personality-gated:
+ *      AGGRESSIVE / STATUS_HUNTER never sacrifice an attack turn for defense;
+ *      DEFENSIVE recharges a defense ring if either d-slot is at 0;
+ *      RESILIENT recharges the more-depleted defense ring if either is at 0.
+ *   3. Otherwise → null (attack normally).
+ */
+export function decideRecharge(view: BoardView, profile: AIProfile): RechargeDecision | null {
+  const attackSpent = view.attackSlots.every(isSlotDepleted);
+  if (attackSpent) {
+    // Forced recharge: pick the attack slot missing the most uses.
+    return { slot: mostDepleted(view.attackSlots).key };
+  }
+
+  // Attack rings are available — defense recharge is a personality choice.
+  const depletedDefense = view.defenseSlots.filter(isSlotDepleted);
+  if (depletedDefense.length === 0) return null;
+
+  switch (profile.personality) {
+    case 'DEFENSIVE':
+      // Restore whichever depleted defense ring is more depleted.
+      return { slot: mostDepleted(depletedDefense).key };
+
+    case 'RESILIENT':
+      // Balanced posture: recharge a depleted defense ring (more-depleted first).
+      return { slot: mostDepleted(depletedDefense).key };
+
+    case 'AGGRESSIVE':
+    case 'STATUS_HUNTER':
+    default:
+      // Never trade an attack turn for defense; keep up the pressure.
+      return null;
+  }
 }
 
 /**

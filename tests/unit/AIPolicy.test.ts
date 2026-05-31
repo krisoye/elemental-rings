@@ -2,6 +2,7 @@ import { describe, test, expect } from 'vitest';
 import {
   decideAttack,
   decideDefense,
+  decideRecharge,
   BoardView,
   AttackSlotView,
   DefenseSlotView,
@@ -12,8 +13,8 @@ import { ElementEnum } from '../../shared/types';
 
 const { FIRE, WATER, EARTH, WIND, WOOD } = ElementEnum;
 
-function ring(element: number, currentUses = 3, isExtinguished = false) {
-  return { element, currentUses, isExtinguished };
+function ring(element: number, currentUses = 3, isExtinguished = false, maxUses = 3) {
+  return { element, currentUses, maxUses, isExtinguished };
 }
 
 /** Default named-slot board: a1=FIRE, a2=WATER, d1=WOOD, d2=EARTH. */
@@ -185,6 +186,120 @@ describe('RESILIENT sharpens at low hearts', () => {
       expect(d.slot).toBe('d1'); // WOOD — STRONG parry vs WATER
       expect(d.pressOffsetMs).toBe(0);
     }
+  });
+});
+
+describe('decideRecharge (#197)', () => {
+  // Both attack rings spent → must recharge, never null, for every personality.
+  test('both attack rings spent → forced recharge (never null) for all personalities', () => {
+    const v = view({
+      attackSlots: [
+        { key: 'a1', ring: ring(FIRE, 0, true) },
+        { key: 'a2', ring: ring(WATER, 0, true) },
+      ],
+    });
+    for (const p of Object.values(AI_PROFILES)) {
+      const d = decideRecharge(v, p);
+      expect(d).not.toBeNull();
+      expect(['a1', 'a2']).toContain(d!.slot);
+    }
+  });
+
+  test('forced recharge picks the MOST-depleted attack slot', () => {
+    // a1 missing 1 use (maxUses 3, current 2 — but extinguished only at 0). Make
+    // both spent but with different maxUses so depletion differs.
+    const v = view({
+      attackSlots: [
+        { key: 'a1', ring: ring(FIRE, 0, true, 2) }, // depletion 2
+        { key: 'a2', ring: ring(WATER, 0, true, 5) }, // depletion 5 (most)
+      ],
+    });
+    expect(decideRecharge(v, AI_PROFILES.AGGRESSIVE)!.slot).toBe('a2');
+  });
+
+  test('attack available → null (attack normally) when defense is healthy', () => {
+    for (const p of Object.values(AI_PROFILES)) {
+      expect(decideRecharge(view(), p)).toBeNull();
+    }
+  });
+
+  test('AGGRESSIVE never recharges defense even when both d-slots are spent', () => {
+    const v = view({
+      defenseSlots: [
+        { key: 'd1', ring: ring(WOOD, 0, true) },
+        { key: 'd2', ring: ring(EARTH, 0, true) },
+      ],
+    });
+    expect(decideRecharge(v, AI_PROFILES.AGGRESSIVE)).toBeNull();
+  });
+
+  test('STATUS_HUNTER never recharges defense even when both d-slots are spent', () => {
+    const v = view({
+      defenseSlots: [
+        { key: 'd1', ring: ring(WOOD, 0, true) },
+        { key: 'd2', ring: ring(EARTH, 0, true) },
+      ],
+    });
+    expect(decideRecharge(v, AI_PROFILES.STATUS_HUNTER)).toBeNull();
+  });
+
+  test('DEFENSIVE recharges a depleted defense ring (more-depleted first)', () => {
+    const v = view({
+      defenseSlots: [
+        { key: 'd1', ring: ring(WOOD, 0, true, 3) }, // depletion 3
+        { key: 'd2', ring: ring(EARTH, 0, true, 5) }, // depletion 5 (most)
+      ],
+    });
+    const d = decideRecharge(v, AI_PROFILES.DEFENSIVE);
+    expect(d).not.toBeNull();
+    expect(d!.slot).toBe('d2');
+  });
+
+  test('DEFENSIVE: one depleted defense ring → recharges it', () => {
+    const v = view({
+      defenseSlots: [
+        { key: 'd1', ring: ring(WOOD, 0, true) },
+        { key: 'd2', ring: ring(EARTH, 3) },
+      ],
+    });
+    expect(decideRecharge(v, AI_PROFILES.DEFENSIVE)!.slot).toBe('d1');
+  });
+
+  test('RESILIENT recharges the more-depleted depleted defense ring', () => {
+    const v = view({
+      defenseSlots: [
+        { key: 'd1', ring: ring(WOOD, 0, true, 5) }, // depletion 5 (most)
+        { key: 'd2', ring: ring(EARTH, 0, true, 3) }, // depletion 3
+      ],
+    });
+    expect(decideRecharge(v, AI_PROFILES.RESILIENT)!.slot).toBe('d1');
+  });
+
+  test('defense merely low (not at 0) does not trigger a defense recharge', () => {
+    const v = view({
+      defenseSlots: [
+        { key: 'd1', ring: ring(WOOD, 1) }, // low but usable
+        { key: 'd2', ring: ring(EARTH, 1) },
+      ],
+    });
+    expect(decideRecharge(v, AI_PROFILES.DEFENSIVE)).toBeNull();
+    expect(decideRecharge(v, AI_PROFILES.RESILIENT)).toBeNull();
+  });
+
+  test('forced attack recharge takes priority over defense recharge', () => {
+    // Both attack AND both defense rings spent → DEFENSIVE still recharges attack.
+    const v = view({
+      attackSlots: [
+        { key: 'a1', ring: ring(FIRE, 0, true) },
+        { key: 'a2', ring: ring(WATER, 0, true) },
+      ],
+      defenseSlots: [
+        { key: 'd1', ring: ring(WOOD, 0, true) },
+        { key: 'd2', ring: ring(EARTH, 0, true) },
+      ],
+    });
+    const d = decideRecharge(v, AI_PROFILES.DEFENSIVE);
+    expect(['a1', 'a2']).toContain(d!.slot);
   });
 });
 

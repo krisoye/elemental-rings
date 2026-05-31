@@ -660,7 +660,7 @@ export class BattleRoom extends Room<{ state: BattleState }> {
    * row, and the affordable spirit is spent. A full ring (cost 0) is a no-op that
    * still consumes the turn. The turn then advances to the opponent.
    */
-  private handleRecharge(id: string, payload: RechargePayload): void {
+  handleRecharge(id: string, payload: RechargePayload): void {
     const state = this.state;
     if (state.phase !== 'ATTACK_SELECT') return;
     if (id !== state.currentAttackerId) return;
