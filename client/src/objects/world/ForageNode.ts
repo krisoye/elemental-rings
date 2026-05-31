@@ -8,23 +8,36 @@ const API_BASE_FN = _WS_FN.replace(/^ws/, 'http');
 /** The Tiled tileset name carrying the berry/fruit-tree plant frames. */
 const BERRY_TILESET = 'berry_and_trees';
 /**
- * The berry sheet is 5 columns wide; within every 2-row food-source block the
- * column meaning is fixed: cols 0–1 = without-food (depleted), cols 2–3 =
- * with-food (available), col 4 = item icon. So a with-food tile is one whose
- * local column ∈ {2,3}, and depleting it = subtract 2 (col 2→0, 3→1, same row,
- * same tileset). This holds for EVERY type — no per-type table needed (#195).
+ * The berry sheet is 5 columns wide (0–4).  Column semantics differ by type:
+ *
+ *   2-tile-wide types (Bush rows 0–1, Purple tree rows 2–3,
+ *                      Bramble rows 6–7, Star tree rows 8–10):
+ *     col 0–1 = without-food   col 2–3 = with-food   col 4 = item icon
+ *     depletion offset = −2  (col 2→0, col 3→1)
+ *
+ *   1-tile-wide types (Tall tree rows 4–5):
+ *     col 0 = without-food   col 1 = with-food   col 2 = item icon
+ *     depletion offset = −1  (col 1→0)
+ *
+ * ForageNode detects with-food tiles by row group and records the correct
+ * per-tile offset so the swap is always type-agnostic at runtime.
  */
 const BERRY_COLS = 5;
-/** Layers whose tiles compose the 2×2 plant (trunk/lower + canopy/upper). */
+/** Sheet row range (inclusive) that uses the narrow 1-tile layout (tall tree). */
+const TALL_TREE_ROW_MIN = 4;
+const TALL_TREE_ROW_MAX = 5;
+/** Layers whose tiles compose the plant (trunk/lower + canopy/upper). */
 const PLANT_LAYERS = ['behind', 'in-front'] as const;
 
-/** One with-food plant tile recorded for toggling (#195). */
+/** One with-food plant tile recorded for toggling. */
 interface FoodTile {
   layerName: string;
   tileX: number;
   tileY: number;
   /** The with-food (available) global gid as authored in the map. */
   availableGid: number;
+  /** Columns to subtract to reach the without-food gid (−1 for tall tree, −2 for all others). */
+  offset: number;
 }
 
 /**
@@ -99,13 +112,20 @@ export class ForageNode {
             if (!tile) continue;
             const gid = tile.index;
             if (gid < firstgid || gid >= lastgid) continue; // not a berry tile
-            const localCol = (gid - firstgid) % BERRY_COLS;
-            if (localCol === 2 || localCol === 3) {
+            const local = gid - firstgid;
+            const localRow = Math.floor(local / BERRY_COLS);
+            const localCol = local % BERRY_COLS;
+            // Tall-tree rows use col 1 as with-food (1-tile-wide, offset −1).
+            // All other row groups use col 2–3 as with-food (2-tile-wide, offset −2).
+            const isTallTree = localRow >= TALL_TREE_ROW_MIN && localRow <= TALL_TREE_ROW_MAX;
+            const isWithFood = isTallTree ? localCol === 1 : (localCol === 2 || localCol === 3);
+            if (isWithFood) {
               this.foodTiles.push({
                 layerName,
                 tileX: tx0 + dx,
                 tileY: ty0 + dy,
                 availableGid: gid,
+                offset: isTallTree ? -1 : -2,
               });
             }
           }
@@ -143,15 +163,14 @@ export class ForageNode {
 
   /**
    * Set the available / depleted visual state by swapping each food tile between
-   * the with-food gid and the without-food gid (a fixed −2 column shift). Called on
+   * the with-food gid and the without-food gid. The offset is −1 for tall-tree
+   * tiles (col 1→0) and −2 for all other types (col 2→0, col 3→1). Called on
    * scene load from GET /api/overworld/forage-status and after a forage POST.
-   * `behind` tiles stay non-empty after −2 (still a solid trunk) so collision is
-   * preserved; putTileAt recalculates collision faces by default.
    */
   setDepleted(depleted: boolean): void {
     this.depleted = depleted;
     for (const t of this.foodTiles) {
-      const gid = depleted ? t.availableGid - 2 : t.availableGid;
+      const gid = depleted ? t.availableGid + t.offset : t.availableGid;
       this.map.putTileAt(gid, t.tileX, t.tileY, true, t.layerName);
     }
   }
