@@ -287,8 +287,10 @@ export class BattleHandOverlay {
     const spareFull = usedSpares >= spareCapacity && spareCapacity >= 0;
 
     // #85 Fix 3 — push the carried-rings section down 49px so the label + row clear
-    // the (now uncapped) Thumb passive strip below the battle slots.
-    const ringY = CANVAS_H / 2 + 94;
+    // the (now uncapped) Thumb passive strip below the battle slots. When the
+    // spare-full warning line is shown (+18px), bump the grid down an extra 20px
+    // so the warning text doesn't overlap the first row of ring cards.
+    const ringY = CANVAS_H / 2 + (spareFull ? 114 : 94);
     const spareLabelText = `Spare rings — select to assign, or click two slots to swap:   Spare: ${usedSpares} / ${spareCapacity}`;
     const spareLabelColor = spareFull ? '#ff8888' : '#aaccff';
     const carriedLbl = this.scene.add
