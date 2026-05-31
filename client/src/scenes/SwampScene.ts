@@ -68,6 +68,9 @@ export class SwampScene extends BaseBiomeScene {
     for (const [key, path] of FOREST_GENERATED_TILESETS) {
       if (!this.textures.exists(key)) this.load.image(key, path);
     }
+    if (!this.textures.exists('terrain_mossy_swamp_16')) {
+      this.load.image('terrain_mossy_swamp_16', 'assets/terrain/terrain_mossy_swamp_16.png');
+    }
     this.loadCommonAssets();
     this.load.tilemapTiledJSON('swamp_entry', 'assets/maps/swamp/swamp_entry.json');
   }
