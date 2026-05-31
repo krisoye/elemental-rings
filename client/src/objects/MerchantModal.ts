@@ -27,6 +27,7 @@ interface RingRecord {
   current_uses: number;
   max_uses: number;
   in_carry: number;
+  xp: number;
 }
 
 /**
@@ -318,11 +319,12 @@ export class MerchantModal {
     let yOff = ROW_H + 6;
     for (const ring of sellableRings) {
       const sellEntry = this.catalog.rings.find((e) => e.elementIndex === ring.element);
-      const price = sellEntry?.sellPrice ?? 0;
+      const basePrice = sellEntry?.sellPrice ?? 0;
+      const price = basePrice + Math.floor(ring.xp / 100);
       const name = ELEMENT_NAMES[ring.element] ?? `Element ${ring.element}`;
       const rowGroup = this.scene.add.container(0, yOff);
       rowGroup.add([
-        this.scene.add.text(col1, 0, `${name} Ring T${ring.tier}  ${price} GP  (${ring.current_uses}/${ring.max_uses} uses)`, {
+        this.scene.add.text(col1, 0, `${name} Ring T${ring.tier}  ${price} GP  (${ring.current_uses}/${ring.max_uses} uses, xp ${ring.xp})`, {
           fontSize: '14px', color: '#e8e0d0',
         }).setScrollFactor(0),
         this.makeActionBtn('Sell', col3, 0, async () => { await this.executeSellRing(ring.id); }),
