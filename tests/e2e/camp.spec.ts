@@ -1,5 +1,6 @@
 import { test, expect } from '@playwright/test';
 import { seedAuthToken, campToEncounter, waitForEncounter } from './helpers';
+import { returnFromBattle } from './helpers/returnFromBattle';
 
 const URL = 'http://localhost:8090';
 const API_URL = 'http://localhost:2568';
@@ -134,6 +135,8 @@ test('camp: after vsAI duel ends, scene is CampScene', async ({ browser }) => {
     clearInterval(driver);
   }
 
+  // #212 — leave the ENDED scene via the persistent modal ([Return to Overworld]).
+  await returnFromBattle(page);
   await page.waitForFunction(
     () => (window as any).__game?.scene?.isActive('EncounterScene'),
     undefined,
@@ -213,6 +216,8 @@ test('persistence: ring uses and gold updated after vsAI duel', async ({ browser
     clearInterval(driver);
   }
 
+  // #212 — leave the ENDED scene via the persistent modal ([Return to Overworld]).
+  await returnFromBattle(page);
   // Wait for EncounterScene to load after the battle.
   await page.waitForFunction(
     () => (window as any).__game?.scene?.isActive('EncounterScene'),

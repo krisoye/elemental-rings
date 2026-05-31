@@ -9,6 +9,9 @@ import Phaser from 'phaser';
 export class Hud extends Phaser.GameObjects.Container {
   private readonly banner: Phaser.GameObjects.Text;
   private readonly opponentName: Phaser.GameObjects.Text;
+  // #211 — bottom-left ⚡ current/max spirit readout for the LOCAL player only.
+  // Spirit is the local player's private info; the opponent's is never rendered.
+  private readonly spirit: Phaser.GameObjects.Text;
 
   constructor(scene: Phaser.Scene) {
     super(scene, 0, 0);
@@ -27,6 +30,19 @@ export class Hud extends Phaser.GameObjects.Container {
       fontSize: '16px',
       color: '#ffcc66',
     });
+    // #211 — spirit readout, bottom-left. Hidden until updateFromState confirms a
+    // non-zero spiritMax (AI / no-token sessions have spiritMax 0 → no DB balance).
+    this.spirit = scene.add
+      .text(16, 564, '', {
+        fontSize: '20px',
+        fontStyle: 'bold',
+        color: '#ffffff',
+        backgroundColor: '#00000099',
+        padding: { x: 8, y: 4 },
+      })
+      .setOrigin(0, 1)
+      .setDepth(500)
+      .setVisible(false);
     scene.add.existing(this);
   }
 
@@ -36,6 +52,19 @@ export class Hud extends Phaser.GameObjects.Container {
       | undefined;
     const opp = oppId ? state.players.get(oppId) : undefined;
     this.opponentName.setText(opp?.displayName ? `VS ${opp.displayName}` : '');
+
+    // #211 — spirit gauge for the LOCAL player. Hidden when spiritMax is 0 (AI /
+    // no-token local session). White by default; RED when fully depleted.
+    const me = state.players.get(myId);
+    const spiritMax = (me?.spiritMax as number) ?? 0;
+    if (spiritMax > 0) {
+      const spiritCurrent = (me?.spiritCurrent as number) ?? 0;
+      this.spirit.setText(`⚡ ${spiritCurrent}/${spiritMax}`);
+      this.spirit.setColor(spiritCurrent === 0 ? '#ff4444' : '#ffffff');
+      this.spirit.setVisible(true);
+    } else {
+      this.spirit.setVisible(false);
+    }
 
     if (state.phase === 'ENDED') {
       const won = state.winnerId === myId;
@@ -61,5 +90,14 @@ export class Hud extends Phaser.GameObjects.Container {
       (state.phase === 'ATTACK_SELECT' && imAttacker) ||
       (state.phase === 'DEFEND_WINDOW' && !imAttacker);
     this.banner.setColor(actionable ? '#ffff66' : '#ffffff');
+  }
+
+  /**
+   * #211 — the rendered spirit readout as 'current/max', or undefined when the
+   * readout is hidden (AI / no-token local session, spiritMax 0). Used by
+   * BattleScene.publishHudView so E2E can assert the readout without reading pixels.
+   */
+  get displayedSpirit(): string | undefined {
+    return this.spirit.visible ? this.spirit.text.replace('⚡ ', '') : undefined;
   }
 }

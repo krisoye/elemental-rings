@@ -24,14 +24,24 @@ export async function connectToRoom(
   const client = new Client(SERVER_URL);
   const room = await client.joinOrCreate<any>(roomName, opts);
   window.__room = room;
+  // #212 — clear any won-ring stash from a prior duel so the end-of-battle modal
+  // never names a ring won in an earlier battle (er_pending_ring is independently
+  // cleared by the carry prompt on consumption).
+  window.__lastWonRing = null;
 
   // Capture a won ring at the connection level rather than in BattleScene: a
   // duel can end (e.g. an instant forfeit) before BattleScene mounts, so the
   // listener must live for the room's whole lifetime. The server is
   // authoritative — it decides the ring id; we only stash it for CampScene's
   // post-battle prompt (#40).
-  room.onMessage('wonRing', (payload: { ringId?: string }) => {
-    if (payload?.ringId) localStorage.setItem('er_pending_ring', payload.ringId);
+  room.onMessage('wonRing', (payload: { ringId?: string; element?: number }) => {
+    if (payload?.ringId) {
+      localStorage.setItem('er_pending_ring', payload.ringId);
+      // #212 — keep the element alongside the id so the end-of-battle modal can
+      // name the won ring ("Won: FIRE Ring"). The er_pending_ring key (carry
+      // prompt) is unchanged; this is an additive read-only stash.
+      window.__lastWonRing = { ringId: payload.ringId, element: payload.element ?? 0 };
+    }
   });
 
   // Capture the post-battle reward summary (#78 ②) at the connection level for

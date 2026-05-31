@@ -127,6 +127,9 @@ export class BattleHandOverlay {
       this.manageModal = null;
     }
 
+    // #212 — host-agnostic open flag (EncounterScene or a biome). E2E reads it to
+    // assert which post-duel route opened the overlay.
+    window.__battleHandOpen = true;
     const container = this.scene.add.container(0, 0).setDepth(2000);
     const overlay = this.scene.add
       .rectangle(CANVAS_W / 2, CANVAS_H / 2, CANVAS_W, CANVAS_H, 0x000000, 0.75)
@@ -598,6 +601,7 @@ export class BattleHandOverlay {
     this.manageSelectedRingId = null;
     this.manageSelectedFromSlot = null;
     this.manageStatusText = null;
+    window.__battleHandOpen = false; // #212
     delete window.__encounterDiscardRing;
     const cb = this.onCloseCb;
     this.onCloseCb = undefined;

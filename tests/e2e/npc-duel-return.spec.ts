@@ -1,5 +1,6 @@
 import { test, expect } from '@playwright/test';
 import { seedAuthToken, E2E_FAST } from './helpers';
+import { returnFromBattle } from './helpers/returnFromBattle';
 import type { Page } from '@playwright/test';
 
 /**
@@ -22,10 +23,11 @@ const URL = 'http://localhost:8090';
 const API_URL = 'http://localhost:2568';
 
 /** Sanctum door zone center (client/public/assets/maps/sanctum.json). */
-const SANCTUM_DOOR = { x: 1088, y: 608 };
-/** Forest NPC world centers (tx*32+16, ty*32+16 from NpcSpawns). */
-const FOREST_NPC_1 = { id: 'forest_npc_1', x: 15 * 32 + 16, y: 12 * 32 + 16 }; // 496, 400
-const FOREST_NPC_3 = { id: 'forest_npc_3', x: 8 * 32 + 16, y: 22 * 32 + 16 }; // 272, 720
+const SANCTUM_DOOR = { x: 87, y: 152 };
+/** Forest NPC world centers (tx*16+8, ty*16+8 from NpcSpawns; 16px grid after
+ * the #149/#159 map migration — server/src/api/routes.ts TILE_SIZE=16). */
+const FOREST_NPC_1 = { id: 'forest_npc_1', x: 7 * 16 + 8, y: 6 * 16 + 8 }; // 120, 104
+const FOREST_NPC_3 = { id: 'forest_npc_3', x: 4 * 16 + 8, y: 11 * 16 + 8 }; // 72, 184
 
 async function loadSanctum(page: Page): Promise<void> {
   await page.goto(URL);
@@ -36,12 +38,25 @@ async function loadSanctum(page: Page): Promise<void> {
   });
 }
 
-/** Place the live player at a point and wait for the named zone to register. */
+/**
+ * Place the live player at a point and wait for the named zone to register. The
+ * setPosition is RE-applied inside the poll: zone overlap is published by the
+ * scene's per-frame update, and under parallel-worker load a single pre-poll
+ * setPosition can be missed (the frame that read the player's position ran before
+ * the teleport landed), leaving the zone unregistered until the 5s timeout. Setting
+ * the position every poll iteration makes the overlap deterministic.
+ */
 async function walkToZone(page: Page, p: { x: number; y: number }, zone: string): Promise<void> {
-  await page.evaluate(([zx, zy]) => (window as any).__player.setPosition(zx, zy), [p.x, p.y]);
-  await page.waitForFunction((z) => ((window as any).__sanctumZones ?? []).includes(z), zone, {
-    timeout: 5000,
-  });
+  await page.waitForFunction(
+    ({ zx, zy, z }) => {
+      const player = (window as any).__player;
+      if (!player) return false;
+      player.setPosition(zx, zy);
+      return ((window as any).__sanctumZones ?? []).includes(z);
+    },
+    { zx: p.x, zy: p.y, z: zone },
+    { timeout: 8000 },
+  );
 }
 
 /** Enter the Forest overworld via the Sanctum door and wait for the NPC roster. */
@@ -114,9 +129,15 @@ async function driveToEnded(page: Page): Promise<void> {
         room?.state?.phase === 'ATTACK_SELECT' &&
         room?.state?.currentAttackerId === room?.sessionId
       ) {
+        // Mirror helpers.driveAiDuel: when BOTH attack rings are extinguished,
+        // ring exhaustion no longer auto-loses (#124) — the protagonist must
+        // `forfeit` explicitly (§6.3) or the deadlocked turn never resolves and
+        // the duel never reaches ENDED.
         const me = room.state.players.get(room.sessionId);
-        const slot = me?.a1?.isExtinguished ? 'a2' : 'a1';
-        room.send('selectAttack', { slot });
+        const a1Dead = !!me?.a1?.isExtinguished;
+        const a2Dead = !!me?.a2?.isExtinguished;
+        if (a1Dead && a2Dead) room.send('forfeit');
+        else room.send('selectAttack', { slot: a1Dead ? 'a2' : 'a1' });
       } else if (
         room?.state?.phase === 'DEFEND_WINDOW' &&
         room?.state?.currentAttackerId !== room?.sessionId
@@ -135,6 +156,11 @@ async function driveToEnded(page: Page): Promise<void> {
   } finally {
     clearInterval(driver);
   }
+  // #212 — the duel no longer auto-routes on ENDED; the persistent modal is the
+  // single exit. Choose [Return to Overworld] (no battle-hand overlay), which for a
+  // biome-origin duel returns the player to the biome scene — exactly what the
+  // post-ENDED ForestScene assertions in these scenarios depend on.
+  await returnFromBattle(page);
 }
 
 // ── Scenario 1: lose an overworld NPC duel → back to the biome, no loop ───────
@@ -237,26 +263,32 @@ test('#88: winning an overworld NPC duel returns to the Forest with the NPC remo
   await page.waitForFunction((id) => (window as any).__detectedNpc?.id === id, FOREST_NPC_3.id, {
     timeout: 5000,
   });
-  const personality = await page.evaluate(() => (window as any).__detectedNpc?.personality);
 
   // Set the origin exactly as handleInteract would (biome + player pos), then start
-  // a guaranteed WIN duel scoped to this NPC (aiHearts:1) so the defeat is recorded
-  // server-side. This drives the exact BattleScene return path under a win.
+  // a DETERMINISTIC WIN duel scoped to this NPC (npcId records the defeat regardless
+  // of personality). aiHearts:1 + aiUses:0 is the proven forced-win setup (see
+  // battle-end-modal scenario 5): the AI's rings are extinguished, so it forfeits
+  // (§6.3) → the human wins on setup, never on combat timing. aiHearts:1 alone is
+  // NOT enough — a defensive AI (forest_npc_3 is RESILIENT) parries every human
+  // attack and extinguishes both attack rings before a hit lands → unwinnable
+  // deadlock. The defeat is recorded against forest_npc_3 (server keys
+  // recordNpcDefeat on npcId, not the personality).
   await page.evaluate(([x, y]) => {
     (window as any).__duelOrigin = { scene: 'ForestScene', x, y };
   }, [FOREST_NPC_3.x, FOREST_NPC_3.y]);
   await page.evaluate(
-    async ({ p, id }) => {
+    async ({ id }) => {
       const token = localStorage.getItem('er_token') ?? '';
       await (window as any).connectToRoom('battle-ai', {
         vsAI: true,
-        personality: p,
+        personality: 'AGGRESSIVE',
         token,
         npcId: id,
         aiHearts: 1,
+        aiUses: 0,
       });
     },
-    { p: personality, id: FOREST_NPC_3.id },
+    { id: FOREST_NPC_3.id },
   );
   await page.waitForFunction(
     () =>
@@ -265,7 +297,56 @@ test('#88: winning an overworld NPC duel returns to the Forest with the NPC remo
     { timeout: 10000 },
   );
 
-  await driveToEnded(page);
+  // Drive the bare battle-ai room to a guaranteed human WIN (aiHearts:1) so the
+  // server records the NPC defeat. Mirrors npc-population.driveNpcWin: attack on our
+  // turn (falling back a1→a2 when extinguished), defend on the AI's. We drive on the
+  // room BEFORE mounting BattleScene so the duel is not perturbed mid-flight.
+  const pollMs = E2E_FAST ? 80 : 250;
+  const winDriver = setInterval(() => {
+    void page.evaluate(() => {
+      const room = (window as any).__room;
+      if (
+        room?.state?.phase === 'ATTACK_SELECT' &&
+        room?.state?.currentAttackerId === room?.sessionId
+      ) {
+        const me = room.state.players.get(room.sessionId);
+        const slot = me?.a1?.isExtinguished ? 'a2' : 'a1';
+        room.send('selectAttack', { slot });
+      } else if (
+        room?.state?.phase === 'DEFEND_WINDOW' &&
+        room?.state?.currentAttackerId !== room?.sessionId
+      ) {
+        room.send('submitDefense', { slot: 'd1' });
+      }
+    });
+  }, pollMs);
+  try {
+    await page.waitForFunction(
+      () =>
+        (window as any).__room?.state?.phase === 'ENDED' &&
+        (window as any).__room?.state?.winnerId &&
+        (window as any).__room?.state?.winnerId !== 'AI',
+      { timeout: E2E_FAST ? 12000 : 30000 },
+    );
+  } finally {
+    clearInterval(winDriver);
+  }
+
+  // #212 — the duel ended on the bare room (BattleScene was never mounted), so mount
+  // the now-ENDED BattleScene exactly as EncounterScene.startAIDuel hands off (stop
+  // the active biome scene, start BattleScene). create() runs checkEnded against the
+  // already-ENDED room → the persistent end modal opens, giving the real #212 exit.
+  await page.evaluate(() => {
+    const active = (window as any).__activeScene;
+    if (active) (window as any).__game.scene.stop(active);
+    (window as any).__game.scene.start('BattleScene');
+  });
+  await page.waitForFunction(() => (window as any).__scene?.constructor.name === 'BattleScene', {
+    timeout: 12000,
+  });
+
+  // Choose [Return to Overworld] on the modal → biome-origin duel returns to Forest.
+  await returnFromBattle(page);
 
   // Returns to the Forest (the recorded origin), not the hub.
   await page.waitForFunction(() => (window as any).__activeScene === 'ForestScene', {
@@ -323,8 +404,13 @@ test('#88: entering the Encounter hub after an NPC duel shows markers, no auto-l
   await page.waitForFunction(() => typeof (window as any).__encounterSelect === 'function', {
     timeout: 10000,
   });
-  const sceneName = await page.evaluate(() => (window as any).__scene?.constructor.name);
-  expect(sceneName).toBe('EncounterScene');
+  // EncounterScene never publishes window.__scene (only CampScene/BattleScene/the
+  // biome scenes do); it is identified by its active-scene state + the
+  // __encounterSelect hook. Assert the hub scene is the live one.
+  const onHub = await page.evaluate(() =>
+    (window as any).__game?.scene?.isActive('EncounterScene'),
+  );
+  expect(onHub).toBe(true);
 
   // No automatic duel started: give any stale relaunch a chance to fire, then
   // assert we are still in the hub and have NOT auto-joined a battle-ai room.

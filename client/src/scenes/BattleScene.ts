@@ -4,7 +4,12 @@ import { Orb } from '../objects/Orb';
 import { PlayerDuelist } from '../objects/PlayerDuelist';
 import { OpponentDuelist } from '../objects/OpponentDuelist';
 import { Hud } from '../objects/Hud';
-import type { ExchangeResultPayload, BattleSummaryPayload } from '../../../shared/types';
+import { BattleEndModal } from '../objects/BattleEndModal';
+import type {
+  ExchangeResultPayload,
+  RechargeResultPayload,
+  BattleSummaryPayload,
+} from '../../../shared/types';
 import {
   PLAYER_X,
   PLAYER_Y,
@@ -100,14 +105,19 @@ export class BattleScene extends Phaser.Scene {
   private prevRallyActive = false;
   private prevCurrentAttackerId = '';
   private returning = false;
-  // #78 ② — post-battle reward summary. The server sends `battleSummary` after
-  // the ENDED state patch, so the message can arrive before, after, or around
-  // the moment checkEnded() renders the banner. We render the lines whenever both
-  // the banner exists (bannerShown) and the summary has arrived; whichever
-  // happens second triggers renderBattleSummary().
+  // #78 ② / #212 — post-battle reward summary. The server sends `battleSummary`
+  // after the ENDED state patch, so the message can arrive before, after, or
+  // around the moment checkEnded() runs. The end-of-battle modal is shown once
+  // BOTH the duel has ENDED (ended) and the summary has arrived
+  // (pendingBattleSummary); whichever happens second triggers maybeShowEndModal().
   private pendingBattleSummary: BattleSummaryPayload | null = null;
-  private bannerShown = false;
-  private summaryRendered = false;
+  private ended = false;
+  // #212 — resolved post-duel destination, captured on ENDED and used by the
+  // modal's route choice. toBiome is the biome scene key (ForestScene/SwampScene)
+  // or null for the EncounterScene hub; screenId restores the correct biome screen.
+  private endDestination: { toBiome: string | null; screenId?: string } | null = null;
+  // #212 — the persistent end-of-battle modal (null until shown).
+  private endModal: BattleEndModal | null = null;
 
   // #125 attack-phase gesture state. pendingAttackSlot/Timer hold a single
   // attack-key press until the double-tap window lapses (then it fires); a second
@@ -155,8 +165,9 @@ export class BattleScene extends Phaser.Scene {
     this.prevCurrentAttackerId = '';
     this.returning = false;
     this.pendingBattleSummary = null;
-    this.bannerShown = false;
-    this.summaryRendered = false;
+    this.ended = false;
+    this.endDestination = null;
+    this.endModal = null;
     this.pendingAttackSlot = null;
     this.pendingAttackTimer = null;
     this.lastPressAt = {};
@@ -217,25 +228,37 @@ export class BattleScene extends Phaser.Scene {
     // end before BattleScene mounts (e.g. an instant forfeit), so the listener
     // must outlive any single scene.
 
-    // #78 ② — render the reward lines once both the banner and the summary are
-    // ready. The summary may already have been captured at the connection level
-    // before this scene mounted (Connection.ts stashes it on window), so seed
-    // from there first, then keep listening for a later arrival.
+    // #78 ② / #212 — show the end-of-battle modal once both the duel has ENDED and
+    // the reward summary is ready. The summary may already have been captured at
+    // the connection level before this scene mounted (Connection.ts stashes it on
+    // window), so seed from there first, then keep listening for a later arrival.
     if (window.__lastBattleSummary) {
       this.pendingBattleSummary = window.__lastBattleSummary;
-      this.renderBattleSummary();
+      this.maybeShowEndModal();
     }
     const offSummary = room.onMessage('battleSummary', (payload: BattleSummaryPayload) => {
       this.pendingBattleSummary = payload;
-      this.renderBattleSummary();
+      this.maybeShowEndModal();
+    });
+
+    // #211 — per-client recharge result. The turn is consumed regardless (server
+    // rule); this only surfaces a PARTIAL or INSUFFICIENT-spirit outcome. A full
+    // success (restored === requested) flashes nothing — the HUD readout already
+    // reflects the spend. Published to window for E2E.
+    const offRecharge = room.onMessage('rechargeResult', (p: RechargeResultPayload) => {
+      window.__lastRechargeResult = p;
+      this.showRechargeFeedback(p);
     });
 
     this.events.once('shutdown', () => {
       room.onStateChange.remove(onState);
       offExchange();
       offSummary();
+      offRecharge();
       this.cancelPendingAttack();
       this.dismissForfeitPrompt();
+      this.endModal?.destroy();
+      this.endModal = null;
       window.__scene = null;
     });
   }
@@ -254,6 +277,8 @@ export class BattleScene extends Phaser.Scene {
       d1: this.hand.displayedUses('d1'),
       d2: this.hand.displayedUses('d2'),
       hearts: this.playerDuelist.displayedHearts,
+      // #211 — rendered ⚡ current/max (undefined when hidden: AI / no-token).
+      spirit: this.hud.displayedSpirit,
     };
   }
 
@@ -307,6 +332,36 @@ export class BattleScene extends Phaser.Scene {
     this.tweens.add({
       targets: t, alpha: 0, y: 165,
       duration: 750, ease: 'Power2',
+      onComplete: () => t.destroy(),
+    });
+  }
+
+  /**
+   * #211 — flash a brief recharge-spend label near the player's slots when the
+   * spend was less than requested. The turn is consumed either way (server rule),
+   * so this only communicates the spirit shortfall:
+   *   - restored === 0 && requested > 0 → "Not enough spirit!" (red)
+   *   - 0 < restored < requested        → "Restored X/Y — low spirit" (amber)
+   *   - restored === requested (full)   → no flash
+   * Reuses the showExchangeOutcome rise-and-fade tween pattern.
+   */
+  private showRechargeFeedback(p: RechargeResultPayload): void {
+    if (p.requested <= 0 || p.restored >= p.requested) return;
+    const { label, color } =
+      p.restored === 0
+        ? { label: 'Not enough spirit!', color: '#ff4444' }
+        : { label: `Restored ${p.restored}/${p.requested} — low spirit`, color: '#ffaa33' };
+    // Positioned just above the player's slot row (the bottom hand), low on screen.
+    const t = this.add
+      .text(512, 470, label, {
+        fontSize: '24px', color, fontStyle: 'bold',
+        stroke: '#000000', strokeThickness: 4,
+      })
+      .setOrigin(0.5)
+      .setDepth(1100);
+    this.tweens.add({
+      targets: t, alpha: 0, y: 430,
+      duration: 900, ease: 'Power2',
       onComplete: () => t.destroy(),
     });
   }
@@ -485,94 +540,98 @@ export class BattleScene extends Phaser.Scene {
   }
 
   /**
-   * On phase ENDED, show a brief winner banner then return to the post-duel
-   * destination. The er_pending_ring localStorage key (if set by Connection.ts on
-   * a win) is picked up the next time the player returns to CampScene via "Return
-   * to Sanctum". Guarded so it fires once.
+   * #212 — On phase ENDED, resolve the post-duel destination and arm the
+   * persistent end-of-battle modal. There is NO auto-route timer: the modal is the
+   * single exit for everyone (including E2E fast mode). The er_pending_ring
+   * localStorage key (set by Connection.ts on a win) is left intact by BOTH routes
+   * so the won-ring carry prompt still surfaces on arrival. Guarded so it fires once.
    *
-   * #88 — destination routing:
+   * Input is inert once ENDED: onSlotPressed gates every send on the live
+   * ATTACK_SELECT/DEFEND_WINDOW phase, so no room.send can fire after ENDED.
+   *
+   * #88 — destination routing (preserved exactly):
    *   - Overworld NPC duels (launched from ForestScene/SwampScene) record their
-   *     origin biome + the player's world position in window.__duelOrigin. On END
-   *     we return to that biome scene (which restores the player near {x,y}), and
-   *     clear __duelOrigin so it is never reused.
+   *     origin biome + the player's world position in window.__duelOrigin. We
+   *     return to that biome scene (which restores the player near {x,y}) and clear
+   *     __duelOrigin so it is never reused.
    *   - Hub/marker duels leave __duelOrigin unset → return to the EncounterScene
-   *     hub. We pass an EXPLICIT `{}` so Phaser overwrites settings.data (a no-data
+   *     hub with EXPLICIT data so Phaser overwrites settings.data (a no-data
    *     scene.start leaves the previous { npcId, personality } in place, which made
    *     EncounterScene re-launch the duel in an infinite loop — see #88 root cause).
    */
   private checkEnded(state: any, myId: string): void {
     if (state.phase !== 'ENDED' || this.returning) return;
     this.returning = true;
+    this.ended = true;
 
-    const won = state.winnerId === myId;
-    this.add
-      .text(512, 288, won ? 'YOU WIN!' : 'YOU LOSE!', {
-        fontSize: '48px',
-        color: won ? '#44ff44' : '#ff4444',
-        backgroundColor: '#000000aa',
-        padding: { x: 20, y: 12 },
-      })
-      .setOrigin(0.5)
-      .setDepth(1000);
-
-    // #78 ② — the banner exists now; if the summary already arrived, render the
-    // reward lines (else the onMessage handler will render once it does).
-    this.bannerShown = true;
-    this.renderBattleSummary();
-
-    // #88 — resolve the post-duel destination. A biome origin returns to that
-    // biome scene; anything else (unset, or 'EncounterScene') returns to the hub
-    // with explicit empty data so no stale NPC-duel data is retained.
+    // #88 — resolve the post-duel destination now (before any scene.start). A biome
+    // origin returns to that biome scene; anything else returns to the hub.
     const origin = window.__duelOrigin;
     const toBiome =
       origin && (origin.scene === 'ForestScene' || origin.scene === 'SwampScene')
         ? origin.scene
         : null;
+    this.endDestination = { toBiome, screenId: origin?.screenId };
 
-    // Under E2E fast mode the 2s winner banner is pure dead time; collapse it to
-    // ~0ms so duels return immediately (#68).
-    const bannerMs = __E2E_FAST__ ? 0 : 2000;
-    this.time.delayedCall(bannerMs, () => {
-      if (toBiome) {
-        // The biome scene reads __duelOrigin in its create() to restore the player
-        // position, then clears it. Pass screenId so ForestScene.init() loads the
-        // correct screen (not defaulting to forest_anchorage for every return).
-        const screenId = origin?.screenId;
-        this.scene.start(toBiome, { openBattleHand: true, ...(screenId ? { screenId } : {}) });
-      } else {
-        // Hub return — clear any stray origin and pass explicit empty data so
-        // EncounterScene.init sees undefined personality → npcDuel=null → hub.
-        window.__duelOrigin = null;
-        this.scene.start('EncounterScene', { openBattleHand: true });
-      }
-    });
+    // Show the modal once the reward summary is also ready (maybeShowEndModal is
+    // idempotent; the battleSummary handler calls it too if it arrives later).
+    this.maybeShowEndModal();
   }
 
   /**
-   * Render the two reward lines (#78 ②) under the WIN/LOSE banner. Idempotent and
-   * order-independent: it no-ops until BOTH the banner has been drawn
-   * (bannerShown) and the server's `battleSummary` has arrived
-   * (pendingBattleSummary), and only renders once (summaryRendered guard).
+   * #212 — show the persistent end-of-battle modal once BOTH the duel has ENDED
+   * (ended) and the reward summary has arrived (pendingBattleSummary). Idempotent
+   * and order-independent (whichever happens second triggers it). On a win the
+   * won-ring element comes from the connection-level wonRing stash; on a loss the
+   * forfeited staked thumb element comes from the live BattleState.
    */
-  private renderBattleSummary(): void {
-    if (this.summaryRendered) return;
-    if (!this.pendingBattleSummary || !this.bannerShown) return;
-    this.summaryRendered = true;
+  private maybeShowEndModal(): void {
+    if (this.endModal || !this.ended || !this.pendingBattleSummary || !this.endDestination) return;
 
-    const { goldGained, xpGained, aggregateXp } = this.pendingBattleSummary;
-    // Below the y=288 banner (48px text + padding ≈ ±40px); depth 1001 keeps the
-    // lines above the banner's depth-1000 background.
-    this.add
-      .text(512, 348, `+${goldGained} gold`, { fontSize: '18px', color: '#ffd700' })
-      .setOrigin(0.5)
-      .setDepth(1001);
-    this.add
-      .text(512, 378, `+${xpGained} XP  (total ${aggregateXp})`, {
-        fontSize: '18px',
-        color: '#88ffaa',
-      })
-      .setOrigin(0.5)
-      .setDepth(1001);
+    const { won, goldGained, xpGained, aggregateXp } = this.pendingBattleSummary;
+    // Won ring (WIN) or the forfeited staked thumb (LOSS).
+    let ringElement: number | null = null;
+    if (won) {
+      ringElement = window.__lastWonRing?.element ?? null;
+    } else {
+      const myId = window.__room?.sessionId;
+      const myThumb = myId ? window.__room?.state?.players?.get(myId)?.thumb : null;
+      ringElement = myThumb ? (myThumb.element as number) : null;
+    }
+
+    this.endModal = new BattleEndModal(
+      this,
+      { won, ringElement, goldGained, xpGained, aggregateXp },
+      (choice) => this.routeAfterBattle(choice),
+    );
+    this.endModal.show();
+  }
+
+  /**
+   * #212 — perform the post-duel scene transition for the chosen route. Both routes
+   * use the SAME destination resolved on ENDED (#88) and leave er_pending_ring
+   * intact (the won-ring carry prompt surfaces on arrival):
+   *   - 'managehand' → openBattleHand: true (lands with the Manage Battle-Hand overlay)
+   *   - 'overworld'  → openBattleHand omitted (lands in the biome/hub, no overlay)
+   */
+  private routeAfterBattle(choice: 'managehand' | 'overworld'): void {
+    const openBattleHand = choice === 'managehand';
+    const dest = this.endDestination;
+    if (!dest) return;
+
+    if (dest.toBiome) {
+      // The biome scene reads __duelOrigin in its create() to restore the player
+      // position, then clears it. Pass screenId so the correct screen loads.
+      this.scene.start(dest.toBiome, {
+        ...(openBattleHand ? { openBattleHand: true } : {}),
+        ...(dest.screenId ? { screenId: dest.screenId } : {}),
+      });
+    } else {
+      // Hub return — clear any stray origin and pass explicit data so
+      // EncounterScene.init sees undefined personality → npcDuel=null → hub.
+      window.__duelOrigin = null;
+      this.scene.start('EncounterScene', openBattleHand ? { openBattleHand: true } : {});
+    }
   }
 
   /** Launch the orb telegraph when a defend window opens, including rally volleys. */
