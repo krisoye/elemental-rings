@@ -13,8 +13,7 @@ describe('getWaystone — id → definition lookup', () => {
   test('returns the matching definition for a known id', () => {
     const def = getWaystone('forest_glade');
     expect(def).toBeDefined();
-    expect(def?.name).toBe('Glade Waystone');
-    expect(def?.xpThreshold).toBe(100);
+    expect(def?.name).toBe('The Glade');
     expect(def?.biome).toBe('forest');
   });
 
@@ -28,7 +27,7 @@ describe('getWaystone — id → definition lookup', () => {
 // canTeleport — pure teleport-gate predicate (§10.8 spirit gate, #87 Part B)
 // ---------------------------------------------------------------------------
 
-describe('canTeleport — current spirit vs. waystone spiritCost', () => {
+describe('canTeleport — current spirit vs. anchorage spiritCost', () => {
   test('forest_entry (spiritCost 0) is always teleportable, even at 0 spirit', () => {
     expect(canTeleport(0, 'forest_entry')).toBe(true);
   });
@@ -58,7 +57,7 @@ describe('canTeleport — current spirit vs. waystone spiritCost', () => {
 // spiritCost — every catalog entry carries a non-negative cost (#87 Part B)
 // ---------------------------------------------------------------------------
 
-describe('waystone spiritCost', () => {
+describe('anchorage spiritCost', () => {
   test('every entry has a non-negative spiritCost; the home Anchorage is free', () => {
     for (const w of WAYSTONES) {
       expect(typeof w.spiritCost).toBe('number');
@@ -69,19 +68,10 @@ describe('waystone spiritCost', () => {
 });
 
 // ---------------------------------------------------------------------------
-// Drift test — catalog ids must equal the COMBINED catalog-backed object ids
-// across every biome map
+// Drift test — catalog ids must equal the combined anchorage ids across every
+// biome map. Discovery waystones have been removed; only `anchorage` map
+// objects remain in the catalog.
 // ---------------------------------------------------------------------------
-// Catalog-backed locations carry a `waystoneId` property on a map. They come in
-// two flavours: `anchorage` objects (home base / teleport destinations) and
-// `waystone` objects (discovery standing-stones). As of 8E the Forest's catalog
-// objects are placed across the per-screen maps generated into
-// client/public/assets/maps/forest/ (one .json per FOREST_SCREENS entry); the
-// Swamp ships its catalog objects in swamp.json. The union of all `waystoneId`s
-// across every Forest screen + the Swamp map must equal the catalog id-set (no map
-// ships a waystone the catalog lacks, and no catalog entry is unplaced).
-// `biome_exit` objects carry a `target` (scene key) — NOT a `waystoneId` — so they
-// are excluded.
 
 interface MapObject {
   name?: string;
@@ -109,32 +99,38 @@ function biomeMapPaths(): string[] {
   return [...forestMaps, path.join(MAPS_DIR, 'swamp', 'swamp_entry.json')];
 }
 
-/** Collect every `waystoneId` from the anchorage/waystone objects across all maps. */
-function collectMapWaystoneIds(): Set<string> {
+/** Collect every `waystoneId` from anchorage objects across all maps. */
+function collectMapAnchorageIds(): Set<string> {
   const ids = new Set<string>();
   for (const mapPath of biomeMapPaths()) {
     for (const obj of loadObjectLayerAt(mapPath)) {
-      if (obj.name !== 'anchorage' && obj.name !== 'waystone') continue;
+      if (obj.name !== 'anchorage') continue;
       const prop = (obj.properties ?? []).find((p) => p.name === 'waystoneId');
-      expect(typeof prop?.value, `${mapPath} ${obj.name} has a string waystoneId`).toBe('string');
+      expect(typeof prop?.value, `${mapPath} anchorage has a string waystoneId`).toBe('string');
       ids.add(prop!.value as string);
     }
   }
   return ids;
 }
 
-describe('waystone catalog ↔ map drift', () => {
-  test('every catalog id appears on some biome map (anchorage or waystone), and vice versa', () => {
-    const mapIds = collectMapWaystoneIds();
+describe('anchorage catalog ↔ map drift', () => {
+  test('every catalog id appears on some biome map, and vice versa', () => {
+    const mapIds = collectMapAnchorageIds();
     const catalogIds = new Set(WAYSTONES.map((w) => w.id));
     expect([...mapIds].sort()).toEqual([...catalogIds].sort());
   });
 
-  test('combined catalog spans 12 waystones (7 Forest + 5 Swamp)', () => {
-    // 7 Forest (incl. the 2 hidden alcove ids) + 5 Swamp. Guards against silent
-    // catalog regressions; bump deliberately when a biome is added.
-    expect(WAYSTONES.length).toBeGreaterThanOrEqual(12);
-    expect(collectMapWaystoneIds().size).toBe(WAYSTONES.length);
+  test('catalog contains exactly 6 anchorages (4 Forest + 2 Swamp)', () => {
+    // 4 Forest (entry, glade, depths, hidden) + 2 Swamp. Bump when a biome is added.
+    expect(WAYSTONES.length).toBe(6);
+    expect(collectMapAnchorageIds().size).toBe(6);
+  });
+
+  test('no waystone objects remain in any biome map', () => {
+    for (const mapPath of biomeMapPaths()) {
+      const waystones = loadObjectLayerAt(mapPath).filter((o) => o.name === 'waystone');
+      expect(waystones, `${mapPath} should have no waystone objects`).toHaveLength(0);
+    }
   });
 
   test('the Swamp map ships its biome-exit back to the Forest with a target', () => {
@@ -145,18 +141,23 @@ describe('waystone catalog ↔ map drift', () => {
     const prop = (swampExit!.properties ?? []).find((p) => p.name === 'target');
     expect(prop?.value).toBe('ForestScene');
   });
+
+  test('forest_swamp_gate biome_exit has no gate property', () => {
+    const objs = loadObjectLayerAt(path.join(MAPS_DIR, 'forest', 'forest_swamp_gate.json'));
+    const exit = objs.find((o) => o.name === 'biome_exit');
+    expect(exit).toBeDefined();
+    const gate = (exit!.properties ?? []).find((p) => p.name === 'gate');
+    expect(gate).toBeUndefined();
+  });
 });
 
 // ---------------------------------------------------------------------------
-// FOREST_SCREENS drift — the 8E Forest screen manifest must be internally
-// consistent (reciprocal exits) and reference only real catalog waystone ids.
+// FOREST_SCREENS drift — reciprocal exits; anchorage ids in catalog; no
+// waystone fields remain.
 // ---------------------------------------------------------------------------
 
 const OPPOSITE: Record<string, string> = {
-  north: 'south',
-  south: 'north',
-  east: 'west',
-  west: 'east',
+  north: 'south', south: 'north', east: 'west', west: 'east',
 };
 
 describe('FOREST_SCREENS drift', () => {
@@ -174,21 +175,24 @@ describe('FOREST_SCREENS drift', () => {
     }
   });
 
-  it('all anchorage/waystone ids exist in WAYSTONES catalog', () => {
-    const waystoneIds = new Set(WAYSTONES.map((w) => w.id));
-    for (const screen of FOREST_SCREENS) {
+  it('all anchorage ids exist in the catalog', () => {
+    const catalogIds = new Set(WAYSTONES.map((w) => w.id));
+    for (const screen of [...FOREST_SCREENS, ...SWAMP_SCREENS]) {
       if (screen.anchorage) {
         expect(
-          waystoneIds.has(screen.anchorage),
+          catalogIds.has(screen.anchorage),
           `${screen.id}.anchorage '${screen.anchorage}' not in catalog`,
         ).toBe(true);
       }
-      if (screen.waystone) {
-        expect(
-          waystoneIds.has(screen.waystone),
-          `${screen.id}.waystone '${screen.waystone}' not in catalog`,
-        ).toBe(true);
-      }
+    }
+  });
+
+  it('no screen carries a waystone field', () => {
+    for (const screen of [...FOREST_SCREENS, ...SWAMP_SCREENS]) {
+      expect(
+        'waystone' in screen,
+        `${screen.id} should not have a waystone field`,
+      ).toBe(false);
     }
   });
 });
