@@ -706,14 +706,14 @@ export const fuseRings = db.transaction(
     }
 
     // §4.6 — both parents must be the same XP-derived tier, and that tier must
-    // be at least Tier 2. Tier is derived live from XP (not the cached column).
+    // be at least Tier 1 (≥ 500 XP). Tier is derived live from XP (not the cached column).
     const tier1 = tierForXp(r1.xp);
     const tier2 = tierForXp(r2.xp);
     if (tier1 !== tier2) {
       throw new Error('Rings must be the same tier to fuse');
     }
-    if (tier1 < 2) {
-      throw new Error('Both rings must reach Tier 2 to fuse');
+    if (tier1 < 1) {
+      throw new Error('Both rings must reach Tier 1 to fuse');
     }
 
     const fusionElement = fusionOf(r1.element, r2.element);

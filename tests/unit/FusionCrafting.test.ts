@@ -61,7 +61,7 @@ describe('fusionOf — element pair → fusion element', () => {
 // the repo. better-sqlite3 is synchronous; the schema is applied on import.
 //
 // Fusion rules (GDD §4.6): both parents must share the same XP-derived tier, that
-// tier must be ≥ 2, XP is additive, fused tier = tierForXp(sum), and fused
+// tier must be ≥ 1 (≥ 500 XP), XP is additive, fused tier = tierForXp(sum), and fused
 // max_uses = max(1, min(parents) − 1). Tier is derived from XP, so tests seed XP
 // at/above the relevant tierStartXp threshold rather than the old hard caps.
 // ---------------------------------------------------------------------------
@@ -149,15 +149,29 @@ describe('fuseRings — DB transaction (§4.6)', () => {
     expect(rings).toHaveLength(2);
   });
 
-  test('same-tier Tier 1 pair throws (below the Tier 2 minimum)', () => {
+  test('same-tier Tier 1 pair → fusion succeeds (Tier 1 is the new minimum)', () => {
     const p = makePlayer(db);
-    const fire = makeRing(db, p, FIRE, T1_XP); // Tier 1
-    const water = makeRing(db, p, WATER, T1_XP); // Tier 1
+    const fire = makeRing(db, p, FIRE, T1_XP); // Tier 1 (500 XP)
+    const water = makeRing(db, p, WATER, T1_XP); // Tier 1 (500 XP)
 
-    expect(() => repo.fuseRings(p, fire, water)).toThrow(/Tier 2/);
+    const newId = repo.fuseRings(p, fire, water);
+    const result = repo.getRingsByOwner(p).find((r) => r.id === newId);
+
+    expect(result).toBeDefined();
+    expect(result!.element).toBe(STEAM);
+    expect(result!.xp).toBe(T1_XP * 2); // 1000
+    expect(result!.tier).toBe(tierForXp(T1_XP * 2)); // 1000 → Tier 1
+  });
+
+  test('same-tier Tier 0 pair throws (below the 500 XP minimum)', () => {
+    const p = makePlayer(db);
+    const fire = makeRing(db, p, FIRE, 100); // Tier 0
+    const water = makeRing(db, p, WATER, 100); // Tier 0
+
+    expect(() => repo.fuseRings(p, fire, water)).toThrow(/Tier 1/);
     const rings = repo.getRingsByOwner(p);
     expect(rings).toHaveLength(2);
-    expect(rings.every((r) => r.tier === 1)).toBe(true);
+    expect(rings.every((r) => r.tier === 0)).toBe(true);
   });
 
   test('same-tier Tier 3 parents → fusion succeeds', () => {
