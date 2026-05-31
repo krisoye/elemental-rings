@@ -3,7 +3,6 @@ import type { AIPersonality } from '../../../shared/types';
 import type { ScreenDef } from '../../../shared/world/forest';
 import { Player } from '../objects/world/Player';
 import { InteractionZone } from '../objects/world/InteractionZone';
-import { Waystone } from '../objects/world/Waystone';
 import { Campfire } from '../objects/world/Campfire';
 import { CampfireModal } from '../objects/CampfireModal';
 import { ForageNode } from '../objects/world/ForageNode';
@@ -12,6 +11,7 @@ import { MerchantModal } from '../objects/MerchantModal';
 import { Compass } from '../objects/world/Compass';
 import { BlinkController } from '../objects/world/BlinkController';
 import { BattleHandOverlay } from '../objects/BattleHandOverlay';
+import { OverworldMapModal } from '../objects/OverworldMapModal';
 import { placeDecoration, type DecorationHandle } from '../objects/world/Decoration';
 import {
   MONSTER_OW_REGISTRY,
@@ -129,14 +129,14 @@ export abstract class BaseBiomeScene extends Phaser.Scene {
   private wasd!: { W: Phaser.Input.Keyboard.Key; A: Phaser.Input.Keyboard.Key; S: Phaser.Input.Keyboard.Key; D: Phaser.Input.Keyboard.Key };
   private zones: InteractionZone[] = [];
   private activeZone: InteractionZone | null = null;
-  /** Waystone markers keyed by waystone id (for recolor on attune). */
-  private waystones: Map<string, Waystone> = new Map();
   /** Centers of Anchorage locations (keyed by waystoneId), for compass + spawn logic. */
   private anchorageMarkers: Map<string, { center: { x: number; y: number } }> = new Map();
   /** Campfire graphics markers keyed by anchorage id (#191). */
   private campfires: Map<string, Campfire> = new Map();
   /** Open campfire modal singleton (#191); null when closed. */
   private campfireModal: CampfireModal | null = null;
+  /** World-map overlay (M key); null when not open. */
+  private overworldMap: OverworldMapModal | null = null;
   /** Anchorage ids already auto-attuned (or attuned on load) — fire onAttune once. */
   private anchorageAutoAttuned: Set<string> = new Set();
   /** Latest GET /api/waystones payload (mirrored to window.__waystones). */
@@ -512,10 +512,14 @@ export abstract class BaseBiomeScene extends Phaser.Scene {
     this.input.keyboard!.on('keydown-ESC', () => {
       if (this.merchantModal?.isOpen()) {
         this.merchantModal.close();
+      } else if (this.overworldMap?.isOpen()) {
+        this.overworldMap.hide();
+        this.overworldMap = null;
       } else if (this.overlayOpen) {
         this.closeBattleHand();
       }
     });
+    this.input.keyboard!.on('keydown-M', () => this.toggleOverworldMap());
     window.__overworldBattleHandOpen = false;
     window.__overworldToggleBattleHand = (): void => this.toggleBattleHand();
 
@@ -554,6 +558,8 @@ export abstract class BaseBiomeScene extends Phaser.Scene {
       this.blink = null;
       this.battleHand?.destroy();
       this.battleHand = null;
+      this.overworldMap?.hide();
+      this.overworldMap = null;
       this.overlayOpen = false;
       this.npcLastClick.clear();
       this.npcGraphics.forEach((g) => g.destroy());
@@ -563,7 +569,6 @@ export abstract class BaseBiomeScene extends Phaser.Scene {
       this.hudText?.destroy();
       this.hudText = null;
       this.zones.forEach((z) => z.destroy());
-      this.waystones.forEach((w) => w.destroy());
       this.forageNodes.forEach((n) => n.destroy());
       this.forageNodes.clear();
       window.__forageNodeForaged = undefined;
@@ -580,7 +585,6 @@ export abstract class BaseBiomeScene extends Phaser.Scene {
       this.sanctumSprite = null;
       this.sanctumReturnZone = null; // destroyed as part of this.zones above
       this.zones = [];
-      this.waystones.clear();
       this.anchorageMarkers.clear();
       this.anchorageAutoAttuned.clear();
     });
@@ -725,6 +729,25 @@ export abstract class BaseBiomeScene extends Phaser.Scene {
     window.__overworldBattleHandOpen = false;
   }
 
+  /** Toggle the M-key world-map overlay. Blocked while any other overlay is open. */
+  private toggleOverworldMap(): void {
+    if (this.overworldMap?.isOpen()) {
+      this.overworldMap.hide();
+      this.overworldMap = null;
+      return;
+    }
+    if (this.overlayOpen) return; // battle hand, merchant, etc. takes priority
+    const attuned = new Set(
+      (this.waystonePayload?.waystones ?? [])
+        .filter((w) => w.attuned)
+        .map((w) => w.id),
+    );
+    this.overworldMap = new OverworldMapModal(this, () => {
+      this.overworldMap = null;
+    });
+    this.overworldMap.show(this.screenId, attuned, (c) => this.cameras.main.ignore(c));
+  }
+
   // ── Anchorage / interact dispatch ───────────────────────────────────────────
 
   /**
@@ -807,26 +830,21 @@ export abstract class BaseBiomeScene extends Phaser.Scene {
   /**
    * Per-frame compass pull (8B.2). Finds the nearest eligible UNATTUNED waystone and
    * points the compass at it (intensity rising as distance shrinks), or hides when
-   * none is within COMPASS_RANGE. Anchorages always pull while unattuned; discovery
-   * waystones only pull once their aggregate-XP threshold is met.
+   * none is within COMPASS_RANGE. Points only toward unattuned anchorages on the
+   * current screen (discovery waystones have been removed).
    */
   private updateCompass(): void {
     const px = this.player.x;
     const py = this.player.y;
 
-    const unattuned = (this.waystonePayload?.waystones ?? []).filter((w) => {
-      if (w.attuned) return false;
-      const isAnchorage = this.anchorageMarkers.has(w.id);
-      return isAnchorage || w.meetsThreshold;
-    });
+    const unattuned = (this.waystonePayload?.waystones ?? []).filter((w) => !w.attuned);
 
     let targetId: string | null = null;
     let bestDist = Infinity;
     let bestX = 0;
     let bestY = 0;
     for (const info of unattuned) {
-      const center =
-        this.waystones.get(info.id)?.center ?? this.anchorageMarkers.get(info.id)?.center;
+      const center = this.anchorageMarkers.get(info.id)?.center;
       if (!center) continue;
       const d = Phaser.Math.Distance.Between(px, py, center.x, center.y);
       if (d < bestDist) {
@@ -865,10 +883,9 @@ export abstract class BaseBiomeScene extends Phaser.Scene {
         const target = this.targetSceneOf(o) ?? 'SwampScene';
         const targetScreen = this.stringPropOf(o, 'targetScreen');
         const spawnEdge = this.stringPropOf(o, 'spawnEdge') as 'north'|'south'|'east'|'west'|undefined;
-        // The attunement gate comes from the map object's `gate` property (the
-        // hand-authored hub map) or the screen manifest's biomeExit.gate (the
-        // generated screens). An ungated exit (e.g. the Swamp's return) always opens.
-        const gate = this.gateOf(o) ?? this.screenDef?.biomeExit?.gate;
+        // Future boss-defeat gate: read from the map object's `gate` property.
+        // All exits are currently ungated; bosses block the path physically.
+        const gate = this.gateOf(o);
         const zone = new InteractionZone(this, o, () => this.tryBiomeExit(target, gate, targetScreen, spawnEdge));
         this.physics.add.overlap(this.player, zone.overlapZone);
         this.zones.push(zone);
@@ -925,9 +942,8 @@ export abstract class BaseBiomeScene extends Phaser.Scene {
 
   /**
    * Attempt a biome transition through a biome_exit zone. When a gate waystone is
-   * given, the transition is barred until that waystone is attuned (the gate reads
-   * the cached server payload). An ungated exit (the Swamp's return) always opens;
-   * Forest→Swamp is gated on forest_sw_stone.
+   * Biome transitions are ungated — bosses physically block the path until
+   * defeated. Once clear the player simply walks through.
    */
   private tryBiomeExit(
     target: string,
@@ -935,13 +951,7 @@ export abstract class BaseBiomeScene extends Phaser.Scene {
     targetScreen?: string,
     spawnEdge?: 'north' | 'south' | 'east' | 'west',
   ): void {
-    if (gate) {
-      const stone = this.waystonePayload?.waystones?.find((w) => w.id === gate);
-      if (!stone?.attuned) {
-        this.showBarrierMessage('You sense a barrier — something blocks the way');
-        return;
-      }
-    }
+    void gate; // formerly a waystone attunement gate; now reserved for future boss-defeat gates
     const data: Record<string, string> = {};
     if (targetScreen) data.screenId = targetScreen;
     if (spawnEdge) data.spawnEdge = spawnEdge;
@@ -1113,26 +1123,6 @@ export abstract class BaseBiomeScene extends Phaser.Scene {
       this.zones.push(zone);
     }
 
-    // Loop B — pure Waystone objects (discoverable standing stones, NO campfire).
-    for (const o of objs) {
-      if (o.name !== 'waystone') continue;
-      const id = this.waystoneIdOf(o);
-      const markerId = id ?? `visual_${o.id ?? o.x}_${o.y}`;
-      const info = id ? byId.get(id) : undefined;
-      const marker = new Waystone(
-        this,
-        o,
-        markerId,
-        info?.name ?? markerId,
-        info?.attuned ?? false,
-        id ? () => void this.onAttune(id) : () => {},
-      );
-      if (id) {
-        this.physics.add.overlap(this.player, marker.interactionZone.overlapZone);
-        this.zones.push(marker.interactionZone);
-      }
-      this.waystones.set(markerId, marker);
-    }
 
     // Anchor-derived spawn (8B.3) + Sanctum exterior (8B.4.1): sprite bottom edge
     // flush with the anchorage bottom edge; player spawns in the tile below.
@@ -1160,24 +1150,18 @@ export abstract class BaseBiomeScene extends Phaser.Scene {
       window.__sanctumReturnCenter = { x: sanctumX, y: sanctumY };
     }
 
-    // #137 — these waystone/anchorage/sanctum world objects were created async
-    // (after the synchronous create() collection), so route them to uiCam.ignore
-    // now: every Waystone marker's display objects, every InteractionZone built in
-    // this method (anchorage zones + the sanctum_return zone are all in this.zones),
-    // the Sanctum exterior sprite, and the campfire graphics. Re-ignoring an object
-    // already ignored is a harmless no-op (it just re-sets the same cameraFilter bit).
+    // #137 — anchorage/sanctum world objects created async must be routed to
+    // uiCam.ignore so the world camera renders them (not uiCam at 1:1).
     {
       const worldObjects: Phaser.GameObjects.GameObject[] = [];
       this.zones.forEach((z) => worldObjects.push(...z.displayObjects));
-      this.waystones.forEach((w) => worldObjects.push(...w.displayObjects));
       this.campfires.forEach((cf) => worldObjects.push(...cf.displayObjects));
       if (this.sanctumSprite) worldObjects.push(this.sanctumSprite);
       this.ignoreWorldObjects(worldObjects);
     }
 
     // 8E (#107) — publish every interaction zone's world center so E2E can read
-    // positions dynamically per-screen (anchorages/waystones/biome_exit/sanctum_
-    // return) instead of hardcoding pixel coordinates that move between screens.
+    // positions dynamically per-screen.
     this.publishZoneCenters();
 
     // Player has been (re)positioned — safe to allow edge transitions again.
@@ -1315,9 +1299,6 @@ export abstract class BaseBiomeScene extends Phaser.Scene {
       if (!res.ok) return;
       const payload = (await res.json()) as WaystonesPayload;
       this.cachePayload(payload);
-      for (const info of payload.waystones) {
-        this.waystones.get(info.id)?.setAttuned(info.attuned);
-      }
       const attuned = payload.waystones.find((w) => w.id === waystoneId);
       if (attuned) this.showToast(`${attuned.name} attuned!`, '#49d3e0');
     } catch {

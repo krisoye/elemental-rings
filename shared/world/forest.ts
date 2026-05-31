@@ -1,17 +1,17 @@
 // Forest region screen manifest (GDD §10.15/§10.17, Phase 8E). The single source
 // of truth for the Forest biome's multi-screen layout: each ScreenDef declares a
 // screen's tile size, its cardinal exits to neighbouring screens, optional
-// safe/danger tagging, the anchorage/waystone catalog ids it carries, and any
-// biome-exit transition to an adjacent biome.
+// safe/danger tagging, the anchorage catalog id it carries, and any biome-exit
+// transition to an adjacent biome.
 //
 // This module is shared by:
 //   - ForestScene (client) — drives edge transitions + per-screen lookup,
 //   - the map generator (gen-forest-screens.mjs inlines a copy of the data),
 //   - the Vitest drift test (reciprocal exits + catalog parity).
 //
-// Anchorage / waystone ids MUST exist in shared/waystones.ts (catalog parity is
-// asserted by the drift test). Exits MUST be reciprocal (a north exit to X means
-// X has a south exit back).
+// Anchorage ids MUST exist in shared/waystones.ts (catalog parity is asserted
+// by the drift test). Exits MUST be reciprocal (a north exit to X means X has
+// a south exit back). Biome exits are ungated; bosses physically block paths.
 
 /** One Forest screen: its tile dimensions, exits, and catalog wiring. */
 export interface ScreenDef {
@@ -25,18 +25,12 @@ export interface ScreenDef {
   safe?: true;
   /** Danger tier (1–3) — drives ambient threat; presentation only. */
   danger?: 1 | 2 | 3;
-  /** Anchorage waystone id placed on this screen — must exist in shared/waystones.ts. */
+  /** Anchorage id placed on this screen — must exist in shared/waystones.ts. */
   anchorage?: string;
-  /** Discovery waystone id placed on this screen — must exist in shared/waystones.ts. */
-  waystone?: string;
   /** A transition to an adjacent biome (e.g. the Swamp) at a screen edge. */
   biomeExit?: {
-    /** Edge the exit sits on. */
     dir: 'north' | 'south' | 'east' | 'west';
-    /** Destination Phaser scene key, e.g. 'SwampScene'. */
     target: string;
-    /** Optional attunement gate — a waystoneId that must be attuned to pass. */
-    gate?: string;
   };
 }
 
@@ -64,7 +58,7 @@ export const FOREST_SCREENS: ScreenDef[] = [
     size: [32, 20],
     exits: { south: 'forest_north_road' },
     danger: 2,
-    waystone: 'forest_north_stone',
+    // Boss guards the northern exit to Snow Fields; no waystone needed.
   },
   {
     id: 'forest_mossy_fen',
@@ -108,8 +102,8 @@ export const FOREST_SCREENS: ScreenDef[] = [
     size: [28, 18],
     exits: { east: 'forest_hollow' },
     danger: 2,
-    waystone: 'forest_sw_stone',
-    biomeExit: { dir: 'south', target: 'SwampScene', gate: 'forest_sw_stone' },
+    // Swamp is open once the Bogwood boss is defeated (blocks path physically).
+    biomeExit: { dir: 'south', target: 'SwampScene' },
   },
   {
     id: 'forest_briar_pass',
@@ -142,7 +136,6 @@ export const FOREST_SCREENS: ScreenDef[] = [
     exits: {},
     danger: 1,
     anchorage: 'forest_hidden_anchor',
-    waystone: 'forest_hidden_glade',
   },
 ];
 

@@ -64,12 +64,10 @@ import { getTalisman } from '../../../shared/talismans';
 import { blinkCost } from '../../../shared/blink';
 
 /**
- * Build the /api/waystones payload for a player: the catalog joined with the
- * player's attunement set, aggregate XP, and current spirit. `meetsThreshold` is
- * the §10.8 teleport-gate predicate — true when the player holds at least the
- * destination's `spiritCost` (#87 Part B; replaces the old aggregate-XP gate).
- * The GET and POST share this one shape so the client can render and disable
- * unaffordable destinations in a single round-trip.
+ * Build the /api/waystones payload for a player: the anchorage catalog joined
+ * with the player's attunement set and current spirit. `meetsThreshold` is the
+ * §10.8 teleport-gate predicate — true when the player holds at least the
+ * destination's spiritCost.
  */
 function buildWaystonePayload(playerId: string): {
   aggregateXp: number;
@@ -78,7 +76,6 @@ function buildWaystonePayload(playerId: string): {
   waystones: Array<{
     id: string;
     name: string;
-    xpThreshold: number;
     spiritCost: number;
     attuned: boolean;
     meetsThreshold: boolean;
@@ -94,7 +91,6 @@ function buildWaystonePayload(playerId: string): {
     waystones: WAYSTONES.map((w) => ({
       id: w.id,
       name: w.name,
-      xpThreshold: w.xpThreshold,
       spiritCost: w.spiritCost,
       attuned: attuned.has(w.id),
       meetsThreshold: spirit_current >= w.spiritCost,
@@ -506,13 +502,6 @@ apiRouter.post('/api/waystones/attune', requireAuth, (req: Request, res: Respons
     return;
   }
   attuneWaystone(playerId, waystoneId);
-  // GDD §10.7 — revelation waystones unlock their targets on attune (8C.2, #82):
-  // attuning the Ironbark Rune also attunes the hidden Forest alcove Anchorage,
-  // which has no walking path and is otherwise unreachable. Each revealed id is
-  // validated against the catalog so a malformed `reveals` entry is a safe no-op.
-  for (const revealedId of def.reveals ?? []) {
-    if (getWaystone(revealedId)) attuneWaystone(playerId, revealedId);
-  }
   res.status(200).json(buildWaystonePayload(playerId));
 });
 
