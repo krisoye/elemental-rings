@@ -142,18 +142,31 @@ The Forest is a **multi-screen region** — a graph of discrete maps connected b
 - `biome_exit` marks a transition to a different biome scene, gated by attunement of the named waystone.
 - Add a new screen here first; the drift test will catch any broken exits or unknown ids before implementation.
 
-**Region topology:**
+**Region topology (28 screens):**
+
+*Main body + west wing + Thornado wing:*
 ```
             [snow_gate]
                  │ N/S
             [north_road]
                  │ N/S
-[mossy_fen]──W/E─[anchorage]─E/W──[east_path]──E/W──[glade]──N/S──[crossroads]──E/W──[briar_pass]
-                      │ N/S                                               │ N/S              │ N/S
-               [south_path]                                         [ridge]──E/W──[deepwood]──E/W──[boss_clearing]
-                      │ N/S                                                                          │ N/S
-               [hollow]──W/E──[swamp_gate]──→ SwampScene                                      [briar_pass] (loop)
-
+[fen_ridge]─S/N─[deep_fen]─E/W─[mossy_fen]─E/W─[anchorage]─E/W─[east_path]─E/W─[glade]─E/W─[heath]─N/S─[gale_lookout]
+                                                      │ N/S                              │ N/S       │ E/W
+                                               [south_path]                        [crossroads]  [wind_shelf]─E/W─[thornado_shrine]
+                                                      │ N/S                              │ N/S
+                                               [hollow]─W/E─[swamp_gate]──→ SwampScene  [ridge]─N/S─[rocky_overlook]
+                                                                                            │ E/W
+                                               [crossroads]─E/W─[briar_pass]─S/N─[boss_clearing]─W/E─[deepwood]
+```
+*Deep forest loop (south of boss clearing):*
+```
+[boss_clearing]─S/N─[verdant_descent]─S/N─[ancient_grove]─W/E─[bloom_hollow]
+     │ W/E                                       │ E/W
+ [deepwood]─S/N─[root_tangle]─E/W─[canopy_walk]─E/W─[briar_thicket]
+                     │ N/S
+             (loops back N to deepwood)
+```
+```
 [hidden_alcove]  ← teleport-only, no walking exits
 ```
 
@@ -190,9 +203,9 @@ The Forest is a **multi-screen region** — a graph of discrete maps connected b
 
 #### `forest_mossy_fen` — Mossy Fen
 - **size:** 32×22
-- **exits:** east → `forest_anchorage`
+- **exits:** east → `forest_anchorage`, west → `forest_deep_fen`
 - **danger:** 1
-- **content:** A quiet, slightly boggy clearing west of town. Mossy ground, scattered mushroom clusters, low-hanging branches. The richest early foraging spot. A solitary passive Villager wanders here. Dead end — the western edge is impassable undergrowth.
+- **content:** A quiet, slightly boggy clearing west of town. Mossy ground, scattered mushroom clusters, low-hanging branches. The richest early foraging spot. A solitary passive Villager wanders here. A path west continues deeper into the fen.
 
 ---
 
@@ -206,10 +219,10 @@ The Forest is a **multi-screen region** — a graph of discrete maps connected b
 
 #### `forest_glade` — The Glade
 - **size:** 36×28
-- **exits:** west → `forest_east_path`, north → `forest_crossroads`
+- **exits:** west → `forest_east_path`, north → `forest_crossroads`, east → `forest_heath`
 - **anchorage:** `forest_glade`
 - **danger:** 1
-- **content:** A sunlit open meadow — the second Anchorage and the first natural rest stop beyond the hub. Tall grass at the edges, a worn campfire ring at center. Several Duelist NPCs wander between here and the Crossroads.
+- **content:** A sunlit open meadow — the second Anchorage and the first natural rest stop beyond the hub. Tall grass at the edges, a worn campfire ring at center. Several Duelist NPCs wander between here and the Crossroads. The eastern edge opens onto rolling heath — the start of the Thornado wing.
 
 ---
 
@@ -257,26 +270,151 @@ The Forest is a **multi-screen region** — a graph of discrete maps connected b
 
 #### `forest_ridge` — The Ridge
 - **size:** 32×22
-- **exits:** south → `forest_crossroads`, east → `forest_deepwood`
+- **exits:** south → `forest_crossroads`, east → `forest_deepwood`, north → `forest_rocky_overlook`
 - **danger:** 2
-- **content:** Rocky elevated ground; implied hillside looking south over the canopy. Sparse trees, more open sky. Danger 2 duelists patrol the exposed rock. The eastern descent drops into the darkest part of the forest.
+- **content:** Rocky elevated ground; implied hillside looking south over the canopy. Sparse trees, more open sky. Danger 2 duelists patrol the exposed rock. The eastern descent drops into the darkest part of the forest. A rocky path climbs north to an exposed overlook.
 
 ---
 
 #### `forest_deepwood` — The Deepwood
 - **size:** 40×30
-- **exits:** west → `forest_ridge`, east → `forest_boss_clearing`
+- **exits:** west → `forest_ridge`, east → `forest_boss_clearing`, south → `forest_root_tangle`
 - **anchorage:** `forest_depths`
 - **danger:** 3
-- **content:** The oldest, darkest part of the forest — ancient gnarled trees, almost no light reaching the floor. The forest_depths Anchorage sits in a rare clearing, a hard-earned rest point. Danger 3 duelists. The eastern path descends toward the Boss Clearing, creating a loop with Briar Pass.
+- **content:** The oldest, darkest part of the forest — ancient gnarled trees, almost no light reaching the floor. The forest_depths Anchorage sits in a rare clearing, a hard-earned rest point. Danger 3 duelists. The eastern path descends toward the Boss Clearing, creating a loop with Briar Pass. A southern exit drops into the Root Tangle, closing the deep-forest loop.
 
 ---
 
 #### `forest_boss_clearing` — The Boss Clearing
 - **size:** 28×22
-- **exits:** north → `forest_briar_pass`, west → `forest_deepwood`
+- **exits:** north → `forest_briar_pass`, west → `forest_deepwood`, south → `forest_verdant_descent` *(opens on boss defeat)*
 - **danger:** 3
-- **content:** A circular clearing, unnaturally still and quiet. The Forest biome boss resides here and guards the waystone or unique item that closes the Forest chapter. Reachable from two directions — Briar Pass from the north, Deepwood from the west — rewarding thorough exploration with the loop.
+- **waystone:** `forest_desert_stone` — *The Barrowstone* (reveals the Desert biome; guarded by the boss; attuneable after defeat)
+
+**Boss: The Thornwood Warden**
+A towering spirit of bark and howling wind, the oldest guardian the Forest has ever set against intruders. Uses Wood offensively and Wind defensively — the same combination as the Thornado ring, previewing what fusion can produce.
+
+| Property | Value |
+|---|---|
+| Elements | Wood (attack) + Wind (defense) |
+| Personality | Aggressive / Defensive mix |
+| HP | Major boss tier |
+| XP | Major boss tier |
+
+**Defeat rewards:**
+1. **Reliquary Shard** — the first shard in the game. Expands the Reliquary from 20 to 30 ring slots (§4.1.1).
+2. **Large food cache** — biome boss food drop (§10.5).
+3. **The Barrowstone** becomes attuneable — reveals the Desert biome path.
+4. **South exit opens** — the Verdant Descent becomes accessible, unlocking the Bloom wing.
+
+**Content:** A circular clearing of stamped earth ringed by ancient standing stones, unnaturally still and quiet. The Barrowstone — a weathered waystone carved with desert-wind glyphs — stands at the far end, inert until the Warden falls. Reachable from two directions before the fight — Briar Pass from the north, Deepwood from the west — but there is no way south until the Warden is defeated.
+
+---
+
+#### `forest_heath` — The Heath
+- **size:** 38×26
+- **exits:** west → `forest_glade`, east → `forest_wind_shelf`, north → `forest_gale_lookout`
+- **danger:** 2
+- **content:** Open rolling heath east of the Glade. Long grass, scattered boulders, hawthorn thickets at the edges. The first screen where Wind-element NPCs appear in numbers alongside Wood ones. The air tastes drier, more open — a noticeable shift from the enclosed forest interior.
+
+---
+
+#### `forest_gale_lookout` — Gale Lookout
+- **size:** 26×20
+- **exits:** south → `forest_heath`
+- **danger:** 2
+- **content:** A rocky outcrop north of the Heath at the top of a slight rise. Open sky, sweeping view back over the forest canopy. One strong Wind-element duelist guards the high ground. A forage node sits in a windswept crevice. Dead end.
+
+---
+
+#### `forest_wind_shelf` — Wind Shelf
+- **size:** 28×28
+- **exits:** west → `forest_heath`, east → `forest_thornado_shrine`
+- **danger:** 2
+- **content:** Elevated rocky shelf — trees here are sparse and twisted sideways after decades of wind. Stones are scoured smooth. The path east narrows into a natural wind tunnel between two stone faces; the sound of the shrine clearing is audible before it is visible.
+
+---
+
+#### `forest_thornado_shrine` — Thornado Shrine
+- **size:** 40×30
+- **exits:** west → `forest_wind_shelf`
+- **danger:** 2
+- **shrine:** Thornado (Wood + Wind)
+- **shrine_key:** The altar doors are sealed. A Thornado ring must be won and inserted into the altar slot to unseal them permanently. The Shrine Guardian — a duelist who wields the only Thornado ring in this part of the forest — must be defeated first. Inserting the ring consumes it; the doors open and crafting becomes available from that point forward.
+- **content:** A wide clearing at the forest's windswept eastern fringe. An ancient stone altar stands at the center, its twin doors sealed and carved with intertwined Wood and Wind glyphs. A perpetual gale circles the clearing, bending the grass flat. The Shrine Guardian patrols the outer ring. Defeat them, claim their Thornado ring, and present it to the altar to unlock Thornado crafting here. The shrine is reachable before the Forest boss, but the Thornado ring must be won in combat first. Dead end.
+
+---
+
+#### `forest_verdant_descent` — Verdant Descent
+- **size:** 18×32
+- **exits:** north → `forest_boss_clearing`, south → `forest_ancient_grove`
+- **danger:** 2
+- **content:** A narrow root-lined passage south of the Boss Clearing, accessible only after the Thornwood Warden is defeated. The ground drops away; ancient tree roots form natural steps downward. The air shifts — warmer, earthier, rich with mulch and pollen. The oppressive stillness of the clearing gives way to something alive.
+
+---
+
+#### `forest_ancient_grove` — The Ancient Grove
+- **size:** 44×34
+- **exits:** north → `forest_verdant_descent`, west → `forest_bloom_hollow`, east → `forest_root_tangle`
+- **danger:** 3
+- **content:** The oldest living part of the Forest — oak trees with canopies so wide they block the sky entirely. The floor is carpeted with flowering moss, exposed root systems, and patches of deep earth. This is the hub of the post-boss region: north leads back up to the Boss Clearing via the Verdant Descent, west reaches the Bloom Hollow and its shrine, east descends into the Root Tangle. Danger 3 Earth-and-Wood duelists wander between the great trunks.
+
+---
+
+#### `forest_bloom_hollow` — Bloom Hollow
+- **size:** 38×30
+- **exits:** east → `forest_ancient_grove`
+- **danger:** 2
+- **shrine:** Bloom (Wood + Earth)
+- **content:** A sunken hollow west of the Ancient Grove. The ground dips into a natural bowl thick with flowering vines, wild roses, and earthen mounds. The Bloom shrine altar sits at the lowest point — its doors stand open, unsealed long before the Forest was settled, awaiting whoever comes to use it. A shrine guardian defends the hollow. Dead end — the western edge is a sheer root wall.
+
+---
+
+#### `forest_root_tangle` — The Root Tangle
+- **size:** 32×24
+- **exits:** west → `forest_ancient_grove`, north → `forest_deepwood`
+- **danger:** 3
+- **content:** Chaotic exposed root systems east of the Ancient Grove — root walls as tall as a person force a winding path through the screen. The northern exit emerges in the Deepwood, closing the deep-forest loop (Ancient Grove → Root Tangle → Deepwood → Boss Clearing → Verdant Descent → Ancient Grove). Two or three of the toughest Forest-zone duelists roam here.
+
+---
+
+#### `forest_canopy_walk` — Canopy Walk
+- **size:** 22×38
+- **exits:** west → `forest_root_tangle`, east → `forest_briar_thicket`
+- **danger:** 3
+- **content:** The terrain rises east of the Root Tangle; ancient root platforms and compressed bark form a natural elevated walkway above the forest floor. Rare high-XP NPCs patrol the walkway. The path continues east into the densest briar growth in the Forest.
+
+---
+
+#### `forest_briar_thicket` — The Briar Thicket
+- **size:** 30×22
+- **exits:** west → `forest_canopy_walk`
+- **danger:** 3
+- **content:** The easternmost screen of the Forest biome — a wall of mature briar and thorned undergrowth pressed against the canopy ceiling. The highest NPC density in the Forest. Rewards those who push all the way through with the strongest XP gains before they leave the biome. Dead end.
+
+---
+
+#### `forest_deep_fen` — The Deep Fen
+- **size:** 34×28
+- **exits:** east → `forest_mossy_fen`, north → `forest_fen_ridge`
+- **danger:** 2
+- **content:** A boggy extension west of the Mossy Fen. Darker palette, standing water pools, unfamiliar mushroom varieties. Better foraging than the Mossy Fen but stronger NPCs. The northern rise is rocky and exposed above the waterline.
+
+---
+
+#### `forest_fen_ridge` — Fen Ridge
+- **size:** 28×22
+- **exits:** south → `forest_deep_fen`
+- **danger:** 2
+- **content:** A rocky ridge above the western fen, exposed to wind blowing in from the open country beyond the Forest's edge. One strong NPC holds the high ground. A forage node sits in a windswept crevice. Dead end — the western face is a sheer drop.
+
+---
+
+#### `forest_rocky_overlook` — Rocky Overlook
+- **size:** 28×18
+- **exits:** south → `forest_ridge`
+- **danger:** 2
+- **content:** Elevated rock north of the Ridge. The forest canopy stretches south as far as the eye can see — a rare open view. One seasoned Duelist NPC. Dead end.
 
 ---
 
@@ -355,7 +493,7 @@ BaseBiomeScene (abstract Phaser.Scene)
 │     onEnterScreen?()  ← per-screen decoration placement
 
 ForestScene extends BaseBiomeScene
-│   manifest: FOREST_SCREENS (shared/world/forest.ts — 15 screens)
+│   manifest: FOREST_SCREENS (shared/world/forest.ts — 28 screens)
 │   tilesetKey() → 'forest'
 │   Phaser key: 'ForestScene'; init({ screenId, spawnEdge })
 │   onEnterScreen() → calls Decoration.placeDecoration per screenId spec
@@ -376,9 +514,9 @@ SwampScene extends BaseBiomeScene
 
 - [#98](https://github.com/krisoye/elemental-rings/issues/98) — **8E.1:** `BaseBiomeScene` + `ForestScene` core. Extracts all shared logic from `OverworldScene` into `BaseBiomeScene`. Creates `ForestScene`, `shared/world/forest.ts` manifest, edge-transition system. Deletes `OverworldScene.ts` + `HiddenForestScene.ts`. Extends drift test for reciprocal exits + waystones.ts parity.
 - [#99](https://github.com/krisoye/elemental-rings/issues/99) — **8E.3:** Server NPC screen-awareness. Adds `screen: string` to `NpcSpawnDef`; expands `NPC_SPAWNS` for all Forest screens by danger tier; adds `?screen=` filter to `GET /api/overworld/npcs` (screen required when biome provided).
-- [#100](https://github.com/krisoye/elemental-rings/issues/100) — **8E.2:** Forest screen map generator. Single `gen-forest-screens.mjs` generates all 15 maps from `FOREST_SCREENS` manifest → `maps/forest/<id>.json`. Corridor maps auto-shaped; open maps get grove clusters; object layer derived from manifest fields. Deletes `gen-overworld-map.mjs`, `overworld.json`, `forest_hidden.json`.
+- [#100](https://github.com/krisoye/elemental-rings/issues/100) — **8E.2:** Forest screen map generator. Single `gen-forest-screens.mjs` generates all 28 maps from `FOREST_SCREENS` manifest → `maps/forest/<id>.json`. Corridor maps auto-shaped; open maps get grove clusters; object layer derived from manifest fields. Deletes `gen-overworld-map.mjs`, `overworld.json`, `forest_hidden.json`.
 - [#101](https://github.com/krisoye/elemental-rings/issues/101) — **8E.4:** Migrate `SwampScene` to `BaseBiomeScene`. Removes ~250 lines of duplicated shared logic; keeps fog + detection-radius overrides; creates `shared/world/swamp.ts`.
-- [#102](https://github.com/krisoye/elemental-rings/issues/102) — **8E.5:** Forest decoration + hub structures placement. Art-directs all 15 Forest screens via `Decoration.ts` + `SCREEN_SPECS` constant in `ForestScene`. Hub gets Starter Village buildings; corridors get dense flanking trees; deep forest gets densest coverage; boss clearing kept open.
+- [#102](https://github.com/krisoye/elemental-rings/issues/102) — **8E.5:** Forest decoration + hub structures placement. Art-directs all 28 Forest screens via `Decoration.ts` + `SCREEN_SPECS` constant in `ForestScene`. Hub gets Starter Village buildings; corridors get dense flanking trees; deep forest gets densest coverage; boss clearing kept open; shrine screens get altar objects.
 
 **Confirmed implementation decisions (8E):**
 

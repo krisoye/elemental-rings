@@ -23,7 +23,7 @@ Each biome has NPCs and monsters that lean toward specific element distributions
 
 | Biome | Dominant Elements | Key Weaknesses to Bring | Notable Content |
 |---|---|---|---|
-| Forest | Wood, Wind, Bloom | Fire, Water | Early-game, teaches base element triangle |
+| Forest | Wood, Wind, Bloom | Fire, Water | Thornado shrine (sealed — ring-key unlock); Bloom shrine (open); boss: The Thornwood Warden; Desert biome waystone (The Barrowstone) |
 | Snow Fields | Water, Wind, Mud | Fire, Earth ⚠️ *[Metal removed in v4 — counter TBD]* | Frost shrine; cold-water fusion encounters |
 | Swamps | Mud, Water, Wood, Earth | Fire, Wind | Mud shrine; reduced enemy visibility range |
 | Desert | Fire, Earth, Magma | Water, Mud, Wind | Magma shrine; Magma-type recipes |

@@ -53,8 +53,18 @@ Tier 3 recipes are not yet fully defined — they will emerge from the overworld
 
 **Where:** Fusion shrines in the overworld. Each shrine is associated with one or more recipes. The player must physically reach the shrine to craft there. *(Phase 8 — for now, fusion is accessible from the Sanctum camp screen for development and testing.)*
 
-**How:**
-1. The player visits a shrine (or the Sanctum in early phases)
+**Shrine sealing — the ring-key mechanic:**
+Some shrines are sealed on first visit. A sealed shrine displays its recipe but cannot be used until the player presents a ring of the correct fusion type to the altar. The ring is **consumed** as a key — it opens the shrine doors permanently for all future visits. The ring must be won in combat (typically from a guardian NPC who wields one in the area around the shrine).
+
+| Shrine | Location | Sealed? | Key required |
+|---|---|---|---|
+| Thornado | Forest biome, eastern wing | Yes | A Thornado ring (won from the Shrine Guardian) |
+| Bloom | Forest biome, deep south wing | No | Open; no key required |
+
+The Thornado shrine is reachable before the Forest boss, but the key must be won first — the Shrine Guardian in that screen is the only source of a Thornado ring before crafting is unlocked.
+
+**How to craft:**
+1. The player visits an open shrine (or the Sanctum in early phases)
 2. They select two rings they own that form a valid pair and are both at their tier's XP cap
 3. The game previews the result (element, tier, XP, uses)
 4. The player confirms — parent rings are consumed, fusion ring is created and added to inventory
