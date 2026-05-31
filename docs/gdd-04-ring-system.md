@@ -90,7 +90,7 @@ Fusion combines two rings of the **same tier** into a single compound-element ri
 
 **Fusion rules:**
 - Both parent rings must be the **same tier**
-- Minimum tier to fuse: **Tier 2** (both rings must have ≥ 1 500 XP)
+- Minimum tier to fuse: **Tier 1** (both rings must have ≥ 500 XP)
 - Both parent rings are consumed; they cease to exist
 - The fused ring's **XP = parent1.xp + parent2.xp** — the full investment of both parents is preserved
 - The fused ring's **tier is determined by its total XP** via the standard tier formula
@@ -98,16 +98,16 @@ Fusion combines two rings of the **same tier** into a single compound-element ri
 
 **Uses penalty:** the −1 deduction reflects the energy cost of combining two rings. The fused ring is not weaker per se — it has a compound element that covers more match-ups — but it has fewer shots before depleting. It earns the next +1 use by crossing the following tier threshold naturally through battle.
 
-**Worked example — fusing two minimum Tier 2 rings:**
+**Worked example — fusing two minimum Tier 1 rings:**
 
 | | Parent 1 | Parent 2 | Fused result |
 |---|---|---|---|
-| XP | 1 500 | 1 500 | 3 000 |
-| Tier | 2 | 2 | 3 (lands at threshold) |
-| Max uses | 5 | 5 | min(5,5) − 1 = **4** |
-| Next +1 use | — | — | Cross Tier 4 (5 000 XP) in battle |
+| XP | 500 | 500 | 1 000 |
+| Tier | 1 | 1 | 1 (XP 1 000 is within Tier 1's range) |
+| Max uses | 4 | 4 | min(4,4) − 1 = **3** |
+| Next +1 use | — | — | Cross Tier 2 (1 500 XP) in battle |
 
-The fused ring starts at Tier 3 with 4 uses. A natural Tier 3 ring has 6 uses. The 2-use gap closes as the fused ring earns XP: +1 use at Tier 4, +1 more at Tier 5, and so on.
+The fused ring starts at Tier 1 with 3 uses. A natural Tier 1 ring has 4 uses. The gap closes as the fused ring earns XP: +1 use at Tier 2, and so on.
 
 **Two progression paths:**
 
