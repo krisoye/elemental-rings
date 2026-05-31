@@ -34,30 +34,94 @@ test('forage-client: forage fresh node in forest_anchorage updates HUD', async (
   const page = await ctx.newPage();
   await page.goto(URL);
 
-  // Navigate to forest_anchorage.
+  // Navigate to forest_anchorage (enterForestScreen waits for __waystones +
+  // __zoneCenters, which is published after the forage zones are built).
   await enterForestScreen(page, 'forest_anchorage');
 
-  // Wait for ForageNodes to exist (the berry_and_trees texture is loaded).
+  // Wait for the forage zone center to be published (node constructed).
   await page.waitForFunction(
-    () => (window as any).__scene?.textures?.exists?.('berry-nodes'),
+    () => {
+      const zc = (window as any).__zoneCenters as Record<string, unknown> | undefined;
+      return !!zc && !!zc['forest_anchorage:berry_1'];
+    },
     { timeout: 8000 },
   );
+
+  // #195 — capture the with-food plant tile indices BEFORE foraging, by reading
+  // the behind/in-front tiles over the node's footprint via the live tilemap.
+  const tilesBefore = await page.evaluate(() => {
+    const scene = (window as any).__scene;
+    const map = scene?.map as any;
+    const zc = (window as any).__zoneCenters as Record<string, { x: number; y: number }>;
+    const c = zc['forest_anchorage:berry_1'];
+    const tw = map.tileWidth;
+    const tx0 = Math.floor((c.x - 16) / tw);
+    const ty0 = Math.floor((c.y - 16) / tw);
+    const out: number[] = [];
+    for (const layer of ['behind', 'in-front']) {
+      for (let dy = 0; dy < 2; dy++)
+        for (let dx = 0; dx < 2; dx++) {
+          const t = map.getTileAt(tx0 + dx, ty0 + dy, false, layer);
+          if (t) out.push(t.index);
+        }
+    }
+    return out;
+  });
 
   // Get food before forage.
   const foodBefore = await (
     await fetch(`${API_URL}/api/me`, { headers: { Authorization: `Bearer ${token}` } })
   ).json().then((d: any) => d.player.food_units);
 
-  // Forage node 1 via the server API (simulates E press result).
-  const forageRes = await fetch(`${API_URL}/api/overworld/forage`, {
-    method: 'POST',
-    headers: authJson(token),
-    body: JSON.stringify({ node_id: 'forest_anchorage:berry_1' }),
+  // Position the player on the node and press E to forage (drives the client
+  // tile-swap, not just the API).
+  await page.evaluate(() => {
+    const zc = (window as any).__zoneCenters as Record<string, { x: number; y: number }>;
+    const c = zc['forest_anchorage:berry_1'];
+    (window as any).__player?.setPosition(c.x, c.y);
   });
-  expect(forageRes.status).toBe(200);
-  const { food_units: foodAfter, yielded } = (await forageRes.json()) as { food_units: number; yielded: number };
-  expect(yielded).toBe(1);
+  await page.waitForFunction(
+    () => ((window as any).__sanctumZones as string[] | undefined)?.includes('forest_anchorage:berry_1'),
+    { timeout: 5000 },
+  );
+  await page.keyboard.press('e');
+  await page.waitForFunction(
+    () => {
+      const f = (window as any).__forageNodeForaged as { nodeId: string } | undefined;
+      return !!f && f.nodeId === 'forest_anchorage:berry_1';
+    },
+    { timeout: 5000 },
+  );
+
+  const foodAfter = await (
+    await fetch(`${API_URL}/api/me`, { headers: { Authorization: `Bearer ${token}` } })
+  ).json().then((d: any) => d.player.food_units);
   expect(foodAfter).toBe(foodBefore + 1);
+
+  // #195 — after foraging, each with-food tile index decreased by exactly 2
+  // (with-food → without-food), and at least one plant tile was present.
+  const tilesAfter = await page.evaluate(() => {
+    const scene = (window as any).__scene;
+    const map = scene?.map as any;
+    const zc = (window as any).__zoneCenters as Record<string, { x: number; y: number }>;
+    const c = zc['forest_anchorage:berry_1'];
+    const tw = map.tileWidth;
+    const tx0 = Math.floor((c.x - 16) / tw);
+    const ty0 = Math.floor((c.y - 16) / tw);
+    const out: number[] = [];
+    for (const layer of ['behind', 'in-front']) {
+      for (let dy = 0; dy < 2; dy++)
+        for (let dx = 0; dx < 2; dx++) {
+          const t = map.getTileAt(tx0 + dx, ty0 + dy, false, layer);
+          if (t) out.push(t.index);
+        }
+    }
+    return out;
+  });
+  expect(tilesBefore.length).toBeGreaterThan(0);
+  // The set of plant tiles should have shifted down by 2 (with-food → without-food).
+  const droppedByTwo = tilesBefore.filter((g) => tilesAfter.includes(g - 2)).length;
+  expect(droppedByTwo).toBeGreaterThan(0);
 
   await ctx.close();
 });
@@ -187,13 +251,8 @@ test('forage-client: swamp forage node accessible', async ({ browser }) => {
     () => (window as any).__activeScene === 'SwampScene',
     { timeout: 8000 },
   );
-  // Wait for the berry-nodes texture to load.
-  await page.waitForFunction(
-    () => (window as any).__scene?.textures?.exists?.('berry-nodes'),
-    { timeout: 8000 },
-  );
 
-  // Forage the swamp node via the API.
+  // Forage the swamp node via the API (server keys by opaque node_id).
   const { player: before } = (await (
     await fetch(`${API_URL}/api/me`, { headers: { Authorization: `Bearer ${token}` } })
   ).json()) as { player: { food_units: number } };

@@ -327,14 +327,9 @@ export abstract class BaseBiomeScene extends Phaser.Scene {
         this.load.spritesheet(entry.key, entry.path, { frameWidth: 24, frameHeight: 32 });
       }
     }
-    // #128 — berry bush / fruit tree nodes (GDD §10.10).
-    // Spritesheet is 80×176 with 16×16 frames (5 cols × 11 rows).
-    if (!this.textures.exists('berry-nodes')) {
-      this.load.spritesheet('berry-nodes', 'assets/flora/flora_berries_trees.png', {
-        frameWidth: 16,
-        frameHeight: 16,
-      });
-    }
+    // #195 — forage-node plants are tilemap tiles (behind/in-front layers via the
+    // `berry_and_trees` Tiled tileset), not a standalone sprite. ForageNode toggles
+    // those tiles, so no `berry-nodes` spritesheet load is needed here anymore.
   }
 
   // ── Lifecycle ─────────────────────────────────────────────────────────────
@@ -859,6 +854,7 @@ export abstract class BaseBiomeScene extends Phaser.Scene {
         if (!nodeId) continue;
         const node = new ForageNode(
           this,
+          this.map,
           o,
           nodeId,
           (food_units) => {
