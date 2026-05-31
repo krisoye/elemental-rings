@@ -142,16 +142,7 @@ export class ForestScene extends BaseBiomeScene {
     return 0; // ground
   }
 
-  /**
-   * The hub map (`forest_anchorage`) includes the Sanctum building as hand-authored
-   * Tiled tiles (ground / behind / in-front layers), so the generated
-   * `sanctum-exterior.png` sprite would double-render over the same spot and appear
-   * twice the expected size at 2× zoom. Return false to skip the sprite; the
-   * sanctum_return interaction zone is still built normally.
-   */
-  protected shouldDrawSanctumExterior(): boolean {
-    return !this.is16pxScreen();
-  }
+
 
   preload(): void {
     if (this.screenId === 'forest_anchorage') {

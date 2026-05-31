@@ -472,9 +472,11 @@ export class CampScene extends Phaser.Scene {
     const target = CampScene.biomeSceneForAnchor(anchor);
     const data = CampScene.forestScreenForAnchor(anchor);
     if (this.scene.manager.keys[target]) {
-      this.scene.start(target, data);
+      // fromSanctum suppresses edge transitions in BaseBiomeScene until
+      // loadWaystones repositions the player at the sanctum door.
+      this.scene.start(target, { ...data, fromSanctum: true });
     } else if (this.scene.manager.keys['ForestScene']) {
-      this.scene.start('ForestScene');
+      this.scene.start('ForestScene', { fromSanctum: true });
     }
   }
 
