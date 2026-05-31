@@ -1467,66 +1467,141 @@ export class CampScene extends Phaser.Scene {
       })),
     };
 
+    // Scroll grid layout: 5 rows visible, 52px per row. Visibility-windowed (same
+    // pattern as InventoryGrid) — GeometryMask is unreliable in nested Containers
+    // under a multi-camera setup in Phaser 4.
+    const ROW_H = 52;
+    const VISIBLE_ROWS = 5;
+    const LIST_TOP = 140;
+    const LIST_BOTTOM = LIST_TOP + VISIBLE_ROWS * ROW_H; // 400
+    const ARROW_X = CANVAS_W / 2 + 330;
+    const NAME_X = CANVAS_W / 2 - 310;
+    const BTN_X = CANVAS_W / 2 + 80;
+
+    let scrollRow = 0;
+    const totalRows = payload.waystones.length;
+
+    type RowEntry = {
+      nameText: Phaser.GameObjects.Text;
+      subText?: Phaser.GameObjects.Text;
+      btnText?: Phaser.GameObjects.Text;
+    };
+    const rows: RowEntry[] = [];
+
     const c = this.beginOverlay('teleport', 'TELEPORT');
-    let y = 150;
+
+    // Spirit balance display
+    c.add(
+      this.add
+        .text(CANVAS_W / 2, 95, `Spirit: ${payload.spiritCurrent ?? 0}`, {
+          fontSize: '14px',
+          color: '#88ccff',
+        })
+        .setOrigin(0.5)
+        .setScrollFactor(0),
+    );
+
+    // Thin divider below header
+    c.add(
+      this.add
+        .rectangle(CANVAS_W / 2, 115, 680, 1, 0x444466)
+        .setScrollFactor(0),
+    );
+
+    // Scroll arrows
+    const upArrow = this.add
+      .text(ARROW_X, LIST_TOP + 8, '▲', { fontSize: '14px', color: '#aaaaaa' })
+      .setOrigin(0.5)
+      .setScrollFactor(0)
+      .setInteractive({ useHandCursor: true });
+    const downArrow = this.add
+      .text(ARROW_X, LIST_BOTTOM - 8, '▼', { fontSize: '14px', color: '#aaaaaa' })
+      .setOrigin(0.5)
+      .setScrollFactor(0)
+      .setInteractive({ useHandCursor: true });
+    c.add([upArrow, downArrow]);
+
+    const applyScroll = (): void => {
+      for (let i = 0; i < rows.length; i++) {
+        const inView = i >= scrollRow && i < scrollRow + VISIBLE_ROWS;
+        const rowTopY = LIST_TOP + (i - scrollRow) * ROW_H;
+        const r = rows[i];
+        r.nameText.setVisible(inView).setY(rowTopY + 16);
+        if (r.subText) r.subText.setVisible(inView).setY(rowTopY + 34);
+        if (r.btnText) r.btnText.setVisible(inView).setY(rowTopY + 16);
+      }
+      upArrow.setAlpha(scrollRow > 0 ? 1 : 0.3);
+      downArrow.setAlpha(scrollRow + VISIBLE_ROWS < totalRows ? 1 : 0.3);
+    };
+
+    const scroll = (delta: number): void => {
+      const maxScroll = Math.max(0, totalRows - VISIBLE_ROWS);
+      scrollRow = Math.max(0, Math.min(maxScroll, scrollRow + delta));
+      applyScroll();
+    };
+
+    upArrow.on('pointerdown', () => scroll(-1));
+    downArrow.on('pointerdown', () => scroll(1));
+
+    // Mouse-wheel scrolls the list; removed when the overlay closes.
+    const wheelHandler = (
+      _p: Phaser.Input.Pointer,
+      _go: unknown,
+      _dx: number,
+      dy: number,
+    ): void => {
+      if (this.overlayName !== 'teleport') return;
+      scroll(dy > 0 ? 1 : -1);
+    };
+    this.input.on('wheel', wheelHandler);
+    this.overlayOnClose = () => this.input.off('wheel', wheelHandler);
+
+    // Build one row per waystone
     for (const w of payload.waystones) {
       const isAnchor = w.id === payload.anchor;
-      const suffix = isAnchor ? ' (anchored here)' : '';
+      const anchorMark = isAnchor ? ' ★' : '';
+
       if (!w.attuned) {
-        // Undiscovered — masked, non-actionable.
-        c.add(
-          this.add
-            .text(CANVAS_W / 2, y, `??? — undiscovered${suffix}`, {
-              fontSize: '14px',
-              color: '#555555',
-            })
-            .setOrigin(0.5)
-            .setScrollFactor(0),
-        );
+        const nameText = this.add
+          .text(NAME_X, 0, `??? — undiscovered${anchorMark}`, { fontSize: '14px', color: '#555555' })
+          .setOrigin(0, 0.5)
+          .setScrollFactor(0);
+        c.add(nameText);
+        rows.push({ nameText });
       } else if (!w.meetsThreshold) {
-        // #87 Part B — attuned but SPIRIT-locked: show the spirit gate, grey out,
-        // no Travel button (the §10.8 gate is current spirit, not aggregate XP).
-        c.add(
-          this.add
-            .text(CANVAS_W / 2, y, `${w.name}${suffix}`, { fontSize: '14px', color: '#888888' })
-            .setOrigin(0.5)
-            .setScrollFactor(0),
-        );
-        c.add(
-          this.add
-            .text(
-              CANVAS_W / 2,
-              y + 20,
-              `Requires ${w.spiritCost ?? 0} spirit (have ${payload.spiritCurrent ?? 0})`,
-              { fontSize: '12px', color: '#666666' },
-            )
-            .setOrigin(0.5)
-            .setScrollFactor(0),
-        );
-        y += 20;
+        // #87 Part B — spirit-locked: name greyed out, cost shown as subtitle.
+        const nameText = this.add
+          .text(NAME_X, 0, `${w.name}${anchorMark}`, { fontSize: '14px', color: '#888888' })
+          .setOrigin(0, 0.5)
+          .setScrollFactor(0);
+        const subText = this.add
+          .text(NAME_X, 0, `${w.spiritCost ?? 0} spirit required`, { fontSize: '12px', color: '#666666' })
+          .setOrigin(0, 0.5)
+          .setScrollFactor(0);
+        c.add([nameText, subText]);
+        rows.push({ nameText, subText });
       } else {
-        // Attuned + affordable — actionable [Travel] button labelled with the cost.
-        c.add(
-          this.add
-            .text(CANVAS_W / 2 - 90, y, `${w.name}${suffix}`, { fontSize: '14px', color: '#cccccc' })
-            .setOrigin(0.5)
-            .setScrollFactor(0),
-        );
-        c.add(
-          this.add
-            .text(CANVAS_W / 2 + 70, y, `[Travel — ${w.spiritCost ?? 0} spirit]`, {
-              fontSize: '13px',
-              color: '#ffcc44',
-            })
-            .setOrigin(0.5)
-            .setScrollFactor(0)
-            .setName(`travel-${w.id}`)
-            .setInteractive({ useHandCursor: true })
-            .on('pointerdown', () => void this.doTeleport(w.id, w.name)),
-        );
+        // Attuned + affordable — actionable [Travel] button.
+        const nameText = this.add
+          .text(NAME_X, 0, `${w.name}${anchorMark}`, { fontSize: '14px', color: '#cccccc' })
+          .setOrigin(0, 0.5)
+          .setScrollFactor(0);
+        const btnText = this.add
+          .text(BTN_X, 0, `[Travel — ${w.spiritCost ?? 0} spirit]`, {
+            fontSize: '13px',
+            color: '#ffcc44',
+          })
+          .setOrigin(0, 0.5)
+          .setScrollFactor(0)
+          .setName(`travel-${w.id}`)
+          .setInteractive({ useHandCursor: true })
+          .on('pointerdown', () => void this.doTeleport(w.id, w.name));
+        c.add([nameText, btnText]);
+        rows.push({ nameText, btnText });
       }
-      y += 44;
     }
+
+    applyScroll();
   }
 
   /**
