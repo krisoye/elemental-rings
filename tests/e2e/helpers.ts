@@ -1,4 +1,5 @@
 import type { Browser, Page, BrowserContext } from '@playwright/test';
+import { returnFromBattle } from './helpers/returnFromBattle';
 
 // Port 8090 avoids colliding with the production Vite dev server on 8080.
 const URL = 'http://localhost:8090';
@@ -366,8 +367,10 @@ export async function driveAiDuel(
     clearInterval(driver);
   }
 
-  // BattleScene shows a winner banner (2s normal / ~0ms fast) before starting
-  // EncounterScene; allow margin.
+  // #212 — the duel no longer auto-routes: on ENDED a persistent modal is the
+  // single exit. Choose [Return to Overworld] (no battle-hand overlay) to reach
+  // the post-battle EncounterScene hub, matching the prior auto-return behavior.
+  await returnFromBattle(page);
   await page.waitForFunction(() => (window as any).__game?.scene?.isActive('EncounterScene'), {
     timeout: E2E_FAST ? 5000 : 15000,
   });

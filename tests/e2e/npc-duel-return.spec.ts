@@ -1,5 +1,6 @@
 import { test, expect } from '@playwright/test';
 import { seedAuthToken, E2E_FAST } from './helpers';
+import { returnFromBattle } from './helpers/returnFromBattle';
 import type { Page } from '@playwright/test';
 
 /**
@@ -135,6 +136,11 @@ async function driveToEnded(page: Page): Promise<void> {
   } finally {
     clearInterval(driver);
   }
+  // #212 — the duel no longer auto-routes on ENDED; the persistent modal is the
+  // single exit. Choose [Return to Overworld] (no battle-hand overlay), which for a
+  // biome-origin duel returns the player to the biome scene — exactly what the
+  // post-ENDED ForestScene assertions in these scenarios depend on.
+  await returnFromBattle(page);
 }
 
 // ── Scenario 1: lose an overworld NPC duel → back to the biome, no loop ───────

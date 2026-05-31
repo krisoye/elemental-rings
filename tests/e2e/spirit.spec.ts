@@ -1,5 +1,6 @@
 import { test, expect } from '@playwright/test';
 import { driveAiDuel } from './helpers';
+import { returnFromBattle } from './helpers/returnFromBattle';
 
 // #41 — Spirit / food system E2E. Asserts on REAL server state (API responses)
 // and the CampScene __campState hook. Sleep costs food and restores spirit;
@@ -137,6 +138,8 @@ test('spirit: recharge a depleted ring spends spirit equal to uses restored', as
   } finally {
     clearInterval(driver);
   }
+  // #212 — leave the ENDED scene via the persistent modal ([Return to Overworld]).
+  await returnFromBattle(page);
   await page.waitForFunction(
     () => (window as any).__game?.scene?.isActive('EncounterScene'),
     undefined,
@@ -241,6 +244,8 @@ test('spirit: recharge-all returns remaining spirit and never goes negative', as
   } finally {
     clearInterval(driver);
   }
+  // #212 — leave the ENDED scene via the persistent modal ([Return to Overworld]).
+  await returnFromBattle(page);
   await page.waitForFunction(
     () => (window as any).__game?.scene?.isActive('EncounterScene'),
     undefined,

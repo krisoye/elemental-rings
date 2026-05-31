@@ -7,6 +7,7 @@ import {
   closeBattle,
   driveAiDuel,
 } from './helpers';
+import { returnFromBattle } from './helpers/returnFromBattle';
 
 // Port 8090 avoids colliding with the production Vite dev server on 8080.
 const URL = 'http://localhost:8090';
@@ -160,7 +161,9 @@ test('scenario 4: duel completes and returns to EncounterScene', async ({ browse
     clearInterval(driver);
   }
 
-  // After the duel ends BattleScene transitions to EncounterScene.
+  // #212 — on ENDED a persistent modal is the single exit (no auto-route).
+  // Choose [Return to Overworld] to reach the post-battle EncounterScene hub.
+  await returnFromBattle(page);
   await page.waitForFunction(
     () => (window as any).__game?.scene?.isActive('EncounterScene'),
     { timeout: 8000 },
