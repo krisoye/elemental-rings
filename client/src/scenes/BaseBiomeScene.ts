@@ -1074,9 +1074,20 @@ export abstract class BaseBiomeScene extends Phaser.Scene {
       const campfire = new Campfire(this, { x: cx, y: cy });
       this.campfires.set(id, campfire);
 
+      // InteractionZone must be co-located with the campfire graphic, which
+      // draws at (cx+24, cy+24). Shift the object origin so the zone center
+      // lands on the visible fire rather than the invisible anchorage center.
+      const zw = o.width ?? 32;
+      const zh = o.height ?? 32;
+      const campfireZoneObj = {
+        ...o,
+        name: id,
+        x: cx + 24 - zw / 2,
+        y: cy + 24 - zh / 2,
+      } as Phaser.Types.Tilemaps.TiledObject;
       const zone = new InteractionZone(
         this,
-        { ...o, name: id } as Phaser.Types.Tilemaps.TiledObject,
+        campfireZoneObj,
         () => this.openCampfireModal(id),
       );
       this.physics.add.overlap(this.player, zone.overlapZone);
