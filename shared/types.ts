@@ -66,6 +66,13 @@ export interface BattleRoomOptions {
   // default ids[0]. If unaffordable the flag is silently ignored (server is the
   // guard) and the duel proceeds with default initiative.
   firstStrike?: boolean;
+  // #199 — the intended staked (thumb) element for this vsAI duel, threaded from
+  // the overworld NPC's spawn data so generateAILoadout filters its variant pool
+  // to the matching thumb. This makes the AI's battle stake element equal the
+  // element shown by the overworld sprite colour and the approach warning. Only
+  // set on overworld-launched NPC duels; the encounter-hub markers leave it
+  // undefined (the per-personality preview seed already pins their stake).
+  thumbElement?: number;
 }
 
 export interface SelectAttackPayload {

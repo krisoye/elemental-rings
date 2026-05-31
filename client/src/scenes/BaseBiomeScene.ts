@@ -160,6 +160,9 @@ export abstract class BaseBiomeScene extends Phaser.Scene {
     y: number;
     aiSeed?: number;
     spriteFrame: number;
+    /** #199 — the NPC's staked element, threaded into the duel so the battle
+     *  thumb matches the overworld sprite colour + approach warning. */
+    element: number;
   } | null = null;
   /** Camera-pinned Approach [E] detection prompt; created lazily, reused/hidden. */
   private npcPrompt: Phaser.GameObjects.Text | null = null;
@@ -745,6 +748,9 @@ export abstract class BaseBiomeScene extends Phaser.Scene {
         personality: this.detectedNpc.personality as AIPersonality,
         aiSeed: this.detectedNpc.aiSeed,
         spriteFrame: this.detectedNpc.spriteFrame,
+        // #199 — thread the NPC's staked element so the battle thumb matches the
+        // overworld sprite colour + approach warning.
+        thumbElement: this.detectedNpc.element,
       });
       return;
     }
@@ -1489,6 +1495,9 @@ export abstract class BaseBiomeScene extends Phaser.Scene {
       ambush: true,
       spriteFrame: npc.spriteFrame,
       battleKey: owEntry?.battleKey,
+      // #199 — thread the NPC's staked element so the battle thumb matches the
+      // overworld sprite colour + approach warning.
+      thumbElement: npc.element,
     });
   }
 
@@ -1519,6 +1528,7 @@ export abstract class BaseBiomeScene extends Phaser.Scene {
         y: nearest.y,
         aiSeed: nearest.aiSeed,
         spriteFrame: nearest.spriteFrame,
+        element: nearest.element,
       };
       const elementName = ELEMENT_NAMES[nearest.element] ?? '?';
       this.showNpcPrompt(`${elementName} duelist — Approach [E]`);
