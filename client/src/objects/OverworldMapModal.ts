@@ -39,8 +39,6 @@ const EDGE_BIOME  = 0x44bb44;
 
 const DOT_ANCHOR_ATTUNED   = 0xffcc00;
 const DOT_ANCHOR_UNATTUNED = 0x555533;
-const DOT_STONE_ATTUNED    = 0x44eeff;
-const DOT_STONE_UNATTUNED  = 0x224444;
 
 // ── Static data ─────────────────────────────────────────────────────────────
 
@@ -52,8 +50,7 @@ interface NodeSpec {
   biome:     'forest' | 'swamp';
   danger?:   1 | 2 | 3;
   safe?:     true;
-  anchorage?: string; // waystone id of the anchorage on this screen
-  waystone?:  string; // waystone id of the discovery stone on this screen
+  anchorage?: string; // anchorage id on this screen
   isolated?:  true;   // no walking exits — teleport only
 }
 
@@ -61,7 +58,7 @@ interface NodeSpec {
 // Row decreases northward; col increases eastward.
 const NODE_SPECS: NodeSpec[] = [
   // ── North arm ──────────────────────────────────────────────────────────────
-  { id: 'forest_snow_gate',     label: 'Snow Gate',   col: 0,  row: -2, biome: 'forest', danger: 2, waystone: 'forest_north_stone' },
+  { id: 'forest_snow_gate',     label: 'Snow Gate',   col: 0,  row: -2, biome: 'forest', danger: 2 },
   { id: 'forest_north_road',    label: 'North Road',  col: 0,  row: -1, biome: 'forest', danger: 1 },
   // ── West arm ───────────────────────────────────────────────────────────────
   { id: 'forest_mossy_fen',     label: 'Mossy Fen',   col: -1, row:  0, biome: 'forest', danger: 1 },
@@ -73,7 +70,7 @@ const NODE_SPECS: NodeSpec[] = [
   // ── South arm ──────────────────────────────────────────────────────────────
   { id: 'forest_south_path',    label: 'South Path',  col: 0,  row:  1, biome: 'forest', danger: 1 },
   { id: 'forest_hollow',        label: 'Hollow',      col: 0,  row:  2, biome: 'forest', danger: 2 },
-  { id: 'forest_swamp_gate',    label: 'Swamp Gate',  col: -1, row:  2, biome: 'forest', danger: 2, waystone: 'forest_sw_stone' },
+  { id: 'forest_swamp_gate',    label: 'Swamp Gate',  col: -1, row:  2, biome: 'forest', danger: 2 },
   // ── Northeast cluster ──────────────────────────────────────────────────────
   { id: 'forest_crossroads',    label: 'Crossroads',  col: 2,  row: -1, biome: 'forest', danger: 1 },
   { id: 'forest_ridge',         label: 'Ridge',       col: 2,  row: -2, biome: 'forest', danger: 2 },
@@ -81,7 +78,7 @@ const NODE_SPECS: NodeSpec[] = [
   { id: 'forest_deepwood',      label: 'Deepwood',    col: 3,  row: -2, biome: 'forest', danger: 3, anchorage: 'forest_depths' },
   { id: 'forest_boss_clearing', label: 'Boss\nClearing', col: 4, row: -2, biome: 'forest', danger: 3 },
   // ── Isolated (teleport only) ───────────────────────────────────────────────
-  { id: 'forest_hidden_alcove', label: 'Hidden\nAlcove', col: 5, row: 0, biome: 'forest', danger: 1, isolated: true, anchorage: 'forest_hidden_anchor', waystone: 'forest_hidden_glade' },
+  { id: 'forest_hidden_alcove', label: 'Hidden\nAlcove', col: 5, row: 0, biome: 'forest', danger: 1, isolated: true, anchorage: 'forest_hidden_anchor' },
   // ── Swamp biome ────────────────────────────────────────────────────────────
   { id: 'swamp_entry',          label: 'Swamp',       col: -1, row:  3, biome: 'swamp' },
 ];
@@ -290,16 +287,6 @@ export class OverworldMapModal {
         gfx.strokeCircle(dotX, dotY, 5);
       }
 
-      // Discovery waystone dot (top-left corner of node)
-      if (spec.waystone) {
-        const dotX = x - NODE_W / 2 + 7;
-        const dotY = y - NODE_H / 2 + 7;
-        const col = attuned.has(spec.waystone) ? DOT_STONE_ATTUNED : DOT_STONE_UNATTUNED;
-        gfx.fillStyle(col, 1);
-        gfx.fillCircle(dotX, dotY, 4);
-        gfx.lineStyle(1, 0x000000, 0.5);
-        gfx.strokeCircle(dotX, dotY, 4);
-      }
 
       // "You are here" marker — small downward-pointing triangle below node
       if (isCurrent) {
@@ -343,14 +330,6 @@ export class OverworldMapModal {
     gfx.fillCircle(lx + 5, legendY + 6, 5);
     c.add(s.add.text(lx + 12, legendY, 'Anchorage\n(unset)', { fontSize: '8px', color: '#666644', lineSpacing: 2 }).setScrollFactor(0));
     lx += 76;
-    // Waystone legend
-    gfx.fillStyle(DOT_STONE_ATTUNED, 1);
-    gfx.fillCircle(lx + 4, legendY + 6, 4);
-    c.add(s.add.text(lx + 10, legendY, 'Waystone\n(found)', { fontSize: '8px', color: '#44aaaa', lineSpacing: 2 }).setScrollFactor(0));
-    lx += 74;
-    gfx.fillStyle(DOT_STONE_UNATTUNED, 1);
-    gfx.fillCircle(lx + 4, legendY + 6, 4);
-    c.add(s.add.text(lx + 10, legendY, 'Waystone\n(undiscovered)', { fontSize: '8px', color: '#224444', lineSpacing: 2 }).setScrollFactor(0));
 
     // Hint
     c.add(
