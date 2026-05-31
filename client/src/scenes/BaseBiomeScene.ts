@@ -1225,21 +1225,28 @@ export abstract class BaseBiomeScene extends Phaser.Scene {
   /**
    * Draw the Sanctum exterior sprite (8B.4.1) at the given world center and add a
    * static physics body so the player cannot walk through it.
+   *
+   * On 16px / 2× zoom screens (Swamp, generated Forest) the sprite is scaled
+   * down by 1/worldZoom() so it appears the same on-screen size as it does at
+   * 1× zoom. Physics body dimensions use displayWidth/displayHeight so they
+   * match the visually rendered size rather than the raw texture dimensions.
    */
   private drawSanctumExterior(cx: number, cy: number): void {
     if (!this.shouldDrawSanctumExterior()) return;
     const img = this.add.image(cx, cy, 'sanctum-exterior').setDepth(8);
+    // Scale the sprite so it renders at the same screen size regardless of zoom.
+    img.setScale(1 / this.worldZoom());
     this.sanctumSprite = img;
     // Static physics body sized to the building's lower half (walls + door) so the
-    // player cannot walk through the structure. The roof overhangs above and does not
-    // need collision. Offset downward from the sprite center so the body aligns with
-    // the visible wall area.
+    // player cannot walk through the structure. Use displayWidth/displayHeight
+    // (= texture size × scale) so the body matches the scaled visual, not the
+    // raw 128×160 texture size.
     this.physics.add.existing(img, true /* isStatic */);
     const body = img.body as Phaser.Physics.Arcade.StaticBody;
-    const bw = img.width * 0.8;
-    const bh = img.height * 0.5;
+    const bw = img.displayWidth * 0.8;
+    const bh = img.displayHeight * 0.5;
     body.setSize(bw, bh);
-    body.setOffset((img.width - bw) / 2, img.height * 0.45);
+    body.setOffset((img.displayWidth - bw) / 2, img.displayHeight * 0.45);
     this.physics.add.collider(this.player, img);
   }
 
