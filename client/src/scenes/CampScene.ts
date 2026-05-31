@@ -9,6 +9,7 @@ import { InteractionZone } from '../objects/world/InteractionZone';
 import { BlinkController } from '../objects/world/BlinkController';
 import { getTalisman } from '../../../shared/talismans';
 import { FOREST_SCREENS } from '../../../shared/world/forest';
+import { restAtCamp, summonSanctum as summonSanctumHelper } from '../net/campActions';
 
 declare const __SERVER_URL__: string;
 
@@ -1701,7 +1702,7 @@ export class CampScene extends Phaser.Scene {
 
   /**
    * POST /api/sanctum/summon with the player's current anchorage. On success
-   * shows the cost and reloads state; on 400 shows the error message.
+   * shows the cost and reloads state; on error shows the error message.
    */
   private async doSummonSanctum(
     anchorageId: string,
@@ -1712,28 +1713,13 @@ export class CampScene extends Phaser.Scene {
       this.scene.start('LoginScene');
       return;
     }
-    try {
-      const res = await fetch(`${API_BASE}/api/sanctum/summon`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ anchorageId }),
-      });
-      const body = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        const errMsg: string = body?.error ?? `Summon failed (${res.status})`;
-        // "requires N spirit" → "Need N spirit — rest first"
-        const spiritMatch = errMsg.match(/requires?\s+(\d+)\s+spirit/i);
-        setStatus(
-          spiritMatch ? `Need ${spiritMatch[1]} spirit — rest first` : errMsg,
-        );
-        return;
-      }
-      const cost: number = body?.spiritCost ?? 0;
-      setStatus(`Sanctum summoned! (cost: ${cost} spirit)`, '#aaffcc');
-      await this.loadData();
-    } catch {
-      setStatus('Network error during summon');
+    const result = await summonSanctumHelper(API_BASE, token, anchorageId);
+    if ('error' in result) {
+      setStatus(result.error);
+      return;
     }
+    setStatus(`Sanctum summoned! (cost: ${result.spiritCost} spirit)`, '#aaffcc');
+    await this.loadData();
   }
 
   // ── Reusable panels (parked off-screen; overlays use them in 8A.2) ────────
@@ -2060,18 +2046,9 @@ export class CampScene extends Phaser.Scene {
       this.scene.start('LoginScene');
       return;
     }
-    try {
-      const res = await fetch(`${API_BASE}/api/camp/sleep`, {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      if (!res.ok) {
-        const body = await res.json().catch(() => ({}));
-        this.setStatus(body?.error ?? `Sleep failed (${res.status})`);
-        return;
-      }
-    } catch {
-      this.setStatus('Network error during sleep');
+    const result = await restAtCamp(API_BASE, token);
+    if ('error' in result) {
+      this.setStatus(result.error);
       return;
     }
     await this.loadData();

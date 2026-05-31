@@ -49,6 +49,9 @@ const SOLO_SPECS = [
   'sanctum-summon.spec.ts',  // #180/#174
   'sanctum-zones.spec.ts',
   'spare-carry.spec.ts',     // #171
+  'spare-ring-scroll.spec.ts',  // #194
+  'merchant-qty-scroll.spec.ts', // #193
+  'anchorage-campfire.spec.ts',  // #191
   'spirit.spec.ts',
   'swamp.spec.ts',
   'talisman.spec.ts',

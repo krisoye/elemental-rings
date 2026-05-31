@@ -285,6 +285,10 @@ declare global {
     __forageStatus?: Array<{ node_id: string; depleted: boolean }> | undefined;
     // #131 — merchant modal state: set when MerchantModal opens, cleared on close.
     __merchantModalOpen?: boolean | undefined;
+    // #191 — overworld anchorage campfire modal state and direct-action hooks.
+    __campfireModal?: { anchorageId: string; summonCost: number } | null;
+    __campfireRest?: () => void;
+    __campfireSummon?: () => void;
   }
 }
 
