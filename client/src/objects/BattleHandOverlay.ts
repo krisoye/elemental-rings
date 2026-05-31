@@ -41,7 +41,7 @@ export class BattleHandOverlay {
   private onCloseCb?: () => void;
 
   private manageModal: Phaser.GameObjects.Container | null = null;
-  private spareScrollY = 0;
+  private spareScrollRow = 0;
   private spareWheelHandler: ((p: unknown, g: unknown, dx: number, dy: number) => void) | null = null;
   private manageSelectedRingId: string | null = null;
   /** Slot the selected ring came from, or null when selection is from the spare row. */
@@ -87,7 +87,7 @@ export class BattleHandOverlay {
    */
   async open(onClose?: () => void): Promise<void> {
     if (this.manageModal) return;
-    this.spareScrollY = 0;
+    this.spareScrollRow = 0;
     if (onClose) this.onCloseCb = onClose;
     const token = localStorage.getItem('er_token');
     if (!token) return;
@@ -306,20 +306,21 @@ export class BattleHandOverlay {
         .setOrigin(0.5);
       container.add(fullLbl);
     }
-    // Spare cards sub-container with GeometryMask scroll viewport (#194).
+    // Spare cards sub-container — visibility-windowed (replaces GeometryMask, which
+    // is unreliable in nested Container / multi-camera Phaser 4 setups; same fix as
+    // InventoryGrid PR #168).
     const SPARE_TOP = 377;
     const SPARE_H = 115;
     const SPARE_ROW_H = 90;
     const totalRows = Math.ceil(availableRings.length / 6);
-    const totalH = totalRows * SPARE_ROW_H;
-    const maxSpareScroll = Math.max(0, totalH - SPARE_H);
+    // SPARE_H (115px) fits exactly 1 complete row of SPARE_ROW_H (90px); a second
+    // row would bleed into the recharge controls, so cap at 1 visible row.
+    const VISIBLE_ROWS = 1;
 
-    const spareContainer = this.scene.add.container(0, -this.spareScrollY);
-    const spareMaskGfx = this.scene.add.graphics();
-    spareMaskGfx.fillRect(CANVAS_W / 2 - 325, SPARE_TOP, 650, SPARE_H);
-    spareMaskGfx.setVisible(false);
-    spareContainer.setMask(new Phaser.Display.Masks.GeometryMask(this.scene, spareMaskGfx));
-    container.add([spareContainer, spareMaskGfx]);
+    const spareContainer = this.scene.add.container(0, 0);
+    container.add(spareContainer);
+    // Per-row group containers toggled visible/hidden by updateSpareVisibility().
+    const spareRowGroups: Map<number, Phaser.GameObjects.Container[]> = new Map();
 
     availableRings.forEach((ring, i) => {
       const col = i % 6;
@@ -328,8 +329,11 @@ export class BattleHandOverlay {
       const ry = ringY + row * SPARE_ROW_H;
       const selected = this.manageSelectedRingId === ring.id && this.manageSelectedFromSlot === null;
       const cardAlpha = spareFull ? 0.45 : 1;
+
+      const ringGrp = this.scene.add.container(rx, ry);
+
       const rect = this.scene.add
-        .rectangle(rx, ry, 72, 80, ELEMENT_COLORS[ring.element] ?? 0x444444)
+        .rectangle(0, 0, 72, 80, ELEMENT_COLORS[ring.element] ?? 0x444444)
         .setScrollFactor(0)
         .setStrokeStyle(selected ? 3 : 2, selected ? 0xffff00 : 0x888888)
         .setAlpha(cardAlpha)
@@ -338,7 +342,6 @@ export class BattleHandOverlay {
           const selSlot = this.manageSelectedFromSlot;
           const selId = this.manageSelectedRingId;
           if (selSlot !== null && selId !== null) {
-            // Slot ring selected — move it to spare and put this spare ring in its slot.
             void this.swapSlotWithSpare(selSlot, selId, ring.id);
           } else {
             this.manageSelectedRingId = selected ? null : ring.id;
@@ -346,19 +349,39 @@ export class BattleHandOverlay {
             this.renderManageModal();
           }
         });
-      spareContainer.add(rect);
-      this.addRingInfo(spareContainer, rx, ry, ring);
-      const x = this.scene.add
-        .text(rx + 30, ry - 32, '×', { fontSize: '13px', color: '#ff3333' })
-        .setScrollFactor(0)
-        .setOrigin(0.5)
-        .setInteractive({ useHandCursor: true })
-        .on('pointerdown', (_p: unknown, _x: number, _y: number, evt: { stopPropagation?: () => void }) => {
-          evt?.stopPropagation?.();
-          void this.discardCarriedRing(ring.id);
-        });
-      spareContainer.add(x);
+      ringGrp.add(rect);
+
+      const used = ring.max_uses - ring.current_uses;
+      const pips = '●'.repeat(ring.current_uses) + '○'.repeat(Math.max(0, used));
+      ringGrp.add([
+        this.scene.add.text(0, -22, ELEMENT_NAMES[ring.element] ?? '?', { fontSize: '9px', color: '#000000' }).setScrollFactor(0).setOrigin(0.5),
+        this.scene.add.text(0, -6, pips, { fontSize: '10px', color: '#000000' }).setScrollFactor(0).setOrigin(0.5),
+        this.scene.add.text(0, 10, `Xp: ${ring.xp}`, { fontSize: '9px', color: '#000000' }).setScrollFactor(0).setOrigin(0.5),
+        this.scene.add.text(0, 24, `T${ring.tier}`, { fontSize: '9px', color: '#000000' }).setScrollFactor(0).setOrigin(0.5),
+        this.scene.add
+          .text(30, -32, '×', { fontSize: '13px', color: '#ff3333' })
+          .setScrollFactor(0)
+          .setOrigin(0.5)
+          .setInteractive({ useHandCursor: true })
+          .on('pointerdown', (_p: unknown, _x: number, _y: number, evt: { stopPropagation?: () => void }) => {
+            evt?.stopPropagation?.();
+            void this.discardCarriedRing(ring.id);
+          }),
+      ]);
+
+      spareContainer.add(ringGrp);
+      if (!spareRowGroups.has(row)) spareRowGroups.set(row, []);
+      spareRowGroups.get(row)!.push(ringGrp);
     });
+
+    const updateSpareVisibility = (): void => {
+      spareRowGroups.forEach((grps, row) => {
+        const visible = row >= this.spareScrollRow && row < this.spareScrollRow + VISIBLE_ROWS;
+        grps.forEach((g) => g.setVisible(visible));
+      });
+      spareContainer.y = -this.spareScrollRow * SPARE_ROW_H;
+    };
+    updateSpareVisibility();
 
     // Overflow hint + wheel scroll.
     if (totalRows > 1) {
@@ -376,8 +399,9 @@ export class BattleHandOverlay {
       this.spareWheelHandler = null;
     }
     this.spareWheelHandler = (_p: unknown, _g: unknown, _dx: number, dy: number) => {
-      this.spareScrollY = Phaser.Math.Clamp(this.spareScrollY + dy * 0.5, 0, maxSpareScroll);
-      spareContainer.setY(-this.spareScrollY);
+      const maxRow = Math.max(0, totalRows - VISIBLE_ROWS);
+      this.spareScrollRow = Phaser.Math.Clamp(this.spareScrollRow + (dy > 0 ? 1 : -1), 0, maxRow);
+      updateSpareVisibility();
     };
     this.scene.input.on('wheel', this.spareWheelHandler);
 
@@ -566,7 +590,7 @@ export class BattleHandOverlay {
       this.scene.input.off('wheel', this.spareWheelHandler);
       this.spareWheelHandler = null;
     }
-    this.spareScrollY = 0;
+    this.spareScrollRow = 0;
     if (this.manageModal) {
       this.manageModal.destroy(true);
       this.manageModal = null;
