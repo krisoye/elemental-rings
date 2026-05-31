@@ -514,3 +514,34 @@ describe('Scenario 14: shadow gauge (§7.1 / §3.5)', () => {
     expect(after.shadowGauge).toBe(5); // clamped, not 6
   });
 });
+
+// Regression: an exhausted (0-use) defense ring must not be able to catch. The
+// submitDefense handler mirrors the attack-side isExtinguished guard, so pressing
+// a spent ring is ignored and the attack lands uncontested (NO_BLOCK) rather than
+// resolving as a free block.
+describe('Scenario 15: exhausted defense ring cannot block', () => {
+  test('pressing a 0-use d1 is ignored → NO_BLOCK (heart + gauge), ring stays spent', async () => {
+    const { room, c1, c2 } = await joinBattle();
+    const attacker = attackerClient(room, c1, c2);
+    const defender = defenderClient(room, c1, c2);
+    const defenderId = defender.sessionId;
+
+    // Exhaust the defender's WOOD ring on d1.
+    const d1 = room.state.players.get(defenderId).d1;
+    d1.currentUses = 0;
+    d1.isExtinguished = true;
+
+    attacker.send('selectAttack', { slot: 'a1' }); // FIRE
+    await room.waitForNextPatch();
+
+    // Press the spent d1 at perfect parry timing — must be ignored by the guard.
+    await pressDefenseAt(room, defender, 'd1', 0);
+
+    const d = room.state.players.get(defenderId);
+    expect(d.d1.currentUses).toBe(0); // never charged a use
+    expect(d.d1.isExtinguished).toBe(true);
+    expect(d.hearts).toBe(2); // took the uncontested hit
+    expect(d.fireGauge).toBe(1); // NO_BLOCK fills the gauge; a WEAK block would not
+    expect(room.state.phase).toBe('ATTACK_SELECT');
+  });
+});

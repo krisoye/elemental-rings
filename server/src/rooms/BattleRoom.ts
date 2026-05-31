@@ -651,6 +651,13 @@ export class BattleRoom extends Room<{ state: BattleState }> {
     if (id === state.currentAttackerId) return;
     if (!DEFENSE_SLOTS.has(payload.slot)) return;
 
+    // An exhausted defense ring cannot catch — mirror the attack-side guard
+    // (handleSelectAttack) so a 0-use ring can't be committed to a block/parry.
+    // Mirrors only the GUARD; the defense use is still spent later, in
+    // _resolveExchange → BlockResolver.spendUse (outcome-dependent), not here.
+    const defender = state.players.get(id)!;
+    if (defender.getSlot(payload.slot).isExtinguished) return;
+
     if (!this.defenseSubmitted) {
       this.defenseSubmitted = true;
       this.defenseSlotKey = payload.slot;
