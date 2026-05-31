@@ -75,16 +75,13 @@ Phase 8 is the largest phase in the roadmap — it introduces a full tilemap wor
 
 ---
 
-#### EPIC 8C — World Population, Sanctum Stone & Swamp Biome (EPIC [#80](https://github.com/krisoye/elemental-rings/issues/80))
+#### EPIC 8C — World Population & Swamp Biome (EPIC [#80](https://github.com/krisoye/elemental-rings/issues/80))
 
-**What ships:** A field tool for managing the Sanctum (Sanctum Stone talisman), a second navigable biome (Swamp) with a hidden-progression secret, and the first living inhabitants (NPCs + detection). Decomposed into three sub-issues that can largely proceed in parallel.
+**What ships:** A second navigable biome (Swamp) with a hidden-progression secret, and the first living inhabitants (NPCs + detection). Decomposed into sub-issues that can largely proceed in parallel.
 
 **Sub-issues:**
-- [#81](https://github.com/krisoye/elemental-rings/issues/81) — 8C.1: Talisman equipment system + Sanctum Stone (necklace slot, `talisman_loadout` table, charge economy, field-anchor from any Anchorage)
 - [#82](https://github.com/krisoye/elemental-rings/issues/82) — 8C.2: Swamp biome + hidden Forest alcove (new map + tileset, `SwampScene`, gated Forest→Swamp transition, the Ironbark Rune revealing an unreachable Forest Anchorage)
 - [#83](https://github.com/krisoye/elemental-rings/issues/83) — 8C.3: NPC & monster world population + detection (per-biome spawn table, detection radius, duels via the existing `battle-ai` room, server-side defeat tracking)
-
-**Sanctum Stone (GDD §14.3):** A necklace talisman with 3 charges. Activated at any discovered Anchorage in the field, it **permanently transports** the Sanctum to that Anchorage (the Sanctum physically moves and stays there until summoned elsewhere or the player teleports from within the meditation circle). Charges refill on sleep. This is the inverse of the meditation-circle teleport: it lets the player relocate home from the field rather than from inside the Sanctum.
 
 **Swamp biome:** Dominant elements Mud/Water/Wood/Earth (§10.2). Reached from the Forest's southwest edge once the `forest_sw_stone` (Bogwood Sentinel) waystone is attuned. Contains the `swamp_secret_forest` (Ironbark Rune) waystone, whose revelation unlocks `forest_hidden_anchor` — an Anchorage inside a tiny Forest alcove reachable ONLY by teleporting there (no walking path from the Forest side). This closes a discovery loop: explore Swamp → find rune → unlock hidden Forest area.
 
@@ -347,8 +344,9 @@ Implements the §10.15 Forest region manifest as a **15-screen connected world**
 BaseBiomeScene (abstract Phaser.Scene)
 │   Core mechanics — written once:
 │     tilemap load, Player, Arcade physics, camera, compass HUD,
-│     waystone attunement, NPC detection + duel launch, talisman,
-│     blink (§10.13), biome_exit, edge-transition system, E2E hooks
+│     waystone attunement, NPC detection + duel launch,
+│     campfire (rest + Sanctum summon), blink (§10.13),
+│     biome_exit, edge-transition system, E2E hooks
 │   Abstract contract:
 │     abstract tilesetKey(): string
 │     abstract mapKeyForScreen(screenId: string): string
