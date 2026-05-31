@@ -21,6 +21,7 @@ import {
   COMPASS_RANGE,
   SANCTUM_Y_ABOVE,
   SANCTUM_SPAWN_Y_BELOW,
+  SANCTUM_SPRITE_HALF_H,
   SANCTUM_ZONE_HALF,
   ANCHORAGE_GROUND_RADIUS,
   DETECTION_RADIUS,
@@ -1129,7 +1130,8 @@ export abstract class BaseBiomeScene extends Phaser.Scene {
       const sanctumX = anchorCenter.center.x;
       const sanctumY = anchorCenter.center.y - SANCTUM_Y_ABOVE;
 
-      this.refreshSanctumZone(sanctumX, sanctumY);
+      // Interaction zone centered on the door (sprite bottom edge).
+      this.refreshSanctumZone(sanctumX, sanctumY + SANCTUM_SPRITE_HALF_H);
       this.drawSanctumExterior(sanctumX, sanctumY);
 
       if (!this.returnedFromDuel) {
@@ -1411,7 +1413,7 @@ export abstract class BaseBiomeScene extends Phaser.Scene {
     // Always refresh the interaction zone to match the new anchor position — the
     // zone was created at the OLD anchor in loadWaystones and must be relocated
     // so the player can actually enter the summoned Sanctum.
-    this.refreshSanctumZone(sanctumX, sanctumY);
+    this.refreshSanctumZone(sanctumX, sanctumY + SANCTUM_SPRITE_HALF_H);
     window.__sanctumReturnCenter = { x: sanctumX, y: sanctumY };
   }
 

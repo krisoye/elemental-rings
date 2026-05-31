@@ -135,6 +135,9 @@ export const SANCTUM_Y_ABOVE = 32;
 // maps the tile below starts at anchorage bottom (center + 8) and its center
 // is one half-tile further down: 8 + 8 = 16 below the anchorage center.
 export const SANCTUM_SPAWN_Y_BELOW = 16;
+// Half-height of the sanctum sprite at 0.5× scale (160 / 2 * 0.5 = 40). Adding
+// this to the sprite center Y gives the door (bottom edge of the sprite).
+export const SANCTUM_SPRITE_HALF_H = 40;
 export const SANCTUM_ZONE_HALF = 32; // px — half-width/height of the sanctum_return interaction zone
 
 // #73 — Phase 8B.4.3 Anchorage ground treatment. A soft worn-ground ring beneath
