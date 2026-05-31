@@ -41,6 +41,8 @@ export class BattleHandOverlay {
   private onCloseCb?: () => void;
 
   private manageModal: Phaser.GameObjects.Container | null = null;
+  private spareScrollY = 0;
+  private spareWheelHandler: ((p: unknown, g: unknown, dx: number, dy: number) => void) | null = null;
   private manageSelectedRingId: string | null = null;
   /** Slot the selected ring came from, or null when selection is from the spare row. */
   private manageSelectedFromSlot: BattleSlot | null = null;
@@ -85,6 +87,7 @@ export class BattleHandOverlay {
    */
   async open(onClose?: () => void): Promise<void> {
     if (this.manageModal) return;
+    this.spareScrollY = 0;
     if (onClose) this.onCloseCb = onClose;
     const token = localStorage.getItem('er_token');
     if (!token) return;
@@ -115,6 +118,10 @@ export class BattleHandOverlay {
 
   /** Render (or re-render) the manage-battle-hand modal from cached state. */
   private renderManageModal(): void {
+    if (this.spareWheelHandler) {
+      this.scene.input.off('wheel', this.spareWheelHandler);
+      this.spareWheelHandler = null;
+    }
     if (this.manageModal) {
       this.manageModal.destroy(true);
       this.manageModal = null;
@@ -299,11 +306,26 @@ export class BattleHandOverlay {
         .setOrigin(0.5);
       container.add(fullLbl);
     }
+    // Spare cards sub-container with GeometryMask scroll viewport (#194).
+    const SPARE_TOP = 377;
+    const SPARE_H = 115;
+    const SPARE_ROW_H = 90;
+    const totalRows = Math.ceil(availableRings.length / 6);
+    const totalH = totalRows * SPARE_ROW_H;
+    const maxSpareScroll = Math.max(0, totalH - SPARE_H);
+
+    const spareContainer = this.scene.add.container(0, -this.spareScrollY);
+    const spareMaskGfx = this.scene.add.graphics();
+    spareMaskGfx.fillRect(CANVAS_W / 2 - 325, SPARE_TOP, 650, SPARE_H);
+    spareMaskGfx.setVisible(false);
+    spareContainer.setMask(new Phaser.Display.Masks.GeometryMask(this.scene, spareMaskGfx));
+    container.add([spareContainer, spareMaskGfx]);
+
     availableRings.forEach((ring, i) => {
       const col = i % 6;
       const row = Math.floor(i / 6);
       const rx = CANVAS_W / 2 - 250 + col * 90;
-      const ry = ringY + row * 90;
+      const ry = ringY + row * SPARE_ROW_H;
       const selected = this.manageSelectedRingId === ring.id && this.manageSelectedFromSlot === null;
       const cardAlpha = spareFull ? 0.45 : 1;
       const rect = this.scene.add
@@ -324,8 +346,8 @@ export class BattleHandOverlay {
             this.renderManageModal();
           }
         });
-      container.add(rect);
-      this.addRingInfo(container, rx, ry, ring);
+      spareContainer.add(rect);
+      this.addRingInfo(spareContainer, rx, ry, ring);
       const x = this.scene.add
         .text(rx + 30, ry - 32, '×', { fontSize: '13px', color: '#ff3333' })
         .setScrollFactor(0)
@@ -335,8 +357,29 @@ export class BattleHandOverlay {
           evt?.stopPropagation?.();
           void this.discardCarriedRing(ring.id);
         });
-      container.add(x);
+      spareContainer.add(x);
     });
+
+    // Overflow hint + wheel scroll.
+    if (totalRows > 1) {
+      const hint = this.scene.add
+        .text(CANVAS_W / 2, SPARE_TOP + SPARE_H + 3, '▼ scroll', {
+          fontSize: '11px', color: '#556677',
+        })
+        .setScrollFactor(0)
+        .setOrigin(0.5, 0);
+      container.add(hint);
+    }
+
+    if (this.spareWheelHandler) {
+      this.scene.input.off('wheel', this.spareWheelHandler);
+      this.spareWheelHandler = null;
+    }
+    this.spareWheelHandler = (_p: unknown, _g: unknown, _dx: number, dy: number) => {
+      this.spareScrollY = Phaser.Math.Clamp(this.spareScrollY + dy * 0.5, 0, maxSpareScroll);
+      spareContainer.setY(-this.spareScrollY);
+    };
+    this.scene.input.on('wheel', this.spareWheelHandler);
 
     // ── Recharge controls (spirit-powered, mirrors Sanctum) ──────────────────
     // #85 Fix 3 — shifted 35px down (185→220) to follow the lowered carried-rings row.
@@ -519,6 +562,11 @@ export class BattleHandOverlay {
 
   /** Close the modal and fire the close callback (host re-enables movement). */
   close(): void {
+    if (this.spareWheelHandler) {
+      this.scene.input.off('wheel', this.spareWheelHandler);
+      this.spareWheelHandler = null;
+    }
+    this.spareScrollY = 0;
     if (this.manageModal) {
       this.manageModal.destroy(true);
       this.manageModal = null;
@@ -706,6 +754,10 @@ export class BattleHandOverlay {
 
   /** Destroy the overlay (host scene shutdown). */
   destroy(): void {
+    if (this.spareWheelHandler) {
+      this.scene.input.off('wheel', this.spareWheelHandler);
+      this.spareWheelHandler = null;
+    }
     if (this.manageModal) {
       this.manageModal.destroy(true);
       this.manageModal = null;
