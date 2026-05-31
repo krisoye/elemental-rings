@@ -1310,11 +1310,16 @@ export function ringBuyPrice(element: number): number {
     : MERCHANT_RING_BUY_PRICE_NEUTRAL;
 }
 
-/** Sell price the merchant pays the player for a Tier 1 ring of the given element. */
-export function ringSellPrice(element: number): number {
-  return TRIANGLE_ELEMENTS.has(element)
+/**
+ * Sell price the merchant pays the player for a ring.
+ * Base is element-type determined; XP adds floor(xp / 100) GP on top.
+ * The catalog endpoint passes xp=0 to expose the base rate.
+ */
+export function ringSellPrice(element: number, xp = 0): number {
+  const base = TRIANGLE_ELEMENTS.has(element)
     ? MERCHANT_RING_SELL_PRICE_T1
     : MERCHANT_RING_SELL_PRICE_NEUTRAL;
+  return base + Math.floor(xp / 100);
 }
 
 const updateGold = db.prepare(`UPDATE players SET gold = gold + ? WHERE id = ?`);
@@ -1428,9 +1433,10 @@ export const merchantSellRing = db.transaction(
     if (!ring || ring.owner_id !== playerId) {
       return { ok: false, reason: 'Ring not found or not owned' };
     }
-    // GDD §10.11 — merchants only trade Tier 1 base-element rings. Reject any
-    // fusion (5–14), Shadow (15), or higher-tier ring before any state change.
-    if (!MERCHANT_TRADEABLE_ELEMENTS.has(ring.element) || ring.tier !== 1) {
+    // Merchants trade any tier of base-element ring (fusions 5–14 and Shadow 15
+    // are still rejected). The tier gate is removed so XP-earned tiers fetch
+    // their full XP-adjusted price.
+    if (!MERCHANT_TRADEABLE_ELEMENTS.has(ring.element)) {
       return { ok: false, reason: 'Ring type not accepted by merchant' };
     }
     // Block selling a ring that is currently equipped in a battle-hand slot.
@@ -1443,7 +1449,7 @@ export const merchantSellRing = db.transaction(
         }
       }
     }
-    const price = ringSellPrice(ring.element);
+    const price = ringSellPrice(ring.element, ring.xp);
     deleteRing.run(ringId, playerId);
     updateGold.run(price, playerId);
     const updated = getPlayerById(playerId)!;

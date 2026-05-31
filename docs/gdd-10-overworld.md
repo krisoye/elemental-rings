@@ -296,6 +296,35 @@ Merchants are encountered in cities and occasionally wandering the overworld bet
 | Shrine maps | Reveal shrine locations on the world map | Gold |
 | Food | Emergency provisions at 2× forage value | Gold |
 
+**Shop mechanics (implemented):**
+
+*Buy prices — Tier 1 base rings only:*
+
+| Element | Buy price |
+|---|---|
+| Fire, Water, Wood (triangle) | 30 GP |
+| Wind, Earth (neutral) | 25 GP |
+| Food | 2 GP / unit |
+
+*Sell prices — carried rings of any tier, base elements only:*
+
+Sell price = **base + floor(xp / 100)** GP, where base is element-type determined:
+
+| Element | Base sell price | Example: 3000 XP (T3) |
+|---|---|---|
+| Fire, Water, Wood | 10 GP | 40 GP |
+| Wind, Earth | 8 GP | 38 GP |
+| Food | 1 GP / unit | — |
+
+**What can be sold:**
+- Any base-element ring (Fire, Water, Earth, Wind, Wood) of any tier that the player is **currently carrying** (in the carry set)
+- Rings stored in the Reliquary cannot be sold — they are not on the player's person
+
+**What cannot be sold:**
+- Fused rings (elements 5–14)
+- Shadow rings
+- Rings currently assigned to a battle slot (must be unslotted first)
+
 **Carry cap (garments):**
 - Players start with `carry_cap = 10` (spiritually derived from base spirit gauge)
 - Garments from merchants can expand it beyond the spirit-derived default
