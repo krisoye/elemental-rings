@@ -7,7 +7,10 @@
  * loadout, 3-gauge model, rally swap, heart logic, and phase-lock end-to-end.
  * (Pure resolution math is in tests/unit/.)
  *
- * Default loadout (seatPlayer): thumb=WOOD, a1=FIRE, a2=WATER, d1=WOOD, d2=EARTH.
+ * Default loadout (seatPlayer): thumb=FIRE, a1=FIRE, a2=WATER, d1=WOOD, d2=EARTH.
+ * The FIRE thumb's all-in setup passive pours all 3 thumb uses onto the FIRE a1
+ * (the only FIRE base ring in hand) at seat time, so a1 starts at 6 uses; the
+ * WOOD d1 / WATER a2 / EARTH d2 rings keep their 3 starting uses.
  * Under the v4 triangle (Fire→Wood→Water→Fire):
  *   - FIRE(a1) attack vs WOOD(d1) defense → WEAK; vs EARTH(d2) → NEUTRAL
  *   - WATER(a2) attack vs WOOD(d1) defense → STRONG (parry → rally); vs EARTH → NEUTRAL

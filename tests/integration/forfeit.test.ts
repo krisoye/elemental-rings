@@ -14,7 +14,9 @@
  * explicit forfeit message ends the duel for the opponent).
  *
  * Default loadout (seatPlayer DEFAULT_LOADOUT): thumb=FIRE, a1=FIRE, a2=WATER,
- * d1=WOOD, d2=EARTH. With a FIRE thumb, Kindling buffs the FIRE a1 to 4 uses.
+ * d1=WOOD, d2=EARTH. With a FIRE thumb, the all-in setup passive pours all 3
+ * thumb uses onto the FIRE a1 (the only FIRE base ring), so a1 ends at 6 uses
+ * (maxUses raised to 6). These tests read maxUses dynamically, not a fixed 4.
  */
 import { describe, test, expect, beforeAll, afterAll } from 'vitest';
 import { ColyseusTestServer, boot } from '@colyseus/testing';

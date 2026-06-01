@@ -170,9 +170,10 @@ test('Drowning: waterGauge>=4 drains the highest-capacity attack ring (a1/a2) at
   const h = await setupBattle(browser);
   const { attacker, defender } = await attackerDefender(h.p1, h.p2);
 
-  // Default loadout: a1=FIRE (max 3 after Kindling possibly), a2=WATER. Both
-  // start at the same max so the tie resolves to a1. Seed Drowning on the
-  // DEFENDER (next attacker) so the turn-start tick fires on their turn.
+  // Default loadout: a1=FIRE, a2=WATER. We seed both attack rings to 3 uses
+  // (overriding the Fire thumb's all-in setup, which would otherwise have
+  // poured the thumb uses onto a1) so the capacity tie resolves to a1. Seed
+  // Drowning on the DEFENDER (next attacker) so the turn-start tick fires.
   await setState(defender, { waterGauge: 4, uses: { a1: 3, a2: 3 } });
 
   // Pass the turn with a clean EARTH catch (no heart, no gauge change).
@@ -306,8 +307,8 @@ test('Entangled: woodGauge>=4 drains the highest-capacity defense ring (d1/d2) a
 
   // Defender becomes attacker next turn. Default d1=WOOD, d2=EARTH (both max 3 →
   // tie resolves to d1). Seed Entangled and explicit attack-ring uses (the Fire
-  // thumb's Kindling buffs the FIRE a1, so we pin a1/a2 to a known value to assert
-  // Entangled never touches them).
+  // thumb's all-in setup pours its uses onto the FIRE a1, so we pin a1/a2 to a
+  // known value to assert Entangled never touches them).
   await setState(defender, { woodGauge: 4, uses: { a1: 3, a2: 3, d1: 3, d2: 3 } });
 
   await attacker.keyboard.press('1'); // A1 FIRE

@@ -47,7 +47,14 @@
 
 ## 13.1 Alternative Designs (Not Adopted)
 
-> ⚠️ **This is NOT the current system.** Everything in §13.1 is a parked design alternative kept for reference — the live ring-progression and fusion rules are in **§4** and **§5**. Nothing here is implemented or planned. If one of these is ever adopted, move its rules into §4/§5 and delete it from here.
+> ⚠️ **This is NOT the current system.** Everything in §13.1 is a parked design alternative kept for reference — the live ring-progression and fusion rules are in **§4** and **§5**, and the live Thumb passives are in **§9.3**. Nothing here is implemented or planned. If one of these is ever adopted, move its rules into the relevant section and delete it from here.
+
+### Retired Thumb passives (parked)
+
+Earlier Thumb-passive designs replaced by the §9.3 set. Kept for reference only.
+
+- **Bulwark (Earth) — setup aura.** Fired once at duel start: distributed +1 current use to Earth rings in the battle hand in the order D1→D2→A1→A2, spending 1 Thumb use per ring buffed (max uses raised to match; stops when the Thumb runs out). Replaced by **Precision Parry** — a reactive, timing-gated refund (§9.3) — so Earth's identity became "reward disciplined defense" rather than a second flavor of the setup aura.
+- **Deep Roots (Wood) — heart guard.** Reactive: when the player would lose a heart, the Wood Thumb absorbed the blow by spending 1 use instead (the heart was not lost). Retired because Wood folded into the shared all-in setup archetype (§9.3) alongside Fire and Water, and an un-counterable heart-saver was hard to read across the Thumb's visible use count during a fast exchange.
 
 ### Decoupled XP / Tier progression (parked)
 

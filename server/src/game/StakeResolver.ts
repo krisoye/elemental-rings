@@ -27,76 +27,65 @@ function chargeThumb(ps: PlayerState): void {
 }
 
 /**
- * Kindling (Fire thumb) / Bulwark (Earth thumb) — applied once when the
+ * All-in setup distributor (Fire / Water / Wood thumb) — applied once when the
  * battle room seats the player, before the first exchange.
  *
- * Kindling: buffs a1/a2/d1/d2 rings that share the FIRE element, in the
- *   order a1→a2→d1→d2, consuming 1 thumb use per ring buffed.
- * Bulwark: same but targets EARTH rings in the order d1→d2→a1→a2.
+ * The thumb spends ALL of its current uses, distributing +1 currentUses at a
+ * time to base-element rings in the battle hand (A1/A2/D1/D2) that match the
+ * thumb's element. Recipients are visited round-robin from highest-XP to
+ * lowest-XP, tiebreaking by slot order A1→A2→D1→D2, until the thumb reaches 0.
  *
- * Each buffed ring gets +1 currentUses (maxUses raised to match if needed),
- * and isExtinguished is cleared. Stops when thumb uses run out or all slots
- * have been visited.
+ * Each granted use raises the ring's maxUses to match if it would overflow, and
+ * clears isExtinguished. If no matching rings are in the hand, the passive does
+ * NOT fire and the thumb keeps all of its uses. When it does fire, the thumb
+ * ends at 0 uses (extinguished, passive for the rest of the duel).
  *
- * Returns the number of rings buffed (0 if the passive did not apply) so the
- * caller can award thumb XP per buffed ring.
+ * Returns the total number of uses distributed (0 if the passive did not apply)
+ * so the caller can award thumb XP (XP_THUMB_BUFF per use distributed).
  */
 export function applySetupPassive(ps: PlayerState): number {
   if (!thumbActive(ps)) return 0;
+  const el = ps.thumb.element;
+  if (el !== FIRE && el !== WATER && el !== WOOD) return 0;
 
-  let targetEl: number;
-  let order: ReadonlyArray<'a1' | 'a2' | 'd1' | 'd2'>;
+  const SLOT_ORDER = ['a1', 'a2', 'd1', 'd2'] as const;
+  const matching = SLOT_ORDER.map((slot, idx) => ({ idx, ring: ps.getSlot(slot) }))
+    .filter(({ ring }) => ring.element === el)
+    .sort((a, b) => b.ring.xp - a.ring.xp || a.idx - b.idx);
 
-  if (ps.thumb.element === FIRE) {
-    targetEl = FIRE;
-    order = ['a1', 'a2', 'd1', 'd2'];
-  } else if (ps.thumb.element === EARTH) {
-    targetEl = EARTH;
-    order = ['d1', 'd2', 'a1', 'a2'];
-  } else {
-    return 0;
-  }
+  // No matching base-element rings: passive does not fire; thumb keeps its uses.
+  if (matching.length === 0) return 0;
 
-  let buffed = 0;
-  for (const slot of order) {
-    if (ps.thumb.currentUses <= 0) break;
-    const ring = ps.getSlot(slot);
-    if (ring.element !== targetEl) continue;
+  let distributed = 0;
+  let i = 0;
+  while (ps.thumb.currentUses > 0) {
+    const ring = matching[i % matching.length].ring;
     ring.currentUses += 1;
     ring.maxUses = Math.max(ring.maxUses, ring.currentUses);
     ring.isExtinguished = false;
     chargeThumb(ps);
-    buffed += 1;
+    distributed += 1;
+    i += 1;
   }
-  return buffed;
+  return distributed;
 }
 
 /**
- * Wellspring (Water thumb) — called after a successful PARRY+STRONG rally.
+ * Precision Parry (Earth thumb) — called whenever the DEFENDER hits the PARRY
+ * timing window, regardless of element matchup (STRONG/NEUTRAL/WEAK).
  *
- * Refunds the 1 use that `resolveBlock` already spent on the defender ring,
- * then charges the thumb 1 use instead.
+ * Refunds the 1 use that `resolveBlock` already spent on the defending ring
+ * (capped at its maxUses), then charges the Earth thumb 1 use instead and
+ * clears isExtinguished on the defending ring. Fires every time until the thumb
+ * is exhausted.
  *
  * Returns true if the passive fired; false if the guard rejected it.
  */
-export function applyWellspring(ps: PlayerState, defenderRing: Ring): boolean {
+export function applyEarthParry(ps: PlayerState, defenderRing: Ring): boolean {
   if (!thumbActive(ps)) return false;
-  if (ps.thumb.element !== WATER) return false;
+  if (ps.thumb.element !== EARTH) return false;
   defenderRing.currentUses = Math.min(defenderRing.maxUses, defenderRing.currentUses + 1);
   defenderRing.isExtinguished = false;
-  chargeThumb(ps);
-  return true;
-}
-
-/**
- * Deep Roots (Wood thumb) — called instead of applying a heart loss to the
- * player. The thumb absorbs the blow by spending 1 use.
- *
- * Returns true if the passive fired (heart NOT lost); false otherwise.
- */
-export function applyDeepRoots(ps: PlayerState): boolean {
-  if (!thumbActive(ps)) return false;
-  if (ps.thumb.element !== WOOD) return false;
   chargeThumb(ps);
   return true;
 }

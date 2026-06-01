@@ -57,12 +57,12 @@ export function npcEffectiveXp(personality: AIPersonality, playerAggregateXp: nu
  * coherent variant; the RNG picks one per duel. Thumb is the staked ring.
  *
  * Design notes (GDD §10.5):
- *  AGGRESSIVE  — opens with strongest, burns uses. Stake on dominant bracelet
- *                (Kindling/Tailwind passive). Fire-Aggressor gets +1 use on
- *                Fire a1 from Kindling; Wind-Aggressor chains uncounterable hits.
- *  DEFENSIVE   — conserves, exhausts opponent. Earth-Defender gets Bulwark (+1
- *                use on both Earth defense rings); Wood-Defender Deep Roots
- *                (thumb absorbs heart-loss).
+ *  AGGRESSIVE  — opens with strongest, burns uses. Fire-Aggressor's all-in setup
+ *                passive dumps the thumb's uses onto Fire a1; Wind-Aggressor's
+ *                Tailwind self-charges to chain uncounterable hits.
+ *  DEFENSIVE   — conserves, exhausts opponent. Earth-Defender's Precision Parry
+ *                refunds defense uses on perfect timing; Wood-Defender's all-in
+ *                setup passive front-loads its Wood defense ring.
  *  STATUS_HUNTER — builds single-element gauge to trigger status effects. Uses
  *                triple same-element attack + the counter in defense so the
  *                opponent can't STRONG-block and trigger a rally against them.
@@ -72,23 +72,23 @@ export function npcEffectiveXp(personality: AIPersonality, playerAggregateXp: nu
  */
 export const TEMPLATES: Record<AIPersonality, LoadoutTemplate[]> = {
   AGGRESSIVE: [
-    // Fire-Aggressor: Kindling +1 use on Fire a1; Wind a2 uncounterable
+    // Fire-Aggressor: all-in setup dumps thumb uses onto Fire a1; Wind a2 uncounterable
     { thumb: FIRE, a1: FIRE, a2: WIND, d1: EARTH, d2: WATER },
     // Wind-Aggressor: Tailwind self-charges; both attack slots uncounterable
     { thumb: WIND, a1: WIND, a2: FIRE, d1: EARTH, d2: WOOD  },
   ],
   DEFENSIVE: [
-    // Earth-Defender: Bulwark adds +1 use to both Earth defense rings
+    // Earth-Defender: Precision Parry refunds defense uses on perfect timing
     { thumb: EARTH, a1: WATER, a2: WIND, d1: EARTH, d2: EARTH },
-    // Wood-Defender: Deep Roots thumb absorbs heart-loss
+    // Wood-Defender: all-in setup front-loads its Wood defense ring
     { thumb: WOOD,  a1: WATER, a2: WIND, d1: WOOD,  d2: EARTH },
   ],
   STATUS_HUNTER: [
-    // Fire-Hunter: Kindling +1 on a1; triple Fire for gauge; Wood blocks Water counter
+    // Fire-Hunter: all-in setup pours thumb uses across the Fire attack pair for gauge; Wood blocks Water counter
     { thumb: FIRE,  a1: FIRE,  a2: FIRE,  d1: WOOD,  d2: EARTH },
-    // Water-Hunter: Wellspring refunds defense use; Fire blocks Wood counter
+    // Water-Hunter: all-in setup front-loads the Water attack pair; Fire blocks Wood counter
     { thumb: WATER, a1: WATER, a2: WATER, d1: FIRE,  d2: EARTH },
-    // Wood-Hunter: Deep Roots; Water blocks Fire counter
+    // Wood-Hunter: all-in setup front-loads the Wood attack pair; Water blocks Fire counter
     { thumb: WOOD,  a1: WOOD,  a2: WOOD,  d1: WATER, d2: EARTH },
   ],
   RESILIENT: [

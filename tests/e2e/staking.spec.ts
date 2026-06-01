@@ -29,9 +29,12 @@ async function putLoadout(token: string, partial: Record<string, string | null>)
   });
 }
 
-// ── #31 Scenario 1: Kindling buffs Fire rings at duel start ──────────────────
-test('passive: Kindling buffs Fire rings at duel start', async ({ browser }) => {
-  // Starter loadout: thumb=Fire(element=0), a1=Fire → Kindling fires: a1 gets +1 use.
+// ── #241 Scenario 1: all-in setup pours Fire thumb uses onto Fire rings ───────
+test('passive: all-in setup distributes Fire thumb uses to Fire rings at duel start', async ({
+  browser,
+}) => {
+  // Starter loadout: thumb=Fire(element=0), a1=Fire is the only Fire base ring →
+  // the all-in setup passive pours ALL 3 thumb uses onto a1 (a1→6, thumb→0).
   const ctx = await browser.newContext();
   await seedAuthToken(ctx);
   const page = await ctx.newPage();
@@ -40,7 +43,7 @@ test('passive: Kindling buffs Fire rings at duel start', async ({ browser }) => 
   await waitForEncounter(page);
   await page.evaluate(() => (window as any).__encounterSelect('AGGRESSIVE'));
 
-  // Wait for ATTACK_SELECT (seatPlayer ran, Kindling applied).
+  // Wait for ATTACK_SELECT (seatPlayer ran, all-in setup applied).
   await page.waitForFunction(
     () => (window as any).__room?.state?.phase === 'ATTACK_SELECT',
     { timeout: 10000 },
@@ -52,9 +55,9 @@ test('passive: Kindling buffs Fire rings at duel start', async ({ browser }) => 
     return [me?.a1?.currentUses, me?.thumb?.currentUses];
   }, myId);
 
-  // Fire thumb (3 uses) buffs Fire a1: a1→4, thumb→2.
-  expect(a1Uses).toBe(4);
-  expect(thumbUses).toBe(2);
+  // Fire thumb (3 uses) pours all onto the only Fire ring (a1): a1→6, thumb→0.
+  expect(a1Uses).toBe(6);
+  expect(thumbUses).toBe(0);
   await ctx.close();
 });
 
@@ -133,8 +136,9 @@ test('passive: opponent ATK and DEF totals visible in HUD state', async ({ brows
     myId1,
   );
 
-  // Starter loadout: a1=Fire(4 with Kindling), a2=Water(3), d1=Wood(3), d2=Earth(3).
-  // ATK total = a1.currentUses + a2.currentUses = 4 + 3 = 7.
+  // Starter loadout: a1=Fire, a2=Water(3), d1=Wood(3), d2=Earth(3). The Fire
+  // thumb's all-in setup pours all 3 thumb uses onto the only Fire ring (a1),
+  // so a1=6.  ATK total = a1.currentUses + a2.currentUses = 6 + 3 = 9.
   // DEF total = d1.currentUses + d2.currentUses = 3 + 3 = 6.
   const [atkTotal, defTotal] = await p1.evaluate((id) => {
     const opp = (window as any).__room?.state?.players?.get(id);
@@ -144,7 +148,7 @@ test('passive: opponent ATK and DEF totals visible in HUD state', async ({ brows
     ];
   }, oppId);
 
-  expect(atkTotal).toBe(7); // 4+3 (Kindling on Fire a1)
+  expect(atkTotal).toBe(9); // 6+3 (all-in setup poured the Fire thumb onto a1)
   expect(defTotal).toBe(6); // 3+3
 
   await p1ctx.close();
