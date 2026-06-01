@@ -1,100 +1,30 @@
-## 10. World Regions, Build Decomposition & Region Manifests
+## 10. World Regions & Region Manifests
 
-This file covers the world-building implementation phases, the Forest region screen manifest, and asset/architecture decomposition. For overworld mechanics (biomes, detection, NPCs, Sanctum, waystones, anchorages, teleportation, merchants) see `gdd-10-overworld.md`.
+This file covers world structure: the overworld architecture, the short-range blink and field battle-hand mechanics, the Forest region screen manifest, and the terrain/biome-scene approach. For overworld *mechanics* (biomes, detection, NPCs, Sanctum, waystones, anchorages, teleportation, merchants) see `gdd-10-overworld.md`.
+
+> Implementation status — what's built, what's in progress — lives in GitHub Issues, not here. This section describes the intended world and how it is structured.
+
+> **Forward note:** this file currently holds the whole world because the Forest is the only fully-authored region. As more biomes are authored (Swamp, Snow Fields, Desert, …), the per-region screen manifests (§10.15 and its successors) should split into one file per biome — e.g. `gdd-10-forest.md`, `gdd-10-swamp.md` — leaving the shared overworld architecture (§10.12–10.14, §10.16–10.17) here as the hub. Split when a second region's manifest is written, not before.
 
 ---
 
-### 10.12 Phase 8 Build Decomposition
+### 10.12 Overworld Architecture
 
-Phase 8 is the largest phase in the roadmap — it introduces a full tilemap world, spatial movement, and all overworld systems. It is broken into three EPICs that ship sequentially.
+The world is rendered as **top-down tilemap scenes** with a walking protagonist (Arcade physics, WASD + arrows). There are two kinds of space:
 
-#### EPIC 8A — Spatial Engine + Sanctum Scene (EPIC [#54](https://github.com/krisoye/elemental-rings/issues/54))
-
-**What ships:** The Phaser tilemap engine and the Sanctum as a walkable room. Client-only — no Colyseus or server route changes. Every camp action (carry, loadout, sleep, recharge, fusion) already round-trips to authoritative REST endpoints; 8A only adds the spatial presentation layer.
-
-**Sanctum room zones** (walk to zone; press E to activate interior zones, or simply walk into the exit door):
+**The Sanctum** is a walkable interior room — the protagonist's mobile home. Each fixture is a proximity-triggered interaction zone:
 
 | Zone | Action |
 |---|---|
-| Ring-storage wall | Inventory, loadout, carry management, and fusion (until shrines arrive in 8C) |
-| Meditation circle | Ring recharge. Teleportation UI stub (enabled in 8B). |
-| Bed | Sleep — spend 25 food, restore full spirit gauge |
-| Campfire (exterior) | Placeholder — food display; cook/eat mechanic is a future phase |
-| Exit door | Walk into the door to leave the Sanctum (touch-to-exit — no key press needed) |
+| Ring-storage wall | Inventory, loadout, carry management, and Sanctum-side fusion |
+| Meditation circle | Ring recharge; long-range teleportation to discovered Anchorages |
+| Bed | Sleep — spend food, restore full spirit gauge |
+| Campfire | Rest, and summon the Sanctum to a discovered Anchorage in the field |
+| Exit door | Step into the overworld |
 
-**Sub-issues (implement in order):**
-- [#55](https://github.com/krisoye/elemental-rings/issues/55) — 8A.1: Spatial movement engine + Sanctum room shell (tilemap, Player, collision, camera)
-- [#56](https://github.com/krisoye/elemental-rings/issues/56) — 8A.2: Sanctum interaction zones (reintegrate CampScene panels as proximity overlays)
-- [#57](https://github.com/krisoye/elemental-rings/issues/57) — 8A.3: Overworld stub + scene transition (seam to 8B)
+**Biomes** are multi-screen regions — graphs of discrete tilemap screens connected by walkable edges (walk off an edge → brief fade → spawn at the neighbor's opposite edge). The Forest is the first full region (§10.15); the Swamp adjoins it.
 
-**Confirmed implementation decisions (8A):**
-
-| Decision | Choice | Rationale |
-|---|---|---|
-| Tile assets | Kenney CC0 placeholder tilesheet (32px tiles, committed PNG + generator script); Tiled-format JSON maps | Swappable: replace PNG + reindex in Tiled. No Tiled GUI or MCP needed for 8A. |
-| Multiplayer overworld | Per-player (local) for 8A MVP | Per-player adds zero server complexity. Area-scoped Colyseus `WorldRoom` designed in once biome authoring begins. |
-| Scene key | Keep `'CampScene'` (transform in place) | Preserves 4 existing `scene.start('CampScene')` callers and all `window.__camp*` E2E hooks — zero test churn. |
-| EncounterScene | Survives as a dev/test shortcut ("Set Out →" button) | The overworld is its eventual spatial replacement, but it remains invaluable for isolated battle testing. |
-| Fusion entry point | Sanctum ring-wall zone until 8C | Shrines are a physical overworld object that requires biome content. The existing `/api/fusion/combine` route is unchanged. |
-| Player movement | Top-down Arcade Physics, zero gravity, WASD + arrows, 160 px/s | Standard Phaser top-down pattern; no physics complexity needed for a walking protagonist. |
-
----
-
-#### EPIC 8B — Overworld World (EPIC [#60](https://github.com/krisoye/elemental-rings/issues/60))
-
-**What ships:** The 8A overworld *stub* becomes a real **Forest biome** — a generated Tiled map with 3 waystone markers (touch to attune, **server-persisted**), a compass HUD that pulls toward the nearest *unattuned* waystone, and teleportation from the Sanctum's meditation circle. Unlike 8A (client-only), **8B adds server state and routes** — attunement, the Sanctum anchor, and the teleport gate are game rules and are server-enforced (§2).
-
-> **Design note (v4.9 — 8B.4 shipped):** The 8B.4 EPIC (#70, PRs #77/#79 + the overworld-fixes follow-up) closed the visual foundation and a large part of the Waystone/Anchorage distinction. As shipped now: the three Forest locations render as **Anchorages** (campfire + ground ring, no standing stone) and **auto-attune on walk-in** (§10.7a); the Sanctum exterior sits **directly at the Anchorage center** (`SANCTUM_OFFSET = 0`) and materializes there; and two **first-class discovery waystones** now exist (standing stones, press-E attune) that reveal adjacent biomes. As of **8D (#87)** the §10.8 teleport gate is the **`spirit_current >= spiritCost`** rule (spending spirit on travel — see §10.8), completing the preparation loop. The data model still keeps Anchorages and waystones in one catalog (`shared/waystones.ts`), distinguished by the map object `name` — a full table-level separation remains a future pass.
-
-**Sub-issues shipped (8B.1–8B.3):**
-- [#61](https://github.com/krisoye/elemental-rings/issues/61) — 8B.1: Forest biome map + waystone attunement (`shared/waystones.ts` catalog, map generator, `waystone_attunements` table, `GET /api/waystones` + `POST /api/waystones/attune`, overworld markers)
-- [#62](https://github.com/krisoye/elemental-rings/issues/62) — 8B.2: Compass HUD (directional pull to nearest unattuned waystone; client-only)
-- [#63](https://github.com/krisoye/elemental-rings/issues/63) — 8B.3: Teleportation + Sanctum anchoring (`players.anchored_waystone`, `POST /api/teleport`, meditation-circle modal list, anchor-derived overworld spawn)
-
-**8B.4 EPIC — Visual foundation + design correction (#70):**
-- [#71](https://github.com/krisoye/elemental-rings/issues/71) — 8B.4.1: Sanctum exterior + anchor co-location (hotfix — Sanctum has no visible exterior; `sanctum_return` zone doesn't move with anchor)
-- [#72](https://github.com/krisoye/elemental-rings/issues/72) — closed (waystone visual already functional; waystones render as standing stones with glow + label)
-- [#73](https://github.com/krisoye/elemental-rings/issues/73) — 8B.4.3: Safe area ground treatment around waystones (campfire, worn ground)
-- [#74](https://github.com/krisoye/elemental-rings/issues/74) — 8B.4.4: Forest map terrain overhaul (trees, paths, clearings)
-
-**Forest locations (as shipped — Anchorages and discovery waystones are now visually + behaviorally distinct):**
-
-| id | Name | Type | Gate | Notes |
-|---|---|---|---|---|
-| `forest_entry` | Forest Waystone | Anchorage | 0 (free) | Default Anchorage; pre-attuned at creation. Renders campfire + ground ring; auto-attunes on walk-in. |
-| `forest_glade` | Glade Waystone | Anchorage | 100 aggregate XP | Mid-biome Anchorage. Auto-attune; teleport destination. |
-| `forest_depths` | Deepwood Waystone | Anchorage | 300 aggregate XP | Deep-biome Anchorage. Auto-attune; teleport destination. |
-| `forest_north_stone` | Frost-Worn Stone | Waystone | 150 aggregate XP | Discovery marker (standing stone, press-E). Reveals the **Snow Fields** (future biome). |
-| `forest_sw_stone` | Bogwood Sentinel | Waystone | 250 aggregate XP | Discovery marker. Reveals the **Swamp** biome — gates the Forest→Swamp transition (8C.2). |
-
-**Known limitations (remaining after 8B.4):**
-- Anchorages and waystones still share one catalog (`shared/waystones.ts`); they are distinguished by the map object `name` and rendered differently, but a table-level separation (a dedicated `anchorages` table) is still future.
-- The server cannot verify the player physically stood on an Anchorage before auto-attuning (per-player overworld MVP). A future shared `WorldRoom` would verify proximity authoritatively.
-
-> **Implemented in 8D (#87):** The §10.8 teleport gate now spends **`spiritCost`** (per-destination, in `shared/waystones.ts`) and rejects when `spirit_current < spiritCost`, completing the sleep → restore spirit → teleport preparation loop. Short-range **blink** (§12, below) and **ambush first-strike** (§10.3/§10.9) add the first non-recharge spirit sinks.
-
----
-
-#### EPIC 8C — World Population & Swamp Biome (EPIC [#80](https://github.com/krisoye/elemental-rings/issues/80))
-
-**What ships:** A second navigable biome (Swamp) with a hidden-progression secret, and the first living inhabitants (NPCs + detection). Decomposed into sub-issues that can largely proceed in parallel.
-
-**Sub-issues:**
-- [#82](https://github.com/krisoye/elemental-rings/issues/82) — 8C.2: Swamp biome + hidden Forest alcove (new map + tileset, `SwampScene`, gated Forest→Swamp transition, the Ironbark Rune revealing an unreachable Forest Anchorage)
-- [#83](https://github.com/krisoye/elemental-rings/issues/83) — 8C.3: NPC & monster world population + detection (per-biome spawn table, detection radius, duels via the existing `battle-ai` room, server-side defeat tracking)
-
-**Swamp biome:** Dominant elements Mud/Water/Wood/Earth (§10.2). Reached from the Forest's southwest edge once the `forest_sw_stone` (Bogwood Sentinel) waystone is attuned. Contains the `swamp_secret_forest` (Ironbark Rune) waystone, whose revelation unlocks `forest_hidden_anchor` — an Anchorage inside a tiny Forest alcove reachable ONLY by teleporting there (no walking path from the Forest side). This closes a discovery loop: explore Swamp → find rune → unlock hidden Forest area.
-
-**World population:** NPC/monster placement using the existing 4-personality AI (Aggressive/Defensive/Status-Hunter/Resilient). Detection radius reveals an opponent's element; approach (E) launches the duel via the existing `battle-ai` room, flee = walk away. Defeats are recorded server-side (permanent NPCs stay beaten; daily NPCs respawn on the game-day tick). Shrines and the Underground/Shadow drop zone remain deferred to a later phase.
-
-**Confirmed implementation decisions (8C):**
-
-| Decision | Choice | Rationale |
-|---|---|---|
-| Anchorage data model | Anchorages remain entries in the `shared/waystones.ts` catalog (with `xpThreshold` gate) | First-class Anchorage/waystone separation is still a future pass; the map object `name` (`anchorage` vs `waystone`) already drives the visual + auto-attune split (shipped in the 8B.4 follow-up) |
-| Biome scenes | `SwampScene`/`HiddenForestScene` clone `OverworldScene` for MVP | **Superseded by §10.17**: `BaseBiomeScene` abstract class + per-biome subclasses is the design adopted in 8E. `SwampScene` migrates in 8E.4; `HiddenForestScene` is deleted (absorbed as `forest_hidden_alcove` manifest entry). |
-| NPC duels | Reuse the `battle-ai` Colyseus room (`npcId` added to `BattleRoomOptions`) | No new duel endpoint; defeat recorded in `persistBattleResult` |
-| Multiplayer overworld | Still per-player | Shared `WorldRoom` remains deferred |
+**World model:** the overworld is per-player for now (a shared, area-scoped multiplayer world is a future direction). NPCs and monsters are placed per screen by danger tier; a detection radius reveals an opponent's element, and approaching launches a duel through the authoritative battle room. Defeats persist server-side — boss and guardian defeats permanently, roamers respawn on the game-day tick. Biome-to-biome passage is held by **boss gates**: a boss NPC physically blocks the exit until defeated.
 
 ---
 
@@ -124,7 +54,7 @@ The protagonist can review and reassign their battle hand (Thumb/A1/A2/D1/D2 slo
 
 **Key binding:** `Tab` toggles the overlay open/closed; `Esc` also closes it. While the overlay is open, player movement is suppressed and blink (§10.13) is disabled.
 
-**Available actions:** Same as the in-Sanctum battle-hand screen — reassign carried rings to battle slots (`PUT /api/loadout`), recharge individual rings or all rings (`POST /api/spirit/recharge`, consuming `spirit_current`). Sleep is NOT available in the field (§12.4).
+**Available actions:** Same as the in-Sanctum battle-hand screen — reassign carried rings to battle slots, recharge individual rings or all rings (consuming `spirit_current`). Sleep is NOT available in the field (§12.4).
 
 **GDD rule reference:** §6.8 ("After any battle, the player can freely reorganize their battle hand among their carried rings before the next encounter") and §12.3 ("Recharging a ring — anywhere"). Both explicitly allow field access; the Tab binding makes this convenient without requiring a Sanctum return.
 
@@ -135,12 +65,13 @@ The protagonist can review and reassign their battle hand (Thumb/A1/A2/D1/D2 slo
 The Forest is a **multi-screen region** — a graph of discrete maps connected by road edges. Walking off a screen edge transitions (brief fade) to the neighbor, spawning the player at the opposite edge. Each screen is one Tiled map file generated from this manifest.
 
 **Schema conventions:**
-- `size` is width × height in tiles (32 px/tile). Narrow dimensions imply a corridor — the generator flanks the short axis with trees/rocks, leaving only the road open.
-- `exits` are always reciprocal and validated by a Vitest drift test. `north`/`south` and `east`/`west` are the only valid directions.
-- `anchorage` and `waystone` ids must exist in `shared/waystones.ts`.
+- `size` is width × height in tiles. Narrow dimensions imply a corridor — the generator flanks the short axis with trees/rocks, leaving only the road open.
+- `exits` are always reciprocal and validated by a drift test. `north`/`south` and `east`/`west` are the only valid directions.
+- `anchorage` ids must exist in the anchorage catalog (`shared/waystones.ts`).
+- A `waystone` is a **revelation marker** — attuning it reveals a distant region; it is not a teleport destination.
+- A `biome_exit` marks a transition to a different biome scene, held by a boss gate until that boss is defeated.
 - `danger` (1–3) controls NPC tier and density. Omit for safe screens.
-- `biome_exit` marks a transition to a different biome scene, gated by attunement of the named waystone.
-- Add a new screen here first; the drift test will catch any broken exits or unknown ids before implementation.
+- Add a new screen here first; the drift test catches broken exits or unknown ids before implementation.
 
 **Region topology (28 screens):**
 
@@ -177,7 +108,7 @@ The Forest is a **multi-screen region** — a graph of discrete maps connected b
 - **exits:** north → `forest_north_road`, east → `forest_east_path`, south → `forest_south_path`, west → `forest_mossy_fen`
 - **safe:** true
 - **anchorage:** `forest_entry`
-- **map:** hand-authored Tiled export (`client/public/assets/maps/forest/forest_anchorage.json`) — **not generated** by the forest-screen generator. Uses 6 tilesets: `forest16` (water/void collision), `Fantasy Era- Wild plains pack`, `ModernEra_GreenForest_Tileset`, `asset_alliance_starter_village_main`, `berry_and_trees`. The `charsetA_1` charset is declared in the map's `npcs` layer for Tiled authoring reference but that layer is not rendered — merchant NPCs are spawned as interactive sprites from the `objects` layer.
+- **map:** hand-authored Tiled export (`client/public/assets/maps/forest/forest_anchorage.json`) — **not generated** by the forest-screen generator. Merchant NPCs are spawned as interactive sprites from the `objects` layer.
 - **layers:** follows the three-layer convention (§10.1) — `ground` (terrain), `behind` (south walls, trunks), `in-front` (roofs, canopy)
 - **objects:** `spawn` (player start), `anchorage` (forest_entry zone), `sanctum_return` (return-to-Sanctum zone), two `forage_node` objects (berry_1, berry_2), two `merchant` NPCs
 - **content:** The safe community hub. A large lake occupies the northwest quarter. An orange-roofed merchant building sits in the northeast; a larger blue-roofed building with a south-facing entrance dominates the center. Berry bushes, mixed grass-and-soil paths, and a stone wall section fill the remaining space. Two merchant NPCs are present. The Sanctum anchors here by default; all four cardinal exits lead into the wider Forest region.
@@ -196,8 +127,7 @@ The Forest is a **multi-screen region** — a graph of discrete maps connected b
 - **size:** 32×20
 - **exits:** south → `forest_north_road`
 - **danger:** 2
-- **waystone:** `forest_north_stone`
-- **content:** A widening clearing at the forest's northern fringe. The Frost-Worn Stone stands here guarded by a mid-tier mini-boss. Attuning it reveals the Snow Fields. Dead end — the northern edge is a wall of frost-touched firs with no path forward.
+- **content:** A widening clearing at the forest's northern fringe. A mid-tier Frost Sentinel mini-boss patrols here. The northern edge is a wall of frost-touched firs — the path onward into the Snow Fields opens once that biome is authored and its boss gate placed. For now, a dead end.
 
 ---
 
@@ -254,9 +184,8 @@ The Forest is a **multi-screen region** — a graph of discrete maps connected b
 - **size:** 28×18
 - **exits:** east → `forest_hollow`
 - **danger:** 2
-- **waystone:** `forest_sw_stone`
-- **biome_exit:** south → `SwampScene` *(gated by attunement of `forest_sw_stone`)*
-- **content:** The southwestern fringe. Ground shifts from dirt to mud; standing water pools near the edge. The Bogwood Sentinel stands here guarded by a mid-tier boss. Attuning it reveals the Swamp and opens the southern biome exit. Until then the south edge is impassable.
+- **biome_exit:** south → `SwampScene` *(held by the Bogwood Warden boss gate until defeated)*
+- **content:** The southwestern fringe. Ground shifts from dirt to mud; standing water pools near the edge. The **Bogwood Warden** — a mid-tier boss wielding Mud (Water+Earth) attack and Wood defense — stands in the south passage. Until it falls, the south edge is impassable; defeating it opens the way into the Swamp and drops a food cache.
 
 ---
 
@@ -289,7 +218,6 @@ The Forest is a **multi-screen region** — a graph of discrete maps connected b
 - **size:** 28×22
 - **exits:** north → `forest_briar_pass`, west → `forest_deepwood`, south → `forest_verdant_descent` *(opens on boss defeat)*
 - **danger:** 3
-- **waystone:** `forest_desert_stone` — *The Barrowstone* (reveals the Desert biome; guarded by the boss; attuneable after defeat)
 
 **Boss: The Thornwood Warden**
 A towering spirit of bark and howling wind, the oldest guardian the Forest has ever set against intruders. Uses Wood offensively and Wind defensively — the same combination as the Thornado ring, previewing what fusion can produce.
@@ -304,10 +232,9 @@ A towering spirit of bark and howling wind, the oldest guardian the Forest has e
 **Defeat rewards:**
 1. **Reliquary Shard** — the first shard in the game. Expands the Reliquary from 20 to 30 ring slots (§4.1.1).
 2. **Large food cache** — biome boss food drop (§10.5).
-3. **The Barrowstone** becomes attuneable — reveals the Desert biome path.
-4. **South exit opens** — the Verdant Descent becomes accessible, unlocking the Bloom wing.
+3. **South exit opens** — the Verdant Descent becomes accessible, unlocking the Bloom wing.
 
-**Content:** A circular clearing of stamped earth ringed by ancient standing stones, unnaturally still and quiet. The Barrowstone — a weathered waystone carved with desert-wind glyphs — stands at the far end, inert until the Warden falls. Reachable from two directions before the fight — Briar Pass from the north, Deepwood from the west — but there is no way south until the Warden is defeated.
+**Content:** A circular clearing of stamped earth ringed by ancient standing stones, unnaturally still and quiet. The Warden blocks the south passage; the clearing is reachable from two directions before the fight — Briar Pass from the north, Deepwood from the west — but there is no way south until the Warden is defeated.
 
 ---
 
@@ -372,9 +299,9 @@ A towering spirit of bark and howling wind, the oldest guardian the Forest has e
 
 #### `forest_root_tangle` — The Root Tangle
 - **size:** 32×24
-- **exits:** west → `forest_ancient_grove`, north → `forest_deepwood`
+- **exits:** west → `forest_ancient_grove`, north → `forest_deepwood`, east → `forest_canopy_walk`
 - **danger:** 3
-- **content:** Chaotic exposed root systems east of the Ancient Grove — root walls as tall as a person force a winding path through the screen. The northern exit emerges in the Deepwood, closing the deep-forest loop (Ancient Grove → Root Tangle → Deepwood → Boss Clearing → Verdant Descent → Ancient Grove). Two or three of the toughest Forest-zone duelists roam here.
+- **content:** Chaotic exposed root systems east of the Ancient Grove — root walls as tall as a person force a winding path through the screen. The northern exit emerges in the Deepwood, closing the deep-forest loop (Ancient Grove → Root Tangle → Deepwood → Boss Clearing → Verdant Descent → Ancient Grove). The eastern path climbs toward the Canopy Walk. Two or three of the toughest Forest-zone duelists roam here.
 
 ---
 
@@ -422,173 +349,50 @@ A towering spirit of bark and howling wind, the oldest guardian the Forest has e
 - **size:** 24×18
 - **exits:** *(none — teleport-only via `forest_hidden_anchor`)*
 - **anchorage:** `forest_hidden_anchor`
-- **waystone:** `forest_hidden_glade`
 - **danger:** 1
-- **content:** A serene, impossibly still clearing accessible only by teleporting after attuning the Ironbark Rune in the Swamp. Both the Hidden Anchorage and the Hidden Glade Waystone sit here. A secret reward — quiet and beautiful, a deliberate contrast to the boss route.
+- **content:** A serene, impossibly still clearing accessible only by teleporting after attuning the Ironbark Rune in the Swamp. The Hidden Anchorage sits here. A secret reward — quiet and beautiful, a deliberate contrast to the boss route.
 
 ---
 
-### 10.16 Phase 8D — Asset Art Pass
+### 10.16 Terrain & Asset Approach
 
-Replaces placeholder generated tiles with real **Asset Alliance** pixel-art assets. Produces the reusable pipeline (decoder, tilesets, sprite system) and applies it to the Sanctum (permanent) + current Forest/Swamp maps (proof). Tilesets and the `Decoration.ts` sprite-placement system are inherited by Phase 8E.
+Biome maps use **16 px tiles on a three-layer convention** (`ground` / `behind` / `in-front`, §10.1) rendered at 2× zoom. Terrain is **autotiled** — grass, dirt roads, water, and cliffs each resolve from a 48-variant autotile set, so generated screens read as continuous terrain rather than flat color. Trees, rocks, bushes, and structures are placed as a separate decoration sprite layer on top.
 
-#### Biome → Asset Mapping
+Generated screens are **deterministic and drift-tested**: re-running a generator is a no-op diff, and integrity tests verify map format, collision, and that every screen is BFS-traversable. The hub (`forest_anchorage`) is hand-authored in Tiled rather than generated, because its multi-tileset village layout is richer than the generator targets.
 
-| Screen / Scene | Ground tileset | Object sprites | Source pack |
-|---|---|---|---|
-| `forest_anchorage` hub | GreenForest grass + dirt path | GreenForest trees; Starter Village houses, fences, lamp posts | GreenForest + Starter Village 32×32 |
-| Forest corridor screens (`north_road`, `east_path`, `south_path`, `briar_pass`) | GreenForest grass + dirt | GreenForest trees dense on short axis | GreenForest |
-| `forest_glade` | GreenForest grass | GreenForest sparse trees, flowers | GreenForest |
-| `forest_mossy_fen` | GreenForest dark grass | GreenForest trees, rocks, pond blobs | GreenForest |
-| `forest_hollow` | Dark grass + mud patch | GreenForest trees, Cold Cave rocks | GreenForest + Cold Cave |
-| `forest_snow_gate` | Stone + frost | Cold Cave rocks + pine variants | Cold Cave |
-| `forest_swamp_gate` | Mud/dirt | Cold Cave alt rocks + GreenForest | Cold Cave + GreenForest |
-| `forest_crossroads`, `forest_ridge` | GreenForest grass + stone | GreenForest trees, rock clusters | GreenForest |
-| `forest_deepwood` | GreenForest dark grass | GreenForest dense trees, dark variants | GreenForest |
-| `forest_boss_clearing` | Stone circle | Rock pillars, minimal trees | GreenForest + Cold Cave |
-| `forest_hidden_alcove` | GreenForest grass (serene) | Single large tree, soft bush ring | GreenForest |
-| Swamp screens | Mud + water | Cold Cave alt rocks, reed sprites | Cold Cave + GreenForest |
-| **Sanctum interior** | Cozy Indoor wood + stone floors | Cozy Indoor furniture (bed, bookshelf, rug, hearth, door) | Cozy Indoor |
-
-#### Phase 8D Build Decomposition (EPIC [#92](https://github.com/krisoye/elemental-rings/issues/92))
-
-**Sub-issues (8D.1 + 8D.3 parallel; 8D.4 after 8D.2):**
-
-- [#93](https://github.com/krisoye/elemental-rings/issues/93) — **8D.1:** RPG Maker VX autotile decoder tool (`client/scripts/lib/rpgmaker-autotile.mjs`). Reads A2/A4 source sheets; outputs flat 48-variant Tiled-compatible tileset PNGs. Verified by Vitest. NOT wired into any map — tool only, consumed by 8E.
-- [#94](https://github.com/krisoye/elemental-rings/issues/94) — **8D.2:** Forest + Swamp ground tilesets. Generates `forest.png` (GreenForest grass/tree/dirt) and refreshes `swamp.png` (real mud/water). Splits the shared `placeholder.png` — OverworldScene + HiddenForestScene → `forest`; CampScene → `sanctum` (see 8D.3). GID contract unchanged (4-tile strip, GID3 `collides:true`).
-- [#95](https://github.com/krisoye/elemental-rings/issues/95) — **8D.3:** Sanctum interior. Generates `sanctum.png` (Cozy Indoor wood/stone floors). Adds furniture sprites at the five interaction zones (bed, meditation, ringwall, campfire, door). All E2E hooks and InteractionZones unchanged.
-- [#96](https://github.com/krisoye/elemental-rings/issues/96) — **8D.4:** Decoration sprite system. `client/src/objects/world/Decoration.ts` — `placeDecoration(scene, group, spec[])` helper usable by any biome scene. Generates `forest-decoration.png` (trees, rocks, bushes, ponds) and `structures.png` (Starter Village buildings). Minimal proof placement in current OverworldScene/ForestScene; full per-screen placement is 8E.5.
-
-**Confirmed implementation decisions (8D):**
-
-| Decision | Choice | Rationale |
-|---|---|---|
-| Orientation | **Orthogonal 32px** — unchanged | No engine changes; Asset Alliance ships 32×32 variants |
-| GID structure | 4-tile strip preserved (void/floor/wall/accent) | Drop-in swap; all map generators and collision unchanged |
-| Autotile transitions | Decoder built as a **tool**; NOT applied to maps in 8D | Maps re-indexed once in 8E, not twice |
-| Map application scope | Sanctum (permanent) + current Forest/Swamp (proof) | Tilesets + system are 100% reusable by 8E; current map decoration is throwaway |
-| Source art location | Read from absolute host paths at generation time; committed PNGs are the portable artifact | No repo bloat; regeneration is host-bound (acceptable) |
-| Tileset split | `forest.png` / `sanctum.png` / `swamp.png` | Sanctum must not inherit grass from the shared placeholder sheet |
+Art is sourced from pixel-art packs at generation time and committed as portable tileset PNGs; the source-art paths are host-bound and not part of the repo. Swapping art means regenerating tilesets — the GID contract and collision rules stay fixed, so maps and code are unaffected.
 
 ---
 
-### 10.17 Phase 8E — Forest Region Expansion
+### 10.17 Biome-Scene Architecture
 
-Implements the §10.15 Forest region manifest as a **15-screen connected world** using a new biome class hierarchy. Inherits all tilesets, sprite catalogs, and the `Decoration.ts` system from Phase 8D.
-
-#### Architecture
+The whole Forest region — all 28 screens — is a **single scene class** parameterized by screen id, not 28 separate scenes. Biomes share one abstract base; each biome subclass supplies only what differs.
 
 ```
-BaseBiomeScene (abstract Phaser.Scene)
+BaseBiomeScene (abstract)
 │   Core mechanics — written once:
-│     tilemap load, Player, Arcade physics, camera, compass HUD,
+│     tilemap load, Player, physics, camera, compass HUD,
 │     waystone attunement, NPC detection + duel launch,
 │     campfire (rest + Sanctum summon), blink (§10.13),
-│     biome_exit, edge-transition system, E2E hooks
+│     biome-exit boss gates, edge-transition system
 │   Abstract contract:
-│     abstract tilesetKey(): string
-│     abstract mapKeyForScreen(screenId: string): string
+│     tilesetKey(): string
+│     mapKeyForScreen(screenId): string
 │   Optional overrides:
-│     biomeVisuals?()   ← fog, snow, tint
-│     onEnterScreen?()  ← per-screen decoration placement
+│     biomeVisuals()   ← fog, snow, tint
+│     onEnterScreen()  ← per-screen decoration placement
 
 ForestScene extends BaseBiomeScene
-│   manifest: FOREST_SCREENS (shared/world/forest.ts — 28 screens)
-│   tilesetKey() → 'forest'
-│   Phaser key: 'ForestScene'; init({ screenId, spawnEdge })
-│   onEnterScreen() → calls Decoration.placeDecoration per screenId spec
+│   manifest: FOREST_SCREENS (shared/world/forest.ts)
+│   init({ screenId, spawnEdge })
 
 SwampScene extends BaseBiomeScene
-│   manifest: SWAMP_SCREENS (shared/world/swamp.ts — 1 screen, grows later)
-│   tilesetKey() → 'swamp-tiles'
-│   biomeVisuals() → fog overlay, reduced NPC detection radius
-
-[HiddenForestScene deleted — absorbed as forest_hidden_alcove screen in ForestScene]
+│   manifest: SWAMP_SCREENS (shared/world/swamp.ts)
+│   biomeVisuals() → fog overlay, reduced detection radius
 ```
 
-**Edge-transition system:** when the player walks off a map edge that has an `exits` entry in `ScreenDef`, `BaseBiomeScene` fades (250 ms) and restarts the same scene class with the neighbor's `screenId`, spawning the player at the opposite edge midpoint. `biomeExit` edges still use the attunement-gated transition (existing `tryBiomeExit` pattern).
+**The manifest is the source of truth.** Each biome's screens live in a typed manifest (`shared/world/<biome>.ts`) — imported by the map generator, the drift test, and the server's NPC placement alike, so a screen's exits, anchorages, and danger tier cannot disagree across systems. §10.15 is the human-readable mirror of `forest.ts`.
 
-#### Phase 8E Build Decomposition (EPIC [#97](https://github.com/krisoye/elemental-rings/issues/97))
+**Edge transitions:** walking off a map edge that has an `exits` entry fades briefly and restarts the same scene class with the neighbor's `screenId`, spawning the player at the opposite edge. `biome_exit` edges instead cross to another biome scene once that biome's boss gate is cleared.
 
-**DAG: `{8E.1, 8E.3}` parallel → `{8E.2, 8E.4}` after 8E.1 → `8E.5` after 8E.2 + 8D.4**
-
-- [#98](https://github.com/krisoye/elemental-rings/issues/98) — **8E.1:** `BaseBiomeScene` + `ForestScene` core. Extracts all shared logic from `OverworldScene` into `BaseBiomeScene`. Creates `ForestScene`, `shared/world/forest.ts` manifest, edge-transition system. Deletes `OverworldScene.ts` + `HiddenForestScene.ts`. Extends drift test for reciprocal exits + waystones.ts parity.
-- [#99](https://github.com/krisoye/elemental-rings/issues/99) — **8E.3:** Server NPC screen-awareness. Adds `screen: string` to `NpcSpawnDef`; expands `NPC_SPAWNS` for all Forest screens by danger tier; adds `?screen=` filter to `GET /api/overworld/npcs` (screen required when biome provided).
-- [#100](https://github.com/krisoye/elemental-rings/issues/100) — **8E.2:** Forest screen map generator. Single `gen-forest-screens.mjs` generates all 28 maps from `FOREST_SCREENS` manifest → `maps/forest/<id>.json`. Corridor maps auto-shaped; open maps get grove clusters; object layer derived from manifest fields. Deletes `gen-overworld-map.mjs`, `overworld.json`, `forest_hidden.json`.
-- [#101](https://github.com/krisoye/elemental-rings/issues/101) — **8E.4:** Migrate `SwampScene` to `BaseBiomeScene`. Removes ~250 lines of duplicated shared logic; keeps fog + detection-radius overrides; creates `shared/world/swamp.ts`.
-- [#102](https://github.com/krisoye/elemental-rings/issues/102) — **8E.5:** Forest decoration + hub structures placement. Art-directs all 28 Forest screens via `Decoration.ts` + `SCREEN_SPECS` constant in `ForestScene`. Hub gets Starter Village buildings; corridors get dense flanking trees; deep forest gets densest coverage; boss clearing kept open; shrine screens get altar objects.
-
-**Confirmed implementation decisions (8E):**
-
-| Decision | Choice | Rationale |
-|---|---|---|
-| Biome architecture | `BaseBiomeScene` abstract + subclass per biome | Core mechanics once; biomes diverge via override hooks |
-| Scene key | One `'ForestScene'`, `init({ screenId })` | 15 screens as instances of one class |
-| HiddenForestScene | Deleted — `forest_hidden_alcove` manifest entry | Was an OverworldScene clone; manifest entry is the right abstraction |
-| SwampScene | Rewritten to `extend BaseBiomeScene` | Explicitly "clone for MVP" per §10.12; now migrated |
-| Manifest location | `shared/world/forest.ts` (TypeScript, typed) | Importable by generator + drift test + server; §10.15 is the human-readable mirror |
-| NPC placement | `screen` field server-side | Defeat-tracking and placement must share a source of truth |
-| Transition UX | Walk-off-edge → 250 ms fade → spawn at opposite edge | Classic LttP screen-transition; camera-bounds already pins overrun |
-| Map layout | `maps/forest/<screenId>.json` | Clean namespace; single generator; no name collisions |
-
----
-
-### 10.18 EPIC #149 — Forest + Swamp 16px Migration
-
-Migrates the 14 generated Forest screens **and** the Swamp from the legacy
-32px / 1× / single-`ground`-layer / 4-tile system to the 16px / 2× / 3-layer
-(`ground`/`behind`/`in-front`) rich-terrain system already used by the hub. Roads
-become autotiled dirt, ponds become autotiled water, groves/outcrops become
-autotiled cliff + tree trunks/canopy, and overworld monster markers become the
-high-quality `monsters/` sprites (so what you see matches what you fight).
-
-**Sub-issue plan (EPIC [#149](https://github.com/krisoye/elemental-rings/issues/149)):**
-
-| Order | Sub-issue | Status |
-|---|---|---|
-| 1 | Engine generalization (16px/2×/3-layer for any screen) — #150 | **closed** (PR #152) |
-| 2 | Autotile pipeline + resolver (ground/water/cliff) — #151 | **closed** (PR #152, cliff procedurally generated) |
-| 3 | Tile vocabulary / GID contract module — #157 | **closed** |
-| 4 | Generator rewrite (3-layer 16px, autotile terrain) — #159 | **closed** |
-| 5 | Collision + traversal integrity (Vitest) — #160 | **closed** |
-| 6 | Swamp migration — #161 | **closed** |
-| 7 | Overworld monster sprites registry — #158 | **closed** |
-| 8 | Docs + skill update — #162 | **closed** |
-
-**Confirmed implementation decisions (#149):**
-
-| Decision | Choice | Rationale |
-|---|---|---|
-| Tileset strategy | Multi-tileset with fixed firstgids | No composite PNG needed; the hub pattern is reused |
-| Cliff autotile source | Procedurally generated by `gen-cliff-cell.mjs` | No corner-piece cliff art in available packs |
-| Dirt substitute | Dark-grass A2 cell (green-toned) | No brown-dirt autotile in Starter Village A2 |
-| Background fill per biome | Forest = grass (T_GRASS); Swamp = water (T_WATER) | Each biome's dominant terrain renders as autotile-interior variant 0 |
-| Shared layer builders | `client/scripts/lib/map-builders.mjs` | Forest + Swamp generators share ground/behind/in-front + tileset descriptors |
-| Hub exclusion | `gen-forest-screens.mjs` skips `forest_anchorage` | Hand-authored; the 6-tileset hub config is incompatible with the generator |
-| NPC coordinate TILE_SIZE | 16 for Forest/Swamp | Maps are now 16px tiles; spawn tx/ty halved, world-pixel origin unchanged |
-| Monster overworld sprites | Per-element canonical PNG with deterministic battle variant | Eliminates the generic strip; identity match to the battler via `battleKey` |
-| Swamp output path | `maps/swamp/swamp_entry.json` (per-screen dir) | Matches the Forest convention; enables future multi-screen Swamp |
-| Swamp manifest size | reconciled `[28,30]` → `[35,28]` | The generator always produced 35×28; a drift test now guards it |
-
-**Generated-screen tileset GID contract** (`client/scripts/lib/forest-gid-map.mjs`):
-
-| # | Tileset (= texture key) | firstgid | tilecount | Contents |
-|---|---|---|---|---|
-| 1 | `autotile_grass_16` | 1 | 48 | Grass variants (ground base) |
-| 2 | `autotile_dirt_16` | 49 | 48 | Dirt/road variants |
-| 3 | `autotile_water_16` | 97 | 48 | Water variants — all 48 `collides:true` |
-| 4 | `autotile_cliff_16` | 145 | 48 | Cliff variants — all 48 `collides:true` |
-| 5 | `ModernEra_GreenForest_Tileset` | 193 | 120 | Tree trunks (behind), canopy (in-front), rocks |
-| 6 | `berry_and_trees` | 313 | 55 | Bush / flower detail |
-
-> **Cliff result:** `autotile_cliff_16.png` ships as a procedurally generated cell
-> (`gen-cliff-cell.mjs`). No corner-piece cliff cell was found in the ColdCave or
-> GreenForest source art; the procedural cell uses warm-gray stone with
-> CORNER_PIECES-matching geometry. If higher-fidelity art is sourced later, replace
-> the procedural generator with a source-art path in `gen-autotile-16.mjs`.
-
-The generated maps are deterministic (re-running the generators is a no-op diff)
-and validated by `tests/unit/map-integrity.spec.ts` (format, collision, BFS
-traversal) plus the extended `waystones.spec.ts` drift checks.
-
----
+**NPC placement** is server-side and screen-aware: each NPC carries the `screen` it belongs to, so defeat-tracking and placement share one source of truth.

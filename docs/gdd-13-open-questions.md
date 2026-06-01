@@ -45,6 +45,35 @@
 
 ---
 
+## 13.1 Alternative Designs (Not Adopted)
+
+> ⚠️ **This is NOT the current system.** Everything in §13.1 is a parked design alternative kept for reference — the live ring-progression and fusion rules are in **§4** and **§5**. Nothing here is implemented or planned. If one of these is ever adopted, move its rules into §4/§5 and delete it from here.
+
+### Decoupled XP / Tier progression (parked)
+
+An alternative ring-progression model considered as a way to make three trade-offs more deliberate: (1) leaving high-XP rings in the Reliquary for spirit vs. carrying them for combat capacity, (2) whether to fuse at all, and (3) avoiding passive power-creep where the loadout fills with strong rings automatically.
+
+**How it differs from the current system:**
+
+| | Current system (§4/§5) | Parked alternative |
+|---|---|---|
+| Tier source | Derived from XP — `tierForXp(xp)`, thresholds 500 / 1500 / 3000 | A stored counter that **only fusion** increments |
+| Crossing 500 XP | Auto-promotes to Tier 1, grants +1 use | Nothing automatic — a ring can sit at Tier 0 with 2,000 XP |
+| Only way to gain uses / tier | XP accrual crosses thresholds | **Fusion only** |
+| Fused ring XP | Sum of both parents | Sum of both parents **minus 2 × 500** (shave the 500-XP eligibility toll off each parent) |
+| Fused ring uses | `max(1, min(parents) − 1)` | `min(parents) + 1` (tier-up grants a use) |
+| Same-element fusion | Not allowed (cross-element only) | Allowed — Fire+Fire → higher-tier Fire; cross-element still yields the §5.2 fusion |
+
+**Worked examples (alternative only):**
+- 501-XP Tier 0 Fire + 602-XP Tier 0 Fire → **103-XP Tier 1 Fire, 4 uses**
+- 501-XP Tier 2 Water + 603-XP Tier 2 Fire → **104-XP Tier 3 Steam, 6 uses**
+
+**Why it was interesting:** The 500-XP fusion gate and the 500-XP-per-parent toll are the same number, so two minimum-eligible rings fuse to exactly 0 XP (never negative) — XP becomes a fuel you spend to fuse. Because spirit is sourced only from Reliquary rings (`spirit_max = SPIRIT_BASE + floor(reliquary_xp / XP_SCALER)`, §12), decoupling would put the "spirit battery" role (high-XP, low-tier) and the "fighter" role (high-tier, low-XP after the fusion toll) on genuinely different rings — sharpening the existing Reliquary-vs-loadout placement choice. Fusing a ring would also destroy most of its spirit value, making "fuse or not" a clean combat-power-vs-spirit trade.
+
+**Why it's parked:** Not being pursued at this time. Open risks if revisited: the same-element/cross-element lineage rules need full definition (e.g. what happens when a fusion element like Steam tries to fuse again); the cost may compound too hard (a Tier 3 needs 8 base rings, plus the XP toll, plus fused rings landing near 0 XP and being re-grind-gated to 500 before they can fuse again); and it removes the "my ring grew as I used it" feedback loop in favor of a colder "I forged this ring" loop.
+
+---
+
 *Document version 3.2 — Updated May 2026*
 *v3.2 changes: Marked spirit gauge formula and starting spirit max as settled (see `SPIRIT_BASE` and `XP_SCALER` in `server/src/game/constants.ts`; §12.1). Noted carry-cap growth curve remains open and deferred to Phase 8.*
 

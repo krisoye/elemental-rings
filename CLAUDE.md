@@ -156,6 +156,12 @@ Server runs as a systemd service on game-da-god (192.168.4.140). Any LAN device 
 
 ---
 
-## Build Phases
+## GDD is design intent, not status
 
-Tracked in pinned [Issue #14](https://github.com/krisoye/elemental-rings/issues/14).
+The GDD (`docs/`) describes the **intended game** — its rules, systems, world, and feel. It is a living document: it evolves as the vision evolves. It is **not** a build tracker.
+
+- **Implementation status lives in GitHub.** What is built, what is in progress, and the EPIC/issue breakdown are owned by [GitHub Issues](https://github.com/krisoye/elemental-rings/issues) and the project board — never the GDD. Do not put issue numbers, PR numbers, "shipped/deferred" flags, or EPIC decomposition tables in the GDD.
+- **Code is ground truth for shipped mechanics.** When code and the GDD disagree, that is a bug to resolve **deliberately**: either fix the code to match the intended design, or update the GDD because the intent changed. Never leave a silent divergence, and never reverse-engineer the GDD from code as routine maintenance.
+- **The GDD's changelog is a design-change log** — what the game *became* and why — not a list of PRs. Git holds the line-level history.
+
+Before designing or implementing any system, read the relevant GDD section (see the table above) for intent, then verify the current mechanic against the code.
