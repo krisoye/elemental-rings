@@ -8,7 +8,8 @@
 //   id         — stable identifier matching a `waystoneId` map object property
 //   name       — display name in the teleport list
 //   biome      — biome this anchorage belongs to
-//   spiritCost — spirit spent to teleport here (§10.8); 0 = always free
+//   spiritCost — absolute spiritual distance from the origin (forest_entry = 0).
+//                Actual teleport cost is |destination.spiritCost − origin.spiritCost|.
 
 /** Metadata for one anchorage teleport destination. */
 export interface WaystoneDef {
@@ -38,10 +39,12 @@ export function getWaystone(id: string): WaystoneDef | undefined {
 
 /**
  * Teleport-gate predicate (§10.8): true when the player holds at least the
- * destination's spirit cost. An unknown id is never teleportable.
+ * relative cost from `currentAnchorId` to `id`. An unknown destination is
+ * never teleportable. Falls back to the absolute cost when no anchor is given.
  */
-export function canTeleport(spiritCurrent: number, id: string): boolean {
+export function canTeleport(spiritCurrent: number, id: string, currentAnchorId?: string): boolean {
   const def = getWaystone(id);
   if (!def) return false;
-  return spiritCurrent >= def.spiritCost;
+  const anchorCost = currentAnchorId ? (getWaystone(currentAnchorId)?.spiritCost ?? 0) : 0;
+  return spiritCurrent >= Math.abs(def.spiritCost - anchorCost);
 }
