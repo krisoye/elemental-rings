@@ -938,6 +938,21 @@ export function getAggregateXp(playerId: string): number {
   return getSpiritStats(playerId).aggregateXp;
 }
 
+/** Weighted-average XP of the player's carried battle hand (#244). Thumb is
+ *  weighted 1/3; the two attack slots share 1/3; the two defense slots share 1/3.
+ *  Null slots contribute 0. A fully empty hand returns 0. */
+export function getBattleHandAvgXp(playerId: string): number {
+  const loadout = getLoadout(playerId);
+  if (!loadout) return 0;
+  const rings = getCarry(playerId);
+  const byId = new Map(rings.map((r) => [r.id, r]));
+  const xp = (id: string | null): number => (id ? (byId.get(id)?.xp ?? 0) : 0);
+  const thumbXp = xp(loadout.thumb);
+  const atkAvg = (xp(loadout.a1) + xp(loadout.a2)) / 2;
+  const defAvg = (xp(loadout.d1) + xp(loadout.d2)) / 2;
+  return (thumbXp + atkAvg + defAvg) / 3;
+}
+
 // ---------------------------------------------------------------------------
 // #61 — Waystone attunement (Phase 8B, GDD §10.7)
 // ---------------------------------------------------------------------------
