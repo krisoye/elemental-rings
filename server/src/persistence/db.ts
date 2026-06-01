@@ -65,7 +65,7 @@ if (!hasPlayerCol('anchored_waystone')) {
 
 // #182 — Reliquary cap + Shard expansion.
 // reliquary_cap: how many resting (in_carry=0, escrowed=0) rings the player can
-// hold. Defaults to RELIQUARY_BASE_CAP (20). Expansions via Shards raise this.
+// hold. Defaults to RELIQUARY_BASE_CAP. Expansions via Shards raise this.
 // Legacy over-cap players are grandfathered — we only block ADDING more rings.
 if (!hasPlayerCol('reliquary_cap')) {
   db.exec(`ALTER TABLE players ADD COLUMN reliquary_cap INTEGER NOT NULL DEFAULT ${RELIQUARY_BASE_CAP}`);
@@ -75,6 +75,17 @@ if (!hasPlayerCol('reliquary_cap')) {
 if (!hasPlayerCol('reliquary_shards')) {
   db.exec('ALTER TABLE players ADD COLUMN reliquary_shards INTEGER NOT NULL DEFAULT 0');
 }
+
+// #240 — Reliquary held at a FIXED RELIQUARY_BASE_CAP (9). Shard expansion is
+// paused. An ALTER ... DEFAULT only affects NEWLY-inserted column values, never
+// existing rows — so players created under the old cap (20), or who expanded via
+// Shards, still carry a higher reliquary_cap. Clamp any such row down to the
+// fixed cap on every boot. Idempotent: the WHERE guard touches 0 rows once every
+// player is already at or below the cap. Over-cap RESTING rings are NOT evicted
+// (graceful grandfathering — packLoadout only blocks NEW over-cap moves).
+db.exec(
+  `UPDATE players SET reliquary_cap = ${RELIQUARY_BASE_CAP} WHERE reliquary_cap > ${RELIQUARY_BASE_CAP}`,
+);
 
 // Recompute spirit_max on every boot using the same formula as computeSpiritMax()
 // in PlayerRepo: SPIRIT_BASE + floor(aggregate_xp / XP_SCALER). Only Reliquary

@@ -74,16 +74,27 @@ export const TIER1_XP_CAP = 100;
 // the real passive resolution at duel start (see staking.spec.ts coverage).
 export const THUMB_PASSIVE_INFO: Record<number, { name: string; effect: string }> = {
   0: { name: 'Kindling', effect: 'All Fire rings in your battle hand gain +1 use at duel start' },
-  1: { name: 'Wellspring', effect: "A successful block refunds the defending ring's use (Thumb pays)" },
-  2: { name: 'Bulwark', effect: 'All Earth rings in your battle hand gain +1 use at duel start' },
+  1: {
+    name: 'Torrent',
+    effect:
+      'At duel start, spends all thumb uses distributing +1 to matching Water rings, round-robin highest XP first',
+  },
+  2: {
+    name: 'Precision Parry',
+    effect: "On any PARRY-timed defense, refunds the defending ring's use (Thumb pays 1 use)",
+  },
   3: { name: 'Tailwind', effect: 'Each attack thrown is refunded its use (Thumb pays)' },
-  4: { name: 'Deep Roots', effect: 'A lost heart is redirected — Thumb loses a use instead' },
+  4: {
+    name: 'Overgrowth',
+    effect:
+      'At duel start, spends all thumb uses distributing +1 to matching Wood rings, round-robin highest XP first',
+  },
 };
 
 // #85 Fix 1 — width (px) of the Thumb staked-passive reminder strip in the Ring
 // Storage overlay (CampScene) and Manage Battle Hand modal. Wider than the 70px
-// Thumb stake card (STAKE_CARD_WIDTH) so the longest base passive — WATER's
-// "A successful block refunds the defending ring's use (Thumb pays)" — wraps to a
+// Thumb stake card (STAKE_CARD_WIDTH) so the longest base passive effect — the
+// all-in setup distributors (Water's Torrent / Wood's Overgrowth) — wraps to a
 // readable number of lines instead of one word per line clipped at maxLines.
 export const PASSIVE_STRIP_WIDTH = 88;
 

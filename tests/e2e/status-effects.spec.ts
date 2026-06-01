@@ -163,8 +163,8 @@ test('Entangled: woodGauge>=4 drains the highest-capacity defense ring at turn s
 
   // Defender becomes attacker next turn. Default d1=WOOD, d2=EARTH (equal max →
   // tie resolves to d1). v2 Entangled drains a DEFENSE ring at turn start. Seed
-  // attack-ring uses too (the Fire thumb's Kindling buffs the FIRE a1) so the
-  // "attack rings untouched" assertion is exact.
+  // attack-ring uses too (the Fire thumb's all-in setup pours uses onto the FIRE
+  // a1) so the "attack rings untouched" assertion is exact.
   await setState(defender, { woodGauge: 4, uses: { a1: 3, a2: 3, d1: 3, d2: 3 } });
 
   await passTurnViaSafeCatch(attacker, defender);

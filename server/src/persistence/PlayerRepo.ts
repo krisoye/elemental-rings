@@ -30,7 +30,7 @@ export interface PlayerRow {
   spirit_max: number;
   spirit_current: number;
   food_units: number;
-  /** #182 — current Reliquary capacity (starts at RELIQUARY_BASE_CAP=20). */
+  /** #182 — current Reliquary capacity (starts at RELIQUARY_BASE_CAP=9; #240). */
   reliquary_cap: number;
   /** #182 — unspent Reliquary Shards held by the player. */
   reliquary_shards: number;

@@ -27,7 +27,6 @@ import {
   XP_DEF_WEAK,
   XP_THUMB_BUFF,
   XP_THUMB_MID,
-  XP_THUMB_ABSORB,
   GAUGE_SOFT_CAP,
   SHADOW_GAUGE_CAP,
   AMBUSH_SPIRIT_COST,
@@ -81,9 +80,10 @@ const RECHARGEABLE_SLOTS: ReadonlySet<string> = new Set<string>([...ATTACK_SLOTS
 // Water and a rally path; Earth defense is the guaranteed-neutral safety valve.
 // This exercises both the triangle cycle and Earth's asymmetry. (Wind's
 // asymmetry — always-WEAK on defense — is covered by the unit suite.)
-// thumb=FIRE chosen so that no combat passives (Deep Roots/Tailwind/Wellspring)
-// disrupt the integration test suite. Kindling (the FIRE setup passive) buffs
-// a1 from 3→4 uses, which integration tests do not assert on post-seat.
+// thumb=FIRE chosen so that no reactive combat passive (Tailwind/Precision Parry)
+// disrupts the integration test suite. The FIRE all-in setup passive spends the
+// thumb's 3 uses onto a1 (the only FIRE base ring) → a1 3→6 uses, which
+// integration tests do not assert on post-seat.
 const DEFAULT_LOADOUT: Record<SlotKey, number> = {
   thumb: ElementEnum.FIRE,
   a1: ElementEnum.FIRE,
@@ -218,10 +218,11 @@ export class BattleRoom extends Room<{ state: BattleState }> {
    * If `spec` is provided, each slot with an entry uses the given element /
    * currentUses / maxUses. Slots absent from spec fall back to DEFAULT_LOADOUT
    * (with currentUses = maxUses = STARTING_USES). After seating, the thumb's
-   * setup passive is applied (Kindling / Bulwark) — a no-op for most elements.
+   * all-in setup passive is applied (Fire/Water/Wood) — a no-op for other
+   * elements or when no matching base-element ring is in the hand.
    *
-   * Returns the number of rings buffed by the setup passive so the caller can
-   * award thumb XP (XP_THUMB_BUFF per ring).
+   * Returns the number of uses distributed by the setup passive so the caller
+   * can award thumb XP (XP_THUMB_BUFF per use distributed).
    */
   private seatPlayer(
     id: string,
@@ -259,8 +260,9 @@ export class BattleRoom extends Room<{ state: BattleState }> {
 
     this.state.players.set(id, ps);
 
-    // Apply setup passive (Kindling / Bulwark). No-op for all other elements.
-    // Returns how many rings were buffed so the caller can award thumb XP.
+    // Apply the all-in setup passive (Fire/Water/Wood). No-op for other
+    // elements or when no matching base-element ring is in the hand. Returns how
+    // many uses were distributed so the caller can award thumb XP.
     return StakeResolver.applySetupPassive(ps);
   }
 
@@ -311,7 +313,7 @@ export class BattleRoom extends Room<{ state: BattleState }> {
       const buffed = this.seatPlayer(sessionId, '', spec);
       this.sessionToPlayerId.set(sessionId, playerId);
       this.sessionToRingIds.set(sessionId, ringIds);
-      // Kindling/Bulwark thumb XP: 1 per ring buffed at seat time.
+      // All-in setup thumb XP: 1 per use distributed at seat time.
       if (buffed > 0) this.addXp(sessionId, 'thumb', XP_THUMB_BUFF * buffed);
 
       // #171 — seed spareCapacity from the live Reliquary XP so the client HUD
@@ -889,27 +891,18 @@ export class BattleRoom extends Room<{ state: BattleState }> {
     // Award outcome-based XP for the engaged attack/defense rings.
     this.awardExchangeXp(attackerId, xpAttackerSlot, defenderId, xpDefenderSlot, result);
 
-    // Deep Roots passive: Wood thumb absorbs a heart loss. The absorbing player's
-    // thumb earns XP_THUMB_ABSORB per heart absorbed.
+    // Heart-loss resolution. Each lost heart is a plain decrement (floored at 0).
     if (result.defenderHeartLost) {
-      if (StakeResolver.applyDeepRoots(defenderPlayer)) {
-        this.addXp(defenderId, 'thumb', XP_THUMB_ABSORB);
-      } else {
-        defenderPlayer.hearts = Math.max(0, defenderPlayer.hearts - 1);
-      }
+      defenderPlayer.hearts = Math.max(0, defenderPlayer.hearts - 1);
     }
     if (result.attackerHeartLost) {
-      if (StakeResolver.applyDeepRoots(attackerPlayer)) {
-        this.addXp(attackerId, 'thumb', XP_THUMB_ABSORB);
-      } else {
-        attackerPlayer.hearts = Math.max(0, attackerPlayer.hearts - 1);
-      }
+      attackerPlayer.hearts = Math.max(0, attackerPlayer.hearts - 1);
     }
 
-    // Wellspring passive: Water thumb refunds the defender ring use on a rally.
-    // Awards the defender's thumb mid-tier XP when it fires.
-    if (result.rallyContinues && defenderRing) {
-      if (StakeResolver.applyWellspring(defenderPlayer, defenderRing)) {
+    // Earth passive: timing-only parry refund (fires on PARRY regardless of
+    // element match). Awards the defender's thumb mid-tier XP when it fires.
+    if (result.timing === 'PARRY' && defenderRing) {
+      if (StakeResolver.applyEarthParry(defenderPlayer, defenderRing)) {
         this.addXp(defenderId, 'thumb', XP_THUMB_MID);
       }
     }

@@ -19,31 +19,19 @@
 
 The staked ring's **element** determines which passive it provides during battle. The Thumb ring is always visible to both players from detection range, making its element a strategic signal before the duel begins.
 
-Each passive fires at specific moments during battle and **costs the Thumb ring 1 use** when it triggers. A Thumb ring extinguished to 0 uses loses its passive for the rest of the duel. Fused Thumb rings provide no passive — only base-element Thumb rings activate.
+Each passive fires at a specific moment during battle and **spends Thumb ring uses** when it triggers. A Thumb ring extinguished to 0 uses loses its passive for the rest of the duel. Fused Thumb rings provide no passive — only base-element Thumb rings activate.
+
+The three triangle elements (Fire/Water/Wood) share one **all-in setup** archetype that fires once at duel start; Wind and Earth provide reactive passives that fire repeatedly during combat.
 
 ---
 
-**🔴 Fire — Kindling (Offensive Aura)**
-- **Trigger:** Duel start
-- **Effect:** All Fire rings in the battle hand (A1/A2/D1/D2) gain +1 current use
-- **Cost:** Thumb ring loses 1 use at duel start
-- **Signal:** Aggressive — doubling down on one element to overwhelm
-
----
-
-**🔵 Water — Wellspring (Defensive Refund)**
-- **Trigger:** Successful block (player defends an incoming attack)
-- **Effect:** The defending ring's spent use is refunded (capped at max uses); Thumb ring absorbs the cost instead
-- **Cost:** Thumb ring loses 1 use per block triggered
-- **Signal:** Patient — sustains defense rings through prolonged exchanges
-
----
-
-**💚 Wood — Deep Roots (Heart Guard)**
-- **Trigger:** Player would lose a heart
-- **Effect:** The heart loss is redirected — Thumb ring loses 1 use instead of the player losing a heart
-- **Cost:** Thumb ring loses 1 use per heart saved
-- **Signal:** Durable — hard to finish, but the Thumb ring depletes visibly
+**🔴 Fire / 🔵 Water / 💚 Wood — All-In Setup (Element Distributor)**
+- **Trigger:** Duel start (once)
+- **Effect:** The Thumb spends **all** of its current uses, distributing +1 current use at a time to the battle-hand rings (A1/A2/D1/D2) whose **base element matches the Thumb element**. Recipients are filled round-robin from **highest-XP to lowest-XP** (tiebreak: slot order A1→A2→D1→D2) until the Thumb reaches 0. Each grant raises the ring's max uses to match if needed.
+- **Guard:** If no matching base-element ring is in the hand, the passive does **not** fire and the Thumb keeps all of its uses.
+- **Cost:** The Thumb empties to 0 uses at duel start — it is extinguished and passive for the rest of the duel.
+- **Signal:** Front-loaded — a burst of staying power poured into one element's rings before the first exchange. A high-XP Thumb pours more uses; a single matching ring receives the whole pour.
+- *Worked examples (Wood Thumb):* 4 uses with Wood A1(800)/A2(600)/D1(500)/D2(500) → +1 to each. 5 uses, same rings → A1 gets +2 (second round goes to the highest-XP ring first), the rest +1. A Fire Thumb with 5 uses and only Fire A1 in hand → A1 +5.
 
 ---
 
@@ -55,11 +43,11 @@ Each passive fires at specific moments during battle and **costs the Thumb ring 
 
 ---
 
-**🟤 Earth — Bulwark (Defensive Aura)**
-- **Trigger:** Duel start
-- **Effect:** All Earth rings in the battle hand (A1/A2/D1/D2) gain +1 current use; defense slots (D1/D2) are buffed first
-- **Cost:** Thumb ring loses 1 use at duel start
-- **Signal:** Fortified — stacking extra defense coverage to grind through exchanges
+**🟤 Earth — Precision Parry (Refund on Perfect Timing)**
+- **Trigger:** The defender catches an incoming attack within the **PARRY** timing window — **regardless of element matchup** (the trigger is timing alone, not Strong/Neutral/Weak)
+- **Effect:** The defending ring's just-spent use is refunded (capped at its max uses); the Earth Thumb pays 1 use instead
+- **Cost:** Thumb ring loses 1 use per perfectly-timed parry
+- **Signal:** Disciplined — rewards tight defensive timing by keeping the defending ring fresh through prolonged exchanges
 
 ---
 

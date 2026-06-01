@@ -8,13 +8,15 @@ import { test, expect } from '@playwright/test';
  *   - PUT /api/carry → 400 'Reliquary full' when resting rings exceed cap
  *   - POST /api/sanctum/expand-reliquary → spend a Shard to raise cap by 10
  *
- * Scenarios:
- *   1. Fresh player: reliquaryCap=20, reliquaryShards=0, reliquaryCount=5.
- *   2. Seed 20 resting rings, drop one ring back via PUT /api/carry → 400;
+ * #240 — Reliquary is fixed at 9 slots; Shard expansion is paused (plumbing kept,
+ * dormant in-game). Scenarios:
+ *   1. Fresh player: reliquaryCap=9, reliquaryShards=0, reliquaryCount=5.
+ *   2. Seed 9 resting rings (at cap), drop one ring back via PUT /api/carry → 400;
  *      reliquaryCount unchanged.
- *   3. With resting count at 19, the same drop succeeds → reliquaryCount=20.
- *   4. grantShard via test route → POST /api/sanctum/expand-reliquary → cap=30,
- *      shards=0; second call → 400.
+ *   3. With resting count at 8, the same drop succeeds → reliquaryCount=9.
+ *   4. grantShard via test route → POST /api/sanctum/expand-reliquary → cap=19,
+ *      shards=0; second call → 400. (Direct route call — the in-game path is
+ *      dormant but the plumbing still functions.)
  *   5. Migration idempotency (documented manual-only check; commented assertion).
  */
 
@@ -72,30 +74,28 @@ async function grantShard(token: string): Promise<void> {
 }
 
 // ── Scenario 1: fresh player field values ─────────────────────────────────────
-test('reliquary-cap: fresh player → reliquaryCap=20, reliquaryShards=0, reliquaryCount=5', async () => {
+// #240 — Reliquary fixed at 9 slots (Shard expansion paused). A fresh player has
+// 10 starter rings: 5 carried + 5 resting, so reliquaryCount=5 (≤ 9).
+test('reliquary-cap: fresh player → reliquaryCap=9, reliquaryShards=0, reliquaryCount=5', async () => {
   const { token } = await mintToken();
   const player = await getMe(token);
 
-  // A fresh player has 10 starter rings: 5 carried (loadout slots) and 5 resting.
-  expect(player.reliquaryCap).toBe(20);
+  expect(player.reliquaryCap).toBe(9);
   expect(player.reliquaryShards).toBe(0);
   expect(player.reliquaryCount).toBe(5);
 });
 
-// ── Scenario 2: 20 resting rings, drop one back → 400 Reliquary full ─────────
+// ── Scenario 2: 9 resting rings (at cap), drop one back → 400 Reliquary full ──
 test('reliquary-cap: resting count at cap → drop one ring back → 400 Reliquary full', async () => {
   const { token } = await mintToken();
 
   // Mint-token gives a player with 5 carried + 5 resting starter rings.
-  // Seed 15 additional resting rings (total resting = 20 = cap) via direct DB
-  // manipulation through the test/seed-rings route.
-  // We'll use the test-only seed route if available; otherwise build rings via
-  // the win route. For this spec we assume the test server exposes
-  // POST /api/test/seed-resting-rings { count } as a convenience.
+  // Seed 4 additional resting rings (total resting = 9 = cap) via the test-only
+  // POST /api/test/seed-resting-rings { count } convenience route.
   const seedRes = await fetch(`${API_URL}/api/test/seed-resting-rings`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-    body: JSON.stringify({ count: 15 }),
+    body: JSON.stringify({ count: 4 }),
   });
   if (!seedRes.ok) {
     // If the test route doesn't exist yet, mark as todo.
@@ -104,14 +104,14 @@ test('reliquary-cap: resting count at cap → drop one ring back → 400 Reliqua
   }
 
   const mePlayer = await getMe(token);
-  expect(mePlayer.reliquaryCount).toBe(20);
+  expect(mePlayer.reliquaryCount).toBe(9);
 
   // Get the ids of all currently-carried rings.
   const rings = await getMyRings(token);
   const carried = rings.filter((r) => r.in_carry === 1);
   expect(carried.length).toBeGreaterThan(0);
 
-  // Drop one carried ring back (carry one fewer) → resting would be 21 → 400.
+  // Drop one carried ring back (carry one fewer) → resting would be 10 → 400.
   const newCarryIds = carried.slice(0, carried.length - 1).map((r) => r.id);
   const failRes = await putCarry(token, newCarryIds);
   expect(failRes.status).toBe(400);
@@ -120,18 +120,18 @@ test('reliquary-cap: resting count at cap → drop one ring back → 400 Reliqua
 
   // reliquaryCount unchanged.
   const meAfter = await getMe(token);
-  expect(meAfter.reliquaryCount).toBe(20);
+  expect(meAfter.reliquaryCount).toBe(9);
 });
 
-// ── Scenario 3: resting count at 19 → the same drop succeeds ─────────────────
-test('reliquary-cap: resting count at 19 → drop one ring succeeds → reliquaryCount=20', async () => {
+// ── Scenario 3: resting count at 8 → the same drop succeeds → 9 ──────────────
+test('reliquary-cap: resting count at 8 → drop one ring succeeds → reliquaryCount=9', async () => {
   const { token } = await mintToken();
 
-  // Seed 14 additional resting rings → total resting = 5 + 14 = 19.
+  // Seed 3 additional resting rings → total resting = 5 + 3 = 8.
   const seedRes = await fetch(`${API_URL}/api/test/seed-resting-rings`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-    body: JSON.stringify({ count: 14 }),
+    body: JSON.stringify({ count: 3 }),
   });
   if (!seedRes.ok) {
     test.skip(); // eslint-disable-line @typescript-eslint/no-shadow
@@ -139,9 +139,9 @@ test('reliquary-cap: resting count at 19 → drop one ring succeeds → reliquar
   }
 
   const mePlayer = await getMe(token);
-  expect(mePlayer.reliquaryCount).toBe(19);
+  expect(mePlayer.reliquaryCount).toBe(8);
 
-  // Drop one carried ring → resting becomes 20 = exactly at cap → OK.
+  // Drop one carried ring → resting becomes 9 = exactly at cap → OK.
   const rings = await getMyRings(token);
   const carried = rings.filter((r) => r.in_carry === 1);
   const newCarryIds = carried.slice(0, carried.length - 1).map((r) => r.id);
@@ -149,11 +149,16 @@ test('reliquary-cap: resting count at 19 → drop one ring succeeds → reliquar
   expect(okRes.status).toBe(200);
 
   const meAfter = await getMe(token);
-  expect(meAfter.reliquaryCount).toBe(20);
+  expect(meAfter.reliquaryCount).toBe(9);
 });
 
-// ── Scenario 4: expand-reliquary with a Shard ─────────────────────────────────
-test('reliquary-cap: grantShard → expand-reliquary → cap=30 shards=0; second call → 400', async () => {
+// ── Scenario 4: expand-reliquary plumbing (dormant in-game, route still works) ─
+// #240 — Shard expansion is paused: no in-game path grants Shards or reaches the
+// expand endpoint. The plumbing is intentionally KEPT and still functions when
+// the route is called directly (here, via test-only grant-shard + the POST), so
+// it is ready to re-enable. A direct expansion from the fixed cap of 9 adds
+// RELIQUARY_SHARD_INCREMENT (10) → 19.
+test('reliquary-cap: grantShard → expand-reliquary → cap=19 shards=0; second call → 400', async () => {
   const { token } = await mintToken();
 
   // Grant one Shard via the test route.
@@ -166,12 +171,12 @@ test('reliquary-cap: grantShard → expand-reliquary → cap=30 shards=0; second
   const expandRes = await expandReliquary(token);
   expect(expandRes.status).toBe(200);
   const expandBody = await expandRes.json() as { reliquaryCap: number; reliquaryShards: number };
-  expect(expandBody.reliquaryCap).toBe(30);
+  expect(expandBody.reliquaryCap).toBe(19);
   expect(expandBody.reliquaryShards).toBe(0);
 
   // GET /api/me confirms the new cap.
   const meAfterExpand = await getMe(token);
-  expect(meAfterExpand.reliquaryCap).toBe(30);
+  expect(meAfterExpand.reliquaryCap).toBe(19);
   expect(meAfterExpand.reliquaryShards).toBe(0);
 
   // Second call with no Shards → 400.

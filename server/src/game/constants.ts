@@ -44,9 +44,8 @@ export const XP_DEF_COUNTER = 5; // successful parry/counter (PARRY+STRONG)
 export const XP_DEF_BLOCK = 2; // clean block (no heart lost)
 export const XP_DEF_WEAK = 1; // defense failed (heart lost, ring was pressed)
 // Thumb (stake) passive XP.
-export const XP_THUMB_BUFF = 1; // per ring buffed (Kindling/Bulwark, per ring)
-export const XP_THUMB_MID = 2; // per Tailwind or Wellspring activation
-export const XP_THUMB_ABSORB = 1; // per heart absorbed (Deep Roots)
+export const XP_THUMB_BUFF = 1; // per use distributed by the all-in setup passive (Fire/Water/Wood)
+export const XP_THUMB_MID = 2; // per Tailwind (Wind) or Precision Parry (Earth) activation
 
 // #41 — Spirit / food economy. Sleeping consumes food and fully restores the
 // spirit gauge; ring recharging spends spirit (1 unit per use restored).
@@ -87,9 +86,13 @@ export const MERCHANT_RING_SELL_PRICE_T1 = 10;       // GP when player sells Tie
 export const MERCHANT_RING_SELL_PRICE_NEUTRAL = 8;   // GP when player sells Tier 1 Wind/Earth ring
 
 // #182 — Reliquary capacity cap. Resting rings (in_carry=0 AND escrowed=0) consume
-// Reliquary slots. Players start with RELIQUARY_BASE_CAP slots; each Shard consumed
-// via POST /api/sanctum/expand-reliquary grants RELIQUARY_SHARD_INCREMENT more.
-export const RELIQUARY_BASE_CAP = 20;
+// Reliquary slots. Players start with RELIQUARY_BASE_CAP slots.
+//
+// #240 — Reliquary is held at a FIXED 9 slots; Shard-based expansion is paused
+// (dormant). RELIQUARY_SHARD_INCREMENT stays defined so the Shard plumbing
+// (grantShard / addReliquaryShardToReliquary / POST /api/sanctum/expand-reliquary)
+// continues to compile and is ready to re-enable, but no in-game path reaches it.
+export const RELIQUARY_BASE_CAP = 9;
 export const RELIQUARY_SHARD_INCREMENT = 10;
 
 
