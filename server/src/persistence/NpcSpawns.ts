@@ -124,6 +124,17 @@ export const NPC_SPAWNS: NpcSpawnDef[] = [
   // No foodDrop — shrine guardians reward a ring, not a food cache.
   { id: 'forest_thornado_shrine_guardian', biome: 'forest', screen: 'forest_thornado_shrine', personality: 'AGGRESSIVE', type: 'duelist', element: WIND, spriteFrame: D[0], tx: 20, ty: 15, respawnDays: 0 },
 
+  // ── Forest: Bloom Fusion Shrine sub-boss (#232, GDD §4.6) ───────────────────
+  // The Bloom altar is ALWAYS open (no seal), so this Guardian does NOT gate the
+  // altar — it is a permanent (respawnDays: 0) roaming sub-boss in the
+  // forest_bloom_hollow clearing the player may fight for the ring it stakes, but
+  // the altar is craftable whether or not the Guardian is defeated. AILoadout
+  // supports only BASE-element thumbs, so the Guardian fields WOOD with a
+  // DEFENSIVE personality (DEFENSIVE supports EARTH/WOOD): the Wood-Defender
+  // template matches the Bloom (Wood+Earth) theme and the GDD's "Defensive"
+  // characterisation of the Bloom Guardian. No foodDrop — it is not an exit gate.
+  { id: 'forest_bloom_shrine_guardian', biome: 'forest', screen: 'forest_bloom_hollow', personality: 'DEFENSIVE', type: 'duelist', element: WOOD, spriteFrame: D[1], tx: 20, ty: 15, respawnDays: 0, foodDrop: 0 },
+
   // ── Swamp ─────────────────────────────────────────────────────────────────────
   { id: 'swamp_npc_1', biome: 'swamp', screen: 'swamp_entry', personality: 'AGGRESSIVE',    type: 'monster', element: WIND,  spriteFrame: 3, tx: 5, ty: 5, respawnDays: 1 },
   { id: 'swamp_npc_2', biome: 'swamp', screen: 'swamp_entry', personality: 'STATUS_HUNTER', type: 'monster', element: WATER, spriteFrame: 1, tx: 10, ty: 7, respawnDays: 1 },

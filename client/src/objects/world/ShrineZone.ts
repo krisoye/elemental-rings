@@ -36,6 +36,12 @@ const ALTAR_DEPTH = 4; // below in-front canopy (5), above ground/player feet
  * State is server-authoritative: the constructor fetches GET /api/shrines/:id and
  * re-renders the altar to match; a successful unlock flips it to open in place.
  *
+ * #232 — an always-open shrine (the Bloom altar) has no seal: pass
+ * `alwaysOpen: true` and the altar renders open immediately, skips the
+ * GET /api/shrines/:id fetch entirely, and an E press calls `onShrineOpen()`
+ * directly with no ring-key / confirmation flow. It is craftable from the first
+ * visit for every player, regardless of any Guardian's defeat status.
+ *
  * Art note: no dedicated sealed/open altar sprites exist yet, so the altar renders
  * as a coloured placeholder rectangle (dim = sealed, bright = open). Swapping in a
  * real sprite later is a localized change to `renderAltar()`.
@@ -48,6 +54,7 @@ export class ShrineZone {
   private readonly shrineId: string;
   private readonly shrineElement: number;
   private readonly onShrineOpen: () => void;
+  private readonly alwaysOpen: boolean;
   private readonly centerX: number;
   private readonly centerY: number;
 
@@ -66,6 +73,9 @@ export class ShrineZone {
    *   element (e.g. ElementEnum.THORNADO).
    * @param onShrineOpen fired on E when the altar is already unsealed — the scene
    *   opens the Fusion modal pre-filtered to `shrineElement`.
+   * @param alwaysOpen #232 — when true the altar has no seal: it renders open
+   *   immediately, skips the server state fetch, and E presses craft directly with
+   *   no ring-key / confirmation flow (the Bloom altar).
    */
   constructor(
     scene: Phaser.Scene,
@@ -73,11 +83,13 @@ export class ShrineZone {
     shrineId: string,
     shrineElement: number,
     onShrineOpen: () => void,
+    alwaysOpen = false,
   ) {
     this.scene = scene;
     this.shrineId = shrineId;
     this.shrineElement = shrineElement;
     this.onShrineOpen = onShrineOpen;
+    this.alwaysOpen = alwaysOpen;
 
     const x = shrineObj.x ?? 0;
     const y = shrineObj.y ?? 0;
@@ -86,7 +98,10 @@ export class ShrineZone {
     this.centerX = x + w / 2;
     this.centerY = y + h / 2;
 
-    // Placeholder altar sprite (starts sealed; re-coloured once state loads).
+    // An always-open altar (#232) is unsealed from the start; sealed altars start
+    // sealed and load their server state. Placeholder sprite starts sealed and is
+    // re-coloured by renderAltar() to match the resolved state.
+    this.unlocked = alwaysOpen;
     this.altar = scene.add
       .rectangle(this.centerX, this.centerY, ALTAR_W, ALTAR_H, SEALED_COLOR)
       .setStrokeStyle(2, 0x2a1f3a)
@@ -100,7 +115,12 @@ export class ShrineZone {
       'Examine altar [E]',
     );
 
-    void this.loadState();
+    if (alwaysOpen) {
+      // No seal: render open immediately and skip the GET /api/shrines/:id fetch.
+      this.renderAltar();
+    } else {
+      void this.loadState();
+    }
   }
 
   /**

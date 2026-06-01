@@ -193,6 +193,12 @@ export class ForestScene extends BaseBiomeScene {
       this.buildThornadoShrine();
       return;
     }
+    // #232 — the Bloom Fusion Shrine screen places an always-open altar (no seal):
+    // it is craftable from the first visit, independent of the Bloom Guardian.
+    if (this.screenId === 'forest_bloom_hollow') {
+      this.buildBloomShrine();
+      return;
+    }
     // Hub-only: the hand-authored hub perimeter needs invisible wall zones to close
     // its visually-walled-but-physically-open gaps. Generated screens have a real
     // T_CLIFF perimeter with carved exit gaps and need none.
@@ -239,6 +245,41 @@ export class ForestScene extends BaseBiomeScene {
       'forest_thornado_shrine',
       ElementEnum.THORNADO,
       () => void this.openShrineFusion(ElementEnum.THORNADO),
+    );
+    this.registerInteractionZone(
+      this.shrineZone.interactionZone,
+      this.shrineZone.altarObjects,
+    );
+  }
+
+  /**
+   * #232 — Build the Bloom Fusion Shrine on forest_bloom_hollow. Like the Thornado
+   * screen the generated map carries no altar object (only a `spawn`), so we
+   * synthesize a 32×32px altar zone in the upper-centre of the 38×30-tile hollow
+   * (tile (19, 8) → world (312, 136)), clear of the player spawn (world ≈(584, 248))
+   * and the Bloom Guardian patrol (tile (20, 15)). The Bloom altar is ALWAYS open
+   * (`alwaysOpen: true`): no seal, no ring-key, no confirmation — pressing E opens
+   * the Fusion modal pre-filtered to Bloom (Wood+Earth) from the first visit.
+   */
+  private buildBloomShrine(): void {
+    const ALTAR_PX = 32;
+    const altarObj: Phaser.Types.Tilemaps.TiledObject = {
+      id: -232,
+      name: 'shrine',
+      type: 'shrine',
+      // Tile (19, 8) center at 16px = (312, 136); top-left for a 32px altar.
+      x: 312 - ALTAR_PX / 2,
+      y: 136 - ALTAR_PX / 2,
+      width: ALTAR_PX,
+      height: ALTAR_PX,
+    };
+    this.shrineZone = new ShrineZone(
+      this,
+      altarObj,
+      'forest_bloom_hollow',
+      ElementEnum.BLOOM,
+      () => void this.openShrineFusion(ElementEnum.BLOOM),
+      true, // alwaysOpen — the Bloom altar has no seal
     );
     this.registerInteractionZone(
       this.shrineZone.interactionZone,
