@@ -1253,6 +1253,21 @@ export function unlockShrine(playerId: string, shrineId: string, day: number): v
 }
 
 /**
+ * Atomically consume the ring-key and record the shrine unlock in one transaction
+ * (#231). If ring deletion fails (ring not found / not owned), the shrine row is
+ * never written. Uses better-sqlite3 nested-transaction (SAVEPOINT) semantics so
+ * the outer call and {@link consumeRing}'s inner transaction compose safely. Returns
+ * false if the ring could not be consumed; the route should respond 400 in that case.
+ */
+export const consumeAndUnlockShrine = db.transaction(
+  (playerId: string, ringId: string, shrineId: string, day: number): boolean => {
+    if (!consumeRing(playerId, ringId)) return false;
+    upsertShrineUnlock.run(playerId, shrineId, day);
+    return true;
+  },
+);
+
+/**
  * Consume (delete) a specific ring the player owns — the ring-key spent to
  * unseal a shrine (#231). Returns true when the ring existed, belonged to the
  * player, and was deleted; false otherwise. Nulls the ring out of any loadout

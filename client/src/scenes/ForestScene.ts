@@ -66,6 +66,10 @@ export class ForestScene extends BaseBiomeScene {
   }
 
   init(data?: { screenId?: string; spawnEdge?: string }): void {
+    // Tear down the previous screen's shrine before the new screen reuses the
+    // scene instance — prevents stale overlays/listeners on screen transitions.
+    this.shrineZone?.destroy();
+    this.shrineZone = null;
     this.screenId = data?.screenId ?? 'forest_anchorage';
     this.screenDef = FOREST_SCREENS.find((s) => s.id === this.screenId);
     window.__forestScreenId = this.screenId;

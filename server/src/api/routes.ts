@@ -54,8 +54,7 @@ import {
   grantRing,
   grantShard,
   isShrineUnlocked,
-  unlockShrine,
-  consumeRing,
+  consumeAndUnlockShrine,
 } from '../persistence/PlayerRepo';
 import { ElementEnum } from '../../../shared/types';
 import { NPC_SPAWNS, hashNpcId } from '../persistence/NpcSpawns';
@@ -529,12 +528,11 @@ apiRouter.post('/api/shrines/:id/unlock', requireAuth, (req: Request, res: Respo
     res.status(400).json({ error: 'a Thornado ring is required' });
     return;
   }
-  if (!consumeRing(playerId, ringId)) {
+  const player = getPlayerById(playerId);
+  if (!consumeAndUnlockShrine(playerId, ringId, shrineId, player?.game_day ?? 0)) {
     res.status(400).json({ error: 'ring could not be consumed' });
     return;
   }
-  const player = getPlayerById(playerId);
-  unlockShrine(playerId, shrineId, player?.game_day ?? 0);
   res.status(200).json({ ok: true });
 });
 
