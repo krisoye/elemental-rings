@@ -606,17 +606,20 @@ export class BattleScene extends Phaser.Scene {
     const { won, goldGained, xpGained, aggregateXp } = this.pendingBattleSummary;
     // Won ring (WIN) or the forfeited staked thumb (LOSS).
     let ringElement: number | null = null;
+    let ringXp: number | null = null;
     if (won) {
       ringElement = window.__lastWonRing?.element ?? null;
+      ringXp = window.__lastWonRing?.xp ?? null;
     } else {
       const myId = window.__room?.sessionId;
       const myThumb = myId ? window.__room?.state?.players?.get(myId)?.thumb : null;
       ringElement = myThumb ? (myThumb.element as number) : null;
+      ringXp = myThumb ? (myThumb.xp as number) : null;
     }
 
     this.endModal = new BattleEndModal(
       this,
-      { won, ringElement, goldGained, xpGained, aggregateXp },
+      { won, ringElement, ringXp, goldGained, xpGained, aggregateXp },
       (choice) => this.routeAfterBattle(choice),
     );
     this.endModal.show();

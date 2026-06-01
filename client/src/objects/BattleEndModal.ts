@@ -6,6 +6,8 @@ export interface BattleEndResult {
   won: boolean;
   /** Element of the ring won (WIN) or the forfeited staked thumb (LOSS); null when none. */
   ringElement: number | null;
+  /** XP of the ring won or lost; null when ringElement is null. */
+  ringXp: number | null;
   goldGained: number;
   xpGained: number;
   aggregateXp: number;
@@ -113,14 +115,15 @@ export class BattleEndModal {
 
   /** The reward lines, win/loss-specific (GDD §6.4). */
   private resultLines(): Array<{ text: string; color: string }> {
-    const { won, ringElement, goldGained, xpGained, aggregateXp } = this.result;
+    const { won, ringElement, ringXp, goldGained, xpGained, aggregateXp } = this.result;
     const lines: Array<{ text: string; color: string }> = [];
     if (ringElement !== null) {
       const name = ELEMENT_NAMES[ringElement] ?? '?';
+      const xpStr = ringXp !== null ? ` (${ringXp} XP)` : '';
       lines.push(
         won
-          ? { text: `Won: ${name} Ring`, color: '#ffd700' }
-          : { text: `Lost: ${name} Ring`, color: '#ff8888' },
+          ? { text: `Won: ${name} Ring${xpStr}`, color: '#ffd700' }
+          : { text: `Lost: ${name} Ring${xpStr}`, color: '#ff8888' },
       );
     }
     lines.push({ text: `+${goldGained} gold`, color: '#ffd700' });

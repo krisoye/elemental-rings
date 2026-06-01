@@ -107,7 +107,7 @@ declare global {
     // mirroring the er_pending_ring stash but carrying the element so the
     // end-of-battle modal can name the ring ("Won: FIRE Ring"). null when the
     // just-finished duel granted no ring (loss / instant outcomes).
-    __lastWonRing?: { ringId: string; element: number } | null;
+    __lastWonRing?: { ringId: string; element: number; xp: number } | null;
     // #212 — persistent end-of-battle modal hooks. __battleEndModalOpen is true
     // while the modal is shown (false while collapsed via [X]). __battleEndChoice
     // fires the same handler as a button press (route + close). __reopenBattleEnd

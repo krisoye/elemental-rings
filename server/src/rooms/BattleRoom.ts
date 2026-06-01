@@ -515,6 +515,7 @@ export class BattleRoom extends Room<{ state: BattleState }> {
       // player to carry/leave/discard it on returning to camp (#40).
       let wonRingId: string | undefined;
       let wonRingElement: number | undefined;
+      let wonRingXp: number | undefined;
 
       // GDD §6.3 forfeit gold penalty: when THIS loss was a forfeit (the loser is
       // the forfeiter), the loser also pays GOLD_FORFEIT_PENALTY (floored at 0).
@@ -535,6 +536,7 @@ export class BattleRoom extends Room<{ state: BattleState }> {
             goldPenalty,
           );
           wonRingElement = loserPs?.thumb.element;
+          wonRingXp = loserPs?.thumb.xp;
         } else {
           // vsAI: winner has no DB record — delete the ring (+ penalty), atomically.
           PlayerRepo.forfeitRingWithGoldPenalty(loserThumbRingId, loserPlayerId, goldPenalty);
@@ -547,6 +549,7 @@ export class BattleRoom extends Room<{ state: BattleState }> {
           const t = aiPs.thumb;
           wonRingId = PlayerRepo.grantRing(winnerPlayerId, t.element, t.tier, t.maxUses, t.xp);
           wonRingElement = t.element;
+          wonRingXp = t.xp;
         }
         // #83 — this was a win over an overworld NPC: record the defeat so the
         // NPC respawns per its spawn-table cadence (permanent NPCs stay beaten).
@@ -585,7 +588,7 @@ export class BattleRoom extends Room<{ state: BattleState }> {
       // client only stores the id and renders the modal.
       if (wonRingId && winnerId) {
         const winnerClient = this.clients.find((c) => c.sessionId === winnerId);
-        winnerClient?.send('wonRing', { ringId: wonRingId, element: wonRingElement ?? 0 });
+        winnerClient?.send('wonRing', { ringId: wonRingId, element: wonRingElement ?? 0, xp: wonRingXp ?? 0 });
       }
 
       // Post-battle reward summary (#78 ②). Sent AFTER awardXP/refreshSpiritMax
