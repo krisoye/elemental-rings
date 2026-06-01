@@ -245,8 +245,13 @@ function buildTerrainGrid(screen) {
         }
       }
     }
-    // Clear a channel near each exit so the central path is reachable.
-    for (const dir of dirs) {
+    // Clear a channel near each exit (and the biome exit) so the central path is
+    // reachable. biomeExit is included here for the same reason it is included in
+    // carveExitGap and bresenhamTerrain below: on corridor screens a biome exit
+    // in the flanked direction (e.g. south on a wide corridor) gets its channel
+    // blocked by the cliff walls unless we explicitly clear it.
+    const allExitDirs = [...dirs, ...(screen.biomeExit ? [screen.biomeExit.dir] : [])];
+    for (const dir of allExitDirs) {
       const m = edgeMidpoint(dir, w, h);
       for (let d = -GAP_HALF; d <= GAP_HALF; d++) {
         if (dir === 'north' || dir === 'south') {
