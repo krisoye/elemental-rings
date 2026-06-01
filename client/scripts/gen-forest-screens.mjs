@@ -22,12 +22,22 @@ import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
   GENERATED_TILESETS,
-  GID_GRASS_BASE,
-  GID_DIRT_BASE,
   GID_WATER_BASE,
-  GID_CLIFF_BASE,
+  GID_GRASS_FILL,
+  GID_PATH_B,
   GID_TREE_TRUNK,
-  GID_TREE_CANOPY_A,
+  GID_TRUNK_B,
+  GID_TRUNK_C,
+  GID_PLAINS_TRUNK_00,
+  GID_PLAINS_TRUNK_01,
+  GID_PLAINS_TRUNK_16,
+  GID_PLAINS_TRUNK_32,
+  GID_PLAINS_CANOPY_A,
+  GID_PLAINS_CANOPY_B,
+  GID_PLAINS_CANOPY_C,
+  GID_PLAINS_CANOPY_D,
+  GID_VILLAGE_CANOPY,
+  GID_VOID,
 } from './lib/forest-gid-map.mjs';
 import { resolveAutotileVariant } from './lib/autotile-resolver.mjs';
 
@@ -324,7 +334,13 @@ function buildTerrainGrid(screen) {
   return grid;
 }
 
-/** Ground-layer GID array: grass = interior variant 0; dirt/water/cliff autotiled. */
+/**
+ * Ground-layer GID array (curated palette). The terrain grid is unchanged; only
+ * the per-cell output GID differs from the old autotile layout:
+ *   - T_GRASS / T_CLIFF → flat natural floor fill (cliffs read via behind/in-front)
+ *   - T_DIRT            → curated road/path tile (flat, no autotiling)
+ *   - T_WATER           → autotiled pond (the only surviving autotile terrain)
+ */
 function buildGroundLayer(screen, terrainGrid) {
   const [w, h] = screen.size;
   const at = (tx, ty) => ty * w + tx;
@@ -332,49 +348,98 @@ function buildGroundLayer(screen, terrainGrid) {
   for (let ty = 0; ty < h; ty++) {
     for (let tx = 0; tx < w; tx++) {
       const t = terrainGrid[at(tx, ty)];
-      if (t === T_GRASS) {
-        // Grass fills the background; grass-to-grass is always interior (variant 0).
-        data[at(tx, ty)] = GID_GRASS_BASE + 0;
+      if (t === T_WATER) {
+        const mask = neighborMaskForTerrain(terrainGrid, w, h, tx, ty, T_WATER);
+        data[at(tx, ty)] = GID_WATER_BASE + resolveAutotileVariant(mask);
+      } else if (t === T_DIRT) {
+        data[at(tx, ty)] = GID_PATH_B;
       } else {
-        const mask = neighborMaskForTerrain(terrainGrid, w, h, tx, ty, t);
-        const variant = resolveAutotileVariant(mask);
-        const base =
-          t === T_DIRT ? GID_DIRT_BASE : t === T_WATER ? GID_WATER_BASE : GID_CLIFF_BASE;
-        data[at(tx, ty)] = base + variant;
+        // T_GRASS and T_CLIFF both sit on the natural forest floor fill.
+        data[at(tx, ty)] = GID_GRASS_FILL;
       }
     }
   }
   return data;
 }
 
-/** Behind layer: T_CLIFF → tree trunk (non-empty collision blocks movement). */
+/** Trunk variants for the behind layer (non-empty collision blocks movement). */
+const TRUNK_VARIANTS = [
+  GID_TREE_TRUNK, // 95  — ModernEra trunk (most common)
+  GID_TRUNK_B, // 176 — ModernEra variant
+  GID_TRUNK_C, // 177
+  GID_PLAINS_TRUNK_00, // 224
+  GID_PLAINS_TRUNK_01, // 225
+  GID_PLAINS_TRUNK_16, // 240
+  GID_PLAINS_TRUNK_32, // 256
+];
+
+/**
+ * Behind layer: every T_CLIFF cell → a seeded-random trunk variant. Any non-zero
+ * GID on the behind layer collides (the scene uses `non-empty` collision mode), so
+ * the variety here is purely visual — collision is unchanged.
+ */
 function buildBehindLayer(screen, terrainGrid) {
   const [w, h] = screen.size;
   const at = (tx, ty) => ty * w + tx;
   const data = new Array(w * h).fill(0);
+  const rng = makeRng(hashSeed(screen.id + '_behind'));
   for (let ty = 0; ty < h; ty++) {
     for (let tx = 0; tx < w; tx++) {
-      if (terrainGrid[at(tx, ty)] === T_CLIFF) data[at(tx, ty)] = GID_TREE_TRUNK;
+      if (terrainGrid[at(tx, ty)] !== T_CLIFF) continue;
+      const variant = TRUNK_VARIANTS[Math.floor(rng() * TRUNK_VARIANTS.length)];
+      data[at(tx, ty)] = variant;
     }
   }
   return data;
 }
 
-/** In-front layer: T_CLIFF → tree canopy (no collision; player walks under). */
+/** Interior-canopy variants for the in-front layer (no collision). */
+const CANOPY_VARIANTS = [
+  GID_PLAINS_CANOPY_A, // 423
+  GID_PLAINS_CANOPY_B, // 424
+  GID_PLAINS_CANOPY_C, // 422
+  GID_PLAINS_CANOPY_D, // 439
+  GID_VILLAGE_CANOPY, // 624
+];
+
+/** Weighted pick: GID_PLAINS_CANOPY_A 40%, the other four 15% each. */
+function pickCanopy(rng) {
+  const roll = Math.floor(rng() * 100);
+  if (roll < 40) return CANOPY_VARIANTS[0];
+  if (roll < 55) return CANOPY_VARIANTS[1];
+  if (roll < 70) return CANOPY_VARIANTS[2];
+  if (roll < 85) return CANOPY_VARIANTS[3];
+  return CANOPY_VARIANTS[4];
+}
+
+/**
+ * In-front layer (no collision; player walks under). Two roles:
+ *   - perimeter void frame: edge T_CLIFF cells (not exit gaps) → GID_VOID, a solid
+ *     border. Exit gaps are T_GRASS at the perimeter → left empty (walkable).
+ *   - interior canopy: non-edge T_CLIFF cells → a seeded weighted canopy variant.
+ */
 function buildInFrontLayer(screen, terrainGrid) {
   const [w, h] = screen.size;
   const at = (tx, ty) => ty * w + tx;
   const data = new Array(w * h).fill(0);
+  const rng = makeRng(hashSeed(screen.id + '_infr'));
   for (let ty = 0; ty < h; ty++) {
     for (let tx = 0; tx < w; tx++) {
-      if (terrainGrid[at(tx, ty)] === T_CLIFF) data[at(tx, ty)] = GID_TREE_CANOPY_A;
+      const onEdge = tx === 0 || ty === 0 || tx === w - 1 || ty === h - 1;
+      const t = terrainGrid[at(tx, ty)];
+      if (onEdge) {
+        // Void frame on perimeter cliff cells; exit gaps (carved to T_GRASS) stay open.
+        if (t === T_CLIFF) data[at(tx, ty)] = GID_VOID;
+      } else if (t === T_CLIFF) {
+        data[at(tx, ty)] = pickCanopy(rng);
+      }
     }
   }
   return data;
 }
 
 /** Build the `objects` layer for one screen. Pixel coords auto-scale via TILE=16. */
-function buildObjects(screen) {
+function buildObjects(screen, terrainGrid) {
   const [w, h] = screen.size;
   const mapW = w * TILE;
   const mapH = h * TILE;
@@ -479,10 +544,67 @@ function buildObjects(screen) {
     });
   }
 
+  // Forage nodes (skipped on safe screens — the hub has none of its own). Placed
+  // by seeded rejection sampling on walkable interior floor, clear of the centre
+  // clearing and the exit corridors.
+  if (!screen.safe) {
+    const at = (tx, ty) => ty * w + tx;
+    const cx = (w / 2) | 0;
+    const cy = (h / 2) | 0;
+    const exitDirsAll = Object.keys(screen.exits ?? {});
+    const exitMids = exitDirsAll.map((dir) => edgeMidpoint(dir, w, h));
+    const nodeCount = (screen.danger ?? 0) >= 3 ? 1 : 2;
+    const labels = ['bush_1', 'tree_2'];
+    const rng = makeRng(hashSeed(screen.id + '_forage'));
+
+    const isValid = (tx, ty) => {
+      // Interior only (never the perimeter frame).
+      if (!(tx > 0 && tx < w - 1 && ty > 0 && ty < h - 1)) return false;
+      const t = terrainGrid[at(tx, ty)];
+      if (t === T_CLIFF || t === T_WATER) return false;
+      // Keep clear of the centre anchorage/path clearing.
+      if (Math.abs(tx - cx) <= 3 && Math.abs(ty - cy) <= 3) return false;
+      // Keep clear of each exit corridor midpoint.
+      for (const m of exitMids) {
+        if (Math.abs(tx - m.tx) <= 2 && Math.abs(ty - m.ty) <= 2) return false;
+      }
+      return true;
+    };
+
+    for (let n = 0; n < nodeCount; n++) {
+      for (let attempt = 0; attempt < 20; attempt++) {
+        const tx = 1 + Math.floor(rng() * (w - 2));
+        const ty = 1 + Math.floor(rng() * (h - 2));
+        if (!isValid(tx, ty)) continue;
+        const nodeId = `${screen.id}:${labels[n]}`;
+        objects.push({
+          id: nextId++,
+          name: 'forage_node',
+          type: 'forage_node',
+          x: tx * TILE + 8,
+          y: ty * TILE + 8,
+          width: 8,
+          height: 8,
+          point: true,
+          rotation: 0,
+          visible: true,
+          properties: [{ name: 'node_id', type: 'string', value: nodeId }],
+        });
+        break;
+      }
+    }
+  }
+
   return objects;
 }
 
-/** Emit the 6 generated tilesets; water + cliff carry `collides:true` on all 48. */
+/**
+ * Emit the 6 curated generated tilesets. No `tiles` collision-property arrays are
+ * emitted: cliff collision now comes from the `non-empty` behind layer (trunks),
+ * and water-pond collision comes from `collides:true` on the autotile_water_16
+ * tiles, which the scene's default 'property' ground mode reads. Water is the only
+ * tileset that carries collision properties.
+ */
 function buildTilesetDescriptors() {
   const collideTiles = (count) =>
     Array.from({ length: count }, (_, i) => ({
@@ -504,7 +626,7 @@ function buildTilesetDescriptors() {
       margin: 0,
       spacing: 0,
     };
-    if (ts.name === 'autotile_water_16' || ts.name === 'autotile_cliff_16') {
+    if (ts.name === 'autotile_water_16') {
       return { ...base, tiles: collideTiles(ts.tilecount) };
     }
     return base;
@@ -533,10 +655,20 @@ function buildMap(screen) {
       { id: 1, name: 'ground', type: 'tilelayer', x: 0, y: 0, width: w, height: h, opacity: 1, visible: true, data: buildGroundLayer(screen, terrainGrid) },
       { id: 2, name: 'behind', type: 'tilelayer', x: 0, y: 0, width: w, height: h, opacity: 1, visible: true, data: buildBehindLayer(screen, terrainGrid) },
       { id: 3, name: 'in-front', type: 'tilelayer', x: 0, y: 0, width: w, height: h, opacity: 1, visible: true, data: buildInFrontLayer(screen, terrainGrid) },
-      { id: 4, name: 'objects', type: 'objectgroup', x: 0, y: 0, opacity: 1, visible: true, draworder: 'topdown', objects: buildObjects(screen) },
+      { id: 4, name: 'objects', type: 'objectgroup', x: 0, y: 0, opacity: 1, visible: true, draworder: 'topdown', objects: buildObjects(screen, terrainGrid) },
     ],
   };
 }
+
+// Screens the developer authors by hand in Tiled — the generator must NEVER
+// overwrite them (the hub forest_anchorage is skipped separately below).
+const HAND_AUTHORED_SCREENS = new Set([
+  'forest_boss_clearing', 'forest_briar_pass', 'forest_crossroads',
+  'forest_deepwood', 'forest_east_path', 'forest_glade',
+  'forest_hidden_alcove', 'forest_hollow', 'forest_mossy_fen',
+  'forest_north_road', 'forest_ridge', 'forest_snow_gate',
+  'forest_south_path', 'forest_swamp_gate',
+]);
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const outDir = resolve(__dirname, '..', 'public', 'assets', 'maps', 'forest');
@@ -544,6 +676,10 @@ mkdirSync(outDir, { recursive: true });
 let count = 0;
 for (const screen of FOREST_SCREENS) {
   if (screen.id === 'forest_anchorage') continue; // hand-authored hub; do NOT overwrite
+  if (HAND_AUTHORED_SCREENS.has(screen.id)) {
+    console.log(`skipping hand-authored: ${screen.id}`);
+    continue;
+  }
   const map = buildMap(screen);
   const outPath = resolve(outDir, `${screen.id}.json`);
   writeFileSync(outPath, JSON.stringify(map, null, 2) + '\n');

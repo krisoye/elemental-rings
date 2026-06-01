@@ -25,23 +25,22 @@ const FOREST_HUB_TILESETS: ReadonlyArray<readonly [string, string]> = [
 // Keys MUST match the `name` fields in GENERATED_TILESETS (forest-gid-map.mjs) so
 // the firstgid contract baked into each generated map JSON resolves correctly.
 export const FOREST_GENERATED_TILESETS: ReadonlyArray<readonly [string, string]> = [
-  ['autotile_grass_16', 'assets/terrain/autotile_grass_16.png'],
-  ['autotile_dirt_16', 'assets/terrain/autotile_dirt_16.png'],
   ['autotile_water_16', 'assets/terrain/autotile_water_16.png'],
-  ['autotile_cliff_16', 'assets/terrain/autotile_cliff_16.png'],
   ['ModernEra_GreenForest_Tileset', 'assets/terrain/terrain_forest_modern.png'],
   ['berry_and_trees', 'assets/flora/flora_berries_trees.png'],
-];
-
-// Tilesets for hand-authored Forest screens (forest_deepwood, forest_mossy_fen,
-// forest_south_path). Extends the generated base with every extra tileset used
-// across those three maps; buildTilesets() filters to only what each map declares.
-const FOREST_HANDAUTHORED_TILESETS: ReadonlyArray<readonly [string, string]> = [
-  ...FOREST_GENERATED_TILESETS,
-  ['terrain_forest_modern', 'assets/terrain/terrain_forest_modern.png'],
   ['terrain_plains_fantasy', 'assets/terrain/terrain_plains_fantasy.png'],
   ['tileset_village_main_a', 'assets/structures/tileset_village_main_a.png'],
   ['terrain_forest_void', 'assets/terrain/terrain_forest_void.png'],
+];
+
+// Tilesets for hand-authored Forest screens (forest_deepwood, forest_mossy_fen,
+// forest_south_path, …). Extends the generated base with every extra tileset used
+// across those maps; buildTilesets() filters to only what each map declares.
+// terrain_plains_fantasy, tileset_village_main_a and terrain_forest_void now live
+// in the generated base, so they are not repeated here.
+const FOREST_HANDAUTHORED_TILESETS: ReadonlyArray<readonly [string, string]> = [
+  ...FOREST_GENERATED_TILESETS,
+  ['terrain_forest_modern', 'assets/terrain/terrain_forest_modern.png'],
   ['terrain_forest_deepwoods', 'assets/terrain/terrain_forest_deepwoods.png'],
   ['tileset_village_main_b', 'assets/structures/tileset_village_main_b.png'],
 ];

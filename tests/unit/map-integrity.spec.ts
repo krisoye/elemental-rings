@@ -122,11 +122,30 @@ function walkableGrid(map: TiledMap): boolean[][] {
   );
 }
 
+// Screens the developer authors by hand in Tiled (mirrors HAND_AUTHORED_SCREENS in
+// gen-forest-screens.mjs). These keep the legacy autotile 6-tileset firstgid
+// contract; the generator never overwrites them. The remaining non-hub screens are
+// emitted by the generator with the curated-palette contract.
+const HAND_AUTHORED = new Set([
+  'forest_boss_clearing', 'forest_briar_pass', 'forest_crossroads',
+  'forest_deepwood', 'forest_east_path', 'forest_glade',
+  'forest_hidden_alcove', 'forest_hollow', 'forest_mossy_fen',
+  'forest_north_road', 'forest_ridge', 'forest_snow_gate',
+  'forest_south_path', 'forest_swamp_gate',
+]);
+
 const NON_HUB = FOREST_SCREENS.filter((s) => s.id !== 'forest_anchorage');
+const GENERATED = NON_HUB.filter((s) => !HAND_AUTHORED.has(s.id));
+const HAND_AUTHORED_SCREENS = NON_HUB.filter((s) => HAND_AUTHORED.has(s.id));
+
+// firstgid contracts: the curated-palette generated maps vs the legacy autotile
+// maps still used by the hand-authored screens.
+const GENERATED_FIRSTGIDS = [1, 49, 169, 224, 480, 736];
+const LEGACY_FIRSTGIDS = [1, 49, 97, 145, 193, 313];
 
 describe('generated map format', () => {
-  for (const screen of NON_HUB) {
-    it(`${screen.id}: 16px tile size, 4 named layers, 6 tilesets with the firstgid contract`, () => {
+  for (const screen of GENERATED) {
+    it(`${screen.id}: 16px tile size, 4 named layers, 6 tilesets with the curated firstgid contract`, () => {
       const map = loadMap('forest', `${screen.id}.json`);
       expect(map.tilewidth).toBe(16);
       expect(map.tileheight).toBe(16);
@@ -134,13 +153,44 @@ describe('generated map format', () => {
         expect.arrayContaining(['ground', 'behind', 'in-front', 'objects']),
       );
       expect(map.tilesets).toHaveLength(6);
-      expect(map.tilesets.map((t) => t.firstgid)).toEqual([1, 49, 97, 145, 193, 313]);
+      expect(map.tilesets.map((t) => t.firstgid)).toEqual(GENERATED_FIRSTGIDS);
     });
   }
 });
 
-describe('water and cliff tiles collide', () => {
-  for (const screen of NON_HUB) {
+describe('hand-authored map format', () => {
+  for (const screen of HAND_AUTHORED_SCREENS) {
+    it(`${screen.id}: 16px tile size, 4 named layers, legacy firstgid contract`, () => {
+      const map = loadMap('forest', `${screen.id}.json`);
+      expect(map.tilewidth).toBe(16);
+      expect(map.tileheight).toBe(16);
+      expect(map.layers.map((l) => l.name)).toEqual(
+        expect.arrayContaining(['ground', 'behind', 'in-front', 'objects']),
+      );
+      expect(map.tilesets.map((t) => t.firstgid)).toEqual(LEGACY_FIRSTGIDS);
+    });
+  }
+});
+
+describe('water tiles collide', () => {
+  // The curated generated maps drop the autotile_cliff strip — cliff collision now
+  // comes from the non-empty `behind` trunk layer. Only the surviving
+  // autotile_water_16 ponds carry per-tile collides:true.
+  for (const screen of GENERATED) {
+    it(`${screen.id}: every water GID id 0–47 carries collides:true`, () => {
+      const map = loadMap('forest', `${screen.id}.json`);
+      const water = map.tilesets.find((t) => t.name === 'autotile_water_16')!;
+      for (let id = 0; id < 48; id++) {
+        const tile = water.tiles?.find((t) => t.id === id);
+        const has = tile?.properties?.some((p) => p.name === 'collides' && p.value === true);
+        expect(has, `${screen.id} ${water.name} tile ${id} missing collides:true`).toBe(true);
+      }
+    });
+  }
+});
+
+describe('hand-authored water and cliff tiles collide', () => {
+  for (const screen of HAND_AUTHORED_SCREENS) {
     it(`${screen.id}: every water/cliff GID id 0–47 carries collides:true`, () => {
       const map = loadMap('forest', `${screen.id}.json`);
       const water = map.tilesets.find((t) => t.name === 'autotile_water_16')!;
