@@ -31,6 +31,12 @@ export const FOREST_GENERATED_TILESETS: ReadonlyArray<readonly [string, string]>
   ['terrain_plains_fantasy', 'assets/terrain/terrain_plains_fantasy.png'],
   ['tileset_village_main_a', 'assets/structures/tileset_village_main_a.png'],
   ['terrain_forest_void', 'assets/terrain/terrain_forest_void.png'],
+  // Legacy tilesets — referenced by screens generated before PR #250 (boss_clearing,
+  // briar_pass, glade, hollow, hidden_alcove, swamp_gate). buildTilesets() filters
+  // by this.textures.exists so these are no-ops for new-format maps.
+  ['autotile_grass_16', 'assets/terrain/autotile_grass_16.png'],
+  ['autotile_dirt_16', 'assets/terrain/autotile_dirt_16.png'],
+  ['autotile_cliff_16', 'assets/terrain/autotile_cliff_16.png'],
 ];
 
 // Tilesets for hand-authored Forest screens (forest_deepwood, forest_mossy_fen,
