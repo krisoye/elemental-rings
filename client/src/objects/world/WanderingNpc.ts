@@ -184,7 +184,9 @@ export class WanderingNpc {
     if (this.destroyed) return;
     const target = this.pickTarget();
     const dx = target.x - this.sprite.x;
-    const dy = target.y - this.sprite.y;
+    // Monsters: only drift horizontally so the persistent bob tween owns y
+    // exclusively — two tweens targeting the same property simultaneously fight.
+    const dy = this.char !== undefined ? target.y - this.sprite.y : 0;
     const dist = Math.hypot(dx, dy);
     if (dist < 1) {
       this.scheduleNextLeg(Phaser.Math.Between(PAUSE_MIN_MS, PAUSE_MAX_MS));
@@ -193,10 +195,12 @@ export class WanderingNpc {
     const duration = (dist / WANDER_SPEED) * 1000;
     this.applyFacing(dx, dy, true);
 
+    const tweenProps: Record<string, number> = { x: target.x };
+    if (this.char !== undefined) tweenProps.y = target.y;
+
     this.moveTween = this.scene.tweens.add({
       targets: this.sprite,
-      x: target.x,
-      y: target.y,
+      ...tweenProps,
       duration,
       ease: 'Linear',
       onUpdate: () => this.syncRosterPosition(),
