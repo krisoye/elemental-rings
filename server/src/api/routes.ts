@@ -23,6 +23,7 @@ import {
   spendSpirit,
   spendSpiritAtomic,
   getSpiritStats,
+  getBattleHandAvgXp,
   lockStake,
   unlockStake,
   fuseRings,
@@ -410,24 +411,25 @@ apiRouter.post('/api/stake/unlock', requireAuth, (req: Request, res: Response): 
  * color each opponent marker, show what beating them transfers, and render a
  * relative difficulty label before the player commits to a duel.
  *
- * Auth is OPTIONAL (#196): a valid Bearer token scales each opponent to the
- * authenticated player's aggregate XP; no/invalid token falls back to
- * playerAggregateXp = 0 (a fresh opponent), preserving backwards-compat for
- * unauthenticated E2E. The response includes the resolved playerAggregateXp so the
- * client can compute the difficulty label without a second round-trip.
+ * Auth is OPTIONAL (#196/#244): a valid Bearer token scales each opponent to the
+ * authenticated player's battle-hand weighted-average XP; no/invalid token falls
+ * back to playerBattleHandAvgXp = 0 (a fresh opponent), preserving backwards-compat
+ * for unauthenticated E2E. The response includes the resolved playerBattleHandAvgXp
+ * so the client can compute the difficulty label without a second round-trip.
  *
  * Response: {
- *   playerAggregateXp: number,
+ *   playerBattleHandAvgXp: number,
  *   [AIPersonality]: { element, aiSeed, stakeTier, stakeXp, totalXp, npcEffectiveXp }
  * }
  */
 apiRouter.get('/api/encounter/preview', (req: Request, res: Response): void => {
   // Optional auth: read a Bearer token if present and resolve the player's
-  // aggregate XP from the DB. Any missing/invalid token → playerAggregateXp = 0.
+  // battle-hand average XP from the DB. Any missing/invalid token →
+  // playerBattleHandAvgXp = 0.
   const header = req.headers.authorization;
   const token = header?.startsWith('Bearer ') ? header.slice('Bearer '.length).trim() : undefined;
   const payload = token ? verifyToken(token) : null;
-  const playerAggregateXp = payload ? getSpiritStats(payload.playerId).aggregateXp : 0;
+  const playerBattleHandAvgXp = payload ? getBattleHandAvgXp(payload.playerId) : 0;
 
   const baseSeed = Date.now() & 0xffffffff;
   // Derive a deterministic per-personality aiSeed from the base seed so the
@@ -445,14 +447,14 @@ apiRouter.get('/api/encounter/preview', (req: Request, res: Response): void => {
         totalXp: number;
         npcEffectiveXp: number;
       }
-  > = { playerAggregateXp };
+  > = { playerBattleHandAvgXp };
   AI_PERSONALITIES.forEach((p, i) => {
     const aiSeed = (baseSeed ^ (i * 0xdeadbeef)) & 0xffffffff;
     const loadoutRng = makeRng(aiSeed ^ 0x1a2b3c4d);
     const { element, stakeTier, stakeXp, totalXp, npcEffectiveXp } = previewOpponent(
       p,
       loadoutRng,
-      playerAggregateXp,
+      playerBattleHandAvgXp,
     );
     preview[p] = { element, aiSeed, stakeTier, stakeXp, totalXp, npcEffectiveXp };
   });
@@ -699,11 +701,16 @@ apiRouter.get('/api/overworld/npcs', requireAuth, (req: Request, res: Response):
   // the personality RNG. aiSeed is still returned for BattleRoom loadout seeding.
   // stakeXp is pre-computed via previewOpponent so the overworld approach prompt
   // can show the player what thumb XP they'd win without an extra round-trip.
-  const { aggregateXp: playerAggregateXp } = getSpiritStats(playerId);
+  // #244 — scale to the player's carried battle hand, not the Reliquary aggregate.
+  const playerBattleHandAvgXp = getBattleHandAvgXp(playerId);
   const npcs = visible.map((npc) => {
     const aiSeed = hashNpcId(npc.id);
     const rng = makeRng(aiSeed ^ 0x1a2b3c4d);
-    const { stakeXp } = previewOpponent(npc.personality as AIPersonality, rng, playerAggregateXp);
+    const { stakeXp } = previewOpponent(
+      npc.personality as AIPersonality,
+      rng,
+      playerBattleHandAvgXp,
+    );
     return {
       id: npc.id,
       personality: npc.personality,

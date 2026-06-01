@@ -73,12 +73,13 @@ export interface BattleRoomOptions {
   // set on overworld-launched NPC duels; the encounter-hub markers leave it
   // undefined (the per-personality preview seed already pins their stake).
   thumbElement?: number;
-  // #196 — the joining player's aggregate ring XP, used to scale the AI's loadout
-  // (tier / uses / thumb XP) to the player's level. When omitted, the server reads
-  // it from the DB via the supplied token; absent both, it defaults to 0 (a fresh
-  // opponent, preserving backwards-compat for unauthenticated E2E). Only meaningful
-  // on vsAI rooms; PvP rooms ignore it.
-  playerAggregateXp?: number;
+  // #244 — the joining player's battle-hand weighted-average ring XP (thumb 1/3,
+  // attack pair 1/3, defense pair 1/3), used to scale the AI's loadout (tier /
+  // uses / thumb XP) to the rings the player actually brings to the fight. When
+  // omitted, the server reads it from the DB via the supplied token; absent both,
+  // it defaults to 0 (a fresh opponent, preserving backwards-compat for
+  // unauthenticated E2E). Only meaningful on vsAI rooms; PvP rooms ignore it.
+  playerBattleHandAvgXp?: number;
 }
 
 export interface SelectAttackPayload {

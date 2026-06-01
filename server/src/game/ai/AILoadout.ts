@@ -30,8 +30,8 @@ const PERSONALITY_THUMB_XP: Record<AIPersonality, number> = {
 };
 
 /**
- * #196 — per-personality difficulty multiplier applied to the player's aggregate
- * XP to scale an NPC's effective XP. Tougher personalities field more-seasoned
+ * #196/#244 — per-personality difficulty multiplier applied to the player's
+ * battle-hand weighted-average XP to scale an NPC's effective XP. Tougher personalities field more-seasoned
  * loadouts (higher ring tiers / uses) so beating them transfers more XP. Tuned so
  * a matched-difficulty opponent (DEFENSIVE) tracks the player's level 1:1, while
  * AGGRESSIVE undercuts it and RESILIENT exceeds it.
@@ -44,12 +44,15 @@ const PERSONALITY_MULTIPLIER: Record<AIPersonality, number> = {
 };
 
 /**
- * The NPC's effective XP for a personality, scaled to the player's aggregate XP
- * (#196). A fresh player (aggregate 0) yields 0 here; the per-ring floor at the
- * old hardcoded PERSONALITY_THUMB_XP keeps such opponents non-trivial.
+ * The NPC's effective XP for a personality, scaled to the player's battle-hand
+ * weighted-average XP (#244). A player with an empty/zero-XP hand yields 0 here;
+ * the floor at PERSONALITY_THUMB_XP keeps such opponents non-trivial.
  */
-export function npcEffectiveXp(personality: AIPersonality, playerAggregateXp: number): number {
-  return Math.round(playerAggregateXp * PERSONALITY_MULTIPLIER[personality]);
+export function npcEffectiveXp(
+  personality: AIPersonality,
+  playerBattleHandAvgXp: number,
+): number {
+  return Math.round(playerBattleHandAvgXp * PERSONALITY_MULTIPLIER[personality]);
 }
 
 /**
@@ -105,15 +108,18 @@ export const TEMPLATES: Record<AIPersonality, LoadoutTemplate[]> = {
  * Pick a loadout variant for the given personality using the supplied RNG and
  * convert to a SlotSpec map (tier/uses/xp can be overridden for higher-level AI).
  *
- * #196 — when `playerAggregateXp > 0`, the AI's ring tier, max uses, and thumb XP
- * are scaled to the player's level instead of the fixed `tier`/`maxUses` defaults:
- *   npcEffectiveXp = round(playerAggregateXp · PERSONALITY_MULTIPLIER)
- *   perRingXp      = floor(npcEffectiveXp / 5)            (5 rings in a loadout)
- *   tier           = tierForXp(perRingXp)                 (GDD §4.2)
+ * #244 — when `playerBattleHandAvgXp > 0`, the AI's ring tier, max uses, and thumb
+ * XP are scaled to the player's carried battle hand instead of the fixed
+ * `tier`/`maxUses` defaults. The input is already a weighted average of the
+ * carried hand (thumb 1/3, attack pair 1/3, defense pair 1/3), so it feeds
+ * tierForXp directly — there is no /5 division (the old #196 formula divided a
+ * Reliquary sum across five rings; this one starts from an average):
+ *   npcEffectiveXp = round(playerBattleHandAvgXp · PERSONALITY_MULTIPLIER)
+ *   tier           = tierForXp(npcEffectiveXp)            (GDD §4.2)
  *   maxUses        = naturalMaxUses(tier) = 3 + tier
- *   thumb XP       = max(PERSONALITY_THUMB_XP, perRingXp) (floor at old hardcoded)
- * A fresh player (aggregate 0) leaves the defaults untouched, so all existing
- * call sites that omit `playerAggregateXp` are unaffected.
+ *   thumb XP       = max(PERSONALITY_THUMB_XP, npcEffectiveXp) (floor at hardcoded)
+ * A player with an empty/zero hand (avg 0) leaves the defaults untouched, so all
+ * existing call sites that omit `playerBattleHandAvgXp` are unaffected.
  */
 export function generateAILoadout(
   personality: AIPersonality,
@@ -122,17 +128,18 @@ export function generateAILoadout(
   maxUses = 3,
   xp = 0,
   thumbElement?: number,
-  playerAggregateXp = 0,
+  playerBattleHandAvgXp = 0,
 ): Partial<Record<SlotKey, SlotSpec>> {
-  // #196 — XP-aware scaling. perRingXp distributes the NPC's effective XP across
-  // its five rings; tier/uses follow from it. The thumb's XP is floored at the old
-  // hardcoded value so fresh-player opponents still stake a non-trivial ring.
-  const scaled = playerAggregateXp > 0;
-  const perRingXp = scaled ? Math.floor(npcEffectiveXp(personality, playerAggregateXp) / 5) : 0;
-  const effectiveTier = scaled ? tierForXp(perRingXp) : tier;
+  // #244 — XP-aware scaling. The input is the player's battle-hand weighted
+  // average, so npcEffectiveXp feeds tierForXp directly (no /5). The thumb's XP is
+  // floored at the hardcoded value so weak-hand opponents still stake a
+  // non-trivial ring.
+  const scaled = playerBattleHandAvgXp > 0;
+  const npcXp = scaled ? npcEffectiveXp(personality, playerBattleHandAvgXp) : 0;
+  const effectiveTier = scaled ? tierForXp(npcXp) : tier;
   const effectiveMaxUses = scaled ? naturalMaxUses(effectiveTier) : maxUses;
   const effectiveThumbXp = scaled
-    ? Math.max(PERSONALITY_THUMB_XP[personality], perRingXp)
+    ? Math.max(PERSONALITY_THUMB_XP[personality], npcXp)
     : PERSONALITY_THUMB_XP[personality];
 
   const all = TEMPLATES[personality];
@@ -183,7 +190,7 @@ export function previewStakeElement(personality: AIPersonality, rng: Rng): numbe
 export function previewOpponent(
   personality: AIPersonality,
   rng: Rng,
-  playerAggregateXp = 0,
+  playerBattleHandAvgXp = 0,
 ): { element: number; stakeTier: number; stakeXp: number; totalXp: number; npcEffectiveXp: number } {
   const loadout = generateAILoadout(
     personality,
@@ -192,7 +199,7 @@ export function previewOpponent(
     undefined,
     undefined,
     undefined,
-    playerAggregateXp,
+    playerBattleHandAvgXp,
   );
   const thumb = loadout.thumb;
   const element = thumb?.element ?? 0;
@@ -204,7 +211,7 @@ export function previewOpponent(
     stakeTier,
     stakeXp,
     totalXp,
-    npcEffectiveXp: npcEffectiveXp(personality, playerAggregateXp),
+    npcEffectiveXp: npcEffectiveXp(personality, playerBattleHandAvgXp),
   };
 }
 

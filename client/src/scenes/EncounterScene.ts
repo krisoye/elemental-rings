@@ -88,10 +88,11 @@ export class EncounterScene extends Phaser.Scene {
   // ring before selecting another encounter.
   private wonRingModal: Phaser.GameObjects.Container | null = null;
   private wonRings: RingData[] = [];
-  // #196 — the player's aggregate ring XP, resolved from the preview response
-  // (server-authoritative). Threaded into each vsAI room join so the AI loadout
-  // scales to the player's level. 0 until the preview fetch resolves.
-  private playerAggregateXp = 0;
+  // #244 — the player's battle-hand weighted-average ring XP, resolved from the
+  // preview response (server-authoritative). Threaded into each vsAI room join so
+  // the AI loadout scales to the rings the player brings. 0 until the preview
+  // fetch resolves.
+  private playerBattleHandAvgXp = 0;
 
   constructor() {
     super({ key: 'EncounterScene' });
@@ -215,7 +216,7 @@ export class EncounterScene extends Phaser.Scene {
     const stakeLabels: Map<Choice, Phaser.GameObjects.Text> = new Map();
     // #196 — one color-coded difficulty label per AI marker, rendered below the
     // stake line. Populated once the preview fetch resolves (npcEffectiveXp +
-    // playerAggregateXp). PVP markers get no difficulty label.
+    // playerBattleHandAvgXp). PVP markers get no difficulty label.
     const diffLabels: Map<Choice, Phaser.GameObjects.Text> = new Map();
 
     MARKERS.forEach((m, i) => {
@@ -356,8 +357,8 @@ export class EncounterScene extends Phaser.Scene {
         headers: token ? { Authorization: `Bearer ${token}` } : {},
       });
       if (!res.ok) return;
-      // The response carries a top-level numeric `playerAggregateXp` alongside the
-      // per-personality preview objects (#196), so the value type is a union.
+      // The response carries a top-level numeric `playerBattleHandAvgXp` alongside
+      // the per-personality preview objects (#244), so the value type is a union.
       const preview: Record<
         string,
         | number
@@ -371,8 +372,8 @@ export class EncounterScene extends Phaser.Scene {
           }
       > = await res.json();
 
-      const rawPlayerXp = preview.playerAggregateXp;
-      this.playerAggregateXp = typeof rawPlayerXp === 'number' ? rawPlayerXp : 0;
+      const rawPlayerXp = preview.playerBattleHandAvgXp;
+      this.playerBattleHandAvgXp = typeof rawPlayerXp === 'number' ? rawPlayerXp : 0;
 
       const published: Record<
         string,
@@ -386,7 +387,7 @@ export class EncounterScene extends Phaser.Scene {
       > = {};
 
       for (const [personality, entry] of Object.entries(preview)) {
-        // Skip the top-level playerAggregateXp scalar — only personality objects.
+        // Skip the top-level playerBattleHandAvgXp scalar — only personality objects.
         if (typeof entry !== 'object') continue;
         const { element, aiSeed, stakeTier, stakeXp, totalXp, npcEffectiveXp } = entry;
         this.aiSeeds.set(personality as Choice, aiSeed);
@@ -407,7 +408,7 @@ export class EncounterScene extends Phaser.Scene {
         // #196 — color-coded relative difficulty label below the stake line.
         const diffLabel = diffLabels.get(personality as Choice);
         if (diffLabel) {
-          const diff = difficultyLabel(npcEffectiveXp, this.playerAggregateXp);
+          const diff = difficultyLabel(npcEffectiveXp, this.playerBattleHandAvgXp);
           diffLabel.setText(diff);
           diffLabel.setColor(difficultyColor(diff));
         }
@@ -484,12 +485,15 @@ export class EncounterScene extends Phaser.Scene {
       // loadout variant pool to a thumb-matching template so the duel stake equals
       // the overworld sprite colour + approach warning.
       thumbElement,
-      // #196 — the player's aggregate XP (from the preview response) so the AI
-      // loadout scales to the player's level. Only sent when known (> 0); when
-      // omitted (e.g. the NPC-duel path that skips the preview), the server
-      // re-resolves it from the token as the authority. Sending 0 would suppress
-      // that lookup (nullish-coalescing treats 0 as present), so it is left off.
-      ...(this.playerAggregateXp > 0 ? { playerAggregateXp: this.playerAggregateXp } : {}),
+      // #244 — the player's battle-hand average XP (from the preview response) so
+      // the AI loadout scales to the rings the player brings. Only sent when known
+      // (> 0); when omitted (e.g. the NPC-duel path that skips the preview), the
+      // server re-resolves it from the token as the authority. Sending 0 would
+      // suppress that lookup (nullish-coalescing treats 0 as present), so it is
+      // left off.
+      ...(this.playerBattleHandAvgXp > 0
+        ? { playerBattleHandAvgXp: this.playerBattleHandAvgXp }
+        : {}),
       ...aiOverrides,
     });
 

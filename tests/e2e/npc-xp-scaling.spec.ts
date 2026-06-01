@@ -1,24 +1,41 @@
 import { test, expect, type Page } from '@playwright/test';
 
 /**
- * #196 — NPC difficulty scales with the player's aggregate XP, and the encounter
- * preview surfaces each opponent's scaled effective XP so the client can render a
- * relative difficulty label.
+ * #244 — NPC difficulty scales with the player's CARRIED battle-hand XP (a
+ * weighted average), not the Reliquary aggregate. The encounter preview surfaces
+ * each opponent's scaled effective XP so the client can render a relative
+ * difficulty label, and the joined BattleRoom seats an AI whose thumb stake XP
+ * matches the preview.
  *
  * Scaling (server, single-source in AILoadout.ts):
- *   npcEffectiveXp = round(playerAggregateXp · PERSONALITY_MULTIPLIER[p])
- *   perRingXp      = floor(npcEffectiveXp / 5)
- *   tier           = tierForXp(perRingXp)   (T1 begins at 500 XP, GDD §4.2)
- * Multipliers: AGGRESSIVE 0.8, DEFENSIVE 1.0, STATUS_HUNTER 1.1, RESILIENT 1.3.
+ *   battleHandAvgXp = (thumb.xp + (a1.xp + a2.xp)/2 + (d1.xp + d2.xp)/2) / 3
+ *   npcEffectiveXp  = round(battleHandAvgXp · PERSONALITY_MULTIPLIER[p])
+ *   thumbXp         = max(PERSONALITY_THUMB_XP[p], npcEffectiveXp)   (the floor)
+ *   tier            = tierForXp(npcEffectiveXp)   (T1 begins at 500 XP, GDD §4.2)
+ * The old #196 /5 divisor is GONE — the input is already a weighted average.
  *
- * These tests drive the auth + preview API directly (scenarios 1–2) and a live
- * battle-ai room (scenario 3), matching the harness pattern in
+ * DEFENSIVE (used by every scenario below):
+ *   PERSONALITY_MULTIPLIER[DEFENSIVE] = 1.0
+ *   PERSONALITY_THUMB_XP[DEFENSIVE]   = 20   (the floor)
+ * So with mult 1.0, expected stakeXp = max(20, round(battleHandAvgXp)).
+ *
+ * These tests drive the auth + preview API directly (scenarios 1–4) and a live
+ * battle-ai room (scenario 5), matching the harness pattern in
  * encounter-vs-ai.spec.ts and npc-stake-element-sync.spec.ts.
  */
 
 // Port 8090 (client) / 2568 (test Colyseus + API) — mirrors the other specs.
 const URL = 'http://localhost:8090';
 const API_URL = 'http://localhost:2568';
+
+// DEFENSIVE personality constants (verified in server/src/game/ai/AILoadout.ts).
+const DEFENSIVE_MULT = 1.0;
+const DEFENSIVE_FLOOR = 20;
+
+/** Expected scaled stake XP for DEFENSIVE given a battle-hand weighted average. */
+function expectedDefensiveStake(battleHandAvgXp: number): number {
+  return Math.max(DEFENSIVE_FLOOR, Math.round(battleHandAvgXp * DEFENSIVE_MULT));
+}
 
 interface PreviewEntry {
   element: number;
@@ -29,6 +46,11 @@ interface PreviewEntry {
   npcEffectiveXp: number;
 }
 
+interface MeResponse {
+  rings: Array<{ id: string; xp: number; in_carry: number }>;
+  loadout: { thumb: string | null; a1: string | null; a2: string | null; d1: string | null; d2: string | null } | null;
+}
+
 /** Mint a fresh E2E player and return its signed token. */
 async function mintToken(): Promise<string> {
   const res = await fetch(`${API_URL}/api/test/mint-token`, { method: 'POST' });
@@ -37,22 +59,56 @@ async function mintToken(): Promise<string> {
   return token;
 }
 
-/** Seed the authenticated player's aggregate XP via the #196 test route. */
-async function setAggregateXp(token: string, xp: number): Promise<number> {
+/** GET /api/me for the authenticated player (carried rings + loadout slots). */
+async function fetchMe(token: string): Promise<MeResponse> {
+  const res = await fetch(`${API_URL}/api/me`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!res.ok) throw new Error(`/api/me failed (${res.status})`);
+  return res.json() as Promise<MeResponse>;
+}
+
+/** Set a single carried ring's XP to an absolute value via the test route. */
+async function setRingXp(token: string, ringId: string, xp: number): Promise<void> {
+  const res = await fetch(`${API_URL}/api/test/set-ring-xp`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+    body: JSON.stringify({ ringId, xp }),
+  });
+  if (!res.ok) throw new Error(`set-ring-xp failed (${res.status})`);
+}
+
+/** Grant the player a single high-XP Reliquary (in_carry = 0) ring. */
+async function grantReliquaryXp(token: string, xp: number): Promise<void> {
   const res = await fetch(`${API_URL}/api/test/set-aggregate-xp`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
     body: JSON.stringify({ xp }),
   });
   if (!res.ok) throw new Error(`set-aggregate-xp failed (${res.status})`);
-  const { aggregateXp } = (await res.json()) as { aggregateXp: number };
-  return aggregateXp;
+}
+
+/**
+ * Seed the player's CARRIED battle hand to exact per-slot XP. A fresh player's
+ * default loadout already assigns thumb/a1/a2/d1/d2 to carried starter rings
+ * (xp=0); this reads that mapping from /api/me and sets each slot ring's XP.
+ */
+async function seedBattleHand(
+  token: string,
+  xps: { thumb: number; a1: number; a2: number; d1: number; d2: number },
+): Promise<void> {
+  const me = await fetchMe(token);
+  if (!me.loadout) throw new Error('seedBattleHand: player has no loadout');
+  const slots: Array<keyof typeof xps> = ['thumb', 'a1', 'a2', 'd1', 'd2'];
+  for (const slot of slots) {
+    const ringId = me.loadout[slot];
+    if (!ringId) throw new Error(`seedBattleHand: loadout slot ${slot} is empty`);
+    await setRingXp(token, ringId, xps[slot]);
+  }
 }
 
 /** GET /api/encounter/preview with an optional Bearer token. */
-async function fetchPreview(
-  token?: string,
-): Promise<Record<string, number | PreviewEntry>> {
+async function fetchPreview(token?: string): Promise<Record<string, number | PreviewEntry>> {
   const res = await fetch(`${API_URL}/api/encounter/preview`, {
     headers: token ? { Authorization: `Bearer ${token}` } : {},
   });
@@ -60,76 +116,105 @@ async function fetchPreview(
   return res.json() as Promise<Record<string, number | PreviewEntry>>;
 }
 
-/**
- * Client mirror of EncounterScene.difficultyLabel — kept here so the test asserts
- * the same bucketing the UI renders (the server only supplies the raw XP values).
- */
-function difficultyLabel(npcXp: number, playerXp: number): string {
-  if (playerXp === 0 && npcXp === 0) return 'Fresh';
-  const ratio = playerXp > 0 ? npcXp / playerXp : 1;
-  if (ratio < 0.6) return 'Weaker';
-  if (ratio < 0.9) return 'Easier';
-  if (ratio < 1.2) return 'Matched';
-  if (ratio < 1.8) return 'Stronger';
-  return 'Much Stronger';
-}
-
-// ── Scenario 1: fresh player sees the floor XP ──────────────────────────────
-// A new E2E player has aggregate_xp = 0 (all starter rings xp = 0). The preview
-// then floors every NPC's stake at the old hardcoded PERSONALITY_THUMB_XP, so
-// AGGRESSIVE still stakes ≥ 10 and its difficulty reads 'Fresh' (both 0).
-test('scenario 1: a fresh player sees floor stake XP and a Fresh label', async () => {
+// ── Scenario 1: weak hand → floor ───────────────────────────────────────────
+// A fresh player carries five starter rings at xp=0 → battleHandAvgXp = 0 → the
+// preview floors DEFENSIVE at PERSONALITY_THUMB_XP (20).
+test('scenario 1: an all-zero carried hand floors DEFENSIVE at 20', async () => {
   const token = await mintToken();
   const preview = await fetchPreview(token);
 
-  expect(preview.playerAggregateXp).toBe(0);
+  // battleHandAvgXp = (0 + 0/2 + 0/2)/3 = 0 → unscaled → floor.
+  expect(preview.playerBattleHandAvgXp).toBe(0);
 
-  const agg = preview.AGGRESSIVE as PreviewEntry;
-  expect(agg).toBeDefined();
-  // Floor at the old hardcoded thumb XP (10) so a fresh opponent stays non-trivial.
-  expect(agg.stakeXp).toBeGreaterThanOrEqual(10);
-  // npcEffectiveXp scales off 0, so it is 0 → label is Fresh.
-  expect(agg.npcEffectiveXp).toBe(0);
-  expect(difficultyLabel(agg.npcEffectiveXp, 0)).toBe('Fresh');
+  const def = preview.DEFENSIVE as PreviewEntry;
+  expect(def).toBeDefined();
+  expect(def.npcEffectiveXp).toBe(0); // round(0 × 1.0)
+  expect(def.stakeXp).toBe(DEFENSIVE_FLOOR); // max(20, 0) = 20
 });
 
-// ── Scenario 2: veteran player sees scaled XP ───────────────────────────────
-// Seed aggregate_xp = 2500. RESILIENT (×1.3) → npcEffectiveXp = 3250, perRing
-// = 650 → tier 1; the difficulty ratio 3250/2500 = 1.3 falls in [1.2, 1.8) →
-// 'Stronger'.
-test('scenario 2: a veteran player sees scaled XP and a Stronger RESILIENT', async () => {
+// ── Scenario 2: strong hand → scaled ─────────────────────────────────────────
+// thumb=400, a1=200, a2=200, d1=100, d2=100
+//   battleHandAvgXp = (400 + (200+200)/2 + (100+100)/2)/3 = (400+200+100)/3 = 233.33
+//   npcEffectiveXp  = round(233.33 × 1.0) = 233
+//   stakeXp         = max(20, 233) = 233
+test('scenario 2: a strong carried hand scales DEFENSIVE to 233', async () => {
   const token = await mintToken();
-  const seeded = await setAggregateXp(token, 2500);
-  expect(seeded).toBe(2500);
+  await seedBattleHand(token, { thumb: 400, a1: 200, a2: 200, d1: 100, d2: 100 });
 
   const preview = await fetchPreview(token);
-  expect(preview.playerAggregateXp).toBe(2500);
+  const battleHandAvgXp = (400 + (200 + 200) / 2 + (100 + 100) / 2) / 3; // 233.33
+  expect(preview.playerBattleHandAvgXp).toBeCloseTo(battleHandAvgXp, 5);
 
-  const res = preview.RESILIENT as PreviewEntry;
-  expect(res).toBeDefined();
-  expect(res.npcEffectiveXp).toBe(3250); // 2500 × 1.3
-  expect(res.stakeTier).toBeGreaterThanOrEqual(1); // perRing 650 ≥ 500 → tier 1
-  expect(difficultyLabel(res.npcEffectiveXp, 2500)).toBe('Stronger');
+  const expected = expectedDefensiveStake(battleHandAvgXp); // max(20, round(233.33)) = 233
+  expect(expected).toBe(233);
 
-  // Unauthenticated preview is unaffected (backwards-compat): playerAggregateXp 0.
-  const anon = await fetchPreview();
-  expect(anon.playerAggregateXp).toBe(0);
-  expect((anon.RESILIENT as PreviewEntry).npcEffectiveXp).toBe(0);
+  const def = preview.DEFENSIVE as PreviewEntry;
+  expect(def).toBeDefined();
+  expect(def.npcEffectiveXp).toBe(233);
+  expect(def.stakeXp).toBe(233);
 });
 
-// ── Scenario 3: BattleRoom scales the AI loadout from the player's XP ─────────
-// Connect a veteran (aggregate_xp = 3000) to a battle-ai room with only a token
-// (no explicit playerAggregateXp) so the SERVER resolves the XP authoritatively.
-// RESILIENT at 3000 → effective 3900, perRing 780 ≥ 500 → the seated AI's thumb
-// ring is tier ≥ 1 (a fresh-player opponent would be tier 0).
-test('scenario 3: battle-ai room seats a tier-scaled AI for a veteran player', async ({
+// ── Scenario 3: high Reliquary, weak carry → floor (Reliquary ignored) ───────
+// Grant a 10000-XP Reliquary ring (in_carry = 0) and carry rings at xp=10.
+//   battleHandAvgXp = (10 + (10+10)/2 + (10+10)/2)/3 = (10+10+10)/3 = 10
+//   npcEffectiveXp  = round(10 × 1.0) = 10
+//   stakeXp         = max(20, 10) = 20   ← floor, Reliquary plays no part
+test('scenario 3: a big Reliquary with a weak carry still floors DEFENSIVE at 20', async () => {
+  const token = await mintToken();
+  await grantReliquaryXp(token, 10000); // Reliquary aggregate — must be ignored
+  await seedBattleHand(token, { thumb: 10, a1: 10, a2: 10, d1: 10, d2: 10 });
+
+  const preview = await fetchPreview(token);
+  const battleHandAvgXp = (10 + (10 + 10) / 2 + (10 + 10) / 2) / 3; // 10
+  expect(preview.playerBattleHandAvgXp).toBeCloseTo(battleHandAvgXp, 5);
+
+  const expected = expectedDefensiveStake(battleHandAvgXp); // max(20, round(10)) = 20
+  expect(expected).toBe(DEFENSIVE_FLOOR);
+
+  const def = preview.DEFENSIVE as PreviewEntry;
+  expect(def).toBeDefined();
+  expect(def.npcEffectiveXp).toBe(10);
+  expect(def.stakeXp).toBe(DEFENSIVE_FLOOR);
+});
+
+// ── Scenario 4: thumb-heavy hand ─────────────────────────────────────────────
+// thumb=800, a1=50, a2=50, d1=50, d2=50
+//   battleHandAvgXp = (800 + (50+50)/2 + (50+50)/2)/3 = (800+50+50)/3 = 300
+//   npcEffectiveXp  = round(300 × 1.0) = 300
+//   stakeXp         = max(20, 300) = 300
+test('scenario 4: a thumb-heavy carried hand scales DEFENSIVE to 300', async () => {
+  const token = await mintToken();
+  await seedBattleHand(token, { thumb: 800, a1: 50, a2: 50, d1: 50, d2: 50 });
+
+  const preview = await fetchPreview(token);
+  const battleHandAvgXp = (800 + (50 + 50) / 2 + (50 + 50) / 2) / 3; // 300
+  expect(preview.playerBattleHandAvgXp).toBeCloseTo(battleHandAvgXp, 5);
+
+  const expected = expectedDefensiveStake(battleHandAvgXp); // max(20, round(300)) = 300
+  expect(expected).toBe(300);
+
+  const def = preview.DEFENSIVE as PreviewEntry;
+  expect(def).toBeDefined();
+  expect(def.npcEffectiveXp).toBe(300);
+  expect(def.stakeXp).toBe(300);
+});
+
+// ── Scenario 5: preview matches the BattleRoom ───────────────────────────────
+// Same setup as scenario 2 (stakeXp 233). Join a battle-ai room with ONLY the
+// token (no explicit playerBattleHandAvgXp) so the SERVER resolves the value from
+// the DB, then read room.state.players['AI'].thumb.xp — it must equal 233.
+test('scenario 5: the joined battle-ai AI thumb XP matches the preview stake (233)', async ({
   browser,
 }) => {
   const ctx = await browser.newContext();
   const token = await mintToken();
-  await setAggregateXp(token, 3000);
-  // Inject the SAME token into the context so BootScene authenticates as this
-  // veteran (init scripts run before each page load).
+  await seedBattleHand(token, { thumb: 400, a1: 200, a2: 200, d1: 100, d2: 100 });
+
+  const battleHandAvgXp = (400 + (200 + 200) / 2 + (100 + 100) / 2) / 3; // 233.33
+  const expected = expectedDefensiveStake(battleHandAvgXp); // 233
+  expect(expected).toBe(233);
+
+  // Inject the SAME token so BootScene authenticates as this player.
   await ctx.addInitScript(`localStorage.setItem('er_token', ${JSON.stringify(token)})`);
 
   const page: Page = await ctx.newPage();
@@ -137,14 +222,12 @@ test('scenario 3: battle-ai room seats a tier-scaled AI for a veteran player', a
   await page.waitForFunction(() => (window as any).__activeScene === 'CampScene', {
     timeout: 10000,
   });
-  // connectToRoom is exposed on window by the client net layer (see
-  // npc-stake-element-sync.spec.ts). Join with ONLY the token so the server reads
-  // aggregate XP from the DB rather than a client-supplied value.
+  // Join with ONLY the token so the server reads the battle-hand XP from the DB.
   await page.evaluate(async () => {
     const t = localStorage.getItem('er_token') ?? '';
     await (window as any).connectToRoom('battle-ai', {
       vsAI: true,
-      personality: 'RESILIENT',
+      personality: 'DEFENSIVE',
       token: t,
     });
   });
@@ -155,11 +238,10 @@ test('scenario 3: battle-ai room seats a tier-scaled AI for a veteran player', a
     { timeout: 12000 },
   );
 
-  const aiThumbTier = await page.evaluate(
-    () => (window as any).__room?.state?.players?.get('AI')?.thumb?.tier,
+  const aiThumbXp = await page.evaluate(
+    () => (window as any).__room?.state?.players?.get('AI')?.thumb?.xp,
   );
-  // 3000 × 1.3 = 3900; perRing = 780 ≥ 500 → tier ≥ 1 (a fresh opponent is tier 0).
-  expect(aiThumbTier).toBeGreaterThanOrEqual(1);
+  expect(aiThumbXp).toBe(expected); // 233 — preview stake == seated AI thumb XP
 
   await ctx.close();
 });
