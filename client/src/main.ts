@@ -219,6 +219,14 @@ declare global {
         spiritCost?: number;
       }>;
     };
+    // #231 — Fusion Shrine altar state (set by ShrineZone): the shrine id and
+    // whether it is currently unsealed for this player. Drives E2E assertions on
+    // the seal flow.
+    __shrineState?: { id: string; unlocked: boolean };
+    // #231 — Fusion Shrine confirmation/hint overlay snapshot (set by ShrineZone
+    // while a prompt is up; cleared on dismiss). `confirm` distinguishes the Y/N
+    // unseal prompt from a dismissible hint.
+    __shrinePrompt?: { id: string; confirm: boolean; text: string };
     // Fusion modal availability snapshot (set by FusionPanel.open).
     __fusionState?: {
       recipes: Array<{

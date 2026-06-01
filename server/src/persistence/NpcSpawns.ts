@@ -113,6 +113,17 @@ export const NPC_SPAWNS: NpcSpawnDef[] = [
   { id: 'forest_bogwood_warden',   biome: 'forest', screen: 'forest_swamp_gate',   personality: 'DEFENSIVE', type: 'monster', element: EARTH, spriteFrame: 2, tx: 14, ty: 13, respawnDays: 0, foodDrop: MINI_BOSS_FOOD_DROP },
   { id: 'forest_thornwood_warden', biome: 'forest', screen: 'forest_boss_clearing', personality: 'RESILIENT', type: 'monster', element: WOOD,  spriteFrame: 4, tx: 14, ty: 19, respawnDays: 0, foodDrop: BOSS_FOOD_DROP },
 
+  // ── Forest: Thornado Fusion Shrine sub-boss (#231, GDD §4.6) ────────────────
+  // The Shrine Guardian is a permanent (respawnDays: 0) roaming sub-boss in the
+  // forest_thornado_shrine clearing. It does NOT block an exit — the player fights
+  // it to win the Thornado ring-key that unseals the altar. AILoadout supports only
+  // BASE-element thumbs, so the Guardian fields WIND (AGGRESSIVE supports WIND),
+  // thematically a component of the Thornado (Wood+Wind) fusion it guards. The
+  // actual Thornado ring drop is handled by BattleRoom.persistBattleResult (it
+  // detects this id and grants a Thornado ring to carry), not by the thumb stake.
+  // No foodDrop — shrine guardians reward a ring, not a food cache.
+  { id: 'forest_thornado_shrine_guardian', biome: 'forest', screen: 'forest_thornado_shrine', personality: 'AGGRESSIVE', type: 'duelist', element: WIND, spriteFrame: D[0], tx: 20, ty: 15, respawnDays: 0 },
+
   // ── Swamp ─────────────────────────────────────────────────────────────────────
   { id: 'swamp_npc_1', biome: 'swamp', screen: 'swamp_entry', personality: 'AGGRESSIVE',    type: 'monster', element: WIND,  spriteFrame: 3, tx: 5, ty: 5, respawnDays: 1 },
   { id: 'swamp_npc_2', biome: 'swamp', screen: 'swamp_entry', personality: 'STATUS_HUNTER', type: 'monster', element: WATER, spriteFrame: 1, tx: 10, ty: 7, respawnDays: 1 },

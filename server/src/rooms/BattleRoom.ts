@@ -562,6 +562,14 @@ export class BattleRoom extends Room<{ state: BattleState }> {
             const foodDrop = npcSpawn.foodDrop ?? 0;
             if (foodDrop > 0) PlayerRepo.addFood(winnerPlayerId, foodDrop);
           }
+          // #231 — defeating the Thornado Shrine Guardian drops a Thornado
+          // (Wood+Wind) ring directly into the winner's carry. This is the
+          // ring-key the player carries to the sealed altar to unseal it (the
+          // Guardian's Wind thumb stake above is separate from this reward). The
+          // Guardian is permanent (respawnDays: 0), so this fires once per player.
+          if (this.npcId === 'forest_thornado_shrine_guardian') {
+            PlayerRepo.grantRingToCarry(winnerPlayerId, ElementEnum.THORNADO, 2);
+          }
         }
       }
 

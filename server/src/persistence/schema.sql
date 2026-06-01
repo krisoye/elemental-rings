@@ -54,3 +54,12 @@ CREATE TABLE IF NOT EXISTS npc_defeats (
   defeated_at_day  INTEGER NOT NULL,
   PRIMARY KEY (player_id, npc_id)
 );
+-- #231 — Fusion Shrine seal state (GDD §4.6 shrine crafting). One row per
+-- (player, shrine) the player has permanently unsealed by consuming a matching
+-- fusion ring-key. unlocked_at is the player's game_day at the time of unlock.
+CREATE TABLE IF NOT EXISTS shrines (
+  player_id   TEXT    NOT NULL REFERENCES players(id),
+  shrine_id   TEXT    NOT NULL,
+  unlocked_at INTEGER NOT NULL,
+  PRIMARY KEY (player_id, shrine_id)
+);

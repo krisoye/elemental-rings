@@ -139,6 +139,19 @@ db.exec(`
   )
 `);
 
+// #231 — Fusion Shrine seal state: per-player record of which shrines a player
+// has permanently unsealed (by consuming a matching fusion ring-key). Created
+// here with IF NOT EXISTS so it is idempotent on every boot. References
+// players(id); the migration above has already ensured the players table exists.
+db.exec(`
+  CREATE TABLE IF NOT EXISTS shrines (
+    player_id   TEXT    NOT NULL REFERENCES players(id),
+    shrine_id   TEXT    NOT NULL,
+    unlocked_at INTEGER NOT NULL,
+    PRIMARY KEY (player_id, shrine_id)
+  )
+`);
+
 // #40 — carry flag on rings. On first introduction of the column, backfill it:
 // rings already assigned to a loadout slot become carried, then remaining slots
 // up to each player's carry_cap are filled by element ascending. This block is

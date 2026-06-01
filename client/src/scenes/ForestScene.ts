@@ -1,6 +1,8 @@
 import Phaser from 'phaser';
 import { BaseBiomeScene } from './BaseBiomeScene';
 import { FOREST_SCREENS } from '../../../shared/world/forest';
+import { ElementEnum } from '../../../shared/types';
+import { ShrineZone } from '../objects/world/ShrineZone';
 
 /**
  * The Forest hub (`forest_anchorage`) composes several tilesets and a second
@@ -56,6 +58,9 @@ const FOREST_HANDAUTHORED_TILESETS: ReadonlyArray<readonly [string, string]> = [
  * at its four exits, so the manifest exits are walkable like every other screen.
  */
 export class ForestScene extends BaseBiomeScene {
+  /** #231 — the Thornado Fusion Shrine altar on forest_thornado_shrine, or null. */
+  private shrineZone: ShrineZone | null = null;
+
   constructor() {
     super({ key: 'ForestScene' });
   }
@@ -182,6 +187,12 @@ export class ForestScene extends BaseBiomeScene {
    * enough to trigger the exit.
    */
   onEnterScreen(): void {
+    // #231 — the Thornado Fusion Shrine screen places a sealed altar the player
+    // unseals with a Thornado ring-key won from the Shrine Guardian sub-boss.
+    if (this.screenId === 'forest_thornado_shrine') {
+      this.buildThornadoShrine();
+      return;
+    }
     // Hub-only: the hand-authored hub perimeter needs invisible wall zones to close
     // its visually-walled-but-physically-open gaps. Generated screens have a real
     // T_CLIFF perimeter with carved exit gaps and need none.
@@ -199,5 +210,39 @@ export class ForestScene extends BaseBiomeScene {
     addWall(288, 368);
     // Bottom gap: rows 27-28 = y 432-463
     addWall(432, 464);
+  }
+
+  /**
+   * #231 — Build the Thornado Fusion Shrine on forest_thornado_shrine. The
+   * generated map carries no dedicated altar object (only a `spawn`), so we
+   * synthesize a 32×32px altar zone near the top-centre of the 40×30-tile clearing
+   * (tile ~(20, 8) → world (328, 136)), clear of the player spawn (x≈24) and the
+   * Shrine Guardian patrol (tile (20, 15)). The {@link ShrineZone} owns the
+   * altar's sealed/open state and the ring-key unseal flow; its `onShrineOpen`
+   * opens the Fusion modal pre-filtered to Thornado (Wood+Wind).
+   */
+  private buildThornadoShrine(): void {
+    const ALTAR_PX = 32;
+    const altarObj: Phaser.Types.Tilemaps.TiledObject = {
+      id: -231,
+      name: 'shrine',
+      type: 'shrine',
+      // Tile (20, 8) center at 16px = (328, 136); top-left for a 32px altar.
+      x: 328 - ALTAR_PX / 2,
+      y: 136 - ALTAR_PX / 2,
+      width: ALTAR_PX,
+      height: ALTAR_PX,
+    };
+    this.shrineZone = new ShrineZone(
+      this,
+      altarObj,
+      'forest_thornado_shrine',
+      ElementEnum.THORNADO,
+      () => void this.openShrineFusion(ElementEnum.THORNADO),
+    );
+    this.registerInteractionZone(
+      this.shrineZone.interactionZone,
+      this.shrineZone.altarObjects,
+    );
   }
 }
