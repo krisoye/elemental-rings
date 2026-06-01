@@ -69,7 +69,7 @@ export const FOREST_SCREENS: ScreenDef[] = [
     id: 'forest_mossy_fen',
     name: 'Mossy Fen',
     size: [32, 22],
-    exits: { east: 'forest_anchorage' },
+    exits: { east: 'forest_anchorage', west: 'forest_deep_fen' },
     danger: 1,
   },
   {
@@ -83,7 +83,7 @@ export const FOREST_SCREENS: ScreenDef[] = [
     id: 'forest_glade',
     name: 'The Glade',
     size: [36, 28],
-    exits: { west: 'forest_east_path', north: 'forest_crossroads' },
+    exits: { west: 'forest_east_path', north: 'forest_crossroads', east: 'forest_heath' },
     danger: 1,
     anchorage: 'forest_glade',
   },
@@ -128,14 +128,14 @@ export const FOREST_SCREENS: ScreenDef[] = [
     id: 'forest_ridge',
     name: 'The Ridge',
     size: [32, 22],
-    exits: { south: 'forest_crossroads', east: 'forest_deepwood' },
+    exits: { south: 'forest_crossroads', east: 'forest_deepwood', north: 'forest_rocky_overlook' },
     danger: 2,
   },
   {
     id: 'forest_deepwood',
     name: 'The Deepwood',
     size: [40, 30],
-    exits: { west: 'forest_ridge', east: 'forest_boss_clearing' },
+    exits: { west: 'forest_ridge', east: 'forest_boss_clearing', south: 'forest_root_tangle' },
     danger: 3,
     anchorage: 'forest_depths',
   },
@@ -143,7 +143,7 @@ export const FOREST_SCREENS: ScreenDef[] = [
     id: 'forest_boss_clearing',
     name: 'Boss Clearing',
     size: [28, 22],
-    exits: { north: 'forest_briar_pass', west: 'forest_deepwood' },
+    exits: { north: 'forest_briar_pass', west: 'forest_deepwood', south: 'forest_verdant_descent' },
     danger: 3,
   },
   {
@@ -154,9 +154,115 @@ export const FOREST_SCREENS: ScreenDef[] = [
     danger: 1,
     anchorage: 'forest_hidden_anchor',
   },
+  {
+    id: 'forest_heath',
+    name: 'The Heath',
+    size: [38, 26],
+    exits: { west: 'forest_glade', east: 'forest_wind_shelf', north: 'forest_gale_lookout' },
+    danger: 2,
+  },
+  {
+    id: 'forest_gale_lookout',
+    name: 'Gale Lookout',
+    size: [26, 20],
+    exits: { south: 'forest_heath' },
+    danger: 2,
+  },
+  {
+    id: 'forest_wind_shelf',
+    name: 'Wind Shelf',
+    size: [28, 28],
+    exits: { west: 'forest_heath', east: 'forest_thornado_shrine' },
+    danger: 2,
+  },
+  {
+    id: 'forest_thornado_shrine',
+    name: 'Thornado Shrine',
+    size: [40, 30],
+    exits: { west: 'forest_wind_shelf' },
+    danger: 2,
+  },
+  {
+    id: 'forest_deep_fen',
+    name: 'The Deep Fen',
+    size: [34, 28],
+    exits: { east: 'forest_mossy_fen', north: 'forest_fen_ridge' },
+    danger: 2,
+  },
+  {
+    id: 'forest_fen_ridge',
+    name: 'Fen Ridge',
+    size: [28, 22],
+    exits: { south: 'forest_deep_fen' },
+    danger: 2,
+  },
+  {
+    id: 'forest_rocky_overlook',
+    name: 'Rocky Overlook',
+    size: [28, 18],
+    exits: { south: 'forest_ridge' },
+    danger: 2,
+  },
+  {
+    id: 'forest_verdant_descent',
+    name: 'Verdant Descent',
+    size: [18, 32],
+    exits: { north: 'forest_boss_clearing', south: 'forest_ancient_grove' },
+    danger: 2,
+  },
+  {
+    id: 'forest_ancient_grove',
+    name: 'The Ancient Grove',
+    size: [44, 34],
+    exits: { north: 'forest_verdant_descent', west: 'forest_bloom_hollow', east: 'forest_root_tangle' },
+    danger: 3,
+  },
+  {
+    id: 'forest_bloom_hollow',
+    name: 'Bloom Hollow',
+    size: [38, 30],
+    exits: { east: 'forest_ancient_grove' },
+    danger: 2,
+  },
+  {
+    id: 'forest_root_tangle',
+    name: 'The Root Tangle',
+    size: [32, 24],
+    exits: { west: 'forest_ancient_grove', north: 'forest_deepwood', east: 'forest_canopy_walk' },
+    danger: 3,
+  },
+  {
+    id: 'forest_canopy_walk',
+    name: 'Canopy Walk',
+    size: [22, 38],
+    exits: { west: 'forest_root_tangle', east: 'forest_briar_thicket' },
+    danger: 3,
+  },
+  {
+    id: 'forest_briar_thicket',
+    name: 'The Briar Thicket',
+    size: [30, 22],
+    exits: { west: 'forest_canopy_walk' },
+    danger: 3,
+  },
 ];
 
 /** Look up a Forest screen definition by id, or undefined if unknown. */
 export function getForestScreen(id: string): ScreenDef | undefined {
   return FOREST_SCREENS.find((s) => s.id === id);
 }
+
+/**
+ * #229/#230 — boss-gate wardens, keyed by the screen they guard → the NPC spawn id
+ * (server/src/persistence/NpcSpawns.ts) of the warden that physically blocks that
+ * screen's gated exit until it is defeated. The client renders a listed warden as
+ * a stationary, immovable marker and adds a player↔warden collider so the player
+ * cannot reach the gated exit while the warden is alive (the server is the
+ * authority on whether the warden is still present in the screen's NPC roster):
+ *   forest_swamp_gate   — Bogwood Warden  blocks the south biome_exit → SwampScene.
+ *   forest_boss_clearing— Thornwood Warden blocks the south edge → verdant_descent.
+ */
+export const BOSS_WARDENS: Readonly<Record<string, string>> = {
+  forest_swamp_gate: 'forest_bogwood_warden',
+  forest_boss_clearing: 'forest_thornwood_warden',
+};

@@ -464,6 +464,30 @@ export function grantRing(
 }
 
 /**
+ * Grant a new ring directly into the player's CARRY (in_carry = 1) — used when a
+ * win drops a ready-to-use ring rather than one that rests in the Reliquary. The
+ * ring's element decides fusion-ness (isFusion(element)); no separate flag exists.
+ * Mirrors {@link grantRing}'s defaults (full uses, no XP) and runs in a single
+ * transaction so the insert + carry flag never desync. Returns the new ring id.
+ *
+ * #231 — the Thornado Shrine Guardian drops a Thornado (Wood+Wind) ring on defeat
+ * via this path so the player can immediately carry it to the altar as the seal key.
+ */
+export const grantRingToCarry = db.transaction(
+  (
+    ownerId: string,
+    element: number,
+    tier = STARTER_TIER,
+    maxUses = STARTER_MAX_USES,
+    xp = 0,
+  ): string => {
+    const ringId = grantRing(ownerId, element, tier, maxUses, xp);
+    updateRingCarry.run(1, ringId);
+    return ringId;
+  },
+);
+
+/**
  * Transfer ownership of a ring from one player to another. Nulls out any
  * loadout slots that referenced the ring on the losing player. The ring's XP
  * travels with it (GDD §9.1).
@@ -1220,6 +1244,63 @@ export function getDefeatedNpcs(playerId: string): Map<string, number> {
   }>;
   return new Map(rows.map((r) => [r.npc_id, r.defeated_at_day]));
 }
+
+// ---------------------------------------------------------------------------
+// #231 — Fusion Shrine seal state (GDD §4.6 shrine crafting)
+// ---------------------------------------------------------------------------
+
+const selectShrineUnlocked = db.prepare(
+  `SELECT 1 FROM shrines WHERE player_id = ? AND shrine_id = ?`,
+);
+const upsertShrineUnlock = db.prepare(
+  `INSERT INTO shrines (player_id, shrine_id, unlocked_at)
+   VALUES (?, ?, ?)
+   ON CONFLICT(player_id, shrine_id) DO NOTHING`,
+);
+
+/** True when this player has permanently unsealed the given shrine (#231). */
+export function isShrineUnlocked(playerId: string, shrineId: string): boolean {
+  return selectShrineUnlocked.get(playerId, shrineId) !== undefined;
+}
+
+/**
+ * Permanently mark a shrine as unsealed for this player (#231). Idempotent via
+ * the composite primary key — a repeat call for an already-unsealed shrine is a
+ * no-op (the original unlock day is preserved). `day` is the player's game_day at
+ * unlock time. Bare persistence write; the route validates the ring-key first.
+ */
+export function unlockShrine(playerId: string, shrineId: string, day: number): void {
+  upsertShrineUnlock.run(playerId, shrineId, day);
+}
+
+/**
+ * Atomically consume the ring-key and record the shrine unlock in one transaction
+ * (#231). If ring deletion fails (ring not found / not owned), the shrine row is
+ * never written. Uses better-sqlite3 nested-transaction (SAVEPOINT) semantics so
+ * the outer call and {@link consumeRing}'s inner transaction compose safely. Returns
+ * false if the ring could not be consumed; the route should respond 400 in that case.
+ */
+export const consumeAndUnlockShrine = db.transaction(
+  (playerId: string, ringId: string, shrineId: string, day: number): boolean => {
+    if (!consumeRing(playerId, ringId)) return false;
+    upsertShrineUnlock.run(playerId, shrineId, day);
+    return true;
+  },
+);
+
+/**
+ * Consume (delete) a specific ring the player owns — the ring-key spent to
+ * unseal a shrine (#231). Returns true when the ring existed, belonged to the
+ * player, and was deleted; false otherwise. Nulls the ring out of any loadout
+ * slot first so the delete cannot violate the loadout→rings FK. Runs in a
+ * transaction. Caller validates the ring's element/carry state before calling.
+ */
+export const consumeRing = db.transaction(
+  (playerId: string, ringId: string): boolean => {
+    clearRingFromLoadout(playerId, ringId);
+    return deleteRing.run(ringId, playerId).changes > 0;
+  },
+);
 
 // ---------------------------------------------------------------------------
 // #127 — Foraging system (GDD §10.10)

@@ -54,7 +54,10 @@ import {
   addReliquaryShardToReliquary,
   grantRing,
   grantShard,
+  isShrineUnlocked,
+  consumeAndUnlockShrine,
 } from '../persistence/PlayerRepo';
+import { ElementEnum } from '../../../shared/types';
 import { NPC_SPAWNS, hashNpcId } from '../persistence/NpcSpawns';
 import {
   FOOD_PER_SLEEP,
@@ -482,6 +485,57 @@ apiRouter.post('/api/fusion/combine', requireAuth, (req: Request, res: Response)
     const msg = err instanceof Error ? err.message : 'Fusion failed';
     res.status(400).json({ error: msg });
   }
+});
+
+/**
+ * GET /api/shrines/:id — whether this player has permanently unsealed the named
+ * Fusion Shrine (#231, GDD §4.6). Returns { unlocked: boolean }. A fresh player
+ * reports unlocked=false until they consume a matching fusion ring-key via the
+ * unlock route below. Requires auth.
+ */
+apiRouter.get('/api/shrines/:id', requireAuth, (req: Request, res: Response): void => {
+  const playerId = req.playerId as string;
+  res.status(200).json({ unlocked: isShrineUnlocked(playerId, req.params.id) });
+});
+
+/**
+ * POST /api/shrines/:id/unlock — permanently unseal a Fusion Shrine by consuming
+ * a matching fusion ring-key from the player's carry (#231, GDD §4.6). Body:
+ * { ringId: string }. The ring must exist, belong to the player, be in carry
+ * (in_carry = 1), and carry element THORNADO (Wood+Wind) — the seal key for the
+ * Thornado Shrine. On success the ring is deleted, the shrine is marked unlocked,
+ * and { ok: true } is returned. 400 on any validation failure. Requires auth.
+ */
+apiRouter.post('/api/shrines/:id/unlock', requireAuth, (req: Request, res: Response): void => {
+  const playerId = req.playerId as string;
+  const shrineId = req.params.id;
+  const { ringId } = req.body ?? {};
+  if (typeof ringId !== 'string' || !ringId) {
+    res.status(400).json({ error: 'ringId is required' });
+    return;
+  }
+  // Validate the ring-key: owned, carried, and the correct fusion element. The
+  // shrine seal accepts only a Thornado (Wood+Wind) ring (GDD §4.6 — this is the
+  // Thornado Fusion Shrine). Idempotent unlock is allowed but still consumes a key.
+  const ring = getRingsByOwner(playerId).find((r) => r.id === ringId);
+  if (!ring) {
+    res.status(400).json({ error: 'ring not found or not owned' });
+    return;
+  }
+  if (ring.in_carry !== 1) {
+    res.status(400).json({ error: 'ring must be in carry' });
+    return;
+  }
+  if (ring.element !== ElementEnum.THORNADO) {
+    res.status(400).json({ error: 'a Thornado ring is required' });
+    return;
+  }
+  const player = getPlayerById(playerId);
+  if (!consumeAndUnlockShrine(playerId, ringId, shrineId, player?.game_day ?? 0)) {
+    res.status(400).json({ error: 'ring could not be consumed' });
+    return;
+  }
+  res.status(200).json({ ok: true });
 });
 
 /**

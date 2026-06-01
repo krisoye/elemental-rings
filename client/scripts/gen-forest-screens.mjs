@@ -50,10 +50,10 @@ const FOREST_SCREENS = [
     anchorage: 'forest_entry',
   },
   { id: 'forest_north_road', size: [16, 32], exits: { south: 'forest_anchorage', north: 'forest_snow_gate' }, danger: 1 },
-  { id: 'forest_snow_gate', size: [32, 20], exits: { south: 'forest_north_road' }, danger: 2, waystone: 'forest_north_stone' },
-  { id: 'forest_mossy_fen', size: [32, 22], exits: { east: 'forest_anchorage' }, danger: 1 },
+  { id: 'forest_snow_gate', size: [32, 20], exits: { south: 'forest_north_road' }, danger: 2 },
+  { id: 'forest_mossy_fen', size: [32, 22], exits: { east: 'forest_anchorage', west: 'forest_deep_fen' }, danger: 1 },
   { id: 'forest_east_path', size: [24, 12], exits: { west: 'forest_anchorage', east: 'forest_glade' }, danger: 1 },
-  { id: 'forest_glade', size: [36, 28], exits: { west: 'forest_east_path', north: 'forest_crossroads' }, danger: 1, anchorage: 'forest_glade' },
+  { id: 'forest_glade', size: [36, 28], exits: { west: 'forest_east_path', north: 'forest_crossroads', east: 'forest_heath' }, danger: 1, anchorage: 'forest_glade' },
   { id: 'forest_crossroads', size: [28, 22], exits: { south: 'forest_glade', east: 'forest_briar_pass', north: 'forest_ridge' }, danger: 1 },
   { id: 'forest_south_path', size: [16, 28], exits: { north: 'forest_anchorage', south: 'forest_hollow' }, danger: 1 },
   { id: 'forest_hollow', size: [36, 24], exits: { north: 'forest_south_path', west: 'forest_swamp_gate' }, danger: 2 },
@@ -62,21 +62,32 @@ const FOREST_SCREENS = [
     size: [28, 18],
     exits: { east: 'forest_hollow' },
     danger: 2,
-    waystone: 'forest_sw_stone',
-    biomeExit: { dir: 'south', target: 'SwampScene', gate: 'forest_sw_stone' },
+    biomeExit: { dir: 'south', target: 'SwampScene' },
   },
   { id: 'forest_briar_pass', size: [40, 16], exits: { west: 'forest_crossroads', south: 'forest_boss_clearing' }, danger: 2 },
-  { id: 'forest_ridge', size: [32, 22], exits: { south: 'forest_crossroads', east: 'forest_deepwood' }, danger: 2 },
-  { id: 'forest_deepwood', size: [40, 30], exits: { west: 'forest_ridge', east: 'forest_boss_clearing' }, danger: 3, anchorage: 'forest_depths' },
-  { id: 'forest_boss_clearing', size: [28, 22], exits: { north: 'forest_briar_pass', west: 'forest_deepwood' }, danger: 3 },
+  { id: 'forest_ridge', size: [32, 22], exits: { south: 'forest_crossroads', east: 'forest_deepwood', north: 'forest_rocky_overlook' }, danger: 2 },
+  { id: 'forest_deepwood', size: [40, 30], exits: { west: 'forest_ridge', east: 'forest_boss_clearing', south: 'forest_root_tangle' }, danger: 3, anchorage: 'forest_depths' },
+  { id: 'forest_boss_clearing', size: [28, 22], exits: { north: 'forest_briar_pass', west: 'forest_deepwood', south: 'forest_verdant_descent' }, danger: 3 },
   {
     id: 'forest_hidden_alcove',
     size: [24, 18],
     exits: {},
     danger: 1,
     anchorage: 'forest_hidden_anchor',
-    waystone: 'forest_hidden_glade',
   },
+  { id: 'forest_heath', size: [38, 26], exits: { west: 'forest_glade', east: 'forest_wind_shelf', north: 'forest_gale_lookout' }, danger: 2 },
+  { id: 'forest_gale_lookout', size: [26, 20], exits: { south: 'forest_heath' }, danger: 2 },
+  { id: 'forest_wind_shelf', size: [28, 28], exits: { west: 'forest_heath', east: 'forest_thornado_shrine' }, danger: 2 },
+  { id: 'forest_thornado_shrine', size: [40, 30], exits: { west: 'forest_wind_shelf' }, danger: 2 },
+  { id: 'forest_deep_fen', size: [34, 28], exits: { east: 'forest_mossy_fen', north: 'forest_fen_ridge' }, danger: 2 },
+  { id: 'forest_fen_ridge', size: [28, 22], exits: { south: 'forest_deep_fen' }, danger: 2 },
+  { id: 'forest_rocky_overlook', size: [28, 18], exits: { south: 'forest_ridge' }, danger: 2 },
+  { id: 'forest_verdant_descent', size: [18, 32], exits: { north: 'forest_boss_clearing', south: 'forest_ancient_grove' }, danger: 2 },
+  { id: 'forest_ancient_grove', size: [44, 34], exits: { north: 'forest_verdant_descent', west: 'forest_bloom_hollow', east: 'forest_root_tangle' }, danger: 3 },
+  { id: 'forest_bloom_hollow', size: [38, 30], exits: { east: 'forest_ancient_grove' }, danger: 2 },
+  { id: 'forest_root_tangle', size: [32, 24], exits: { west: 'forest_ancient_grove', north: 'forest_deepwood', east: 'forest_canopy_walk' }, danger: 3 },
+  { id: 'forest_canopy_walk', size: [22, 38], exits: { west: 'forest_root_tangle', east: 'forest_briar_thicket' }, danger: 3 },
+  { id: 'forest_briar_thicket', size: [30, 22], exits: { west: 'forest_canopy_walk' }, danger: 3 },
 ];
 
 /** A short axis (< this many tiles) marks a corridor screen (tree-walled sides). */
@@ -234,8 +245,13 @@ function buildTerrainGrid(screen) {
         }
       }
     }
-    // Clear a channel near each exit so the central path is reachable.
-    for (const dir of dirs) {
+    // Clear a channel near each exit (and the biome exit) so the central path is
+    // reachable. biomeExit is included here for the same reason it is included in
+    // carveExitGap and bresenhamTerrain below: on corridor screens a biome exit
+    // in the flanked direction (e.g. south on a wide corridor) gets its channel
+    // blocked by the cliff walls unless we explicitly clear it.
+    const allExitDirs = [...dirs, ...(screen.biomeExit ? [screen.biomeExit.dir] : [])];
+    for (const dir of allExitDirs) {
       const m = edgeMidpoint(dir, w, h);
       for (let d = -GAP_HALF; d <= GAP_HALF; d++) {
         if (dir === 'north' || dir === 'south') {

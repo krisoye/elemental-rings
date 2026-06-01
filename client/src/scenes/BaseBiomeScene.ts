@@ -1,6 +1,7 @@
 import Phaser from 'phaser';
 import type { AIPersonality } from '../../../shared/types';
 import type { ScreenDef } from '../../../shared/world/forest';
+import { BOSS_WARDENS } from '../../../shared/world/forest';
 import { Player } from '../objects/world/Player';
 import { InteractionZone } from '../objects/world/InteractionZone';
 import { Campfire } from '../objects/world/Campfire';
@@ -15,6 +16,8 @@ import { OverworldMapModal } from '../objects/OverworldMapModal';
 import { placeDecoration, type DecorationHandle } from '../objects/world/Decoration';
 import { MONSTER_OW_REGISTRY } from '../objects/world/NpcSpriteRegistry';
 import { WanderingNpc } from '../objects/world/WanderingNpc';
+import { FusionPanel } from '../objects/FusionPanel';
+import type { RingData } from '../objects/InventoryGrid';
 import {
   COMPASS_RANGE,
   SANCTUM_Y_ABOVE,
@@ -131,6 +134,10 @@ export abstract class BaseBiomeScene extends Phaser.Scene {
   private wasd!: { W: Phaser.Input.Keyboard.Key; A: Phaser.Input.Keyboard.Key; S: Phaser.Input.Keyboard.Key; D: Phaser.Input.Keyboard.Key };
   private zones: InteractionZone[] = [];
   private activeZone: InteractionZone | null = null;
+  /** #231 — the Fusion Shrine crafting modal (lazy, single instance per scene). */
+  private shrineFusion: FusionPanel | null = null;
+  /** #231 — the fusion element the shrine modal is currently pre-filtered to. */
+  private shrineFusionFilter: number | undefined = undefined;
   /** Centers of Anchorage locations (keyed by waystoneId), for compass + spawn logic. */
   private anchorageMarkers: Map<string, { center: { x: number; y: number } }> = new Map();
   /** Campfire graphics markers keyed by anchorage id (#191). */
@@ -276,6 +283,87 @@ export abstract class BaseBiomeScene extends Phaser.Scene {
   onEnterScreen?(): void;
   /** Accessor for the player sprite (for use in onEnterScreen overrides). */
   protected getPlayer(): Player { return this.player; }
+
+  /**
+   * #231 — Register an externally-built {@link InteractionZone} with the full
+   * spatial wiring a `buildZones`-internal zone gets: a player↔zone overlap, entry
+   * in the per-frame active-zone selection list (so E dispatches to it), the
+   * double-click blink controller, and uiCam ignore for its display objects (plus
+   * any extra world sprites the caller owns, e.g. a Shrine altar). For use by
+   * `onEnterScreen()` overrides that add screen-specific zones (the Fusion Shrine).
+   */
+  protected registerInteractionZone(
+    zone: InteractionZone,
+    extraWorldObjects: Phaser.GameObjects.GameObject[] = [],
+  ): void {
+    this.physics.add.overlap(this.player, zone.overlapZone);
+    this.zones.push(zone);
+    this.blink?.register([zone]);
+    this.ignoreWorldObjects([...zone.displayObjects, ...extraWorldObjects]);
+  }
+
+  /**
+   * #231 — Open the Fusion crafting modal pre-filtered to a single fusion element
+   * (the unsealed Shrine's craft action). Fetches the player's current ring
+   * inventory from /api/me, then opens a {@link FusionPanel} showing only the
+   * recipe whose result matches `filterElement`. The server (POST
+   * /api/fusion/combine) remains the sole authority on what fuses.
+   */
+  protected async openShrineFusion(filterElement: number): Promise<void> {
+    this.shrineFusion ??= new FusionPanel(
+      this,
+      (ringId1, ringId2) => this.doShrineFuse(ringId1, ringId2),
+      (container) => {
+        if (container) this.unignoreMain(container);
+      },
+    );
+    this.shrineFusionFilter = filterElement;
+    const rings = await this.fetchRings();
+    this.shrineFusion.open(rings, filterElement);
+    const fc = this.shrineFusion.getContainer();
+    if (fc) this.cameras.main.ignore(fc);
+  }
+
+  /** POST /api/fusion/combine for the shrine modal; reopens on success (#231). */
+  private async doShrineFuse(ringId1: string, ringId2: string): Promise<string | null> {
+    const token = localStorage.getItem('er_token');
+    if (!token) return 'Not authenticated';
+    try {
+      const res = await fetch(`${API_BASE}/api/fusion/combine`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ ringId1, ringId2 }),
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        return (body as { error?: string }).error ?? `Fusion failed (${res.status})`;
+      }
+      // Success: reopen the panel with the refreshed inventory so the new ring
+      // shows and the consumed parents disappear.
+      if (this.shrineFusionFilter !== undefined) {
+        void this.openShrineFusion(this.shrineFusionFilter);
+      }
+      return null;
+    } catch {
+      return 'Fusion failed (network error)';
+    }
+  }
+
+  /** Fetch the player's current ring inventory from /api/me (#231). */
+  private async fetchRings(): Promise<RingData[]> {
+    const token = localStorage.getItem('er_token');
+    if (!token) return [];
+    try {
+      const res = await fetch(`${API_BASE}/api/me`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!res.ok) return [];
+      const body = (await res.json()) as { rings: RingData[] };
+      return body.rings ?? [];
+    } catch {
+      return [];
+    }
+  }
   /** NPC detection radius (px). Subclasses may shrink it (e.g. the foggy Swamp). */
   protected detectionRadius(): number {
     return DETECTION_RADIUS;
@@ -1499,8 +1587,18 @@ export abstract class BaseBiomeScene extends Phaser.Scene {
   private renderNpcs(): void {
     this.npcMarkers.forEach((m) => m.destroy());
     this.npcMarkers = [];
+    // #229/#230 — the boss warden (if any) guarding this screen's gated exit. When
+    // the server still lists it in the roster the warden is alive: render it
+    // stationary + immovable and block the player from reaching the gated exit.
+    const wardenId = BOSS_WARDENS[this.screenId];
     for (const npc of this.overworldNpcs) {
-      this.npcMarkers.push(new WanderingNpc(this, npc, () => this.onNpcClick(npc)));
+      const isWarden = npc.id === wardenId;
+      const marker = new WanderingNpc(this, npc, () => this.onNpcClick(npc), isWarden);
+      this.npcMarkers.push(marker);
+      // The warden's immovable body physically gates the exit until it is beaten;
+      // once defeated the server drops it from the roster, this collider is never
+      // added on the next render, and the exit becomes reachable.
+      if (isWarden) this.physics.add.collider(this.player, marker.sprite);
     }
     // #137 — NPC sprites load async (after the create() world collection), so route
     // them to uiCam.ignore now: they are WORLD objects that zoom with the main camera.

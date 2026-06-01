@@ -69,8 +69,16 @@ export class FusionPanel {
     return this.container;
   }
 
-  /** Open (or re-render) the panel for the given ring inventory. */
-  open(rings: RingData[]): void {
+  /**
+   * Open (or re-render) the panel for the given ring inventory.
+   *
+   * @param rings the player's full ring inventory (display-only preview).
+   * @param filterElement #231 — when provided, only the recipe whose RESULT
+   *   element equals this value is shown (all others are hidden). Used by the
+   *   Fusion Shrine to pre-filter the modal to the shrine's element (e.g. Thornado
+   *   = Wood+Wind). Omitted → the full 10-recipe grid (the CampScene workshop).
+   */
+  open(rings: RingData[], filterElement?: number): void {
     this.close();
 
     const container = this.scene.add.container(0, 0).setDepth(3000);
@@ -97,9 +105,14 @@ export class FusionPanel {
 
     container.add([overlay, panel, title, subtitle, closeBtn]);
 
-    const availability = this.computeAvailability(rings);
+    // #231 — when a filterElement is supplied, restrict the grid to the single
+    // recipe whose RESULT element matches (the Fusion Shrine pre-filter). The
+    // server remains the authority; this only narrows what the panel previews.
+    const availability = this.computeAvailability(rings).filter(
+      (a) => filterElement === undefined || a.recipe.result === filterElement,
+    );
 
-    // Two columns of five recipe rows.
+    // Two columns of five recipe rows (or one row when shrine-filtered).
     const startY = 110;
     const rowH = 38;
     availability.forEach((avail, idx) => {

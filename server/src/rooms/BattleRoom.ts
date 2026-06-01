@@ -10,6 +10,7 @@ import { makeRng } from '../game/ai/AIProfiles';
 import { generateAILoadout, type SlotSpec } from '../game/ai/AILoadout';
 import * as StakeResolver from '../game/StakeResolver';
 import * as PlayerRepo from '../persistence/PlayerRepo';
+import { NPC_SPAWNS } from '../persistence/NpcSpawns';
 import { verifyToken } from '../auth/auth';
 import {
   TELEGRAPH_MS,
@@ -550,7 +551,27 @@ export class BattleRoom extends Room<{ state: BattleState }> {
         }
         // #83 — this was a win over an overworld NPC: record the defeat so the
         // NPC respawns per its spawn-table cadence (permanent NPCs stay beaten).
-        if (this.npcId) PlayerRepo.recordNpcDefeat(winnerPlayerId, this.npcId);
+        if (this.npcId) {
+          // Check first-defeat BEFORE recordNpcDefeat so one-time rewards are
+          // only credited once even if a client somehow rematches a permanent NPC.
+          const firstDefeat = !PlayerRepo.getDefeatedNpcs(winnerPlayerId).has(this.npcId);
+          PlayerRepo.recordNpcDefeat(winnerPlayerId, this.npcId);
+          if (firstDefeat) {
+            // #229/#230 — permanent boss NPCs (respawnDays === 0) drop a food cache
+            // on first defeat only. The overworld hides beaten permanent NPCs, but
+            // gating here closes the authority gap for scripted room creates.
+            const npcSpawn = NPC_SPAWNS.find((n) => n.id === this.npcId);
+            if (npcSpawn?.respawnDays === 0) {
+              const foodDrop = npcSpawn.foodDrop ?? 0;
+              if (foodDrop > 0) PlayerRepo.addFood(winnerPlayerId, foodDrop);
+            }
+            // #231 — defeating the Thornado Shrine Guardian drops a Thornado ring
+            // directly into the winner's carry on first defeat only.
+            if (this.npcId === 'forest_thornado_shrine_guardian') {
+              PlayerRepo.grantRingToCarry(winnerPlayerId, ElementEnum.THORNADO, 2);
+            }
+          }
+        }
       }
 
       // Forfeit gold penalty fallback: if the forfeiting loser had NO staked thumb
