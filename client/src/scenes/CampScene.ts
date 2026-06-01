@@ -2004,8 +2004,8 @@ export class CampScene extends Phaser.Scene {
       // so its bottom sits at ~255. The passive reminder strip is rendered just
       // below it at x=COL_LOADOUT_X (412), y≈265, in the clear band under the Thumb
       // and left of the A1/A2/D1/D2 grid. #85 Fix 1 — PASSIVE_STRIP_WIDTH (88px)
-      // and no maxLines so the longest base passive (WATER/Wellspring) wraps in
-      // full without clipping.
+      // and no maxLines so the longest base passive (the all-in setup
+      // distributors, e.g. Water/Torrent) wraps in full without clipping.
       this.passiveLabel = this.add
         .text(COL_LOADOUT_X, 265, text, {
           fontSize: '10px',

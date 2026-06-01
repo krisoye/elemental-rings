@@ -101,7 +101,10 @@ async function encounterTextByName(page: Page, name: string): Promise<string | n
 }
 
 // ── Scenario 1: Full passive text WATER Thumb (Ring Storage) ─────────────────
-test('passive-strip: WATER Thumb shows full effect text (Thumb pays)', async ({ browser }) => {
+// #241 — WATER's passive is now the all-in setup distributor "Torrent" (was
+// "Wellspring"): at duel start it pours the thumb's uses onto matching Water
+// rings, highest-XP first. The strip shows the name + its full effect text.
+test('passive-strip: WATER Thumb shows full Torrent effect text', async ({ browser }) => {
   const token = await registerAndToken();
   const { rings } = await getMe(token);
   const water = rings.find((r: any) => r.element === WATER_EL);
@@ -116,7 +119,7 @@ test('passive-strip: WATER Thumb shows full effect text (Thumb pays)', async ({ 
   await openReliquary(page);
 
   await page.waitForFunction(
-    () => (window as any).__campState.staked_passive?.name === 'Wellspring',
+    () => (window as any).__campState.staked_passive?.name === 'Torrent',
     { timeout: 5000 },
   );
   await page.waitForFunction(
@@ -126,13 +129,13 @@ test('passive-strip: WATER Thumb shows full effect text (Thumb pays)', async ({ 
         .getAll()
         .flatMap((c: any) => (c.getAll ? [c, ...c.getAll()] : [c]))
         .find((o: any) => o.name === 'staked-passive-strip');
-      return !!strip && /\(Thumb pays\)/.test((strip as any).text ?? '');
+      return !!strip && /round-robin highest XP first/.test((strip as any).text ?? '');
     },
     { timeout: 5000 },
   );
   const stripText = await campTextByName(page, 'staked-passive-strip');
-  expect(stripText).toContain('Wellspring');
-  expect(stripText).toContain('(Thumb pays)');
+  expect(stripText).toContain('Torrent');
+  expect(stripText).toContain('round-robin highest XP first');
   await ctx.close();
 });
 
@@ -330,8 +333,8 @@ test('manage-passive: WATER Thumb full text above the carried-rings label', asyn
   );
 
   const stripText = await encounterTextByName(page, 'manage-staked-passive');
-  expect(stripText).toContain('Wellspring');
-  expect(stripText).toContain('(Thumb pays)');
+  expect(stripText).toContain('Torrent');
+  expect(stripText).toContain('round-robin highest XP first');
 
   // The passive strip bottom must sit above the Carried-rings label top (no overlap).
   const bounds = await page.evaluate(() => {
