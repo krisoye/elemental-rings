@@ -107,15 +107,27 @@ export class WanderingNpc {
   private destroyed = false;
 
   /**
+   * #229/#230 — when true this marker is a boss gate: it stands perfectly still
+   * (no wander leg, no idle-bob) and carries an immovable Arcade physics body so a
+   * `physics.add.collider(player, sprite)` set up by the scene physically blocks
+   * the player from walking past it toward the gated exit. Defaults false (roamers
+   * remain presentation-only with no physics body, exactly as before).
+   */
+  readonly stationary: boolean;
+
+  /**
    * @param scene owning spatial biome scene
    * @param npc the roster entry; its `x`/`y` are mutated in place as it wanders
    * @param onClick fired on the sprite's pointerdown (the scene's ambush handler)
+   * @param stationary #229/#230 — boss gate: stand still + carry an immovable
+   *        physics body for the scene's blocking collider. Defaults false.
    */
-  constructor(scene: Phaser.Scene, npc: WanderTarget, onClick: () => void) {
+  constructor(scene: Phaser.Scene, npc: WanderTarget, onClick: () => void, stationary = false) {
     this.scene = scene;
     this.npc = npc;
     this.spawnX = npc.x;
     this.spawnY = npc.y;
+    this.stationary = stationary;
 
     if (npc.type === 'monster' && npc.element <= 4 && MONSTER_OW_REGISTRY[npc.element]) {
       // Static frame-0 creature art (#192): the sheets are non-uniform single-
@@ -123,7 +135,9 @@ export class WanderingNpc {
       this.sprite = scene.add
         .sprite(npc.x, npc.y, MONSTER_OW_REGISTRY[npc.element].key, 0)
         .setDisplaySize(NPC_OW_DISPLAY_SIZE, NPC_OW_DISPLAY_SIZE);
-      this.startBob();
+      // Boss gates stand perfectly still (#229/#230) — no idle-bob so the body
+      // (added below) stays pinned for the scene's blocking collider.
+      if (!stationary) this.startBob();
     } else {
       // Duelist: shared charset walker, idle/facing-down to start.
       this.char = duelistChar(npc.spriteFrame);
@@ -140,6 +154,19 @@ export class WanderingNpc {
       .setDepth(NPC_DEPTH)
       .setInteractive({ useHandCursor: true })
       .on('pointerdown', onClick);
+
+    if (stationary) {
+      // #229/#230 — boss gate: give the marker an immovable static-style body so a
+      // collider set up by the scene blocks the player. A dynamic immovable body
+      // matches the existing collider pattern (zones use static bodies; sprites use
+      // dynamic ones) and stays put because the marker never moves.
+      scene.physics.add.existing(this.sprite);
+      const body = this.sprite.body as Phaser.Physics.Arcade.Body;
+      body.setImmovable(true);
+      body.moves = false;
+      // Do NOT schedule a wander leg — the warden holds its post.
+      return;
+    }
 
     this.scheduleNextLeg(0);
   }

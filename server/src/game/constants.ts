@@ -58,6 +58,13 @@ export const MERCHANT_FOOD_MARKUP = 2;
 // flat 30 default).
 export const SPIRIT_BASE = 50;
 
+// #229/#230 — boss-gate food drops (GDD §10.5/§10.17). A permanent boss NPC
+// (respawnDays === 0) drops a one-time food cache the first time the player beats
+// it. Tuned relative to the food economy (FOOD_PER_SLEEP = 25): a mini-boss drops
+// just under a night's sleep; a major boss drops two nights' worth.
+export const MINI_BOSS_FOOD_DROP = 20; // Bogwood Warden (mid-tier boss gate)
+export const BOSS_FOOD_DROP = 50; // Thornwood Warden (major boss gate)
+
 // #87 Part C — ambush first-strike premium (GDD §10.3/§10.9). Double-clicking an
 // overworld NPC blinks into the duel and buys the opening attack for this flat
 // spirit cost. The server spends it in BattleRoom.onJoin when the firstStrike

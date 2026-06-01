@@ -1,6 +1,7 @@
 import Phaser from 'phaser';
 import type { AIPersonality } from '../../../shared/types';
 import type { ScreenDef } from '../../../shared/world/forest';
+import { BOSS_WARDENS } from '../../../shared/world/forest';
 import { Player } from '../objects/world/Player';
 import { InteractionZone } from '../objects/world/InteractionZone';
 import { Campfire } from '../objects/world/Campfire';
@@ -1499,8 +1500,18 @@ export abstract class BaseBiomeScene extends Phaser.Scene {
   private renderNpcs(): void {
     this.npcMarkers.forEach((m) => m.destroy());
     this.npcMarkers = [];
+    // #229/#230 — the boss warden (if any) guarding this screen's gated exit. When
+    // the server still lists it in the roster the warden is alive: render it
+    // stationary + immovable and block the player from reaching the gated exit.
+    const wardenId = BOSS_WARDENS[this.screenId];
     for (const npc of this.overworldNpcs) {
-      this.npcMarkers.push(new WanderingNpc(this, npc, () => this.onNpcClick(npc)));
+      const isWarden = npc.id === wardenId;
+      const marker = new WanderingNpc(this, npc, () => this.onNpcClick(npc), isWarden);
+      this.npcMarkers.push(marker);
+      // The warden's immovable body physically gates the exit until it is beaten;
+      // once defeated the server drops it from the roster, this collider is never
+      // added on the next render, and the exit becomes reachable.
+      if (isWarden) this.physics.add.collider(this.player, marker.sprite);
     }
     // #137 — NPC sprites load async (after the create() world collection), so route
     // them to uiCam.ignore now: they are WORLD objects that zoom with the main camera.

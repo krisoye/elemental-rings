@@ -10,6 +10,7 @@ import { makeRng } from '../game/ai/AIProfiles';
 import { generateAILoadout, type SlotSpec } from '../game/ai/AILoadout';
 import * as StakeResolver from '../game/StakeResolver';
 import * as PlayerRepo from '../persistence/PlayerRepo';
+import { NPC_SPAWNS } from '../persistence/NpcSpawns';
 import { verifyToken } from '../auth/auth';
 import {
   TELEGRAPH_MS,
@@ -550,7 +551,18 @@ export class BattleRoom extends Room<{ state: BattleState }> {
         }
         // #83 — this was a win over an overworld NPC: record the defeat so the
         // NPC respawns per its spawn-table cadence (permanent NPCs stay beaten).
-        if (this.npcId) PlayerRepo.recordNpcDefeat(winnerPlayerId, this.npcId);
+        if (this.npcId) {
+          PlayerRepo.recordNpcDefeat(winnerPlayerId, this.npcId);
+          // #229/#230 — permanent boss NPCs (respawnDays === 0) drop a one-time
+          // food cache on defeat. recordNpcDefeat above is idempotent (a permanent
+          // boss can be beaten only once: it never reappears for this player), so
+          // this credit fires exactly once per player per boss.
+          const npcSpawn = NPC_SPAWNS.find((n) => n.id === this.npcId);
+          if (npcSpawn?.respawnDays === 0) {
+            const foodDrop = npcSpawn.foodDrop ?? 0;
+            if (foodDrop > 0) PlayerRepo.addFood(winnerPlayerId, foodDrop);
+          }
+        }
       }
 
       // Forfeit gold penalty fallback: if the forfeiting loser had NO staked thumb

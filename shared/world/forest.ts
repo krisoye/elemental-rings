@@ -251,3 +251,18 @@ export const FOREST_SCREENS: ScreenDef[] = [
 export function getForestScreen(id: string): ScreenDef | undefined {
   return FOREST_SCREENS.find((s) => s.id === id);
 }
+
+/**
+ * #229/#230 — boss-gate wardens, keyed by the screen they guard → the NPC spawn id
+ * (server/src/persistence/NpcSpawns.ts) of the warden that physically blocks that
+ * screen's gated exit until it is defeated. The client renders a listed warden as
+ * a stationary, immovable marker and adds a player↔warden collider so the player
+ * cannot reach the gated exit while the warden is alive (the server is the
+ * authority on whether the warden is still present in the screen's NPC roster):
+ *   forest_swamp_gate   — Bogwood Warden  blocks the south biome_exit → SwampScene.
+ *   forest_boss_clearing— Thornwood Warden blocks the south edge → verdant_descent.
+ */
+export const BOSS_WARDENS: Readonly<Record<string, string>> = {
+  forest_swamp_gate: 'forest_bogwood_warden',
+  forest_boss_clearing: 'forest_thornwood_warden',
+};
