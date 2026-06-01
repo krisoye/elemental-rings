@@ -36,10 +36,15 @@ export const FOREST_GENERATED_TILESETS: ReadonlyArray<readonly [string, string]>
 // Tilesets for hand-authored Forest screens (forest_deepwood, forest_mossy_fen,
 // forest_south_path, …). Extends the generated base with every extra tileset used
 // across those maps; buildTilesets() filters to only what each map declares.
-// terrain_plains_fantasy, tileset_village_main_a and terrain_forest_void now live
-// in the generated base, so they are not repeated here.
+// The three legacy autotile tilesets are included so screens that were generated
+// before PR #250 (boss_clearing, crossroads, briar_pass, glade, hollow, hidden_alcove,
+// ridge) still resolve their GIDs correctly. buildTilesets() only registers tilesets
+// the map's JSON actually declares, so these are no-ops for new-format maps.
 const FOREST_HANDAUTHORED_TILESETS: ReadonlyArray<readonly [string, string]> = [
   ...FOREST_GENERATED_TILESETS,
+  ['autotile_grass_16', 'assets/terrain/autotile_grass_16.png'],
+  ['autotile_dirt_16', 'assets/terrain/autotile_dirt_16.png'],
+  ['autotile_cliff_16', 'assets/terrain/autotile_cliff_16.png'],
   ['terrain_forest_modern', 'assets/terrain/terrain_forest_modern.png'],
   ['terrain_forest_deepwoods', 'assets/terrain/terrain_forest_deepwoods.png'],
   ['tileset_village_main_b', 'assets/structures/tileset_village_main_b.png'],
