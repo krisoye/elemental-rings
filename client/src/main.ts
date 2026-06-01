@@ -248,7 +248,7 @@ declare global {
       reliquaryCap?: number;
       reliquaryShards?: number;
       reliquaryCount?: number;
-      // #171 — spare ring capacity (floor(aggregate_xp/100)), from /api/me.
+      // #171 — spare ring capacity (floor(log_2.5(aggregate_xp))), from /api/me.
       spareCapacity?: number;
       // #78 ④ — Thumb passive reminder. null when no Thumb ring is staked; a base
       // element yields { name, effect }; a fusion yields { name: null, effect: '…

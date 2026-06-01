@@ -181,7 +181,7 @@ apiRouter.get('/api/me', requireAuth, (req: Request, res: Response): void => {
   }
   // One query, both values — aggregate_xp is the raw ring XP sum; spirit_max is
   // derived from it. Both served live so the HUD always reflects current state.
-  // #171 — carry_cap is now XP-derived (5 + floor(aggregate_xp/100)); override the
+  // #171 — carry_cap is now XP-derived (5 + floor(log_2.5(aggregate_xp))); override the
   // DB column so the client always receives the enforced cap, not the stale default.
   // #182 — reliquary fields: cap (from DB column), shards held, and current count.
   const { aggregateXp, spiritMax } = getSpiritStats(playerId);
