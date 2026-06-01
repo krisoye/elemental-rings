@@ -30,7 +30,7 @@ async function me(token: string): Promise<{ player: any; rings: Ring[]; loadout:
 }
 
 // ── GET /api/me exposes the computed carry_cap (5 for a fresh player) ────────
-// #171: /api/me now returns the XP-derived carry_cap (5 + floor(aggregate_xp/100)),
+// #171: /api/me now returns the XP-derived carry_cap (5 + floor(log_2.5(aggregate_xp))),
 // NOT the stale DB column. Fresh player has aggregate_xp=0 → cap=5.
 test('carry: GET /api/me returns computed carry_cap 5 for a fresh player', async () => {
   const { token } = await register();
@@ -58,7 +58,7 @@ test('carry: PUT /api/carry sets in_carry on exactly the named rings', async () 
 });
 
 // ── PUT /api/carry enforces the carry cap ─────────────────────────────────────
-// #171: the effective carry cap is now XP-derived: 5 + floor(aggregate_xp / 100).
+// #171: the effective carry cap is now XP-derived: 5 + floor(log_2.5(aggregate_xp)).
 // A fresh player (aggregate_xp = 0) has cap = 5. Carrying exactly 5 rings is
 // allowed; 6 rings is rejected.
 test('carry: PUT /api/carry returns 400 when count exceeds carry_cap', async () => {
@@ -123,7 +123,7 @@ test('carry: __campState separates atSanctum / loadout / battleHand', async ({ b
 });
 
 // ── Add to Loadout moves a Sanctum ring into carry (when cap allows) ─────────
-// #171: effective carry cap is now 5 + floor(aggregate_xp / 100). A fresh player
+// #171: effective carry cap is now 5 + floor(log_2.5(aggregate_xp)). A fresh player
 // starts with 5 battle-slot rings carried (= cap). We free one slot first, then
 // add a Sanctum ring to confirm the carry flow works within the new cap model.
 test('carry: __campAddToLoadout carries a Sanctum ring', async ({ browser }) => {

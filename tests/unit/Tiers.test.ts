@@ -199,7 +199,7 @@ describe('awardXP — natural tier crossings (#173 C2)', () => {
 
   // -------------------------------------------------------------------------
   // #171 — XP-driven spare carry capacity (GDD §4.1). spare_slots = floor(
-  // aggregate_xp / 100) counting ONLY Reliquary (in_carry=0) rings.
+  // log_2.5(aggregate_xp)) counting ONLY Reliquary (in_carry=0) rings.
   // These tests live inside this describe so they share the same DB singleton.
   // -------------------------------------------------------------------------
 
@@ -209,25 +209,38 @@ describe('awardXP — natural tier crossings (#173 C2)', () => {
     expect(repo.getCarryCap(p)).toBe(5);
   });
 
-  test('exactly 100 aggregate Reliquary XP → spare capacity 1, carry cap 6', () => {
-    // floor(100/100) = 1 spare slot → cap = 5+1 = 6.
+  test('aggregate XP below the log base (2.5) → spare capacity 0 (guards log(0) = -Infinity)', () => {
+    // floor(log_2.5(2)) would be -0.76; the < base guard clamps it to 0. No spare
+    // slot exists until aggregate_xp reaches the base. cap stays at 5.
     const p = makePlayer();
     db.prepare(
       `INSERT INTO rings (id, owner_id, element, tier, max_uses, current_uses, xp, in_carry)
-       VALUES (?, ?, 0, 0, 3, 3, 100, 0)`,
-    ).run(`ring_sp1_${Math.random().toString(36).slice(2)}`, p);
+       VALUES (?, ?, 0, 0, 3, 3, 2, 0)`,
+    ).run(`ring_sp2_${Math.random().toString(36).slice(2)}`, p);
+    expect(repo.getSpareCapacity(p)).toBe(0);
+    expect(repo.getCarryCap(p)).toBe(5);
+  });
+
+  test('aggregate XP = 3 → spare capacity 1, carry cap 6 (first slot just past the base)', () => {
+    // floor(log_2.5(3)) = floor(1.199) = 1 spare slot → cap = 5+1 = 6.
+    const p = makePlayer();
+    db.prepare(
+      `INSERT INTO rings (id, owner_id, element, tier, max_uses, current_uses, xp, in_carry)
+       VALUES (?, ?, 0, 0, 3, 3, 3, 0)`,
+    ).run(`ring_sp3_${Math.random().toString(36).slice(2)}`, p);
     expect(repo.getSpareCapacity(p)).toBe(1);
     expect(repo.getCarryCap(p)).toBe(6);
   });
 
-  test('99 aggregate Reliquary XP → spare capacity 0 (floor boundary — one below threshold)', () => {
-    // floor(99/100) = 0. No extra slot until 100 is reached.
+  test('aggregate XP = 100 → spare capacity 5, carry cap 10 (log scaling)', () => {
+    // floor(log_2.5(100)) = floor(5.026) = 5 spare slots → cap = 5+5 = 10.
     const p = makePlayer();
     db.prepare(
       `INSERT INTO rings (id, owner_id, element, tier, max_uses, current_uses, xp, in_carry)
-       VALUES (?, ?, 0, 0, 3, 3, 99, 0)`,
-    ).run(`ring_sp99_${Math.random().toString(36).slice(2)}`, p);
-    expect(repo.getSpareCapacity(p)).toBe(0);
+       VALUES (?, ?, 0, 0, 3, 3, 100, 0)`,
+    ).run(`ring_sp100_${Math.random().toString(36).slice(2)}`, p);
+    expect(repo.getSpareCapacity(p)).toBe(5);
+    expect(repo.getCarryCap(p)).toBe(10);
   });
 
   test('carried rings (in_carry=1) do NOT count toward aggregate XP for spare capacity', () => {
@@ -242,16 +255,18 @@ describe('awardXP — natural tier crossings (#173 C2)', () => {
     expect(repo.getCarryCap(p)).toBe(5);
   });
 
-  test('200 aggregate Reliquary XP → spare capacity 2, carry cap 7', () => {
+  test('aggregate XP = 625 → spare capacity 7, carry cap 12 (high-XP flattening)', () => {
+    // floor(log_2.5(625)) = floor(7.024) = 7. The log curve flattens: 6.25x the XP
+    // of the 100-XP case yields only +2 slots, vs +6 under the old linear formula.
     const p = makePlayer();
-    for (let i = 0; i < 2; i++) {
+    for (let i = 0; i < 5; i++) {
       db.prepare(
         `INSERT INTO rings (id, owner_id, element, tier, max_uses, current_uses, xp, in_carry)
-         VALUES (?, ?, 0, 0, 3, 3, 100, 0)`,
-      ).run(`ring_sp200_${i}_${Math.random().toString(36).slice(2)}`, p);
+         VALUES (?, ?, 0, 0, 3, 3, 125, 0)`,
+      ).run(`ring_sp625_${i}_${Math.random().toString(36).slice(2)}`, p);
     }
-    expect(repo.getSpareCapacity(p)).toBe(2);
-    expect(repo.getCarryCap(p)).toBe(7);
+    expect(repo.getSpareCapacity(p)).toBe(7);
+    expect(repo.getCarryCap(p)).toBe(12);
   });
 
   test('awardXP with amount=0 at the exact threshold boundary is a strict no-op', () => {

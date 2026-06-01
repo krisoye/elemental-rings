@@ -11,9 +11,9 @@
 | Reliquary | All rings stored in the Sanctum; not in carry loadout; sum of their XP = `aggregate_xp` | 20 | Reliquary Shard (+10, see §4.1.1) |
 | Loadout (carry) | Rings taken on expedition; excluded from `aggregate_xp` | 5 + spare | `aggregate_xp` |
 | Battle hand | 5 named slots (Thumb/A1/A2/D1/D2) used in combat | 5 (fixed) | No |
-| Spare | Carried rings not assigned to battle slots; swappable between encounters | `floor(aggregate_xp / 100)` | Automatic |
+| Spare | Carried rings not assigned to battle slots; swappable between encounters | `floor(log_2.5(aggregate_xp))` | Automatic |
 
-- **Spare capacity formula:** `floor(aggregate_xp / 100)` — every 100 XP banked in the Reliquary unlocks one additional carry slot. At game start spare = 0; the player carries exactly their 5 battle-hand rings.
+- **Spare capacity formula:** `floor(log_2.5(aggregate_xp))` — spare slots scale with the logarithm (base 2.5) of XP banked in the Reliquary: the first slots come quickly, then the curve flattens to a soft ceiling so late-game inventories stay bounded. At game start spare = 0 (the formula returns 0 below an aggregate of 2.5 XP); the player carries exactly their 5 battle-hand rings.
 - Rings in the Reliquary recharge uses on the game day timer
 - Rings on your person do **not** recharge in the field — only at camp (sleep or paid recharge)
 - Rings in the Reliquary do **not** earn XP — battle use is the only XP source (see §4.4)
