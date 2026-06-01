@@ -58,49 +58,83 @@ interface NodeSpec {
 // Row decreases northward; col increases eastward.
 const NODE_SPECS: NodeSpec[] = [
   // ── North arm ──────────────────────────────────────────────────────────────
-  { id: 'forest_snow_gate',     label: 'Snow Gate',   col: 0,  row: -2, biome: 'forest', danger: 2 },
-  { id: 'forest_north_road',    label: 'North Road',  col: 0,  row: -1, biome: 'forest', danger: 1 },
-  // ── West arm ───────────────────────────────────────────────────────────────
-  { id: 'forest_mossy_fen',     label: 'Mossy Fen',   col: -1, row:  0, biome: 'forest', danger: 1 },
+  { id: 'forest_snow_gate',        label: 'Snow Gate',        col:  0, row: -2, biome: 'forest', danger: 2 },
+  { id: 'forest_north_road',       label: 'North Road',       col:  0, row: -1, biome: 'forest', danger: 1 },
+  // ── West arm (fen wing) ────────────────────────────────────────────────────
+  { id: 'forest_fen_ridge',        label: 'Fen Ridge',        col: -2, row: -1, biome: 'forest', danger: 2 },
+  { id: 'forest_deep_fen',         label: 'Deep Fen',         col: -2, row:  0, biome: 'forest', danger: 2 },
+  { id: 'forest_mossy_fen',        label: 'Mossy Fen',        col: -1, row:  0, biome: 'forest', danger: 1 },
   // ── Hub ────────────────────────────────────────────────────────────────────
-  { id: 'forest_anchorage',     label: 'Anchorage',   col: 0,  row:  0, biome: 'forest', safe: true, anchorage: 'forest_entry' },
-  // ── East corridor ──────────────────────────────────────────────────────────
-  { id: 'forest_east_path',     label: 'East Path',   col: 1,  row:  0, biome: 'forest', danger: 1 },
-  { id: 'forest_glade',         label: 'The Glade',   col: 2,  row:  0, biome: 'forest', danger: 1, anchorage: 'forest_glade' },
+  { id: 'forest_anchorage',        label: 'Anchorage',        col:  0, row:  0, biome: 'forest', safe: true, anchorage: 'forest_entry' },
+  // ── East corridor → Thornado wing ─────────────────────────────────────────
+  { id: 'forest_east_path',        label: 'East Path',        col:  1, row:  0, biome: 'forest', danger: 1 },
+  { id: 'forest_glade',            label: 'The Glade',        col:  2, row:  0, biome: 'forest', danger: 1, anchorage: 'forest_glade' },
+  { id: 'forest_heath',            label: 'The Heath',        col:  3, row:  0, biome: 'forest', danger: 2 },
+  { id: 'forest_wind_shelf',       label: 'Wind Shelf',       col:  4, row:  0, biome: 'forest', danger: 2 },
+  { id: 'forest_thornado_shrine',  label: 'Thornado\nShrine', col:  5, row:  0, biome: 'forest', danger: 2 },
   // ── South arm ──────────────────────────────────────────────────────────────
-  { id: 'forest_south_path',    label: 'South Path',  col: 0,  row:  1, biome: 'forest', danger: 1 },
-  { id: 'forest_hollow',        label: 'Hollow',      col: 0,  row:  2, biome: 'forest', danger: 2 },
-  { id: 'forest_swamp_gate',    label: 'Swamp Gate',  col: -1, row:  2, biome: 'forest', danger: 2 },
+  { id: 'forest_south_path',       label: 'South Path',       col:  0, row:  1, biome: 'forest', danger: 1 },
+  { id: 'forest_hollow',           label: 'Hollow',           col:  0, row:  2, biome: 'forest', danger: 2 },
+  { id: 'forest_swamp_gate',       label: 'Swamp Gate',       col: -1, row:  2, biome: 'forest', danger: 2 },
   // ── Northeast cluster ──────────────────────────────────────────────────────
-  { id: 'forest_crossroads',    label: 'Crossroads',  col: 2,  row: -1, biome: 'forest', danger: 1 },
-  { id: 'forest_ridge',         label: 'Ridge',       col: 2,  row: -2, biome: 'forest', danger: 2 },
-  { id: 'forest_briar_pass',    label: 'Briar Pass',  col: 3,  row: -1, biome: 'forest', danger: 2 },
-  { id: 'forest_deepwood',      label: 'Deepwood',    col: 3,  row: -2, biome: 'forest', danger: 3, anchorage: 'forest_depths' },
-  { id: 'forest_boss_clearing', label: 'Boss\nClearing', col: 4, row: -2, biome: 'forest', danger: 3 },
+  { id: 'forest_crossroads',       label: 'Crossroads',       col:  2, row: -1, biome: 'forest', danger: 1 },
+  { id: 'forest_rocky_overlook',   label: 'Rocky\nOverlook',  col:  2, row: -3, biome: 'forest', danger: 2 },
+  { id: 'forest_ridge',            label: 'Ridge',            col:  2, row: -2, biome: 'forest', danger: 2 },
+  { id: 'forest_briar_pass',       label: 'Briar Pass',       col:  3, row: -1, biome: 'forest', danger: 2 },
+  { id: 'forest_gale_lookout',     label: 'Gale\nLookout',    col:  3, row: -3, biome: 'forest', danger: 2 },
+  { id: 'forest_deepwood',         label: 'Deepwood',         col:  3, row: -2, biome: 'forest', danger: 3, anchorage: 'forest_depths' },
+  { id: 'forest_boss_clearing',    label: 'Boss\nClearing',   col:  4, row: -2, biome: 'forest', danger: 3 },
+  // ── Post-boss wing (south of boss clearing) ────────────────────────────────
+  { id: 'forest_verdant_descent',  label: 'Verdant\nDescent', col:  4, row: -1, biome: 'forest', danger: 2 },
+  { id: 'forest_bloom_hollow',     label: 'Bloom\nHollow',    col:  3, row:  1, biome: 'forest', danger: 2 },
+  { id: 'forest_ancient_grove',    label: 'Ancient\nGrove',   col:  4, row:  1, biome: 'forest', danger: 3 },
+  { id: 'forest_root_tangle',      label: 'Root Tangle',      col:  5, row:  1, biome: 'forest', danger: 3 },
+  { id: 'forest_canopy_walk',      label: 'Canopy Walk',      col:  5, row:  2, biome: 'forest', danger: 3 },
+  { id: 'forest_briar_thicket',    label: 'Briar\nThicket',   col:  6, row:  2, biome: 'forest', danger: 3 },
   // ── Isolated (teleport only) ───────────────────────────────────────────────
-  { id: 'forest_hidden_alcove', label: 'Hidden\nAlcove', col: 5, row: 0, biome: 'forest', danger: 1, isolated: true, anchorage: 'forest_hidden_anchor' },
+  { id: 'forest_hidden_alcove',    label: 'Hidden\nAlcove',   col:  6, row:  0, biome: 'forest', danger: 1, isolated: true, anchorage: 'forest_hidden_anchor' },
   // ── Swamp biome ────────────────────────────────────────────────────────────
-  { id: 'swamp_entry',          label: 'Swamp',       col: -1, row:  3, biome: 'swamp' },
+  { id: 'swamp_entry',             label: 'Swamp',            col: -1, row:  3, biome: 'swamp' },
 ];
 
 type EdgeType = 'normal' | 'biome';
 
 const EDGES: Array<{ a: string; b: string; type?: EdgeType }> = [
-  { a: 'forest_anchorage',  b: 'forest_north_road' },
-  { a: 'forest_north_road', b: 'forest_snow_gate' },
-  { a: 'forest_anchorage',  b: 'forest_mossy_fen' },
-  { a: 'forest_anchorage',  b: 'forest_east_path' },
-  { a: 'forest_east_path',  b: 'forest_glade' },
-  { a: 'forest_glade',      b: 'forest_crossroads' },
-  { a: 'forest_crossroads', b: 'forest_ridge' },
-  { a: 'forest_crossroads', b: 'forest_briar_pass' },
-  { a: 'forest_ridge',      b: 'forest_deepwood' },
-  { a: 'forest_deepwood',   b: 'forest_boss_clearing' },
-  { a: 'forest_briar_pass', b: 'forest_boss_clearing' },
-  { a: 'forest_anchorage',  b: 'forest_south_path' },
-  { a: 'forest_south_path', b: 'forest_hollow' },
-  { a: 'forest_hollow',     b: 'forest_swamp_gate' },
-  { a: 'forest_swamp_gate', b: 'swamp_entry', type: 'biome' },
+  // North arm
+  { a: 'forest_anchorage',       b: 'forest_north_road' },
+  { a: 'forest_north_road',      b: 'forest_snow_gate' },
+  // Fen wing
+  { a: 'forest_anchorage',       b: 'forest_mossy_fen' },
+  { a: 'forest_mossy_fen',       b: 'forest_deep_fen' },
+  { a: 'forest_deep_fen',        b: 'forest_fen_ridge' },
+  // East corridor → Thornado wing
+  { a: 'forest_anchorage',       b: 'forest_east_path' },
+  { a: 'forest_east_path',       b: 'forest_glade' },
+  { a: 'forest_glade',           b: 'forest_heath' },
+  { a: 'forest_heath',           b: 'forest_gale_lookout' },
+  { a: 'forest_heath',           b: 'forest_wind_shelf' },
+  { a: 'forest_wind_shelf',      b: 'forest_thornado_shrine' },
+  // South arm
+  { a: 'forest_anchorage',       b: 'forest_south_path' },
+  { a: 'forest_south_path',      b: 'forest_hollow' },
+  { a: 'forest_hollow',          b: 'forest_swamp_gate' },
+  { a: 'forest_swamp_gate',      b: 'swamp_entry', type: 'biome' },
+  // Northeast cluster
+  { a: 'forest_glade',           b: 'forest_crossroads' },
+  { a: 'forest_crossroads',      b: 'forest_ridge' },
+  { a: 'forest_crossroads',      b: 'forest_briar_pass' },
+  { a: 'forest_ridge',           b: 'forest_rocky_overlook' },
+  { a: 'forest_ridge',           b: 'forest_deepwood' },
+  { a: 'forest_deepwood',        b: 'forest_boss_clearing' },
+  { a: 'forest_briar_pass',      b: 'forest_boss_clearing' },
+  // Post-boss wing
+  { a: 'forest_boss_clearing',   b: 'forest_verdant_descent' },
+  { a: 'forest_verdant_descent', b: 'forest_ancient_grove' },
+  { a: 'forest_ancient_grove',   b: 'forest_bloom_hollow' },
+  { a: 'forest_ancient_grove',   b: 'forest_root_tangle' },
+  { a: 'forest_deepwood',        b: 'forest_root_tangle' },
+  { a: 'forest_root_tangle',     b: 'forest_canopy_walk' },
+  { a: 'forest_canopy_walk',     b: 'forest_briar_thicket' },
 ];
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
