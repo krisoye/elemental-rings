@@ -30,7 +30,7 @@ export class PlayerState extends Schema {
   // outside the triangle, so it is tracked separately here.
   @type('uint8') shadowGauge: number = 0;
 
-  // #171 — XP-driven spare carry capacity (GDD §4.1). spare_slots = floor(log_2.5(aggregate_xp))
+  // #171 — XP-driven spare carry capacity (GDD §4.1). spare_slots = ceil(log_2(aggregate_xp))
   // derived from Reliquary ring XP (in_carry = 0). carry_cap = 5 + spare_slots. Broadcast
   // so the client HUD can show available spare slots without a separate REST call.
   @type('uint8') spareCapacity: number = 0;

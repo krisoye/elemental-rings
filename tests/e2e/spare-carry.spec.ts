@@ -3,16 +3,16 @@ import { test, expect } from '@playwright/test';
 /**
  * #171 — XP-driven spare carry capacity (server-side E2E).
  *
- * carry_cap = 5 + floor(log_2.5(aggregate_xp))
+ * carry_cap = 5 + ceil(log_2(aggregate_xp))
  * aggregate_xp = SUM(xp) WHERE in_carry = 0  (Reliquary rings only)
  *
  * Scenarios:
  *   1. GET /api/me: fresh player has spareCapacity 0 (aggregate_xp = 0 in_carry=0).
  *      The REST response exposes spare_capacity for client consumption.
  *   2. PUT /api/loadout with carried-ring count > cap (5) → 400.
- *   4. After retiring enough XP to the Reliquary (in_carry=0) to clear the spare=2
- *      band (aggregate_xp ≥ 2.5^2), spareCapacity becomes 2 and carry cap updates
- *      live to 7 — no server restart required.
+ *   4. After retiring enough XP to the Reliquary (in_carry=0) to reach the spare=2
+ *      band (aggregate_xp ∈ (2, 4] → ceil(log2) = 2), carry cap updates live to 7
+ *      — no server restart required.
  *
  * Uses test-only routes (drain-spirit, set-ring-xp) following the pattern in
  * spirit.spec.ts and teleport.spec.ts. All assertions are server-state only
@@ -70,7 +70,7 @@ test('spare-carry: fresh player has spareCapacity 0 and carry cap 5', async () =
   const { player, rings } = await getMe(token);
 
   // Fresh player: aggregate_xp = 0 (all rings are carried with xp=0, Reliquary
-  // is empty of XP-bearing rings). spareCapacity = floor(log_2.5(0)) → 0 (guarded).
+  // is empty of XP-bearing rings). spareCapacity = ceil(log_2(0)) → 0 (guarded).
   expect(player.aggregate_xp).toBe(0);
   // PUT /api/carry: 5 rings = at cap → 200; 6 rings = over cap → 400.
   const carried = rings.filter((r: any) => r.in_carry === 1).map((r: any) => r.id);
@@ -106,22 +106,22 @@ test('spare-carry: PUT /api/loadout 400 when carried count exceeds cap', async (
 });
 
 // ── Scenario 4: live increment after retiring XP into the spare=2 band ─────────
-// Retire 2 rings with 5 XP each (in_carry = 0 → aggregate_xp = 10).
-// spareCapacity = floor(log_2.5(10)) = floor(2.51) = 2. carry cap: 5 + 2 = 7.
+// Set 2 uncarried rings to 2 XP each (in_carry = 0 → aggregate_xp = 4).
+// spareCapacity = ceil(log_2(4)) = ceil(2) = 2. carry cap: 5 + 2 = 7.
 test('spare-carry: retiring XP into the spare=2 band raises carry cap from 5 to 7', async () => {
   const token = await mintToken();
   const { rings } = await getMe(token);
 
-  // Set 2 uncarried rings to 5 XP each (XP on in_carry=0 rings = aggregate_xp).
-  // aggregate_xp = 10 lands in the spare=2 band [2.5^2, 2.5^3) = [6.25, 15.625).
+  // Set 2 uncarried rings to 2 XP each (XP on in_carry=0 rings = aggregate_xp).
+  // aggregate_xp = 4 lands in the spare=2 band: ceil(log_2(4)) = 2.
   const reliquary = rings.filter((r: any) => r.in_carry === 0);
   expect(reliquary.length).toBeGreaterThanOrEqual(2);
-  await setRingXP(token, reliquary[0].id, 5);
-  await setRingXP(token, reliquary[1].id, 5);
+  await setRingXP(token, reliquary[0].id, 2);
+  await setRingXP(token, reliquary[1].id, 2);
 
   // GET /api/me reflects the updated aggregate_xp and spareCapacity.
   const { player: after } = await getMe(token);
-  expect(after.aggregate_xp).toBe(10);
+  expect(after.aggregate_xp).toBe(4);
 
   // Carry cap is now 7 (5 + 2 spare). We can carry 7 rings without error.
   // NOTE: the 7-ring putCarry will include the 2 XP rings (making them in_carry=1).
