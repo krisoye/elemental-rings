@@ -305,7 +305,7 @@ export const saveLoadout = db.transaction(
     const current = selectLoadout.get(playerId) as LoadoutRow | undefined;
     if (!current) throw new Error(`No loadout for player ${playerId}`);
     // #171 — carry-cap guard: reject if the player is currently carrying more
-    // rings than the XP-derived cap (5 + floor(log_2.5(aggregate_xp))). Single-
+    // rings than the XP-derived cap (5 + ceil(log_2(aggregate_xp))). Single-
     // sourced via getCarryCap so the limit matches packLoadout and the route check.
     const carriedCount = (selectCarryByOwner.all(playerId) as RingRow[]).length;
     const cap = getCarryCap(playerId);
@@ -749,25 +749,25 @@ export const fuseRings = db.transaction(
 );
 
 /** Logarithm base for spare-slot scaling (GDD §4.1). */
-const SPARE_LOG_BASE = 2.5;
+const SPARE_LOG_BASE = 2.0;
 
 /**
  * The player's spare carry capacity (#171, GDD §4.1).
- * spare_slots = floor(log_2.5(aggregate_xp)), where aggregate_xp = SUM(xp) WHERE
+ * spare_slots = ceil(log_2(aggregate_xp)), where aggregate_xp = SUM(xp) WHERE
  * in_carry = 0 (Reliquary rings only — same filter as spirit_max derivation).
- * Logarithmic scaling grants early slots quickly then flattens to a soft ceiling.
- * Returns 0 for aggregate_xp < base (and for a fresh player with no Reliquary XP),
- * guarding against log(0) = -Infinity.
+ * Ceiling of log base 2 gives 0 at xp=1, 1 at xp=2, then grows quickly early
+ * and flattens to a soft ceiling. Returns 0 for aggregate_xp <= 0 (including a
+ * fresh player with no Reliquary XP), guarding against log(0) = -Infinity.
  */
 export function getSpareCapacity(playerId: string): number {
   const { aggregateXp } = getSpiritStats(playerId);
-  if (aggregateXp < SPARE_LOG_BASE) return 0;
-  return Math.floor(Math.log(aggregateXp) / Math.log(SPARE_LOG_BASE));
+  if (aggregateXp <= 0) return 0;
+  return Math.ceil(Math.log(aggregateXp) / Math.log(SPARE_LOG_BASE));
 }
 
 /**
  * The player's carry cap (rings carryable on an expedition). XP-derived (#171):
- * carry_cap = 5 + floor(log_2.5(aggregate_xp)). Base = 5 spare slots for a fresh
+ * carry_cap = 5 + ceil(log_2(aggregate_xp)). Base = 5 spare slots for a fresh
  * player; aggregate Reliquary XP grants additional spare slots on a logarithmic
  * curve. Single-sourced here so packLoadout, merchantBuyRing, and route
  * validation all agree on the same cap.
