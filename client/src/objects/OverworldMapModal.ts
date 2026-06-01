@@ -40,7 +40,30 @@ const EDGE_BIOME  = 0x44bb44;
 const DOT_ANCHOR_ATTUNED   = 0xffcc00;
 const DOT_ANCHOR_UNATTUNED = 0x555533;
 
+// Boss markers — a screen hosting a boss-tier NPC gets a corner glyph. Tier
+// drives the icon + colour (legend below). 'major' = a major boss, 'gate' = a
+// warden physically blocking an exit, 'guardian' = a fusion-shrine sub-boss.
+const BOSS_GLYPH: Record<BossTier, string> = {
+  major:    '⚔',
+  gate:     '⚔',
+  guardian: '✦',
+};
+const BOSS_COLOR: Record<BossTier, string> = {
+  major:    '#ff5555', // bright red – the region's major boss
+  gate:     '#ffaa33', // amber – an exit-blocking gate warden
+  guardian: '#cc88ff', // violet – a fusion-shrine guardian (matches altar art)
+};
+
 // ── Static data ─────────────────────────────────────────────────────────────
+
+/**
+ * Boss-tier classification for the map marker:
+ *   'major'    – the region's major boss (Thornwood Warden).
+ *   'gate'     – a warden that physically blocks an exit until defeated
+ *                (Bogwood Warden, Frost Sentinel).
+ *   'guardian' – a fusion-shrine sub-boss (Thornado / Bloom Guardians).
+ */
+type BossTier = 'major' | 'gate' | 'guardian';
 
 interface NodeSpec {
   id:        string;
@@ -52,13 +75,14 @@ interface NodeSpec {
   safe?:     true;
   anchorage?: string; // anchorage id on this screen
   isolated?:  true;   // no walking exits — teleport only
+  boss?:      BossTier; // a boss-tier NPC lives on this screen
 }
 
 // Grid positions are anchored so forest_anchorage (hub) sits at col=0, row=0.
 // Row decreases northward; col increases eastward.
 const NODE_SPECS: NodeSpec[] = [
   // ── North arm ──────────────────────────────────────────────────────────────
-  { id: 'forest_snow_gate',        label: 'Snow Gate',        col:  0, row: -2, biome: 'forest', danger: 2 },
+  { id: 'forest_snow_gate',        label: 'Snow Gate',        col:  0, row: -2, biome: 'forest', danger: 2, boss: 'gate' },
   { id: 'forest_north_road',       label: 'North Road',       col:  0, row: -1, biome: 'forest', danger: 1 },
   // ── West arm (fen wing) ────────────────────────────────────────────────────
   { id: 'forest_fen_ridge',        label: 'Fen Ridge',        col: -2, row: -1, biome: 'forest', danger: 2 },
@@ -71,11 +95,11 @@ const NODE_SPECS: NodeSpec[] = [
   { id: 'forest_glade',            label: 'The Glade',        col:  2, row:  0, biome: 'forest', danger: 1, anchorage: 'forest_glade' },
   { id: 'forest_heath',            label: 'The Heath',        col:  3, row:  0, biome: 'forest', danger: 2 },
   { id: 'forest_wind_shelf',       label: 'Wind Shelf',       col:  4, row:  0, biome: 'forest', danger: 2 },
-  { id: 'forest_thornado_shrine',  label: 'Thornado\nShrine', col:  5, row:  0, biome: 'forest', danger: 2 },
+  { id: 'forest_thornado_shrine',  label: 'Thornado\nShrine', col:  5, row:  0, biome: 'forest', danger: 2, boss: 'guardian' },
   // ── South arm ──────────────────────────────────────────────────────────────
   { id: 'forest_south_path',       label: 'South Path',       col:  0, row:  1, biome: 'forest', danger: 1 },
   { id: 'forest_hollow',           label: 'Hollow',           col:  0, row:  2, biome: 'forest', danger: 2 },
-  { id: 'forest_swamp_gate',       label: 'Swamp Gate',       col: -1, row:  2, biome: 'forest', danger: 2 },
+  { id: 'forest_swamp_gate',       label: 'Swamp Gate',       col: -1, row:  2, biome: 'forest', danger: 2, boss: 'gate' },
   // ── Northeast cluster ──────────────────────────────────────────────────────
   { id: 'forest_crossroads',       label: 'Crossroads',       col:  2, row: -1, biome: 'forest', danger: 1 },
   { id: 'forest_rocky_overlook',   label: 'Rocky\nOverlook',  col:  2, row: -3, biome: 'forest', danger: 2 },
@@ -83,10 +107,10 @@ const NODE_SPECS: NodeSpec[] = [
   { id: 'forest_briar_pass',       label: 'Briar Pass',       col:  3, row: -1, biome: 'forest', danger: 2 },
   { id: 'forest_gale_lookout',     label: 'Gale\nLookout',    col:  3, row: -3, biome: 'forest', danger: 2 },
   { id: 'forest_deepwood',         label: 'Deepwood',         col:  3, row: -2, biome: 'forest', danger: 3, anchorage: 'forest_depths' },
-  { id: 'forest_boss_clearing',    label: 'Boss\nClearing',   col:  4, row: -2, biome: 'forest', danger: 3 },
+  { id: 'forest_boss_clearing',    label: 'Boss\nClearing',   col:  4, row: -2, biome: 'forest', danger: 3, boss: 'major' },
   // ── Post-boss wing (south of boss clearing) ────────────────────────────────
   { id: 'forest_verdant_descent',  label: 'Verdant\nDescent', col:  4, row: -1, biome: 'forest', danger: 2 },
-  { id: 'forest_bloom_hollow',     label: 'Bloom\nHollow',    col:  3, row:  1, biome: 'forest', danger: 2 },
+  { id: 'forest_bloom_hollow',     label: 'Bloom\nHollow',    col:  3, row:  1, biome: 'forest', danger: 2, boss: 'guardian' },
   { id: 'forest_ancient_grove',    label: 'Ancient\nGrove',   col:  4, row:  1, biome: 'forest', danger: 3 },
   { id: 'forest_root_tangle',      label: 'Root Tangle',      col:  5, row:  1, biome: 'forest', danger: 3 },
   { id: 'forest_canopy_walk',      label: 'Canopy Walk',      col:  5, row:  2, biome: 'forest', danger: 3 },
@@ -322,6 +346,18 @@ export class OverworldMapModal {
       }
 
 
+      // Boss marker (top-left corner of node) — glyph + colour by tier.
+      if (spec.boss) {
+        c.add(
+          s.add
+            .text(x - NODE_W / 2 + 4, y - NODE_H / 2 + 2, BOSS_GLYPH[spec.boss], {
+              fontSize: '13px', color: BOSS_COLOR[spec.boss],
+            })
+            .setOrigin(0, 0)
+            .setScrollFactor(0),
+        );
+      }
+
       // "You are here" marker — small downward-pointing triangle below node
       if (isCurrent) {
         const tx = x;
@@ -364,6 +400,26 @@ export class OverworldMapModal {
     gfx.fillCircle(lx + 5, legendY + 6, 5);
     c.add(s.add.text(lx + 12, legendY, 'Anchorage\n(unset)', { fontSize: '8px', color: '#666644', lineSpacing: 2 }).setScrollFactor(0));
     lx += 76;
+
+    // Boss legend — glyph + colour per tier (see BossTier).
+    const bossLegend: Array<{ tier: BossTier; label: string }> = [
+      { tier: 'major',    label: 'Boss' },
+      { tier: 'gate',     label: 'Gate' },
+      { tier: 'guardian', label: 'Shrine' },
+    ];
+    for (const entry of bossLegend) {
+      c.add(
+        s.add
+          .text(lx, legendY - 2, BOSS_GLYPH[entry.tier], { fontSize: '12px', color: BOSS_COLOR[entry.tier] })
+          .setScrollFactor(0),
+      );
+      c.add(
+        s.add
+          .text(lx + 13, legendY + 1, entry.label, { fontSize: '8px', color: '#7799aa' })
+          .setScrollFactor(0),
+      );
+      lx += 46;
+    }
 
     // Hint
     c.add(
