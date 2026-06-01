@@ -34,13 +34,13 @@ export async function connectToRoom(
   // listener must live for the room's whole lifetime. The server is
   // authoritative — it decides the ring id; we only stash it for CampScene's
   // post-battle prompt (#40).
-  room.onMessage('wonRing', (payload: { ringId?: string; element?: number }) => {
+  room.onMessage('wonRing', (payload: { ringId?: string; element?: number; xp?: number }) => {
     if (payload?.ringId) {
       localStorage.setItem('er_pending_ring', payload.ringId);
       // #212 — keep the element alongside the id so the end-of-battle modal can
       // name the won ring ("Won: FIRE Ring"). The er_pending_ring key (carry
       // prompt) is unchanged; this is an additive read-only stash.
-      window.__lastWonRing = { ringId: payload.ringId, element: payload.element ?? 0 };
+      window.__lastWonRing = { ringId: payload.ringId, element: payload.element ?? 0, xp: payload.xp ?? 0 };
     }
   });
 
