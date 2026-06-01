@@ -15,7 +15,8 @@ import { TALISMANS, getTalisman } from '../../shared/talismans';
 // registry, so dynamic import picks up the env that is set at import time.
 // ---------------------------------------------------------------------------
 
-const RELIQUARY_BASE_CAP = 20;
+// #240 — Reliquary fixed at 9 slots (Shard expansion paused but plumbing kept).
+const RELIQUARY_BASE_CAP = 9;
 const RELIQUARY_SHARD_INCREMENT = 10;
 
 let repo: typeof import('../../server/src/persistence/PlayerRepo');

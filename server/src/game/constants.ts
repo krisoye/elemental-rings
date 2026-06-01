@@ -86,9 +86,13 @@ export const MERCHANT_RING_SELL_PRICE_T1 = 10;       // GP when player sells Tie
 export const MERCHANT_RING_SELL_PRICE_NEUTRAL = 8;   // GP when player sells Tier 1 Wind/Earth ring
 
 // #182 — Reliquary capacity cap. Resting rings (in_carry=0 AND escrowed=0) consume
-// Reliquary slots. Players start with RELIQUARY_BASE_CAP slots; each Shard consumed
-// via POST /api/sanctum/expand-reliquary grants RELIQUARY_SHARD_INCREMENT more.
-export const RELIQUARY_BASE_CAP = 20;
+// Reliquary slots. Players start with RELIQUARY_BASE_CAP slots.
+//
+// #240 — Reliquary is held at a FIXED 9 slots; Shard-based expansion is paused
+// (dormant). RELIQUARY_SHARD_INCREMENT stays defined so the Shard plumbing
+// (grantShard / addReliquaryShardToReliquary / POST /api/sanctum/expand-reliquary)
+// continues to compile and is ready to re-enable, but no in-game path reaches it.
+export const RELIQUARY_BASE_CAP = 9;
 export const RELIQUARY_SHARD_INCREMENT = 10;
 
 
