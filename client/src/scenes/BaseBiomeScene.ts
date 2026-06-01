@@ -13,10 +13,8 @@ import { BlinkController } from '../objects/world/BlinkController';
 import { BattleHandOverlay } from '../objects/BattleHandOverlay';
 import { OverworldMapModal } from '../objects/OverworldMapModal';
 import { placeDecoration, type DecorationHandle } from '../objects/world/Decoration';
-import {
-  MONSTER_OW_REGISTRY,
-  NPC_OW_DISPLAY_SIZE,
-} from '../objects/world/NpcSpriteRegistry';
+import { MONSTER_OW_REGISTRY } from '../objects/world/NpcSpriteRegistry';
+import { WanderingNpc } from '../objects/world/WanderingNpc';
 import {
   COMPASS_RANGE,
   SANCTUM_Y_ABOVE,
@@ -37,7 +35,9 @@ interface NpcInfo {
   personality: string;
   type: 'monster' | 'duelist';
   element: number;
-  /** Direct frame index into the npc-overworld spritesheet (0–11). */
+  /** Server-side sprite seed (0–4 = monster element; 5–11 = "7 human variants").
+   *  The client maps duelist values onto a charset character; monsters use the
+   *  per-element overworld registry. The legacy npc-overworld strip is no longer used. */
   spriteFrame: number;
   x: number;
   y: number;
@@ -162,8 +162,9 @@ export abstract class BaseBiomeScene extends Phaser.Scene {
   private currentAnchorageId: string | null = null;
   /** #83 — the overworld NPC roster from GET /api/overworld/npcs, fetched on create. */
   private overworldNpcs: NpcInfo[] = [];
-  /** NPC marker graphics (ellipse + label), tracked for shutdown removal. */
-  private npcGraphics: Phaser.GameObjects.GameObject[] = [];
+  /** Wandering NPC marker controllers (one per roster entry), tracked for
+   *  re-render + shutdown teardown. Each owns its sprite, tweens, and pause timer. */
+  private npcMarkers: WanderingNpc[] = [];
   /** The NPC currently within detectionRadius() (nearest), or null when none. */
   private detectedNpc: {
     id: string;
@@ -329,13 +330,9 @@ export abstract class BaseBiomeScene extends Phaser.Scene {
     if (!this.textures.exists('sanctum-exterior')) {
       this.load.image('sanctum-exterior', 'assets/structures/structure_sanctum_exterior.png');
     }
-    if (!this.textures.exists('npc-overworld')) {
-      // Kept for duelist/merchant markers (strip frames 5–11); monsters use the registry.
-      this.load.spritesheet('npc-overworld', 'assets/sprites/sprite_npc_overworld.png', {
-        frameWidth: 32,
-        frameHeight: 32,
-      });
-    }
+    // Duelists draw from the shared RPG-Maker charset (loaded via Player.preload
+    // above); the legacy `sprite_npc_overworld.png` strip (24×32 head-tops) was
+    // unusable and is no longer loaded or referenced.
     // Per-element monster overworld sprites (#158) — marker matches the battler.
     // The PNGs are 72×96 spritesheets (3×3 = 9 frames at 24×32); load them as
     // spritesheets so we can render a single frame, not the whole grid (#192).
@@ -570,8 +567,8 @@ export abstract class BaseBiomeScene extends Phaser.Scene {
       this.overworldMap = null;
       this.overlayOpen = false;
       this.npcLastClick.clear();
-      this.npcGraphics.forEach((g) => g.destroy());
-      this.npcGraphics = [];
+      this.npcMarkers.forEach((m) => m.destroy());
+      this.npcMarkers = [];
       this.npcPrompt?.destroy();
       this.npcPrompt = null;
       this.hudText?.destroy();
@@ -1494,30 +1491,20 @@ export abstract class BaseBiomeScene extends Phaser.Scene {
     window.__overworldNpcs = this.overworldNpcs;
   }
 
-  /** Render each NPC marker (depth 6): monsters use a per-element overworld sprite
-   *  matching the battler (#158); duelists/merchants use the npc-overworld strip. */
+  /** Render each NPC marker (depth 6) as a {@link WanderingNpc}: monsters use a
+   *  per-element overworld sprite matching the battler (#158) and idle-bob in place;
+   *  duelists use the shared charset and play the walk-cycle as they wander. Each
+   *  controller writes its live position back into the roster entry so detection +
+   *  the approach prompt + the click handler track the moving creature. */
   private renderNpcs(): void {
-    this.npcGraphics.forEach((g) => g.destroy());
-    this.npcGraphics = [];
+    this.npcMarkers.forEach((m) => m.destroy());
+    this.npcMarkers = [];
     for (const npc of this.overworldNpcs) {
-      let sprite: Phaser.GameObjects.Image | Phaser.GameObjects.Sprite;
-      if (npc.type === 'monster' && npc.element <= 4 && MONSTER_OW_REGISTRY[npc.element]) {
-        // Monster markers are spritesheets (#192) — render frame 0, not the whole grid.
-        sprite = this.add
-          .sprite(npc.x, npc.y, MONSTER_OW_REGISTRY[npc.element].key, 0)
-          .setDisplaySize(NPC_OW_DISPLAY_SIZE, NPC_OW_DISPLAY_SIZE);
-      } else {
-        sprite = this.add.image(npc.x, npc.y, 'npc-overworld', npc.spriteFrame);
-      }
-      sprite
-        .setDepth(6)
-        .setInteractive({ useHandCursor: true })
-        .on('pointerdown', () => this.onNpcClick(npc));
-      this.npcGraphics.push(sprite);
+      this.npcMarkers.push(new WanderingNpc(this, npc, () => this.onNpcClick(npc)));
     }
     // #137 — NPC sprites load async (after the create() world collection), so route
     // them to uiCam.ignore now: they are WORLD objects that zoom with the main camera.
-    this.ignoreWorldObjects([...this.npcGraphics]);
+    this.ignoreWorldObjects(this.npcMarkers.map((m) => m.sprite));
   }
 
   /**

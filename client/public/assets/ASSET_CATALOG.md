@@ -144,10 +144,6 @@ Water/grass hybrids. Overworld sizes range from 48×64 to 96×128.
 **Dimensions:** 384×32  
 384×32 strip (12 frames, 32×32 each). Forest decoration objects: tree trunks, root clusters, log piles. Placed as world sprites via placeDecoration(). Not a tileset.
 
-### `sprite_npc_overworld.png`
-**Dimensions:** 384×32  
-384×32 strip (12 frames, 32×32 each). NPC overworld markers rendered by BaseBiomeScene.renderNpcs(). Frame index assigned by the server (spriteFrame field in GET /api/overworld/npcs response).
-
 
 ---
 
@@ -166,7 +162,7 @@ Water/grass hybrids. Overworld sizes range from 48×64 to 96×128.
 | `monster_` | Monster sprites (overworld + battle) | `monster_fire_01_alt01_overworld.png` |
 | `flora_` | Plants, trees, forage objects | `flora_berries_trees.png` |
 | `structure_` | Building sprites (not tile-grid) | `structure_sanctum_exterior.png` |
-| `sprite_` | Computed/generated sprite sheets | `sprite_npc_overworld.png` |
+| `sprite_` | Computed/generated sprite sheets | `sprite_forest_decor.png` |
 
 **Monster file anatomy:**  
 `monster_<type>_<number>_alt<XX>_<view>.png`  
