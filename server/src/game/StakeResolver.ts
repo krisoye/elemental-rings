@@ -103,3 +103,50 @@ export function applyTailwind(ps: PlayerState, _attackRing: Ring): boolean {
   chargeThumb(ps);
   return true;
 }
+
+// ── Boss unique passives (EPIC #256, #261) ──────────────────────────────────
+/**
+ * Curated, boss-only passive descriptor (GDD §10.5). Data-driven and keyed by
+ * boss id in BOSS_PASSIVES so a new boss is a table row, not a code branch. Both
+ * effects are applied (or initialised) at AI seat time:
+ *
+ *   heartwoodCharges    — Thornwood "Heartwood": the first N heart-losses are
+ *                         redirected to the Thumb (absorbed) instead of costing a
+ *                         heart. BattleRoom tracks the remaining charges and
+ *                         consumes one per absorbed hit (applyHeartwoodAbsorb).
+ *   bulwarkDefenseBonus — Bogwood "Bulwark": both defense rings (d1/d2) start at
+ *                         +this uses, applied once at seat (applyBossSetupPassive).
+ *
+ * Guardians have no row → no passive (their identity is gauge pressure, #260).
+ */
+export interface BossPassive {
+  heartwoodCharges: number;
+  bulwarkDefenseBonus: number;
+}
+
+export const BOSS_PASSIVES: Record<string, BossPassive> = {
+  forest_thornwood_warden: { heartwoodCharges: 2, bulwarkDefenseBonus: 0 },
+  forest_bogwood_warden: { heartwoodCharges: 0, bulwarkDefenseBonus: 1 },
+  // Guardians intentionally absent → applyBossSetupPassive is a no-op for them.
+};
+
+/**
+ * Apply the SEAT-TIME half of a boss passive: Bulwark adds +bulwarkDefenseBonus
+ * uses to both defense rings (raising maxUses to match). Returns the number of
+ * Heartwood charges this boss starts with (0 when none) so BattleRoom can track
+ * the redirect counter. A boss id with no passive row returns 0 and changes
+ * nothing. Mutates `ps` in place.
+ */
+export function applyBossSetupPassive(ps: PlayerState, bossId: string): number {
+  const passive = BOSS_PASSIVES[bossId];
+  if (!passive) return 0;
+
+  if (passive.bulwarkDefenseBonus > 0) {
+    for (const ring of [ps.d1, ps.d2]) {
+      ring.currentUses += passive.bulwarkDefenseBonus;
+      ring.maxUses = Math.max(ring.maxUses, ring.currentUses);
+      ring.isExtinguished = ring.currentUses === 0;
+    }
+  }
+  return passive.heartwoodCharges;
+}

@@ -123,6 +123,14 @@ export class BattleRoom extends Room<{ state: BattleState }> {
   private boss: BossDescriptor | undefined;
 
   /**
+   * #261 — remaining Thornwood "Heartwood" charges: the first N heart-losses the
+   * boss AI would suffer are redirected to the Thumb (absorbed) instead of costing
+   * a heart. Seeded at AI seat from BOSS_PASSIVES; decremented per absorbed hit.
+   * 0 for every other boss / non-boss duel (no absorption).
+   */
+  private heartwoodCharges = 0;
+
+  /**
    * #87 Part C — the sessionId that paid AMBUSH_SPIRIT_COST to ambush this duel.
    * When set, it overrides the default ids[0] opening attacker so the ambusher
    * strikes first. null in normal duels (no first-strike purchase).
@@ -241,6 +249,17 @@ export class BattleRoom extends Room<{ state: BattleState }> {
           : undefined;
       this.seatPlayer(AI_ID, personality, aiSpec, aiOverrides);
 
+      // #261 — boss unique passives (data-driven, keyed by boss id). Applies the
+      // seat-time effect (Bulwark: +1 use on both defense rings) and returns the
+      // Heartwood charge count (Thornwood: first N heart-losses absorbed). No-op
+      // for bosses without a passive row (the guardians) and all non-boss duels.
+      if (this.npcId) {
+        this.heartwoodCharges = StakeResolver.applyBossSetupPassive(
+          this.state.players.get(AI_ID)!,
+          this.npcId,
+        );
+      }
+
       // Build the boss-modified AI profile (no-op when not a boss). The modifier
       // multiplies the base profile's σ / no-block / think fields (both healthy
       // and low-heart variants stay proportional).
@@ -301,6 +320,25 @@ export class BattleRoom extends Room<{ state: BattleState }> {
    */
   private bossGaugeFillMult(): number {
     return this.boss ? BOSS_MODIFIERS[this.boss.tier].gaugeFillMult : 1;
+  }
+
+  /**
+   * #261 — Thornwood "Heartwood". When `id` is the boss AI and it has Heartwood
+   * charges left, ABSORB this heart-loss: consume one charge, redirect the hit to
+   * the Thumb (spend a thumb use as the visual sink, never below 0), and return
+   * true so the caller skips the heart decrement. Returns false for any non-boss /
+   * charge-exhausted case (the heart is lost normally). Idempotent on a 0-use
+   * thumb — the absorb still works (charges are the source of truth, not thumb uses).
+   */
+  private absorbBossHeartLoss(id: string): boolean {
+    if (id !== AI_ID || this.heartwoodCharges <= 0) return false;
+    this.heartwoodCharges -= 1;
+    const ai = this.state.players.get(AI_ID);
+    if (ai && ai.thumb.currentUses > 0) {
+      ai.thumb.currentUses -= 1;
+      ai.thumb.isExtinguished = ai.thumb.currentUses === 0;
+    }
+    return true;
   }
 
   /**
@@ -1042,15 +1080,24 @@ export class BattleRoom extends Room<{ state: BattleState }> {
     this.awardExchangeXp(attackerId, xpAttackerSlot, defenderId, xpDefenderSlot, result);
 
     // Heart-loss resolution. Each lost heart is a plain decrement (floored at 0).
+    // #261 — Thornwood "Heartwood" absorbs the boss's first N heart-losses (the
+    // hit is redirected to the Thumb) before the decrement applies.
+    let aiHeartActuallyLost = false;
     if (result.defenderHeartLost) {
-      defenderPlayer.hearts = Math.max(0, defenderPlayer.hearts - 1);
+      if (!this.absorbBossHeartLoss(defenderId)) {
+        defenderPlayer.hearts = Math.max(0, defenderPlayer.hearts - 1);
+        if (defenderId === AI_ID) aiHeartActuallyLost = true;
+      }
     }
     if (result.attackerHeartLost) {
-      attackerPlayer.hearts = Math.max(0, attackerPlayer.hearts - 1);
+      if (!this.absorbBossHeartLoss(attackerId)) {
+        attackerPlayer.hearts = Math.max(0, attackerPlayer.hearts - 1);
+        if (attackerId === AI_ID) aiHeartActuallyLost = true;
+      }
     }
-    // #259 — a heart change may cross the boss enrage threshold (broadcasts the
-    // `enraged` flag). Runs before any KO early-return so the transition is seen.
-    if (result.defenderHeartLost || result.attackerHeartLost) this.updateBossEnrage();
+    // #259 — a real AI heart change may cross the enrage threshold (broadcasts the
+    // `enraged` flag). An absorbed hit is NOT a heart change, so it never enrages.
+    if (aiHeartActuallyLost) this.updateBossEnrage();
 
     // Earth passive: timing-only parry refund (fires on PARRY regardless of
     // element match). Awards the defender's thumb mid-tier XP when it fires.
