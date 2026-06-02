@@ -24,25 +24,30 @@ Of the carried rings, the player assigns **5 to the battle hand** before each en
 - Once both players formally agree to duel, the battle begins
 
 ### 6.3 Turn Structure (Active Timed Block)
-Combat is an **active, reaction-timed** exchange — not a hidden simultaneous selection. On each turn the **attacker chooses one of three actions**:
+Combat is an **active, reaction-timed** exchange — not a hidden simultaneous selection. One player holds **initiative** at any moment; the other is the **reactor**.
+
+**Initiative** is the right to choose the next action. After each action (and any resulting counter-chain) fully resolves, initiative passes to the other player. Initiative strictly alternates: every player receives an equal number of initiative phases.
+
+The **initiative holder** chooses one of three actions:
 
 **Option A — Attack:** Press A1 or A2 to fire the ring in that slot.
 1. The attack costs **1 use** up front, regardless of the outcome.
-2. The attack is **telegraphed**: the ring's element color(s) travel across the screen toward the defender over a **900 ms** window. Fused rings show all of their component colors (e.g. a Mud ring shows blue + brown).
-3. The **defender** presses **D1 or D2** to fire the ring in that slot — it must land within the timing window as the incoming attack arrives.
+2. The attack is **telegraphed**: the ring's element color(s) travel across the screen toward the reactor over a **900 ms** window. Fused rings show all of their component colors (e.g. a Mud ring shows blue + brown).
+3. The **reactor** presses **D1 or D2** to fire the ring in that slot — it must land within the timing window as the incoming attack arrives.
 4. The block is resolved on two independent axes — **timing** (parry / block / mistime / no-block) and **element relationship** (strong / neutral / weak). See §6.4.
-5. Roles swap — the defender becomes the attacker next turn.
+5. If the reactor achieves **Parry + Strong**, a counter fires and the chain continues (see §6.4 Rally). Any other result ends the chain.
+6. When the chain ends, **initiative passes to the other player** — regardless of who scored hits or how many volleys the chain contained.
 
 **Option B — Recharge:** Double-press A1, A2, D1, or D2 to fully restore that ring's uses. Attack rings recharge via double-tap `1`/`2` or `Z`/`C`; defense rings recharge via double-tap `3`/`4` or a double-tap on the D1/D2 card. All four combat rings are rechargeable in-duel (the Thumb is not).
 - Cost: **1 spirit per use restored** (same rate as overworld recharging, §4.3). A Tier 1 ring at 0 uses costs 3 spirit; one at 1 use costs 2 spirit.
-- The ring is restored to its full `max_uses`. The turn ends immediately — no attack is thrown.
-- Spirit-gated: only the affordable portion is restored. If the player lacks spirit for a full recharge, the affordable uses are restored (or none, at zero affordable) and the turn is still consumed.
-- Only one ring can be recharged per turn.
+- The ring is restored to its full `max_uses`. The initiative phase ends immediately — no attack is thrown.
+- Spirit-gated: only the affordable portion is restored. If the player lacks spirit for a full recharge, the affordable uses are restored (or none, at zero affordable) and the phase is still consumed.
+- Only one ring can be recharged per initiative phase.
 - Defense recharge has **no letter-key (Z/C) form** — during the attack phase `Z`/`C` bind to A1/A2, so defense rings are reachable only by the number keys `3`/`4` and by tapping the D1/D2 cards.
 
-**Option C — Forfeit:** Press D1 and D2 simultaneously during the attack phase to flee while holding initiative.
+**Option C — Forfeit:** Press D1 and D2 simultaneously during the attack phase to flee.
 - The forfeiting player **loses their staked Thumb ring** and pays **25 gold** (`GOLD_FORFEIT_PENALTY` in constants.ts).
-- Forfeiting is only available on the attacker's turn — the defender cannot flee mid-telegraph.
+- Forfeiting is only available during your own initiative phase — the reactor cannot flee mid-telegraph.
 - This is the escape valve when the duel cannot be won, but it costs more than just the stake.
 
 **Phase-locked input:** Attack buttons (A1/A2) only register during the **attack phase**. Defense buttons (D1/D2) only register during the **defense phase**. Wrong-phase presses are silently ignored — protective, not punishing. The phase transition is the most visually prominent UI moment in a battle.
@@ -117,19 +122,21 @@ On the two failure rows (**no-block**, **mistime**) the element axis is irreleva
 
 **Fusion ring resolution.** A fusion ring's two components are each resolved independently. On No-block or Mistime all components land. On a timed defense the defending ring auto-aligns to the attack component it is strongest against; the remaining component resolves as No-block. See §3.4 for the full rule and outcome tables.
 
-**Rally (Parry + Strong = active counter).** Instead of an automatic reflect, the exchange continues as an interactive volley chain:
+**Rally (Parry + Strong = active counter).** The exchange continues as an interactive volley chain:
 
-1. The original attacker becomes the new **rally-defender**; the parrying player becomes the **rally-attacker**.
-2. The **volleyed element is the parrying ring's base element** (not the original thrown element). Example: defender parries FIRE with WATER → a WATER counter flies back.
+1. The initiative holder becomes the new **rally-defender**; the parrying reactor becomes the **rally-attacker**.
+2. The **volleyed element is the parrying ring's base element** (not the original thrown element). Example: reactor parries FIRE with WATER → a WATER counter flies back.
 3. A new 0.9 s telegraph plays for the volleyed element and the rally-defender must respond exactly as in a normal defend window (no-block / block / parry-strong).
 4. If the rally-defender **parries-strong** they become the rally-attacker and the chain continues. The volleyed element is the rally-defender's parrying ring's element. Only triangle elements (Fire, Water, Wood) can produce a PARRY+STRONG; Wind defense is always Weak and Earth defense is always Neutral, so neither can extend a rally.
-5. Any other response ends the rally and resolves normally under the standard outcome table:
-   - **No-block** → rally-defender loses 1 heart (+gauge); rally ends.
-   - **Block/parry (neutral)** → safe; ring −1 use; rally ends.
-   - **Block/parry (weak)** → ring −1 use; −1 heart (no gauge); rally ends.
-   - **Mistime** → rally-defender loses 1 heart + 1 ring use (+gauge); rally ends.
+5. Any other response ends the chain and resolves normally under the standard outcome table:
+   - **No-block** → rally-defender loses 1 heart (+gauge); chain ends.
+   - **Block/parry (neutral)** → safe; ring −1 use; chain ends.
+   - **Block/parry (weak)** → ring −1 use; −1 heart (no gauge); chain ends.
+   - **Mistime** → rally-defender loses 1 heart + 1 ring use (+gauge); chain ends.
 
-**Cost symmetry:** the floor cost is identical to the old auto-reflect. Attacker throws (−1 use) → defender parries strong (−1 use) → rally-defender neutral-blocks (−1 use) = attacker −2 / defender −1. The rally adds optional escalation above that floor.
+**After the chain ends, initiative passes to the non-initiative-holder** — the player who did not start the chain. This is true regardless of rally depth or who scored the final hit. A rally counter does not transfer initiative; it extends the current initiative phase and forces the holder to defend.
+
+**Cost symmetry:** Attacker throws (−1 use) → reactor parries strong (−1 use) → rally-defender neutral-blocks (−1 use) = initiative holder −2 / reactor −1. The rally adds optional escalation above that floor.
 
 **Ring depletion naturally caps rally depth.** Each parry spends a ring use; a ring at 0 uses cannot parry. Only a triangle element ring with remaining uses can continue the chain.
 
