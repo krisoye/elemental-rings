@@ -575,9 +575,15 @@ export class BattleRoom extends Room<{ state: BattleState }> {
         // ⚡ current/max readout immediately (and recharge feedback has a baseline).
         // Only token sessions reach this branch; AI / no-token sessions leave
         // spiritCurrent/spiritMax at 0, which the HUD treats as "hide".
+        // #313 — spirit is a vsAI / boss mechanic; PvP human seats must NOT broadcast
+        // spiritMax so the opponent panel stays hidden for both players. Spirit is
+        // meaningful only when there is an AI whose pool we want to count down.
         const { spirit_current, spirit_max } = PlayerRepo.getSpiritAndFood(playerId);
-        ps.spiritCurrent = spirit_current;
-        ps.spiritMax = spirit_max;
+        if (this.ai) {
+          // vsAI room: broadcast the player's live spirit so the local HUD gauge shows.
+          ps.spiritCurrent = spirit_current;
+          ps.spiritMax = spirit_max;
+        }
         // Set the NPC spirit pool now that we have the player's spirit_max.
         // npcSpiritMult is 0 for PvP rooms (no AI) — guard so we don't touch _npcSpirit there.
         if (this.ai && this.npcSpiritMult > 0) {

@@ -81,6 +81,8 @@ const SOLO_SPECS = [
   'boss-cards.spec.ts', // #263 — two-tone fused card render + ordering (camp/REST)
   'boss-rematch.spec.ts', // #262 — TRAINING-screen rematch row + practice launch
   'ai-double-attack-offense.spec.ts', // #268 — AI fusion-thumb double-attack offense
+  'monster-overworld-sprite.spec.ts', // #192 — overworld marker frame crop
+  'battle-feedback.spec.ts', // #313 — battleKey threading + AI spirit broadcast
 ];
 
 export default defineConfig({
