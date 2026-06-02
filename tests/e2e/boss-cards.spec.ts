@@ -159,8 +159,9 @@ test('CampScene Mud card renders the higher-XP component (Water) first; base rin
   const fills = await page.evaluate(() => (window as any).__campFusedFills);
   // Mud card: two-tone, Water (higher XP) leads, Earth second.
   expect(fills[mud.id]).toEqual([WATER, EARTH]);
-  // Base Fire card: single fill (one element).
-  expect(fills[fire.id]).toEqual([FIRE]);
+  // Base rings are not tracked by __campFusedFills (only fusion fills are published);
+  // the fusionParents: [] assertion above already confirms base ring serialization is correct.
+  expect(fills[fire.id]).toBeUndefined();
 
   await ctx.close();
 });
