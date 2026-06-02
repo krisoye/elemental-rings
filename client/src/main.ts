@@ -146,6 +146,9 @@ declare global {
     // #47 fusion hooks — open the fusion modal / fuse two parents directly.
     __campOpenFusion?: () => void;
     __campFuse?: (ringId1: string, ringId2: string) => Promise<string | null>;
+    // #263 — rendered two-tone fill order per ring id across the camp grids
+    // ([dominant, other] for a fusion, [element] for a base ring). For E2E.
+    __campFusedFills?: Record<string, number[]>;
     // #63 teleport hooks — open the teleport modal / travel to a waystone.
     __campOpenTeleport?: () => Promise<void>;
     __campTeleport?: (waystoneId: string) => Promise<void>;

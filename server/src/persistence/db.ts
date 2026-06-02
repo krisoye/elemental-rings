@@ -33,8 +33,17 @@ db.exec(schema);
 // Guard migrations: ALTER TABLE ... ADD COLUMN throws on a second run, so check
 // PRAGMA first. Each block is independently idempotent and safe on every boot.
 const ringCols = db.pragma('table_info(rings)') as Array<{ name: string }>;
-if (!ringCols.some((c) => c.name === 'escrowed')) {
+const hasRingCol = (name: string): boolean => ringCols.some((c) => c.name === name);
+if (!hasRingCol('escrowed')) {
   db.exec('ALTER TABLE rings ADD COLUMN escrowed INTEGER NOT NULL DEFAULT 0');
+}
+
+// #263 — two-tone fused cards: persist the dominant (higher-XP) parent element at
+// fusion time so the card renders the leading parent's color first. -1 = base
+// ring or a pre-migration fusion (renders in static FUSION_PARENTS order). The
+// DEFAULT -1 backfills every existing row, so pre-migration fusions never break.
+if (!hasRingCol('parent_dominant')) {
+  db.exec('ALTER TABLE rings ADD COLUMN parent_dominant INTEGER NOT NULL DEFAULT -1');
 }
 
 const playerCols = db.pragma('table_info(players)') as Array<{ name: string }>;

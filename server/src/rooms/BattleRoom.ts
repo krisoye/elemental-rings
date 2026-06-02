@@ -452,9 +452,17 @@ export class BattleRoom extends Room<{ state: BattleState }> {
       ring.xp = slotSpec ? slotSpec.xp : 0;
       ring.isExtinguished = currentUses === 0;
       ring.isFusion = isFusion(element);
-      const parents = fusionParents(element);
+      // #263 — prefer the human ring's dominant-first order ([dominant, other])
+      // when the DB recorded a parent (slotSpec.fusionParents), so the in-duel
+      // hand/opponent cards match the static REST cards. AI/boss fused thumbs and
+      // base rings have no recorded parent → fall back to the static
+      // fusionParents(element) order (EPIC #256 Contracts).
       ring.fusionParents.clear();
-      if (parents) ring.fusionParents.push(parents[0], parents[1]);
+      const ordered =
+        slotSpec?.fusionParents && slotSpec.fusionParents.length >= 2
+          ? slotSpec.fusionParents
+          : fusionParents(element);
+      if (ordered) ring.fusionParents.push(ordered[0], ordered[1]);
     }
 
     this.state.players.set(id, ps);
@@ -502,6 +510,13 @@ export class BattleRoom extends Room<{ state: BattleState }> {
                 currentUses: row.current_uses,
                 maxUses: row.max_uses,
                 xp: row.xp,
+                // #263 — thread the dominant-first parent order for a human fusion
+                // whose higher-XP parent was persisted (parent_dominant >= 0), so
+                // the in-duel cards match the static REST cards. getRingsByOwner
+                // already computed it (row.fusionParents = [dominant, other]). For
+                // base rings / pre-migration fusions we omit it and seatPlayer uses
+                // its static fusionParents(element) fallback.
+                ...(row.parent_dominant >= 0 ? { fusionParents: row.fusionParents } : {}),
               };
               ringIds[key] = ringId;
             }

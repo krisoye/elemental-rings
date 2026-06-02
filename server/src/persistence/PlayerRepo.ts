@@ -1,7 +1,7 @@
 import { v4 as uuidv4 } from 'uuid';
 import { db } from './db';
 import { ElementEnum } from '../../../shared/types';
-import { fusionOf } from '../game/Fusions';
+import { fusionOf, isFusion, componentsOf } from '../game/Fusions';
 import { tierForXp } from '../game/Tiers';
 import { getTalisman } from '../../../shared/talismans';
 import {
@@ -47,6 +47,12 @@ export interface RingRow {
   xp: number;
   escrowed: number;
   in_carry: number;
+  /**
+   * #263 — element index of the higher-XP parent at fusion time (the dominant
+   * component, rendered top/left on the two-tone fused card). -1 for base rings
+   * and pre-migration / AI-granted fusions (which render in static order).
+   */
+  parent_dominant: number;
 }
 
 /** A persisted loadout row — each slot holds a ring id (or null when empty). */
@@ -87,6 +93,13 @@ const insertPlayer = db.prepare(
 const insertRing = db.prepare(
   `INSERT INTO rings (id, owner_id, element, tier, max_uses, current_uses, xp)
    VALUES (@id, @owner_id, @element, @tier, @max_uses, @current_uses, @xp)`,
+);
+// #263 — fusion inserts also persist parent_dominant (the higher-XP parent's
+// element at fusion time). Base/granted rings keep the schema DEFAULT (-1) via
+// insertRing, signalling "render in static order".
+const insertFusionRing = db.prepare(
+  `INSERT INTO rings (id, owner_id, element, tier, max_uses, current_uses, xp, parent_dominant)
+   VALUES (@id, @owner_id, @element, @tier, @max_uses, @current_uses, @xp, @parent_dominant)`,
 );
 const insertLoadout = db.prepare(
   `INSERT INTO loadout (player_id, thumb, a1, a2, d1, d2)
@@ -220,9 +233,48 @@ export function getPlayerById(id: string): PlayerRow | undefined {
   return selectById.get(id) as PlayerRow | undefined;
 }
 
-/** All rings owned by a player. */
-export function getRingsByOwner(ownerId: string): RingRow[] {
-  return selectRingsByOwner.all(ownerId) as RingRow[];
+/**
+ * #263 — a serialized ring row plus its dominant-first component order. For a
+ * fusion, `fusionParents` is `[dominant, other]` (the higher-XP parent at fusion
+ * time leads — top/left on the two-tone card) when `parent_dominant >= 0`, else
+ * the static `componentsOf` order. For a base ring it is `[]`. Every fused-ring
+ * renderer treats index 0 as top/left (EPIC #256 Contracts).
+ */
+export interface SerializedRing extends RingRow {
+  fusionParents: number[];
+}
+
+/**
+ * #263 — the dominant-first component pair for a fusion ring, or the static
+ * `componentsOf` order when no parent context was recorded.
+ *
+ * Returns `[dominant, other]` when `ring.parent_dominant >= 0` (a human fusion
+ * whose higher-XP parent we persisted); `other` is the fusion's component that
+ * is not `dominant`. Falls back to the static `componentsOf(element)` order for a
+ * pre-migration fusion (`-1`), an AI/granted fused thumb (no parent XP), or a
+ * base ring (which yields its single element).
+ */
+export function orderedParents(ring: Pick<RingRow, 'element' | 'parent_dominant'>): number[] {
+  const components = componentsOf(ring.element);
+  if (ring.parent_dominant < 0 || components.length < 2) return components;
+  // Guard against a stored dominant that is not actually a component of this
+  // fusion (corrupt/legacy row): fall back to the static order.
+  if (!components.includes(ring.parent_dominant)) return components;
+  const other = components.find((c) => c !== ring.parent_dominant)!;
+  return [ring.parent_dominant, other];
+}
+
+/**
+ * All rings owned by a player, each annotated with its dominant-first
+ * `fusionParents` (#263) so the client renders the two-tone card without
+ * recomputing fusion logic. Base rings carry `fusionParents: []`.
+ */
+export function getRingsByOwner(ownerId: string): SerializedRing[] {
+  const rows = selectRingsByOwner.all(ownerId) as RingRow[];
+  return rows.map((r) => ({
+    ...r,
+    fusionParents: isFusion(r.element) ? orderedParents(r) : [],
+  }));
 }
 
 /** A player's loadout row, or undefined if none exists. */
@@ -751,8 +803,15 @@ export const fuseRings = db.transaction(
     const fusedTier = tierForXp(fusedXp);
     const fusedMaxUses = Math.max(1, Math.min(r1.max_uses, r2.max_uses) - 1);
 
+    // #263 — persist the dominant (higher-XP) parent element so the two-tone card
+    // renders the parent the player leveled first (top/left). A STRICT higher-XP
+    // parent sets the dominant; on equal XP (legal — same tier) we store -1 so the
+    // card falls through to the static FUSION_PARENTS order as the deterministic,
+    // argument-order-independent tiebreak (EPIC #256 Contracts / AC #3).
+    const parentDominant = r1.xp > r2.xp ? r1.element : r2.xp > r1.xp ? r2.element : -1;
+
     const newRingId = uuidv4();
-    insertRing.run({
+    insertFusionRing.run({
       id: newRingId,
       owner_id: playerId,
       element: fusionElement,
@@ -760,6 +819,7 @@ export const fuseRings = db.transaction(
       max_uses: fusedMaxUses,
       current_uses: fusedMaxUses,
       xp: fusedXp,
+      parent_dominant: parentDominant,
     });
 
     // Consume both parents: null them out of any loadout slot, then delete.

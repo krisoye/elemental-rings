@@ -1,6 +1,7 @@
 import Phaser from 'phaser';
-import { ELEMENT_COLORS, ELEMENT_NAMES } from '../Constants';
+import { ELEMENT_NAMES } from '../Constants';
 import type { RingData } from './InventoryGrid';
+import { FusedCardFill } from './fusedFill';
 
 const CARD_W = 70;
 const CARD_H = 90;
@@ -12,6 +13,8 @@ const CARD_H = 90;
  */
 export class StakePanel extends Phaser.GameObjects.Container {
   private readonly bg: Phaser.GameObjects.Rectangle;
+  // #263 — two-tone fused fill for the thumb card.
+  private readonly fusedFill: FusedCardFill;
   private readonly titleLbl: Phaser.GameObjects.Text;
   private readonly elemLbl: Phaser.GameObjects.Text;
   private readonly usesLbl: Phaser.GameObjects.Text;
@@ -42,6 +45,9 @@ export class StakePanel extends Phaser.GameObjects.Container {
     // the render position under camera scroll (#78 ①).
     this.bg.setScrollFactor(0);
     this.bg.setStrokeStyle(2, 0xaa8800);
+    this.add(this.bg);
+    // #263 — two-tone fill above bg (stroke/hit kept), below labels added next.
+    this.fusedFill = new FusedCardFill(scene, this, cx, cy, CARD_W, CARD_H, 0);
 
     this.titleLbl = scene.add
       .text(cx, cy - 36, 'THUMB', { fontSize: '9px', color: '#ffcc44' })
@@ -77,7 +83,7 @@ export class StakePanel extends Phaser.GameObjects.Container {
       else onAssign();
     });
 
-    this.add([this.bg, this.titleLbl, this.elemLbl, this.usesLbl, this.xpLbl, this.tierLbl, this.lockLbl, this.hintLbl]);
+    this.add([this.titleLbl, this.elemLbl, this.usesLbl, this.xpLbl, this.tierLbl, this.lockLbl, this.hintLbl]);
     scene.add.existing(this);
   }
 
@@ -90,7 +96,8 @@ export class StakePanel extends Phaser.GameObjects.Container {
     const ring = thumbRingId ? ringMap.get(thumbRingId) : null;
 
     if (ring) {
-      this.bg.setFillStyle(ELEMENT_COLORS[ring.element] ?? 0x333333);
+      this.bg.setFillStyle(0x333333);
+      this.fusedFill.paint(ring.element, ring.fusionParents);
       this.elemLbl.setText(ELEMENT_NAMES[ring.element] ?? '?').setColor('#000000');
       const used = ring.max_uses - ring.current_uses;
       this.usesLbl
@@ -105,6 +112,7 @@ export class StakePanel extends Phaser.GameObjects.Container {
     } else {
       this.escrowed = false;
       this.bg.setFillStyle(0x333333);
+      this.fusedFill.clear();
       this.elemLbl.setText('—').setColor('#888888');
       this.usesLbl.setText('');
       this.xpLbl.setText('');

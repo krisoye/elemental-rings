@@ -74,6 +74,7 @@ const SOLO_SPECS = [
   'boss-enrage.spec.ts', // #259
   'boss-gauge-pressure.spec.ts', // #260
   'boss-passives.spec.ts', // #261
+  'boss-cards.spec.ts', // #263 — two-tone fused card render + ordering (camp/REST)
 ];
 
 export default defineConfig({

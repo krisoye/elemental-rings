@@ -12,6 +12,13 @@ export interface SlotSpec {
   currentUses: number;
   maxUses: number;
   xp: number;
+  /**
+   * #263 — dominant-first fusion component order for THIS ring, when known
+   * (human rings whose higher-XP parent was persisted: `[dominant, other]`).
+   * Omitted for AI/granted fused thumbs (no parent XP) and base rings — seatPlayer
+   * then falls back to the static `fusionParents(element)` order.
+   */
+  fusionParents?: number[];
 }
 
 /** Element-per-slot template (thumb = staked ring). */

@@ -98,6 +98,12 @@ export const THUMB_PASSIVE_INFO: Record<number, { name: string; effect: string }
 // readable number of lines instead of one word per line clipped at maxLines.
 export const PASSIVE_STRIP_WIDTH = 88;
 
+// #263 — orientation of the two-tone fused ring card. 'vertical' splits the card
+// into a top half (component 0) and a bottom half (component 1); 'horizontal'
+// splits left (0) / right (1). One global constant so every fused card flips
+// together (RingSlot, InventoryGrid, LoadoutPanel, StakePanel, OpponentDuelist).
+export const FUSED_CARD_SPLIT: 'horizontal' | 'vertical' = 'vertical';
+
 // Triangle element indices for the 3-gauge HUD (FIRE/WATER/WOOD).
 export const GAUGE_ELEMENTS = [0, 1, 4];
 export const GAUGE_KEYS = ['fireGauge', 'waterGauge', 'woodGauge'];

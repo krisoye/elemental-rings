@@ -306,6 +306,7 @@ export class CampScene extends Phaser.Scene {
       window.__campLeaveAtSanctum = undefined;
       window.__campOpenFusion = undefined;
       window.__campFuse = undefined;
+      window.__campFusedFills = undefined;
       window.__campOpenTeleport = undefined;
       window.__campTeleport = undefined;
       window.__campHitTestRing = undefined;
@@ -1935,6 +1936,14 @@ export class CampScene extends Phaser.Scene {
     this.loadoutGrid.populate(loadoutPool);
     this.loadoutPanel.updateFromLoadout(this.loadout, this.ringMap);
     this.stakePanel.updateFromLoadout(this.loadout.thumb ?? null, this.ringMap);
+
+    // #263 — publish the rendered two-tone fill order per ring id (across both
+    // grids) so an E2E test can assert which component color leads on each card
+    // ([dominant, other] for a fusion, [element] for a base ring).
+    window.__campFusedFills = {
+      ...this.sanctumGrid.allFusedFillOrders(),
+      ...this.loadoutGrid.allFusedFillOrders(),
+    };
 
     // #78 ④ — derive the Thumb passive reminder. No staked Thumb ring → null; a
     // base element (0–4) → its named passive; a fusion (5–14, no entry) → an
