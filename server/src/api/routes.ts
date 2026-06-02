@@ -28,6 +28,10 @@ import {
   setPlayerDifficulty,
   clampSpiritCurrent,
   getBattleHandAvgXp,
+  getHeartRing,
+  setHeartRing,
+  getTotalRingXp,
+  type HeartReleaseTarget,
   lockStake,
   unlockStake,
   fuseRings,
@@ -178,32 +182,45 @@ apiRouter.post('/auth/login', async (req: Request, res: Response): Promise<void>
 });
 
 /**
+ * Build the canonical `/api/me` player block for a player. Single-sourced so the
+ * GET /api/me handler and the PUT /api/heart-slot response stay byte-for-byte
+ * identical. Reads the player row fresh so it reflects any in-request mutation
+ * (e.g. a heart-slot swap that changed spirit_max / heart_ring_id).
+ */
+function buildMePlayerBlock(playerId: string): Record<string, unknown> | null {
+  const player = getPlayerById(playerId);
+  if (!player) return null;
+  // One query, both values — aggregate_xp is the raw Reliquary ring XP sum;
+  // spirit_max is derived from it. Both served live so the HUD always reflects
+  // current state. #171 — carry_cap is XP-derived; override the DB column. #182 —
+  // reliquary fields. EPIC #302 — heart_ring, total_xp, battle_hand_avg_xp.
+  const { aggregateXp, spiritMax } = getSpiritStats(playerId);
+  return {
+    ...player,
+    // EPIC #279 — surface the difficulty tier for the client's Settings display.
+    difficulty: player.difficulty,
+    spirit_max: spiritMax,
+    aggregate_xp: aggregateXp,
+    carry_cap: getCarryCap(playerId),
+    reliquaryCap: getReliquaryCap(playerId),
+    reliquaryShards: getReliquaryShards(playerId),
+    reliquaryCount: getReliquaryCount(playerId),
+    spareCapacity: getSpareSlots(),
+    // EPIC #302 — heart slot.
+    heart_ring: getHeartRing(playerId),
+    total_xp: getTotalRingXp(playerId),
+    battle_hand_avg_xp: getBattleHandAvgXp(playerId),
+  };
+}
+
+/**
  * GET /api/me — return the authenticated player, their rings, and loadout.
  * Requires a valid Bearer token (enforced by requireAuth → 401 otherwise).
  */
 apiRouter.get('/api/me', requireAuth, requirePlayer, (req: Request, res: Response): void => {
   const playerId = req.playerId as string;
-  const player = req.player!;
-  // One query, both values — aggregate_xp is the raw ring XP sum; spirit_max is
-  // derived from it. Both served live so the HUD always reflects current state.
-  // #171 — carry_cap is now XP-derived (5 + ceil(log_2(aggregate_xp))); override the
-  // DB column so the client always receives the enforced cap, not the stale default.
-  // #182 — reliquary fields: cap (from DB column), shards held, and current count.
-  const { aggregateXp, spiritMax } = getSpiritStats(playerId);
   res.status(200).json({
-    player: {
-      ...player,
-      // EPIC #279 — surface the difficulty tier for the client's Settings display.
-      // (Already present via ...player, but stated explicitly per the contract.)
-      difficulty: player.difficulty,
-      spirit_max: spiritMax,
-      aggregate_xp: aggregateXp,
-      carry_cap: getCarryCap(playerId),
-      reliquaryCap: getReliquaryCap(playerId),
-      reliquaryShards: getReliquaryShards(playerId),
-      reliquaryCount: getReliquaryCount(playerId),
-      spareCapacity: getSpareSlots(),
-    },
+    player: buildMePlayerBlock(playerId),
     rings: getRingsByOwner(playerId),
     loadout: getLoadout(playerId) ?? null,
   });
@@ -278,6 +295,56 @@ apiRouter.put('/api/difficulty', requireAuth, (req: Request, res: Response): voi
   const spiritMax = refreshSpiritMax(playerId);
   clampSpiritCurrent(playerId, spiritMax);
   res.status(200).json({ difficulty: tier, spirit_max: spiritMax });
+});
+
+/** EPIC #302 — the valid `releaseTo` targets for PUT /api/heart-slot. */
+const HEART_RELEASE_TARGETS: ReadonlyArray<HeartReleaseTarget> = [
+  'reliquary',
+  'spare',
+  'thumb',
+  'a1',
+  'a2',
+  'd1',
+  'd2',
+];
+
+function isHeartReleaseTarget(v: unknown): v is HeartReleaseTarget {
+  return typeof v === 'string' && (HEART_RELEASE_TARGETS as ReadonlyArray<string>).includes(v);
+}
+
+/**
+ * PUT /api/heart-slot — equip a ring into the dedicated Heart slot, or swap the
+ * heart ring with a battle-hand slot (EPIC #302). Body:
+ *   { ringId?: string, releaseTo?: 'reliquary'|'spare'|'thumb'|'a1'|'a2'|'d1'|'d2' }
+ *
+ * `releaseTo` defaults to 'reliquary'. For a battle-slot `releaseTo` the swap is
+ * slot-for-slot and `ringId` is ignored (the ring in that slot becomes the new
+ * heart ring). setHeartRing recomputes spirit_max and clamps the gauge. Returns
+ * the full /api/me player block plus the updated ring list. Requires auth.
+ */
+apiRouter.put('/api/heart-slot', requireAuth, requirePlayer, (req: Request, res: Response): void => {
+  const playerId = req.playerId as string;
+  const { ringId, releaseTo } = req.body ?? {};
+  if (ringId !== undefined && (typeof ringId !== 'string' || !ringId)) {
+    fail(res, 400, 'ringId must be a non-empty string when provided');
+    return;
+  }
+  if (releaseTo !== undefined && !isHeartReleaseTarget(releaseTo)) {
+    fail(res, 400, 'invalid releaseTo');
+    return;
+  }
+  const target: HeartReleaseTarget = releaseTo ?? 'reliquary';
+  try {
+    setHeartRing(playerId, (ringId as string | undefined) ?? null, target);
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : 'Unknown error';
+    fail(res, 400, msg);
+    return;
+  }
+  res.status(200).json({
+    player: buildMePlayerBlock(playerId),
+    rings: getRingsByOwner(playerId),
+  });
 });
 
 /**

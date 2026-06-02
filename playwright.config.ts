@@ -51,6 +51,7 @@ const SOLO_SPECS = [
   'npc-xp-scaling.spec.ts', // #196
   'overworld-battlehand.spec.ts',
   'overworld-transition.spec.ts',
+  'heart-slot.spec.ts',      // EPIC #302 (#306) — Heart-slot reliquary modal restructure
   'reliquary-cap.spec.ts',   // #182
   'reliquary-modal.spec.ts',
   'ring-storage-ux.spec.ts',

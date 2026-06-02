@@ -8,7 +8,10 @@ CREATE TABLE IF NOT EXISTS players (
   spirit_max     INTEGER NOT NULL DEFAULT 50,
   spirit_current INTEGER NOT NULL DEFAULT 50,
   food_units     INTEGER NOT NULL DEFAULT 100,
-  difficulty     TEXT NOT NULL DEFAULT 'seeker'
+  difficulty     TEXT NOT NULL DEFAULT 'seeker',
+  -- EPIC #302 — the ring equipped in the Heart slot, or NULL when empty. The
+  -- referenced ring carries heart_slot = 1 and is excluded from spirit/carry sums.
+  heart_ring_id  TEXT
 );
 CREATE TABLE IF NOT EXISTS rings (
   id           TEXT PRIMARY KEY,
@@ -23,7 +26,10 @@ CREATE TABLE IF NOT EXISTS rings (
   -- #263 — element index of the higher-XP parent at fusion time (the "dominant"
   -- component, rendered top/left on the two-tone fused card). -1 = base ring, or
   -- a fusion created without parent context (AI/granted thumbs) → static order.
-  parent_dominant INTEGER NOT NULL DEFAULT -1
+  parent_dominant INTEGER NOT NULL DEFAULT -1,
+  -- EPIC #302 — 1 when this ring is equipped in the player's Heart slot. Heart
+  -- rings are excluded from spirit_max, carry, and Reliquary sums (in_carry = 0).
+  heart_slot INTEGER NOT NULL DEFAULT 0
 );
 CREATE TABLE IF NOT EXISTS loadout (
   player_id TEXT PRIMARY KEY REFERENCES players(id),

@@ -209,7 +209,7 @@ declare global {
     ) => void;
     __reliquaryMove?: (
       ringId: string,
-      target: 'reliquary' | 'spare' | 'thumb' | 'a1' | 'a2' | 'd1' | 'd2',
+      target: 'reliquary' | 'spare' | 'thumb' | 'a1' | 'a2' | 'd1' | 'd2' | 'heart',
     ) => Promise<void>;
     __reliquaryLocked?: boolean;
     // #182 — true when the Reliquary is at its cap (reliquaryCount >= reliquaryCap).
@@ -289,6 +289,14 @@ declare global {
       food_units: number;
       // Aggregate XP across the player's Reliquary rings (server-computed).
       aggregate_xp: number;
+      // EPIC #302 — the ring equipped in the dedicated Heart slot (in_carry = 0,
+      // heart_slot = 1), or null when the slot is empty. From /api/me.
+      heart_ring?: any | null;
+      // EPIC #302 — SUM(xp) across ALL owned rings (no in_carry / heart_slot
+      // filter); the spirit pool driver shown in the header.
+      total_xp?: number;
+      // EPIC #302 — weighted average XP of the five battle-hand rings.
+      battle_hand_avg_xp?: number;
       // EPIC #279 — player's difficulty tier (from /api/me). Drives the spirit_max
       // multiplier server-side; shown as a bracketed label in the stats header.
       difficulty?: DifficultyTier;

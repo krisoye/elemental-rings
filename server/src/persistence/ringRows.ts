@@ -61,6 +61,8 @@ const addRingUsesStmt = db.prepare(
 const setRingEscrowStmt = db.prepare(`UPDATE rings SET escrowed = ? WHERE id = ?`);
 // in_carry flag set.
 const setRingCarryStmt = db.prepare(`UPDATE rings SET in_carry = ? WHERE id = ?`);
+// EPIC #302 — heart_slot flag set.
+const setRingHeartSlotStmt = db.prepare(`UPDATE rings SET heart_slot = ? WHERE id = ?`);
 // Owned delete (the loser/forfeit/discard/consume/sell path). Returns the
 // better-sqlite3 RunResult so callers can read `.changes`.
 const deleteRingOwnedStmt = db.prepare(`DELETE FROM rings WHERE id = ? AND owner_id = ?`);
@@ -113,6 +115,11 @@ export function setRingEscrow(ringId: string, escrowed: 0 | 1): void {
 /** Set (or clear) a ring's in_carry flag. */
 export function setRingCarry(ringId: string, inCarry: 0 | 1): void {
   setRingCarryStmt.run(inCarry, ringId);
+}
+
+/** EPIC #302 — set (or clear) a ring's heart_slot flag. */
+export function setRingHeartSlot(ringId: string, heartSlot: 0 | 1): void {
+  setRingHeartSlotStmt.run(heartSlot, ringId);
 }
 
 /**
