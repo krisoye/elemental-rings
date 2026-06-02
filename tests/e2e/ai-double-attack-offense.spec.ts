@@ -29,12 +29,16 @@ async function openHarness(page: Page): Promise<void> {
 }
 
 async function joinBoss(page: Page, npcId: string, personality: string, extra: object = {}): Promise<void> {
+  // Chain in a single evaluate so onRoomReady() registers its listeners atomically
+  // after connectBoss() resolves — a separate evaluate() call would leave a gap
+  // during which the AI's first action could fire before the listeners are wired.
   await page.evaluate(
     ([id, p, ex]) =>
-      (window as any).connectBoss({ vsAI: true, personality: p, aiSeed: 12345, npcId: id, ...(ex as object) }),
+      (window as any)
+        .connectBoss({ vsAI: true, personality: p, aiSeed: 12345, npcId: id, ...(ex as object) })
+        .then(() => (window as any).onRoomReady()),
     [npcId, personality, extra] as const,
   );
-  await page.evaluate(() => (window as any).onRoomReady());
 }
 
 /** Poll the page for a predicate over the live room, or fail after `timeout`. */
@@ -110,9 +114,10 @@ test('scenario 3: a non-boss (base-thumb) vsAI duel never issues a double attack
   await openHarness(page);
   // No npcId → base-thumb AI → canDoubleAttack always false.
   await page.evaluate(() =>
-    (window as any).connectBoss({ vsAI: true, personality: 'AGGRESSIVE', aiSeed: 7 }),
+    (window as any)
+      .connectBoss({ vsAI: true, personality: 'AGGRESSIVE', aiSeed: 7 })
+      .then(() => (window as any).onRoomReady()),
   );
-  await page.evaluate(() => (window as any).onRoomReady());
 
   const ai = await page.evaluate(() => (window as any).aiState());
   expect(ai.thumb.isFusion).toBe(false);
