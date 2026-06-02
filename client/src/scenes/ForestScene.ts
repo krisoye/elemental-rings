@@ -40,17 +40,19 @@ export const FOREST_GENERATED_TILESETS: ReadonlyArray<readonly [string, string]>
 ];
 
 // Tilesets for hand-authored Forest screens (forest_deepwood, forest_mossy_fen,
-// forest_south_path, …). Extends the generated base with every extra tileset used
-// across those maps; buildTilesets() filters to only what each map declares.
+// forest_south_path, forest_boss_clearing, …). Extends the generated base with
+// every extra tileset used across those maps; buildTilesets() filters to only
+// what each map declares.
 // The three legacy autotile tilesets are included so screens that were generated
-// before PR #250 (boss_clearing, crossroads, briar_pass, glade, hollow, hidden_alcove,
-// ridge) still resolve their GIDs correctly. buildTilesets() only registers tilesets
+// before PR #250 (crossroads, briar_pass, glade, hollow, hidden_alcove, ridge)
+// still resolve their GIDs correctly. buildTilesets() only registers tilesets
 // the map's JSON actually declares, so these are no-ops for new-format maps.
 const FOREST_HANDAUTHORED_TILESETS: ReadonlyArray<readonly [string, string]> = [
   ...FOREST_GENERATED_TILESETS,
   ['autotile_grass_16', 'assets/terrain/autotile_grass_16.png'],
   ['autotile_dirt_16', 'assets/terrain/autotile_dirt_16.png'],
   ['autotile_cliff_16', 'assets/terrain/autotile_cliff_16.png'],
+  ['terrain_mossy_swamp_16', 'assets/terrain/terrain_mossy_swamp_16.png'],
   ['terrain_forest_modern', 'assets/terrain/terrain_forest_modern.png'],
   ['terrain_forest_deepwoods', 'assets/terrain/terrain_forest_deepwoods.png'],
   ['tileset_village_main_b', 'assets/structures/tileset_village_main_b.png'],
@@ -169,7 +171,7 @@ export class ForestScene extends BaseBiomeScene {
       for (const [key, path] of FOREST_HUB_TILESETS) {
         if (!this.textures.exists(key)) this.load.image(key, path);
       }
-    } else if (['forest_deepwood', 'forest_mossy_fen', 'forest_south_path', 'forest_snow_gate', 'forest_north_road', 'forest_east_path', 'forest_crossroads', 'forest_ridge'].includes(this.screenId)) {
+    } else if (['forest_deepwood', 'forest_mossy_fen', 'forest_south_path', 'forest_snow_gate', 'forest_north_road', 'forest_east_path', 'forest_crossroads', 'forest_ridge', 'forest_boss_clearing'].includes(this.screenId)) {
       // Hand-authored maps; load the full extra tileset pool — buildTilesets() filters
       // to only what each map's JSON actually declares.
       for (const [key, path] of FOREST_HANDAUTHORED_TILESETS) {
