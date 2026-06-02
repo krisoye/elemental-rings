@@ -135,6 +135,19 @@ export const NPC_SPAWNS: NpcSpawnDef[] = [
   // characterisation of the Bloom Guardian. No foodDrop — it is not an exit gate.
   { id: 'forest_bloom_shrine_guardian', biome: 'forest', screen: 'forest_bloom_hollow', personality: 'DEFENSIVE', type: 'duelist', element: WOOD, spriteFrame: D[1], tx: 20, ty: 15, respawnDays: 0, foodDrop: 0 },
 
+  // ── Forest: Frost Sentinel mini-boss (#269, GDD §10.15) ─────────────────────
+  // forest_snow_gate is the Forest's northern dead-end clearing. PR #255 marks it
+  // on the World Map with a gate-tier boss icon, so a real mini-boss must live
+  // there. The Sentinel is a permanent (respawnDays: 0) mini-boss fought for XP and
+  // a one-time food cache — it is NOT a biome-exit gate (the north edge is a dead
+  // end, so no BOSS_WARDENS entry blocks it). AILoadout supports only BASE-element
+  // thumbs and AGGRESSIVE has no WATER template, so the frost theme maps to WIND
+  // (AGGRESSIVE supports WIND): thematically the cold wind of the northern fringe.
+  // A future Snow Fields biome design pass may introduce an Ice element; until then
+  // WIND is the correct mechanical thumb. spriteFrame 3 = WIND monster (matching
+  // the element, per the atlas convention above).
+  { id: 'forest_frost_sentinel', biome: 'forest', screen: 'forest_snow_gate', personality: 'AGGRESSIVE', type: 'monster', element: WIND, spriteFrame: 3, tx: 16, ty: 8, respawnDays: 0, foodDrop: MINI_BOSS_FOOD_DROP },
+
   // ── Swamp ─────────────────────────────────────────────────────────────────────
   { id: 'swamp_npc_1', biome: 'swamp', screen: 'swamp_entry', personality: 'AGGRESSIVE',    type: 'monster', element: WIND,  spriteFrame: 3, tx: 5, ty: 5, respawnDays: 1 },
   { id: 'swamp_npc_2', biome: 'swamp', screen: 'swamp_entry', personality: 'STATUS_HUNTER', type: 'monster', element: WATER, spriteFrame: 1, tx: 10, ty: 7, respawnDays: 1 },

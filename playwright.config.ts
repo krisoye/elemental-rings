@@ -36,6 +36,7 @@ const SOLO_SPECS = [
   'compass.spec.ts',
   'forage.spec.ts',
   'forage-client.spec.ts',
+  'frost-sentinel.spec.ts', // #269
   'fusion.spec.ts',
   'merchant.spec.ts',
   'merchant-client.spec.ts',
