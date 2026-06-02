@@ -21,6 +21,8 @@ interface NpcEntry {
   spriteFrame: number;
   x: number;
   y: number;
+  aiSeed: number;
+  stakeXp: number;
 }
 
 /** Mint a fresh-player auth token straight from the test route. */

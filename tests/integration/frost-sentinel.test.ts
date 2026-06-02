@@ -42,7 +42,8 @@ function makePlayer(db: import('better-sqlite3').Database): string {
  */
 function rosterForScreen(playerId: string, screen: string): NpcSpawnDef[] {
   const player = repo.getPlayerById(playerId);
-  const gameDay = player?.game_day ?? 0;
+  if (!player) throw new Error(`rosterForScreen: player ${playerId} not found`);
+  const gameDay = player.game_day;
   const defeated = repo.getDefeatedNpcs(playerId);
   return NPC_SPAWNS.filter((npc) => npc.screen === screen).filter((npc) => {
     const defeatedDay = defeated.get(npc.id);
