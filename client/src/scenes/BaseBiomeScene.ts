@@ -421,12 +421,11 @@ export abstract class BaseBiomeScene extends Phaser.Scene {
     // Duelists draw from the shared RPG-Maker charset (loaded via Player.preload
     // above); the legacy `sprite_npc_overworld.png` strip (24×32 head-tops) was
     // unusable and is no longer loaded or referenced.
-    // Per-element monster overworld sprites (#158) — marker matches the battler.
-    // The PNGs are 72×96 spritesheets (3×3 = 9 frames at 24×32); load them as
-    // spritesheets so we can render a single frame, not the whole grid (#192).
+    // Per-element monster overworld sprites (#158) — each sheet is an RPG Maker-style
+    // walk cycle with per-monster frame dimensions stored in MONSTER_OW_REGISTRY.
     for (const entry of Object.values(MONSTER_OW_REGISTRY)) {
       if (!this.textures.exists(entry.key)) {
-        this.load.spritesheet(entry.key, entry.path, { frameWidth: 24, frameHeight: 32 });
+        this.load.spritesheet(entry.key, entry.path, { frameWidth: entry.frameWidth, frameHeight: entry.frameHeight });
       }
     }
     // #195 — forage-node plants are tilemap tiles (behind/in-front layers via the
