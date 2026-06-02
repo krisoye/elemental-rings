@@ -85,6 +85,32 @@ export interface BattleRoomOptions {
 export interface SelectAttackPayload {
   slot: AttackSlot;
 }
+
+// EPIC #264 / #265 — fusion-thumb double attack. Sent once, on chord completion,
+// when the attacker holds a fusion thumb whose two component elements occupy A1
+// and A2 (server re-validates via canDoubleAttack and silently drops if
+// ineligible). `first` fires immediately; `second` fires `gapMs` later (the held
+// duration). The server clamps `gapMs` to [MIN_COMBO_GAP_MS, MAX_COMBO_GAP_MS]
+// regardless of the client value.
+export interface SelectDoubleAttackPayload {
+  first: AttackSlot;
+  second: AttackSlot;
+  gapMs: number;
+}
+
+// EPIC #264 / #265 — broadcast by the server the moment a double attack commits,
+// so the client can schedule BOTH orb telegraphs/animations up front. Per-orb
+// OUTCOMES still arrive via the existing `ExchangeResultPayload` (one per resolved
+// orb). `firstElements`/`secondElements` are the component elements of each fired
+// ring (always the 2 fusion components, since A1/A2 match the thumb), so the
+// client can render all component colours. `gapMs` is the server-clamped gap.
+export interface DoubleAttackStartPayload {
+  first: AttackSlot;
+  second: AttackSlot;
+  firstElements: number[];
+  secondElements: number[];
+  gapMs: number;
+}
 // GDD §6.3 — recharge one of the attacker's four COMBAT rings (a1/a2/d1/d2;
 // the Thumb is never rechargeable in-duel), spending spirit (1 per use restored)
 // up to the ring's deficit. Attack rings recharge via double-tap 1/2 (Z/C);

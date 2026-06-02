@@ -15,7 +15,10 @@ import {
   AttackSlotView,
   DefenseSlotView,
 } from './AIPolicy';
-import { BLOCK_WINDOW_MS } from '../constants';
+import { BLOCK_WINDOW_MS, MAX_COMBO_GAP_MS } from '../constants';
+
+/** EPIC #265 — poll interval (ms) for detecting orb 2's launch as AI defender. */
+const ORB2_POLL_MS = 50;
 
 /**
  * Structural interface for the bits of BattleRoom the AI drives. Declared here
@@ -24,6 +27,11 @@ import { BLOCK_WINDOW_MS } from '../constants';
 export interface AIRoomHandle {
   readonly state: BattleState;
   readonly currentImpactTime: number;
+  // EPIC #265 — fusion-thumb double attack. comboInFlight is true while a two-orb
+  // combo is airborne; currentImpact2Time is orb 2's impact (impact1 + gapMs). The
+  // AI uses these to schedule a SECOND defense press when defending a double attack.
+  readonly comboInFlight: boolean;
+  readonly currentImpact2Time: number;
   handleSelectAttack(id: string, payload: SelectAttackPayload): void;
   handleSubmitDefense(id: string, payload: SubmitDefensePayload): void;
   handleRecharge(id: string, payload: RechargePayload): void;
@@ -41,6 +49,12 @@ export class AIController {
   private readonly profile: AIProfile;
   private readonly rng: Rng;
   private pending: ReturnType<typeof setTimeout> | null = null;
+  /**
+   * EPIC #265 — a SECOND pending timer used only when defending a fusion-thumb
+   * double attack: orb 1's press is scheduled on `pending`, orb 2's on `pending2`.
+   * Cleared alongside `pending` on every phase entry and on dispose.
+   */
+  private pending2: ReturnType<typeof setTimeout> | null = null;
   /** STATUS_HUNTER commits to one element across turns; persisted here. */
   private committedElement = -1;
 
@@ -78,6 +92,10 @@ export class AIController {
     if (this.pending) {
       clearTimeout(this.pending);
       this.pending = null;
+    }
+    if (this.pending2) {
+      clearTimeout(this.pending2);
+      this.pending2 = null;
     }
   }
 
@@ -179,18 +197,68 @@ export class AIController {
   }
 
   private scheduleDefense(): void {
+    // Orb 1 (or the only orb of a single attack): decide + schedule on `pending`.
+    this.scheduleOnePress(this.room.currentImpactTime, (t) => {
+      this.pending = t;
+    });
+
+    // EPIC #265 — when defending a fusion-thumb double attack, schedule a SECOND
+    // independent defense press for orb 2 against its own impact (impact2 =
+    // impact1 + gapMs). Orb 2 launches gapMs AFTER orb 1, so its impact may not be
+    // known yet at this DEFEND_WINDOW entry; defer until comboInFlight reports orb
+    // 2 airborne (currentImpact2Time set), polling a few times across the gap.
+    if (this.room.comboInFlight) {
+      this.scheduleOrb2Defense(0);
+    }
+  }
+
+  /**
+   * Schedule one defense press against `impactTime`: re-read the live board,
+   * decide via the policy, and (unless it's a deliberate no-block) fire a
+   * `submitDefense` at the jittered intended offset. The chosen timer handle is
+   * handed to `assign` so the caller stores it in the right slot (pending /
+   * pending2). A no-block leaves the slot empty.
+   */
+  private scheduleOnePress(
+    impactTime: number,
+    assign: (t: ReturnType<typeof setTimeout>) => void,
+  ): void {
     const view = this.readBoard();
     const decision = decideDefense(view, this.profile, this.rng);
     if (decision.slot === null || decision.pressOffsetMs === null) return; // deliberate no-block
 
     const jittered = decision.pressOffsetMs + this.timingJitter(view.hearts);
     const clamped = Math.min(jittered, BLOCK_WINDOW_MS - 1);
-    const fireInMs = this.room.currentImpactTime - Date.now() + clamped;
+    const fireInMs = impactTime - Date.now() + clamped;
     const slot = decision.slot;
-    this.pending = setTimeout(() => {
-      this.pending = null;
+    const handle = setTimeout(() => {
       this.room.handleSubmitDefense(this.aiId, { slot, pressTime: Date.now() });
     }, Math.max(0, fireInMs));
+    assign(handle);
+  }
+
+  /**
+   * EPIC #265 — defer orb 2's defense scheduling until its impact is known. Orb 2
+   * launches gapMs after orb 1, so currentImpact2Time is 0 at the combo's start;
+   * poll across the clamped gap window until it is set, then schedule the press on
+   * `pending2`. Bails if the combo ended (no longer in flight) before orb 2 flew.
+   */
+  private scheduleOrb2Defense(attempt: number): void {
+    // Cap the poll attempts: orb 2 launches gapMs (≤ MAX_COMBO_GAP_MS = 600) after
+    // orb 1, so a 50ms poll covering MAX_COMBO_GAP_MS + a margin always observes it.
+    const maxAttempts = Math.ceil((MAX_COMBO_GAP_MS + 200) / ORB2_POLL_MS);
+    if (attempt > maxAttempts) return;
+    if (!this.room.comboInFlight) return; // orb 1 parried/KO'd → orb 2 cancelled
+
+    const impact2 = this.room.currentImpact2Time;
+    if (impact2 <= 0) {
+      // Orb 2 not airborne yet — poll again shortly.
+      this.pending2 = setTimeout(() => this.scheduleOrb2Defense(attempt + 1), ORB2_POLL_MS);
+      return;
+    }
+    this.scheduleOnePress(impact2, (t) => {
+      this.pending2 = t;
+    });
   }
 
   /** Gaussian timing error around the intended offset, in ms. */
