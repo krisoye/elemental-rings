@@ -3,6 +3,7 @@ import type { Player } from './Player';
 import type { InteractionZone } from './InteractionZone';
 import { DOUBLE_CLICK_MS, BLINK_MAX_RANGE } from '../../Constants';
 import { apiFetch, getToken } from '../../net/api';
+import { withinRadius } from '../../util/geometry';
 
 /**
  * Short-range blink (#87 Part A, GDD §12). Double-clicking an interaction zone
@@ -93,13 +94,12 @@ export class BlinkController {
    * player.
    */
   private async attemptBlink(zone: InteractionZone): Promise<boolean> {
-    const distance = Phaser.Math.Distance.Between(
-      this.player.x,
-      this.player.y,
-      zone.centerX,
-      zone.centerY,
-    );
-    if (distance > BLINK_MAX_RANGE) return false; // out of range — no POST, no move
+    const target = { x: zone.centerX, y: zone.centerY };
+    // Out of range — no POST, no move.
+    if (!withinRadius(this.player, target, BLINK_MAX_RANGE)) return false;
+    // The server (POST /api/spirit/blink) computes the spirit cost from the
+    // travelled distance, so still send the precise px distance to it.
+    const distance = Math.hypot(target.x - this.player.x, target.y - this.player.y);
 
     if (!getToken()) return false;
     let res: Response;

@@ -19,6 +19,8 @@ import { WanderingNpc } from '../objects/world/WanderingNpc';
 import { FusionPanel } from '../objects/FusionPanel';
 import type { RingData } from '../objects/InventoryGrid';
 import { apiFetch, fetchMe, getToken } from '../net/api';
+import { DualCameraScene } from './DualCameraScene';
+import { withinRadius, nearest } from '../util/geometry';
 import {
   COMPASS_RANGE,
   SANCTUM_Y_ABOVE,
@@ -120,7 +122,7 @@ type Dir = 'north' | 'south' | 'east' | 'west';
  *   - optionally override `biomeVisuals()` (fog/snow/tint) and `onEnterScreen()`
  *     (per-screen decoration placement) and `detectionRadius()`.
  */
-export abstract class BaseBiomeScene extends Phaser.Scene {
+export abstract class BaseBiomeScene extends DualCameraScene {
   // ── Subclass-supplied identity (set in init() before create()) ─────────────
   /** The current screen id; set by the subclass init() before create() runs. */
   protected screenId!: string;
@@ -212,21 +214,12 @@ export abstract class BaseBiomeScene extends Phaser.Scene {
   private merchantNpcs: MerchantNpc[] = [];
   /** #131 — shop modal (singleton per scene; opens on merchant E press). */
   private merchantModal: MerchantModal | null = null;
-  /**
-   * #137 — UI camera for the dual-camera split. Full-viewport, zoom 1, no follow,
-   * added AFTER cameras.main so it draws on top. cameras.main ignores `uiRoot`
-   * (+ modal containers) so the world can zoom (2× on forest_anchorage) while the
-   * HUD/overlays stay 1:1. Same pattern as #118 (CampScene).
-   */
-  private uiCam!: Phaser.Cameras.Scene2D.Camera;
-  /**
-   * #137 — container for all persistent HUD (resource HUD, compass). cameras.main
-   * ignores it once; uiCam renders it at 1:1. Modal-style overlays (BattleHand,
-   * MerchantModal, barrier/toast) stay at the scene root and are excluded from
-   * cameras.main per-container so single-level E2E flatMap traversal still reaches
-   * their children.
-   */
-  private uiRoot!: Phaser.GameObjects.Container;
+  // #137 — the dual-camera split (uiCam + uiRoot) is provided by DualCameraScene.
+  // cameras.main ignores `uiRoot` (the persistent HUD: resource HUD, compass) once
+  // so the world can zoom (2× on forest_anchorage) while the HUD stays 1:1. Modal
+  // overlays (BattleHand, MerchantModal, barrier/toast) stay at the scene root and
+  // are routed to uiCam per-container via routeToUi() so single-level E2E flatMap
+  // traversal still reaches their children. Same pattern as #118 (CampScene).
 
   // ── Subclass contract ───────────────────────────────────────────────────────
 
@@ -321,7 +314,7 @@ export abstract class BaseBiomeScene extends Phaser.Scene {
     const rings = await this.fetchRings();
     this.shrineFusion.open(rings, filterElement);
     const fc = this.shrineFusion.getContainer();
-    if (fc) this.cameras.main.ignore(fc);
+    if (fc) this.routeToUi(fc);
   }
 
   /** POST /api/fusion/combine for the shrine modal; reopens on success (#231). */
@@ -484,16 +477,15 @@ export abstract class BaseBiomeScene extends Phaser.Scene {
     this.cameras.main.startFollow(this.player, true, 0.1, 0.1);
 
     // ── Dual-camera split (#137) + world zoom (#150) ──────────────────────
-    // uiCam: full-viewport, zoom 1, no follow. cameras.main ignores uiRoot (the
-    // persistent HUD + compass) once; modal overlays (BattleHand, MerchantModal,
-    // toasts) are ignored per-container so they stay at the scene root for E2E
-    // single-level flatMap traversal. uiCam is added AFTER main so it draws on top.
-    // worldZoom() returns 2 for 16px screens (is16pxScreen() = true), else 1. The
-    // uiCam always stays at 1:1 so the HUD/overlays are unaffected by the zoom.
-    this.uiRoot = this.add.container(0, 0).setDepth(4000);
-    this.cameras.main.ignore(this.uiRoot);
+    // worldZoom() returns 2 for 16px screens (is16pxScreen() = true), else 1; the
+    // uiCam always stays at 1:1 so the HUD/overlays are unaffected by the zoom. The
+    // uiCam/uiRoot setup is hoisted into DualCameraScene.initDualCamera(): it
+    // builds uiRoot (the persistent HUD + compass) ignored by cameras.main once,
+    // and adds uiCam AFTER main so it draws on top. Modal overlays (BattleHand,
+    // MerchantModal, toasts) stay at the scene root and are routed per-container so
+    // single-level E2E flatMap traversal still reaches them.
     this.cameras.main.setZoom(this.worldZoom());
-    this.uiCam = this.cameras.add(0, 0, CANVAS_W, CANVAS_H);
+    this.initDualCamera();
     // uiCam ignores world objects; the synchronous ones are collected after
     // buildZones() below, and the async ones (waystones, NPCs) are routed as they
     // are created (loadWaystones / renderNpcs call ignoreWorldObjects).
@@ -588,7 +580,7 @@ export abstract class BaseBiomeScene extends Phaser.Scene {
     // #137 — the overlay's modal container is built lazily on open; route it to the
     // 1:1 UI camera (cameras.main.ignore) each time it renders so it never zooms.
     this.battleHand = new BattleHandOverlay(this, undefined, (container) =>
-      this.cameras.main.ignore(container),
+      this.routeToUi(container),
     );
     this.input.keyboard!.on('keydown-TAB', (e: KeyboardEvent) => {
       e?.preventDefault?.();
@@ -830,7 +822,7 @@ export abstract class BaseBiomeScene extends Phaser.Scene {
     this.overworldMap = new OverworldMapModal(this, () => {
       this.overworldMap = null;
     });
-    this.overworldMap.show(this.screenId, attuned, (c) => this.cameras.main.ignore(c));
+    this.overworldMap.show(this.screenId, attuned, (c) => this.routeToUi(c));
   }
 
   // ── Anchorage / interact dispatch ───────────────────────────────────────────
@@ -844,8 +836,7 @@ export abstract class BaseBiomeScene extends Phaser.Scene {
     const py = this.player.y;
     let inside: string | null = null;
     for (const [id, anchorage] of this.anchorageMarkers) {
-      const { x, y } = anchorage.center;
-      if (Phaser.Math.Distance.Between(px, py, x, y) <= ANCHORAGE_GROUND_RADIUS) {
+      if (withinRadius({ x: px, y: py }, anchorage.center, ANCHORAGE_GROUND_RADIUS)) {
         inside = id;
         break;
       }
@@ -904,8 +895,7 @@ export abstract class BaseBiomeScene extends Phaser.Scene {
     const py = this.player.y;
     for (const [id, anchorage] of this.anchorageMarkers) {
       if (this.anchorageAutoAttuned.has(id)) continue;
-      const { x, y } = anchorage.center;
-      if (Phaser.Math.Distance.Between(px, py, x, y) <= ANCHORAGE_GROUND_RADIUS) {
+      if (withinRadius({ x: px, y: py }, anchorage.center, ANCHORAGE_GROUND_RADIUS)) {
         this.anchorageAutoAttuned.add(id); // prevent repeated POSTs
         void this.onAttune(id);
       }
@@ -922,31 +912,31 @@ export abstract class BaseBiomeScene extends Phaser.Scene {
     const px = this.player.x;
     const py = this.player.y;
 
-    const unattuned = (this.waystonePayload?.waystones ?? []).filter((w) => !w.attuned);
+    // Candidate centers for each unattuned waystone that has a placed marker.
+    const candidates = (this.waystonePayload?.waystones ?? [])
+      .filter((w) => !w.attuned)
+      .map((info) => {
+        const center = this.anchorageMarkers.get(info.id)?.center;
+        return center ? { id: info.id, x: center.x, y: center.y } : null;
+      })
+      .filter((c): c is { id: string; x: number; y: number } => c !== null);
 
-    let targetId: string | null = null;
-    let bestDist = Infinity;
-    let bestX = 0;
-    let bestY = 0;
-    for (const info of unattuned) {
-      const center = this.anchorageMarkers.get(info.id)?.center;
-      if (!center) continue;
-      const d = Phaser.Math.Distance.Between(px, py, center.x, center.y);
-      if (d < bestDist) {
-        bestDist = d;
-        targetId = info.id;
-        bestX = center.x;
-        bestY = center.y;
-      }
+    // Unconditional nearest (radius Infinity), then range-gate by COMPASS_RANGE.
+    const target = nearest({ x: px, y: py }, candidates, Infinity);
+    if (!target) {
+      this.compass.hide();
+      window.__compass = { visible: false, targetId: null, angle: null, intensity: null };
+      return;
     }
-
-    if (targetId === null || bestDist > COMPASS_RANGE) {
+    const bestDist = Math.hypot(target.x - px, target.y - py);
+    if (bestDist > COMPASS_RANGE) {
       this.compass.hide();
       window.__compass = { visible: false, targetId: null, angle: null, intensity: null };
       return;
     }
 
-    const angle = Phaser.Math.Angle.Between(px, py, bestX, bestY);
+    const targetId = target.id;
+    const angle = Phaser.Math.Angle.Between(px, py, target.x, target.y);
     const intensity = 1 - bestDist / COMPASS_RANGE;
     this.compass.point(angle, intensity);
     window.__compass = { visible: true, targetId, angle, intensity };
@@ -1003,7 +993,7 @@ export abstract class BaseBiomeScene extends Phaser.Scene {
             () => { this.overlayOpen = false; },
             // #137 — route the shop container to the 1:1 UI camera (NOT uiRoot, so
             // E2E single-level flatMap traversal still reaches its children).
-            (container) => this.cameras.main.ignore(container),
+            (container) => this.routeToUi(container),
           );
         }
         const modal = this.merchantModal;
@@ -1075,7 +1065,7 @@ export abstract class BaseBiomeScene extends Phaser.Scene {
       .setName('biome-barrier');
     // #137 — render at 1:1 through uiCam, not the zoomed world camera. Kept at the
     // scene root (not uiRoot) so single-level E2E flatMap traversal still reaches it.
-    this.cameras.main.ignore(msg);
+    this.routeToUi(msg);
     this.tweens.add({
       targets: msg,
       alpha: { from: 1, to: 0 },
@@ -1112,7 +1102,7 @@ export abstract class BaseBiomeScene extends Phaser.Scene {
       .setDepth(1000)
       .setName('biome-toast');
     // #137 — render at 1:1 through uiCam (kept at scene root for E2E traversal).
-    this.cameras.main.ignore(msg);
+    this.routeToUi(msg);
     this.tweens.add({
       targets: msg,
       alpha: { from: 1, to: 0 },
@@ -1125,27 +1115,9 @@ export abstract class BaseBiomeScene extends Phaser.Scene {
     });
   }
 
-  /**
-   * #137 — tell the UI camera to ignore world objects so they render only through
-   * the world (main) camera (which zooms). uiCam keeps zoom 1; without this every
-   * world object would double-render (once per camera). Guards against a null
-   * uiCam (defensive — camera setup runs before any caller in create()).
-   */
-  private ignoreWorldObjects(objs: Phaser.GameObjects.GameObject[]): void {
-    if (!this.uiCam || objs.length === 0) return;
-    this.uiCam.ignore(objs);
-  }
-
-  /**
-   * #137 — inverse of `cameras.main.ignore(obj)`. Phaser 4.1's `ignore()` only sets
-   * `obj.cameraFilter |= camera.id` (a bit flag on the object; the camera keeps no
-   * collection), so the clean undo is to clear that bit. Called on transient UI
-   * (barrier/toast) just before destroy so no stale main-camera filter survives.
-   * Mirrors the #118 CampScene helper verbatim.
-   */
-  private unignoreMain(obj: Phaser.GameObjects.GameObject): void {
-    obj.cameraFilter &= ~this.cameras.main.id;
-  }
+  // #137 — ignoreWorldObjects() (uiCam ignores world objects so they render only
+  // through the zooming world camera) and unignoreMain() (clear a stale
+  // main-camera ignore bit before destroy) are provided by DualCameraScene.
 
   /** Read the `target` (destination scene key) custom property off a Tiled object. */
   private targetSceneOf(obj: Phaser.Types.Tilemaps.TiledObject): string | null {
@@ -1420,7 +1392,7 @@ export abstract class BaseBiomeScene extends Phaser.Scene {
         window.__campfireSummon = undefined;
       },
       (newAnchor) => void this.refreshSanctumPosition(newAnchor),
-      (container) => this.cameras.main.ignore(container),
+      (container) => this.routeToUi(container),
     );
     // Fetch live values and re-open with accurate numbers.
     void this.fetchAndReopenCampfireModal(anchorageId, anchorageName, spiritCost);
@@ -1461,7 +1433,7 @@ export abstract class BaseBiomeScene extends Phaser.Scene {
           window.__campfireSummon = undefined;
         },
         (newAnchor) => void this.refreshSanctumPosition(newAnchor),
-        (container) => this.cameras.main.ignore(container),
+        (container) => this.routeToUi(container),
       );
     } catch {
       // Leave the placeholder modal open.
@@ -1624,35 +1596,27 @@ export abstract class BaseBiomeScene extends Phaser.Scene {
     const px = this.player.x;
     const py = this.player.y;
     const radius = this.detectionRadius();
-    let nearest: NpcInfo | null = null;
-    let bestDist = Infinity;
-    for (const npc of this.overworldNpcs) {
-      const d = Phaser.Math.Distance.Between(px, py, npc.x, npc.y);
-      if (d <= radius && d < bestDist) {
-        bestDist = d;
-        nearest = npc;
-      }
-    }
+    const found = nearest({ x: px, y: py }, this.overworldNpcs, radius);
 
-    if (nearest) {
+    if (found) {
       this.detectedNpc = {
-        id: nearest.id,
-        personality: nearest.personality,
-        x: nearest.x,
-        y: nearest.y,
-        aiSeed: nearest.aiSeed,
-        spriteFrame: nearest.spriteFrame,
-        element: nearest.element,
-        stakeXp: nearest.stakeXp,
+        id: found.id,
+        personality: found.personality,
+        x: found.x,
+        y: found.y,
+        aiSeed: found.aiSeed,
+        spriteFrame: found.spriteFrame,
+        element: found.element,
+        stakeXp: found.stakeXp,
       };
-      const isBoss = !!nearest.bossTier;
-      const tierLabel = nearest.bossTier === 'major' ? 'Major Boss' : nearest.bossTier === 'gate' ? 'Gate Boss' : nearest.bossTier === 'sub' ? 'Boss' : '';
-      const label = nearest.displayName
-        ? `${nearest.displayName}${tierLabel ? `  ·  ${tierLabel}` : ''}`
-        : `${ELEMENT_NAMES[nearest.element] ?? '?'} ${nearest.type === 'monster' ? 'monster' : 'duelist'}`;
-      const xpPart = nearest.stakeXp !== undefined ? `  ${nearest.stakeXp.toLocaleString()} XP` : '';
+      const isBoss = !!found.bossTier;
+      const tierLabel = found.bossTier === 'major' ? 'Major Boss' : found.bossTier === 'gate' ? 'Gate Boss' : found.bossTier === 'sub' ? 'Boss' : '';
+      const label = found.displayName
+        ? `${found.displayName}${tierLabel ? `  ·  ${tierLabel}` : ''}`
+        : `${ELEMENT_NAMES[found.element] ?? '?'} ${found.type === 'monster' ? 'monster' : 'duelist'}`;
+      const xpPart = found.stakeXp !== undefined ? `  ${found.stakeXp.toLocaleString()} XP` : '';
       this.showNpcPrompt(`${label}${xpPart}  —  Approach [E]`, isBoss);
-      window.__detectedNpc = { id: nearest.id, personality: nearest.personality };
+      window.__detectedNpc = { id: found.id, personality: found.personality };
     } else {
       this.detectedNpc = null;
       this.hideNpcPrompt();
