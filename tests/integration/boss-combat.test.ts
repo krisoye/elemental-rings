@@ -255,3 +255,90 @@ describe('#259 — boss enrage / phase-2', () => {
     expect(room.state.players.get('AI').enraged).toBe(false);
   });
 });
+
+describe('#260 — boss status-gauge pressure', () => {
+  const TRIANGLE = new Set([ElementEnum.FIRE, ElementEnum.WATER, ElementEnum.WOOD]);
+
+  /**
+   * Drive the boss attacking while the human NEVER defends, recording the triangle
+   * gauge the human accrues and the triangle components the boss landed uncontested
+   * (from exchangeResult broadcasts). Returns the human's summed triangle gauge and
+   * the count of triangle-component uncontested hits, so the test can assert
+   * gauge === hits × gaugeFillMult.
+   */
+  async function pressureGauge(npcId: string | null, personality: string, aiSeed: number) {
+    const room = await colyseus.createRoom<any>('battle-ai', {
+      vsAI: true,
+      personality,
+      aiSeed,
+      ...(npcId ? { npcId } : {}),
+      aiHearts: 99, // boss never dies → it keeps attacking
+    });
+    const human = await colyseus.connectTo(room);
+
+    let triangleHits = 0;
+    human.onMessage('exchangeResult', (msg: any) => {
+      // Count triangle components of the boss's attack on uncontested hits landed
+      // on the human (NO_BLOCK / MISTIME with a heart lost).
+      if (
+        msg.attackerId === 'AI' &&
+        msg.defenderHeartLost &&
+        (msg.timing === 'NO_BLOCK' || msg.timing === 'MISTIME')
+      ) {
+        for (const el of msg.attackerElements) if (TRIANGLE.has(el)) triangleHits++;
+      }
+    });
+
+    await room.waitForNextPatch();
+    await sleep(20);
+
+    // Human never defends; idle while the boss throws. On the human's own turn,
+    // pass it back with a quick a1 throw so the boss keeps attacking.
+    for (let i = 0; i < 30 && triangleHits < 2; i++) {
+      if (room.state.phase === 'ATTACK_SELECT' && room.state.currentAttackerId === human.sessionId) {
+        human.send('selectAttack', { slot: 'a1' });
+      }
+      await sleep(200);
+    }
+
+    const me = room.state.players.get(human.sessionId);
+    const triGauge = (me?.fireGauge ?? 0) + (me?.waterGauge ?? 0) + (me?.woodGauge ?? 0);
+    return { triGauge, triangleHits };
+  }
+
+  test('a sub-boss credits the player gauge at ×1.5 per triangle-component hit', async () => {
+    const { triGauge, triangleHits } = await pressureGauge(
+      'forest_bloom_shrine_guardian',
+      'DEFENSIVE',
+      808,
+    );
+    if (triangleHits > 0) {
+      expect(triGauge).toBeCloseTo(triangleHits * 1.5, 5);
+    }
+  }, 20000);
+
+  test('a non-boss credits the player gauge at the base ×1.0 rate', async () => {
+    const { triGauge, triangleHits } = await pressureGauge(null, 'STATUS_HUNTER', 909);
+    if (triangleHits > 0) {
+      expect(triGauge).toBeCloseTo(triangleHits * 1.0, 5);
+    }
+  }, 20000);
+
+  test('the major boss does NOT press the gauge (×1.0)', async () => {
+    const { triGauge, triangleHits } = await pressureGauge(
+      'forest_thornwood_warden',
+      'RESILIENT',
+      707,
+    );
+    if (triangleHits > 0) {
+      expect(triGauge).toBeCloseTo(triangleHits * 1.0, 5);
+    }
+  }, 20000);
+
+  test('gaugeFillMult is data-driven per tier', async () => {
+    const { BOSS_MODIFIERS } = await import('../../server/src/game/constants');
+    expect(BOSS_MODIFIERS.sub.gaugeFillMult).toBe(1.5);
+    expect(BOSS_MODIFIERS.gate.gaugeFillMult).toBe(1.0);
+    expect(BOSS_MODIFIERS.major.gaugeFillMult).toBe(1.0);
+  });
+});

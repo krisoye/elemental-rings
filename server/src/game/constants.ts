@@ -126,6 +126,13 @@ export const RELIQUARY_SHARD_INCREMENT = 10;
  *   enrageThinkMult       — multiplies the (already modified) think-delay enraged.
  *   enrageAggressive      — when true the enraged boss attacks like AGGRESSIVE
  *                           (chases unparryable / counter-poking throws).
+ *
+ * Status-gauge pressure (#260). gaugeFillMult multiplies the gauge credited to the
+ * DEFENDER on an uncontested boss hit (per orb — a double attack applies it
+ * twice). Bosses with a triangle-bearing attack thus build the player's status
+ * gauge faster, putting a clock on the fight. 1.0 = no pressure.
+ *   gaugeFillMult — multiplier on the defender's per-orb gauge credit from a boss
+ *                   hit. Sub-bosses press hardest (×1.5); major/gate lighter.
  */
 export interface BossModifier {
   bonusHearts: number;
@@ -137,6 +144,7 @@ export interface BossModifier {
   enrageSigmaMult: number;
   enrageThinkMult: number;
   enrageAggressive: boolean;
+  gaugeFillMult: number;
 }
 
 export const BOSS_MODIFIERS: Record<BossTier, BossModifier> = {
@@ -153,6 +161,7 @@ export const BOSS_MODIFIERS: Record<BossTier, BossModifier> = {
     enrageSigmaMult: 0.6,
     enrageThinkMult: 0.6,
     enrageAggressive: true,
+    gaugeFillMult: 1.0,
   },
   // Gate boss (Bogwood Warden): a solid step above a roamer; standard pacing. No
   // enrage (threshold 0).
@@ -166,9 +175,11 @@ export const BOSS_MODIFIERS: Record<BossTier, BossModifier> = {
     enrageSigmaMult: 1.0,
     enrageThinkMult: 1.0,
     enrageAggressive: false,
+    gaugeFillMult: 1.0,
   },
   // Sub-boss (fusion-shrine guardians): same toughness bump as a gate boss; their
-  // distinct threat is status-gauge pressure (#260), not raw stats. No enrage.
+  // distinct threat is status-gauge pressure (#260) — ×1.5 gauge fill — not raw
+  // stats. No enrage.
   sub: {
     bonusHearts: 1,
     sigmaMult: 0.7,
@@ -179,6 +190,7 @@ export const BOSS_MODIFIERS: Record<BossTier, BossModifier> = {
     enrageSigmaMult: 1.0,
     enrageThinkMult: 1.0,
     enrageAggressive: false,
+    gaugeFillMult: 1.5,
   },
 };
 

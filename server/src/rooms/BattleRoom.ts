@@ -295,6 +295,15 @@ export class BattleRoom extends Room<{ state: BattleState }> {
   }
 
   /**
+   * #260 — the status-gauge fill multiplier for this room's boss (1.0 for a
+   * non-boss). Applied to the DEFENDER's uncontested-hit gauge credit when the
+   * boss AI is the attacker, per orb.
+   */
+  private bossGaugeFillMult(): number {
+    return this.boss ? BOSS_MODIFIERS[this.boss.tier].gaugeFillMult : 1;
+  }
+
+  /**
    * #258 — derive a boss-modified AIProfile from the base personality profile by
    * scaling its timing-σ / no-block / think-delay fields by the tier modifier.
    * Both the healthy and the low-heart variants are scaled so the boss stays
@@ -1058,11 +1067,18 @@ export class BattleRoom extends Room<{ state: BattleState }> {
     if (result.clearAllGauges) {
       this.clearAllGauges(defenderPlayer);
     } else {
-      //   hitGaugeElements — uncontested-hit components +1 each (case 1)
+      // #260 — boss status-gauge pressure. When the ATTACKER is the boss AI, an
+      // uncontested hit credits the DEFENDER's gauge at base × gaugeFillMult per
+      // triangle component (per orb — a double attack runs this twice, so each orb
+      // gets the multiplier independently). Player→player and player→non-boss gauge
+      // math is unchanged (mult = 1). Defense-side block deltas (case 2) are the
+      // defender's own ring cost and are NOT boss-scaled.
+      const hitMult = attackerId === AI_ID ? this.bossGaugeFillMult() : 1;
+      //   hitGaugeElements — uncontested-hit components +mult each (case 1)
       //   blockGaugeDeltas — each tracked parent of the defending ring += its
       //     tier-reduced delta (case 2; full rate per tracked parent, §7.1)
       //   blockedGaugeElement — strong-block beaten gauge(s) −1 (case 3)
-      for (const el of result.hitGaugeElements) this.adjustGauge(defenderPlayer, el, +1);
+      for (const el of result.hitGaugeElements) this.adjustGauge(defenderPlayer, el, hitMult);
       for (const { element, delta } of result.blockGaugeDeltas) {
         this.adjustGauge(defenderPlayer, element, delta);
       }
