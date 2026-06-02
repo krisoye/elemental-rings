@@ -30,7 +30,6 @@ const PVP_SPECS = [
   'double-attack.spec.ts', // #265 — fusion-thumb double-attack engine
   'double-attack-input.spec.ts', // #266 — hold-cross-tap gesture + forfeit relocation
   'double-attack-render.spec.ts', // #267 — dual-orb telegraph + parry-disperse VFX
-  'zzdbg.spec.ts',
 ];
 const SOLO_SPECS = [
   'auth.spec.ts',

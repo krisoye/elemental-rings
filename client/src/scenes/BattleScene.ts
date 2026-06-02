@@ -571,6 +571,7 @@ export class BattleScene extends Phaser.Scene {
     if (sibling) {
       const siblingAt = this.lastPressAt[sibling];
       if (siblingAt !== undefined && now - siblingAt <= FORFEIT_CHORD_MS) {
+        this.cancelPendingAttack(); // discard any half-armed A-key press before prompting
         this.showForfeitPrompt();
         return;
       }
