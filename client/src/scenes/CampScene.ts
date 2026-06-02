@@ -2,7 +2,8 @@ import Phaser from 'phaser';
 import { InventoryGrid, type RingData } from '../objects/InventoryGrid';
 import { LoadoutPanel, type LoadoutSlot } from '../objects/LoadoutPanel';
 import { StakePanel } from '../objects/StakePanel';
-import { usePips } from '../objects/ui/RingCard';
+import { RingCard, usePips } from '../objects/ui/RingCard';
+import { attachTooltip } from '../objects/ui/Tooltip';
 import { FusionPanel } from '../objects/FusionPanel';
 import { DifficultyModal } from '../objects/DifficultyModal';
 import { ELEMENT_NAMES, CANVAS_W, CANVAS_H, THUMB_PASSIVE_INFO, SLOT_KEYS } from '../Constants';
@@ -13,7 +14,7 @@ import { BlinkController } from '../objects/world/BlinkController';
 import { getTalisman } from '../../../shared/talismans';
 import { FOREST_SCREENS } from '../../../shared/world/forest';
 import { restAtCamp, summonSanctum as summonSanctumHelper } from '../net/campActions';
-import { API_BASE, apiFetch, fetchMe, getToken } from '../net/api';
+import { API_BASE, apiClient, apiFetch, fetchMe, getToken } from '../net/api';
 import { DualCameraScene } from './DualCameraScene';
 
 // #85 Fix 2A — the inventory grids in the Ring Storage overlay clip to this many
@@ -46,8 +47,21 @@ const BATTLEHAND_RING_X = CONTENT_RIGHT - 148; // 724 — LoadoutPanel origin
 const BATTLEHAND_RING_Y = 246;                  // 148 + one LoadoutPanel ROW_GAP (98)
 // Thumb card aligns with right ring column (A2/D2): center=837, origin=802.
 const BATTLEHAND_THUMB_X = BATTLEHAND_RING_X + 78; // 802
-// Passive effect display width: from COL_BATTLEHAND_X to just before the Thumb card.
-const BATTLEHAND_EFFECT_W = BATTLEHAND_THUMB_X - COL_BATTLEHAND_X - 6; // ≈200
+
+// EPIC #302 — Heart slot card. Placed at the LoadoutPanel origin x (BATTLEHAND_RING_X
+// = 724) so its card body (centered at +35) sits directly above A1 (also +35). Row 0
+// of the battle-hand section → y=148, matching the Thumb row.
+const HEART_CARD_X = BATTLEHAND_RING_X; // 724 — same x-origin as LoadoutPanel
+const HEART_CARD_Y = 148;
+// The ♥ heart card body matches the LoadoutPanel cell geometry (70×90, card center
+// at +35 horizontally) so it lines up column-for-column with A1 below it.
+const HEART_CARD_W = 70;
+const HEART_CARD_H = 90;
+// ATTACK / DEFENSE row labels sit just left of the A1/A2 and D1/D2 rows. The ring
+// grid origin (BATTLEHAND_RING_Y) is the A-row top; the D-row is one ROW_GAP (98) below.
+const BATTLEHAND_ROW_LABEL_X = 600;
+const BATTLEHAND_ATTACK_LABEL_Y = 246;
+const BATTLEHAND_DEFENSE_LABEL_Y = 344;
 
 // The off-screen holding origin for the reusable panel instances. The panels are
 // created once and parked here while the spatial room is shown; 8A.2 re-parents
@@ -126,15 +140,30 @@ export class CampScene extends DualCameraScene {
 
   // ── Reliquary modal (#154) — live header + click-then-click selection ──────
   /**
-   * The full-width stats header (aggregate_xp / spirit_max / spirit current/max)
-   * at the top of the Reliquary modal. Lives inside the overlay container; the
-   * container destroy reclaims it on close, so the reference is dropped there.
-   * Re-rendered from the authoritative `window.__campState` after every move.
+   * EPIC #302 — the three live stats header segments that replace the old single
+   * centered string. Left: `Spirit: cur/max [Tier]`; Center: `♥ cur/max` for the
+   * equipped heart ring; Right (right-aligned to CONTENT_RIGHT): `Total XP | Avg
+   * Battle XP`. All overlay-container-scoped — the container destroy reclaims them
+   * on close, so the references are simply dropped. Re-rendered from the
+   * authoritative `window.__campState` after every move.
    */
-  private reliquaryHeader: Phaser.GameObjects.Text | null = null;
+  private reliquaryHeaderLeft: Phaser.GameObjects.Text | null = null;
+  private reliquaryHeaderCenter: Phaser.GameObjects.Text | null = null;
+  private reliquaryHeaderRight: Phaser.GameObjects.Text | null = null;
+  /**
+   * EPIC #302 — the Heart-slot card (above A1). A {@link RingCard} that
+   * participates in the click-then-click selection system as the `'heart'` source
+   * and target. Overlay-container-scoped: created on open, dropped on close.
+   */
+  private heartCard: RingCard | null = null;
+  /**
+   * EPIC #302 — the detach handle for the Thumb passive hover tooltip. Replaces
+   * the permanent passive strip; called in the overlay's onClose callback.
+   */
+  private thumbTooltipDetach: (() => void) | null = null;
   /**
    * The right-panel loadout count badge ("8 / 10"); turns red at the carry cap.
-   * Overlay-container-scoped like `reliquaryHeader`.
+   * Overlay-container-scoped like the header segments.
    */
   private loadoutBadge: Phaser.GameObjects.Text | null = null;
   /**
@@ -148,16 +177,12 @@ export class CampScene extends DualCameraScene {
   private reliquarySelection:
     | {
         ringId: string;
-        source: 'reliquary' | 'spare' | 'thumb' | LoadoutSlot;
+        source: 'reliquary' | 'spare' | 'thumb' | 'heart' | LoadoutSlot;
       }
     | null = null;
   // #78 ④ — last-computed Thumb passive reminder (recomputed every refreshPools),
-  // mirrored into __campState and rendered as a strip in the ring-storage overlay.
+  // mirrored into __campState and surfaced as the Thumb hover tooltip (EPIC #302).
   private stakedPassive: { name: string | null; effect: string } | null = null;
-  // The overlay's passive-reminder Text strip, alive only while the ring-storage
-  // overlay is open (it lives inside the overlay container, so closeOverlay's
-  // container destroy reclaims it). Null while the overlay is closed.
-  private passiveLabel: Phaser.GameObjects.Text | null = null;
 
   // Cached snapshot of the last /api/me load.
   private rings: RingData[] = [];
@@ -650,10 +675,17 @@ export class CampScene extends DualCameraScene {
       // Clear any in-flight selection highlight on the battle-hand panels.
       this.stakePanel.setSelected(false);
       this.loadoutPanel.setSelectedSlot(null);
-      // The strip + header + badge live inside the overlay container — the
+      // EPIC #302 — detach the Thumb passive hover tooltip (removes the pointer
+      // listeners + destroys the lazy label) before the overlay container is
+      // destroyed. Safe when never attached.
+      this.thumbTooltipDetach?.();
+      this.thumbTooltipDetach = null;
+      // The header + badge + heart card live inside the overlay container — the
       // container destroy reclaims them, so just drop the stale references.
-      this.passiveLabel = null;
-      this.reliquaryHeader = null;
+      this.reliquaryHeaderLeft = null;
+      this.reliquaryHeaderCenter = null;
+      this.reliquaryHeaderRight = null;
+      this.heartCard = null;
       this.loadoutBadge = null;
       this.reliquarySelection = null;
       window.__campHitTestRing = undefined;
@@ -678,21 +710,38 @@ export class CampScene extends DualCameraScene {
       .on('pointerdown', () => this.clearReliquarySelection());
     c.addAt(deselectZone, 1);
 
-    // ── Centered live stats header (#154) ─────────────────────────────────────
-    this.reliquaryHeader = this.add
-      .text(CANVAS_W / 2, 92, '', { fontSize: '14px', color: '#ffdd66' })
+    // ── Three-part live stats header (EPIC #302) ──────────────────────────────
+    // Left: Spirit + difficulty (left-aligned to the SPIRIT column). Center: the
+    // equipped Heart ring's HP (♥ cur/max). Right: total ring XP + average battle
+    // XP, right-aligned to the content edge. Each is its own Text object so the
+    // segments stay anchored independently as values change. All read from the
+    // authoritative /api/me snapshot — never computed client-side.
+    this.reliquaryHeaderLeft = this.add
+      .text(COL_RELIQUARY_X, 92, '', { fontSize: '14px', color: '#ffdd66' })
+      .setOrigin(0, 0)
+      .setScrollFactor(0)
+      .setName('reliquary-header-left');
+    this.reliquaryHeaderCenter = this.add
+      .text(CANVAS_W / 2, 92, '', { fontSize: '14px', color: '#ff8888' })
       .setOrigin(0.5, 0)
       .setScrollFactor(0)
-      .setName('reliquary-header');
-    c.add(this.reliquaryHeader);
+      .setName('reliquary-header-center');
+    this.reliquaryHeaderRight = this.add
+      .text(CONTENT_RIGHT, 92, '', { fontSize: '13px', color: '#aaccff' })
+      .setOrigin(1, 0)
+      .setScrollFactor(0)
+      .setName('reliquary-header-right');
+    c.add([this.reliquaryHeaderLeft, this.reliquaryHeaderCenter, this.reliquaryHeaderRight]);
     // #182 — "Add Shard" expansion button: only shown when player has ≥ 1 shard.
+    // EPIC #302 — moved to y=128 (the column-label row, right-aligned) so it no
+    // longer overlaps the right header segment now occupying (CONTENT_RIGHT, 92).
     const reliquaryShards: number = window.__campState?.reliquaryShards ?? 0;
     if (reliquaryShards > 0) {
       c.add(
         this.add
           .text(
             CONTENT_RIGHT,
-            92,
+            128,
             `[Add Shard (+10)] (${reliquaryShards} available)`,
             { fontSize: '11px', color: '#ffcc44' },
           )
@@ -708,11 +757,12 @@ export class CampScene extends DualCameraScene {
       this.add.rectangle(CANVAS_W / 2, 118, CONTENT_RIGHT - CONTENT_LEFT, 1, 0x6082aa).setScrollFactor(0),
     );
 
-    // ── Left column — RELIQUARY ───────────────────────────────────────────────
-    // The whole label row is interactive: clicking it with a carried ring
-    // selected drops that ring back to the Reliquary (replaces the old dropzone).
+    // ── Left column — SPIRIT (the not-carried Reliquary pool) ─────────────────
+    // EPIC #302 — relabelled SPIRIT ↓ (these rings drive the spirit pool). The
+    // whole label row stays interactive: clicking it with a carried ring selected
+    // drops that ring back to the Reliquary/spirit pool (replaces the old dropzone).
     const reliquaryLabel = this.add
-      .text(COL_RELIQUARY_X, 128, 'RELIQUARY  ↓', { fontSize: '13px', color: '#cccccc' })
+      .text(COL_RELIQUARY_X, 128, 'SPIRIT  ↓', { fontSize: '13px', color: '#cccccc' })
       .setScrollFactor(0)
       .setName('reliquary-label')
       .setInteractive({ useHandCursor: true })
@@ -752,6 +802,31 @@ export class CampScene extends DualCameraScene {
     this.adoptPanel(c, this.stakePanel, BATTLEHAND_THUMB_X, 148);
     this.adoptPanel(c, this.loadoutPanel, BATTLEHAND_RING_X, BATTLEHAND_RING_Y);
 
+    // EPIC #302 — Heart slot card + ATTACK/DEFENSE row labels. The heart card sits
+    // above A1 (same x-origin as the LoadoutPanel) in the Thumb row; the ATTACK and
+    // DEFENSE labels sit just left of the A1/A2 and D1/D2 rows.
+    this.buildHeartCard(c);
+    c.add(
+      this.add
+        .text(BATTLEHAND_ROW_LABEL_X, BATTLEHAND_ATTACK_LABEL_Y, 'ATTACK', {
+          fontSize: '11px',
+          color: '#ff9966',
+        })
+        .setOrigin(0, 0)
+        .setScrollFactor(0)
+        .setName('attack-row-label'),
+    );
+    c.add(
+      this.add
+        .text(BATTLEHAND_ROW_LABEL_X, BATTLEHAND_DEFENSE_LABEL_Y, 'DEFENSE', {
+          fontSize: '11px',
+          color: '#66aaff',
+        })
+        .setOrigin(0, 0)
+        .setScrollFactor(0)
+        .setName('defense-row-label'),
+    );
+
     // Cap the grids at their visible-row windows. Clipping is now done by
     // visibility-windowing (cards outside the window are hidden), not GeometryMask.
     this.sanctumGrid.setVisibleRows(RINGWALL_VISIBLE_ROWS);
@@ -784,9 +859,17 @@ export class CampScene extends DualCameraScene {
         .setScrollFactor(0),
     );
 
-    // #78 ④ — render the Thumb passive reminder now the overlay (and its adopted
-    // stake card) exist.
-    this.renderPassiveStrip();
+    // EPIC #302 — the permanent passive strip is replaced by a hover tooltip on
+    // the Thumb card. attachTooltip reads the live passive text lazily on each
+    // hover so it always reflects the current staked ring; detach() is wired in the
+    // overlay's onClose callback. The Thumb card bg is already interactive (it owns
+    // the stake click); the tooltip listeners coexist with that click.
+    this.thumbTooltipDetach = attachTooltip(
+      this,
+      this.stakePanel.thumbBg,
+      () => this.thumbPassiveTooltipText(),
+      { maxWidth: 220 },
+    );
 
     // #118 — hit-test probe switched to uiCam. Ring cards live under the overlay
     // container, which cameras.main ignores and uiCam renders. uiCam does not
@@ -816,34 +899,112 @@ export class CampScene extends DualCameraScene {
     ): void => this.selectReliquaryRing(ringId, source);
     window.__reliquaryMove = (
       ringId: string,
-      target: 'reliquary' | 'spare' | 'thumb' | LoadoutSlot,
+      target: 'reliquary' | 'spare' | 'thumb' | 'heart' | LoadoutSlot,
     ): Promise<void> => this.reliquaryMove(ringId, target);
+  }
+
+  /**
+   * EPIC #302 — build the Heart slot card above A1. A standalone {@link RingCard}
+   * (not a parked reusable panel) created fresh per overlay and added to the
+   * overlay container `c`, so the container destroy on close reclaims it. Its bg is
+   * made interactive and routes clicks through the universal-swap state machine as
+   * the `'heart'` source/target. A ♥ title sits above the card. The card is painted
+   * from `window.__campState.heart_ring`.
+   */
+  private buildHeartCard(c: Phaser.GameObjects.Container): void {
+    const cx = HEART_CARD_W / 2; // 35 — line the card body up with A1 below
+    const cy = HEART_CARD_H / 2;
+    const card = new RingCard(this, HEART_CARD_X, HEART_CARD_Y, {
+      width: HEART_CARD_W,
+      height: HEART_CARD_H,
+      cx,
+      cy,
+      scrollFactor: 0,
+      strokeColor: 0xcc4466,
+      textColor: '#000000',
+      fontSize: '9px',
+      elementY: -22,
+      pipsY: -5,
+      xpY: 12,
+      tierY: 27,
+      xpPrefix: 'XP:',
+    });
+    // ♥ title above the card.
+    const title = this.add
+      .text(HEART_CARD_X + cx, HEART_CARD_Y + cy - 36, '♥', { fontSize: '12px', color: '#ff6688' })
+      .setOrigin(0.5)
+      .setScrollFactor(0);
+    card.add(title);
+    // Click the heart card → enter the universal-swap state machine as 'heart'.
+    card.bg
+      .setInteractive({ useHandCursor: true })
+      .on('pointerdown', () => void this.onHeartCardClicked());
+    c.add(card);
+    this.heartCard = card;
+    this.renderHeartCard();
+  }
+
+  /**
+   * EPIC #302 — paint the Heart card from the authoritative heart ring (in
+   * `window.__campState.heart_ring`). Empty slot → the dim em-dash look. Also
+   * re-applies the selection stroke when the heart is the active swap selection.
+   */
+  private renderHeartCard(): void {
+    if (!this.heartCard) return;
+    const heart = window.__campState?.heart_ring as RingData | null | undefined;
+    if (heart) {
+      this.heartCard.setRing({
+        element: heart.element,
+        tier: heart.tier,
+        xp: heart.xp,
+        currentUses: heart.current_uses,
+        maxUses: heart.max_uses,
+        fusionParents: heart.fusionParents,
+      });
+      this.heartCard.setTextColor('#000000');
+    } else {
+      this.heartCard.clear();
+      this.heartCard.setElementText('—', '#888888');
+    }
+    const selected = this.reliquarySelection?.source === 'heart';
+    this.heartCard.setStroke(selected ? 3 : 2, selected ? 0xffff00 : 0xcc4466);
   }
 
   // ── Reliquary modal — selection + moves (#154) ────────────────────────────
 
   /**
-   * Render the full-width live stats header from the authoritative snapshot in
-   * `window.__campState` (populated from `/api/me`). Never computes spirit_max or
-   * aggregate_xp locally — both are read straight from the server response. Also
-   * refreshes the LOADOUT count badge (turns red at the carry cap). A no-op when
-   * the header label has been torn down (overlay closed).
+   * Render the three-part live stats header from the authoritative snapshot in
+   * `window.__campState` (populated from `/api/me`). EPIC #302 — replaces the old
+   * single centered string with three independently-anchored segments and drops the
+   * Reliquary/Loadout counts:
+   *   - Left:   `Spirit: cur/max [Tier]`
+   *   - Center: `♥ cur/max` for the equipped heart ring (`♥ 0/0` when empty)
+   *   - Right:  `Total XP: N | Avg Battle XP: M`
+   * Never computes spirit_max / total_xp / avg locally — all read from the server.
+   * Also re-paints the Heart card and refreshes the LOADOUT count badge (turns red
+   * at the carry cap). A no-op for any segment torn down (overlay closed).
    */
   private renderReliquaryHeader(): void {
     const s = window.__campState;
-    if (this.reliquaryHeader && s) {
-      // #182 — header: XP / spirit / Loadout / Reliquary counts.
-      const carried = s.rings.filter((r: RingData) => r.in_carry === 1).length;
-      const reliquaryCount: number =
-        s.reliquaryCount ??
-        s.rings.filter((r: RingData) => r.in_carry === 0 && !(r as any).escrowed).length;
-      const reliquaryCap: number = s.reliquaryCap ?? 20;
-      this.reliquaryHeader.setText(
-        `XP: ${s.aggregate_xp.toLocaleString()}    Spirit: ${s.spirit_current} / ${s.spirit_max} ` +
-        `${CampScene.difficultyLabel(s.difficulty)}` +
-        `    Loadout: ${carried}/${s.carry_cap}  |  Reliquary: ${reliquaryCount}/${reliquaryCap}`,
-      );
+    if (s) {
+      if (this.reliquaryHeaderLeft) {
+        this.reliquaryHeaderLeft.setText(
+          `Spirit: ${s.spirit_current} / ${s.spirit_max} ${CampScene.difficultyLabel(s.difficulty)}`,
+        );
+      }
+      if (this.reliquaryHeaderCenter) {
+        const heart = s.heart_ring as RingData | null | undefined;
+        const hp = heart ? `${heart.current_uses}/${heart.max_uses}` : '0/0';
+        this.reliquaryHeaderCenter.setText(`♥ ${hp}`);
+      }
+      if (this.reliquaryHeaderRight) {
+        const totalXp = (s.total_xp ?? s.aggregate_xp ?? 0).toLocaleString();
+        const avgXp = Math.round(s.battle_hand_avg_xp ?? 0).toLocaleString();
+        this.reliquaryHeaderRight.setText(`Total XP: ${totalXp}  |  Avg Battle XP: ${avgXp}`);
+      }
     }
+    // EPIC #302 — keep the Heart card painted in sync with the header.
+    this.renderHeartCard();
     if (this.loadoutBadge && s) {
       // #154 — badge reads "(N/cap)" beside the LOADOUT label; red at the cap.
       const carried = s.rings.filter((r: RingData) => r.in_carry === 1).length;
@@ -913,7 +1074,7 @@ export class CampScene extends DualCameraScene {
    */
   private async onRingClicked(
     ringId: string,
-    source: 'reliquary' | 'spare' | 'thumb' | LoadoutSlot,
+    source: 'reliquary' | 'spare' | 'thumb' | 'heart' | LoadoutSlot,
   ): Promise<void> {
     const sel = this.reliquarySelection;
     if (sel && sel.ringId === ringId) {
@@ -922,6 +1083,23 @@ export class CampScene extends DualCameraScene {
       return;
     }
     if (sel && sel.source !== source) {
+      // EPIC #302 — the Heart slot has dedicated server semantics (PUT
+      // /api/heart-slot), so any swap touching it routes through reliquaryMove's
+      // 'heart' path rather than the carry/loadout machinery in applySwap.
+      if (source === 'heart') {
+        // A selected ring is dropped onto the heart slot: equip it, releasing the
+        // old heart ring back to the selected ring's section.
+        this.clearReliquarySelection();
+        await this.reliquaryMove(sel.ringId, 'heart', sel.source);
+        return;
+      }
+      if (sel.source === 'heart') {
+        // The heart ring is selected, then a target is clicked: unequip the heart
+        // ring to that target (reliquaryMove's 'heart' source path).
+        this.clearReliquarySelection();
+        await this.reliquaryMove(sel.ringId, source);
+        return;
+      }
       // Two distinct rings from distinct sources — perform the swap. The first
       // ring (sel) moves toward `source`'s section; reliquaryMove handles the
       // displaced occupant.
@@ -945,9 +1123,11 @@ export class CampScene extends DualCameraScene {
    * authoritative server effect is driven by reliquaryMove for each leg.
    */
   private async applySwap(
-    a: { ringId: string; source: 'reliquary' | 'spare' | 'thumb' | LoadoutSlot },
-    b: { ringId: string; source: 'reliquary' | 'spare' | 'thumb' | LoadoutSlot },
+    a: { ringId: string; source: 'reliquary' | 'spare' | 'thumb' | 'heart' | LoadoutSlot },
+    b: { ringId: string; source: 'reliquary' | 'spare' | 'thumb' | 'heart' | LoadoutSlot },
   ): Promise<void> {
+    // EPIC #302 — heart sources/targets are routed before applySwap (onRingClicked),
+    // so neither leg is ever 'heart' here. The wider type only satisfies the caller.
     const aBattle = a.source !== 'reliquary' && a.source !== 'spare';
     const bBattle = b.source !== 'reliquary' && b.source !== 'spare';
 
@@ -1054,10 +1234,10 @@ export class CampScene extends DualCameraScene {
    */
   private setSelection(sel: {
     ringId: string;
-    source: 'reliquary' | 'spare' | 'thumb' | LoadoutSlot;
+    source: 'reliquary' | 'spare' | 'thumb' | 'heart' | LoadoutSlot;
   }): void {
     this.reliquarySelection = sel;
-    // Always drop the battle-hand highlights — they are never the grid source.
+    // Always drop the battle-hand + heart highlights — they are never the grid source.
     this.stakePanel.setSelected(false);
     this.loadoutPanel.setSelectedSlot(null);
     if (sel.source === 'reliquary') {
@@ -1069,11 +1249,17 @@ export class CampScene extends DualCameraScene {
       this.sanctumGrid.clearSelection();
       this.loadoutGrid.clearSelection();
       this.stakePanel.setSelected(true);
+    } else if (sel.source === 'heart') {
+      // EPIC #302 — the heart card paints its own selection stroke via renderHeartCard.
+      this.sanctumGrid.clearSelection();
+      this.loadoutGrid.clearSelection();
     } else {
       this.sanctumGrid.clearSelection();
       this.loadoutGrid.clearSelection();
       this.loadoutPanel.setSelectedSlot(sel.source);
     }
+    // Re-paint the heart card's stroke (selected iff source === 'heart').
+    this.renderHeartCard();
   }
 
   /**
@@ -1118,6 +1304,28 @@ export class CampScene extends DualCameraScene {
   }
 
   /**
+   * EPIC #302 — click on the Heart slot card. With the heart occupied it routes
+   * through onRingClicked with the `'heart'` source (which either picks up the
+   * heart ring or, when a different ring is already selected, equips that ring).
+   * With the heart empty and a ring selected elsewhere, equips that ring into the
+   * heart slot, releasing nothing. Clicking an empty heart with nothing selected
+   * is a no-op.
+   */
+  private async onHeartCardClicked(): Promise<void> {
+    const heart = window.__campState?.heart_ring as RingData | null | undefined;
+    const sel = this.reliquarySelection;
+    if (heart) {
+      await this.onRingClicked(heart.id, 'heart');
+      return;
+    }
+    // Empty heart slot. If a ring is selected from elsewhere, equip it here.
+    if (sel) {
+      this.clearReliquarySelection();
+      await this.reliquaryMove(sel.ringId, 'heart', sel.source);
+    }
+  }
+
+  /**
    * The RELIQUARY label was clicked: send the currently-selected carried ring
    * (Spare or Battle Hand) back to the Reliquary in one action. A Reliquary
    * selection or no selection is a no-op.
@@ -1155,7 +1363,8 @@ export class CampScene extends DualCameraScene {
    */
   private async reliquaryMove(
     ringId: string,
-    target: 'reliquary' | 'spare' | 'thumb' | LoadoutSlot,
+    target: 'reliquary' | 'spare' | 'thumb' | 'heart' | LoadoutSlot,
+    releaseFrom?: 'reliquary' | 'spare' | 'thumb' | 'heart' | LoadoutSlot,
   ): Promise<void> {
     const ring = this.ringMap.get(ringId);
     if (!ring) {
@@ -1167,6 +1376,14 @@ export class CampScene extends DualCameraScene {
       this.clearReliquarySelection();
       return;
     }
+
+    // EPIC #302 — Heart slot moves use the dedicated PUT /api/heart-slot endpoint
+    // (atomic equip/swap + spirit recompute), never the carry/loadout machinery.
+    if (target === 'heart' || ring.heart_slot === 1) {
+      await this.heartSlotMove(ringId, target, releaseFrom);
+      return;
+    }
+
     const wasCarried = ring.in_carry === 1;
     const inBattleSlot = (SLOT_KEYS as readonly string[]).find((s) => this.loadout[s] === ringId);
 
@@ -1222,6 +1439,45 @@ export class CampScene extends DualCameraScene {
   }
 
   /**
+   * EPIC #302 — execute a Heart-slot move via PUT /api/heart-slot and reload
+   * authoritative state. The server owns the atomic equip/swap and recomputes
+   * spirit. Two cases:
+   *   - Equip into the heart (`target === 'heart'`): `ringId` becomes the heart
+   *     ring; the displaced heart ring is released to `releaseFrom` (the section the
+   *     equipped ring came from, defaulting to the Reliquary). For a battle-slot
+   *     `releaseFrom` the server performs a slot-for-slot swap (ringId ignored).
+   *   - Unequip the heart (`ringId` is the current heart ring, `target` ≠ 'heart'):
+   *     the heart slot is cleared and the ring is routed to `target`.
+   * The releaseTo targets the server accepts: reliquary | spare | thumb | a1..d2.
+   */
+  private async heartSlotMove(
+    ringId: string,
+    target: 'reliquary' | 'spare' | 'thumb' | 'heart' | LoadoutSlot,
+    releaseFrom?: 'reliquary' | 'spare' | 'thumb' | 'heart' | LoadoutSlot,
+  ): Promise<void> {
+    // Build the { ringId?, releaseTo? } body. Equip vs unequip is decided by
+    // whether the heart is the move target. 'heart' is never a valid releaseTo.
+    let body: { ringId?: string; releaseTo?: string };
+    if (target === 'heart') {
+      const releaseTo = releaseFrom && releaseFrom !== 'heart' ? releaseFrom : 'reliquary';
+      body = { ringId, releaseTo };
+    } else {
+      // Unequip the current heart ring to `target` (no ringId → clear the slot).
+      body = { releaseTo: target };
+    }
+    try {
+      await apiClient.put('/api/heart-slot', body);
+    } catch {
+      this.setStatus('Heart slot move failed');
+      this.clearReliquarySelection();
+      return;
+    }
+    this.clearReliquarySelection();
+    await this.loadData();
+    this.afterReliquaryReload();
+  }
+
+  /**
    * Add one ring to the carried set via PUT /api/carry, enforcing the carry cap
    * locally for a friendly message (the server is still authoritative). Returns
    * whether the carry succeeded. Does NOT reload — the caller batches the reload.
@@ -1253,6 +1509,9 @@ export class CampScene extends DualCameraScene {
     this.loadoutGrid.clearSelection();
     this.stakePanel.setSelected(false);
     this.loadoutPanel.setSelectedSlot(null);
+    // EPIC #302 — re-paint the heart card so its selection stroke clears in step
+    // with `reliquarySelection` (renderHeartCard reads the live selection source).
+    this.renderHeartCard();
   }
 
   /** Re-render header + lock state after a Reliquary modal reload. */
@@ -1926,7 +2185,10 @@ export class CampScene extends DualCameraScene {
     const battleHandIds = new Set(
       SLOT_KEYS.map((s) => this.loadout[s]).filter(Boolean) as string[],
     );
-    const atSanctum = this.rings.filter((r) => r.in_carry === 0);
+    // EPIC #302 — the equipped heart ring rests outside carry (in_carry = 0) but is
+    // shown in its own Heart card, NOT the SPIRIT (Reliquary) grid. Exclude it here
+    // so it never appears in both places.
+    const atSanctum = this.rings.filter((r) => r.in_carry === 0 && r.heart_slot !== 1);
     const loadoutPool = this.rings.filter((r) => r.in_carry === 1 && !battleHandIds.has(r.id));
     const carriedCount = this.rings.filter((r) => r.in_carry === 1).length;
 
@@ -1953,7 +2215,9 @@ export class CampScene extends DualCameraScene {
       : passiveInfo
       ? { name: passiveInfo.name, effect: passiveInfo.effect }
       : { name: null, effect: 'Fused rings grant no passive' };
-    this.renderPassiveStrip();
+    // EPIC #302 — the passive is now a hover tooltip (read lazily on hover), so no
+    // strip is repainted here; `stakedPassive` feeds both the tooltip and the
+    // __campState.staked_passive mirror below.
 
     this.loadoutHeaderText.setText(`Loadout (${carriedCount}/${this.carryCap})`);
 
@@ -1981,6 +2245,12 @@ export class CampScene extends DualCameraScene {
       reliquaryCount: player.reliquaryCount,
       // #171 — spare capacity from the API response (server-computed, no client arithmetic)
       spareCapacity: player.spareCapacity ?? undefined,
+      // EPIC #302 — heart slot fields from /api/me. heart_ring drives the Heart card
+      // + center header (♥ cur/max); total_xp + battle_hand_avg_xp drive the right
+      // header segment. All server-computed.
+      heart_ring: player.heart_ring ?? null,
+      total_xp: player.total_xp ?? undefined,
+      battle_hand_avg_xp: player.battle_hand_avg_xp ?? undefined,
     };
 
     // #85 Fix 2A — refreshPools rebuilds __campState wholesale, which can happen
@@ -1995,38 +2265,18 @@ export class CampScene extends DualCameraScene {
   }
 
   /**
-   * Render the Thumb passive reminder inside the open ring-storage overlay (#78
-   * ④). A no-op while the overlay is closed (the label lives in the overlay
-   * container). When a passive is known, shows two lines beneath the Thumb card:
-   * the passive name (or "No passive" for fusions) and its effect text. Recomputed
-   * whenever refreshPools runs so it tracks live stake/loadout changes.
+   * EPIC #302 — the Thumb passive reminder text for the hover tooltip (replaces
+   * the permanent strip). Read lazily by {@link attachTooltip} on every hover so it
+   * tracks live stake/loadout changes. Empty string when no Thumb ring is staked
+   * (the tooltip suppresses itself); otherwise the passive name (or "No passive"
+   * for a fusion) and its effect text on two lines. The `stakedPassive` source is
+   * still recomputed in refreshPools and mirrored into __campState.staked_passive.
    */
-  private renderPassiveStrip(): void {
-    if (this.overlayName !== 'ringwall' || !this.overlay) return;
-    const text = !this.stakedPassive
-      ? ''
-      : this.stakedPassive.name
+  private thumbPassiveTooltipText(): string {
+    if (!this.stakedPassive) return '';
+    return this.stakedPassive.name
       ? `${this.stakedPassive.name}\n${this.stakedPassive.effect}`
       : `No passive\n${this.stakedPassive.effect}`;
-    if (!this.passiveLabel) {
-      // Thumb card is adopted at (BATTLEHAND_THUMB_X, 148). The passive effect display
-      // occupies the left portion of the thumb row: x=COL_BATTLEHAND_X, width≈200px,
-      // sitting to the left of the Thumb card inside the same row.
-      this.passiveLabel = this.add
-        .text(COL_BATTLEHAND_X, 158, text, {
-          fontSize: '10px',
-          color: '#ffcc88',
-          wordWrap: { width: BATTLEHAND_EFFECT_W },
-          lineSpacing: 2,
-        })
-        .setFixedSize(BATTLEHAND_EFFECT_W, 0)
-        .setScrollFactor(0)
-        .setDepth(4001) // above the overlay container (depth 4000)
-        .setName('staked-passive-strip');
-      this.overlay.add(this.passiveLabel);
-    } else {
-      this.passiveLabel.setText(text);
-    }
   }
 
   // ── Carry moves (#40, #154) ───────────────────────────────────────────────

@@ -13,6 +13,12 @@ export interface RingData {
   escrowed: number; // 0 or 1
   in_carry: number; // 0 or 1 (#40 — carried on expedition)
   /**
+   * EPIC #302 — heart-slot flag (0 or 1). A ring with heart_slot = 1 is the
+   * equipped Heart ring: it rests outside carry (in_carry = 0) but is excluded
+   * from the spirit/Reliquary sums and from the SPIRIT grid in the reliquary modal.
+   */
+  heart_slot?: number;
+  /**
    * #263 — dominant-first fusion component order from /api/me ([dominant, other]
    * for a fusion, [] for a base ring). Drives the two-tone card fill. Optional so
    * older payloads / preview rows without it fall back to static componentsOf.

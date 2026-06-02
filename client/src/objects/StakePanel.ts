@@ -85,6 +85,15 @@ export class StakePanel extends Phaser.GameObjects.Container {
   }
 
   /**
+   * EPIC #302 — the Thumb card's background rectangle (also its hit area). Exposed
+   * so the host can attach a hover tooltip (the passive reminder) to it without
+   * reaching into the private card body.
+   */
+  get thumbBg(): Phaser.GameObjects.Rectangle {
+    return this.bg;
+  }
+
+  /**
    * Update the thumb card from the current loadout and ring map.
    * @param thumbRingId - the ring id assigned to thumb, or null
    * @param ringMap - ringId → RingData
