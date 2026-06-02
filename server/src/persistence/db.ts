@@ -46,6 +46,15 @@ if (!hasRingCol('parent_dominant')) {
   db.exec('ALTER TABLE rings ADD COLUMN parent_dominant INTEGER NOT NULL DEFAULT -1');
 }
 
+// EPIC #302 — heart slot. A ring equipped in the dedicated Heart slot is NOT a
+// Reliquary ring: it does not contribute to spirit_max and does not consume a
+// carry or Reliquary slot. heart_slot = 1 marks the equipped heart ring (at most
+// one per player, tracked authoritatively by players.heart_ring_id). DEFAULT 0
+// backfills every existing row, so legacy rings migrate as non-heart.
+if (!hasRingCol('heart_slot')) {
+  db.exec('ALTER TABLE rings ADD COLUMN heart_slot INTEGER NOT NULL DEFAULT 0');
+}
+
 const playerCols = db.pragma('table_info(players)') as Array<{ name: string }>;
 const hasPlayerCol = (name: string): boolean => playerCols.some((c) => c.name === name);
 
@@ -74,6 +83,14 @@ if (!hasPlayerCol('spirit_current')) {
 }
 if (!hasPlayerCol('food_units')) {
   db.exec('ALTER TABLE players ADD COLUMN food_units INTEGER NOT NULL DEFAULT 100');
+}
+
+// EPIC #302 — the ring currently equipped in the player's Heart slot, or NULL
+// when the slot is empty. Nullable with NO DEFAULT so legacy players migrate to
+// an empty heart slot (NULL). The matching rings.heart_slot flag is set on the
+// referenced ring; this column is the authoritative single-ring pointer.
+if (!hasPlayerCol('heart_ring_id')) {
+  db.exec('ALTER TABLE players ADD COLUMN heart_ring_id TEXT');
 }
 
 // #63 — Phase 8B.3 teleportation: the waystone the player's Sanctum is currently
@@ -118,7 +135,7 @@ db.exec(
      SET spirit_max = (
        SELECT COALESCE(SUM(r.max_uses), 0)
        FROM rings r
-       WHERE r.owner_id = players.id AND r.in_carry = 0
+       WHERE r.owner_id = players.id AND r.in_carry = 0 AND r.heart_slot = 0
      ) * CASE players.difficulty
          WHEN 'wanderer'  THEN 5
          WHEN 'ascendant' THEN 3

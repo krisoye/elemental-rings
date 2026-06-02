@@ -9,9 +9,10 @@ import {
   addRingUses as addRingUsesRow,
   setRingEscrow,
   setRingCarry,
+  setRingHeartSlot,
   deleteRingOwned,
 } from './ringRows';
-import { ElementEnum, DIFFICULTY_MULTIPLIERS, type DifficultyTier } from '../../../shared/types';
+import { ElementEnum, DIFFICULTY_MULTIPLIERS, type DifficultyTier, type SlotKey } from '../../../shared/types';
 import { fusionOf, isFusion, componentsOf } from '../game/Fusions';
 import { tierForXp } from '../game/Tiers';
 import { getTalisman } from '../../../shared/talismans';
@@ -47,6 +48,11 @@ export interface PlayerRow {
   reliquary_shards: number;
   /** EPIC #279 — player-chosen difficulty tier; scales spirit_max. */
   difficulty: DifficultyTier;
+  /**
+   * EPIC #302 — the ring equipped in the Heart slot, or null when empty. The
+   * referenced ring carries heart_slot = 1 and is excluded from spirit sums.
+   */
+  heart_ring_id: string | null;
 }
 
 /** A persisted ring row. */
@@ -66,6 +72,12 @@ export interface RingRow {
    * and pre-migration / AI-granted fusions (which render in static order).
    */
   parent_dominant: number;
+  /**
+   * EPIC #302 — 1 when this ring is equipped in the player's Heart slot. A heart
+   * ring is excluded from spirit_max and from carry/Reliquary counts (it is held
+   * with in_carry = 0). At most one ring per player carries heart_slot = 1.
+   */
+  heart_slot: number;
 }
 
 /** A persisted loadout row — each slot holds a ring id (or null when empty). */
@@ -78,21 +90,21 @@ export interface LoadoutRow {
   d2: string | null;
 }
 
-// Starter inventory: two rings of each base element (Fire/Water/Wood/Wind/Earth).
-// Order matters — the default loadout below indexes into the created rings by
-// element. Canonical integer values come from shared ElementEnum (FIRE=0,
+// EPIC #302 — starter inventory: 6 rings. One Wind ring lands in the dedicated
+// Heart slot (in_carry = 0, heart_slot = 1); the other five fill the battle hand
+// (in_carry = 1). The Reliquary starts empty, so spirit_max = 0 for a fresh
+// player. Canonical integer values come from shared ElementEnum (FIRE=0,
 // WATER=1, EARTH=2, WIND=3, WOOD=4) — do not hardcode the integers here.
-const STARTER_ELEMENTS: number[] = [
-  ElementEnum.FIRE,
-  ElementEnum.FIRE,
-  ElementEnum.WATER,
-  ElementEnum.WATER,
-  ElementEnum.WOOD,
-  ElementEnum.WOOD,
-  ElementEnum.WIND,
-  ElementEnum.WIND,
-  ElementEnum.EARTH,
-  ElementEnum.EARTH,
+//
+//   Heart  → Wind   (in_carry = 0, heart_slot = 1)
+//   Thumb  → Earth   a1 → Wind   a2 → Wind   d1 → Earth   d2 → Earth
+const STARTER_HEART_ELEMENT = ElementEnum.WIND;
+const STARTER_BATTLE_HAND: ReadonlyArray<{ slot: SlotKey; element: number }> = [
+  { slot: 'thumb', element: ElementEnum.EARTH },
+  { slot: 'a1', element: ElementEnum.WIND },
+  { slot: 'a2', element: ElementEnum.WIND },
+  { slot: 'd1', element: ElementEnum.EARTH },
+  { slot: 'd2', element: ElementEnum.EARTH },
 ];
 
 // GDD §4.2 / EPIC #173 C8 — starter rings begin at tier 0 with 3 max uses (xp=0).
@@ -162,10 +174,25 @@ const updateAnchor = db.prepare(
   `UPDATE players SET anchored_waystone = ? WHERE id = ?`,
 );
 
+// EPIC #302 — heart slot. The pointer column on players + the heart ring lookup.
+const updateHeartRingId = db.prepare(`UPDATE players SET heart_ring_id = ? WHERE id = ?`);
+const selectHeartRingId = db.prepare(`SELECT heart_ring_id FROM players WHERE id = ?`);
+// The full row of the player's equipped heart ring (joined via the pointer).
+const selectHeartRing = db.prepare(
+  `SELECT r.* FROM rings r
+   JOIN players p ON p.heart_ring_id = r.id
+   WHERE p.id = ?`,
+);
+// SUM(xp) across ALL owned rings (no in_carry / heart_slot filter) — the total
+// lifetime XP figure surfaced on /api/me (EPIC #302).
+const selectTotalRingXp = db.prepare(
+  `SELECT COALESCE(SUM(xp), 0) AS xp_sum FROM rings WHERE owner_id = ?`,
+);
+
 const selectByUsername = db.prepare(`SELECT * FROM players WHERE username = ?`);
 const selectById = db.prepare(
   `SELECT id, username, gold, game_day, carry_cap, spirit_max, spirit_current, food_units,
-          reliquary_cap, reliquary_shards, difficulty
+          reliquary_cap, reliquary_shards, difficulty, heart_ring_id
    FROM players WHERE id = ?`,
 );
 // #299 — selectRingsByOwner / selectRingById / single-ring mutators now live in
@@ -173,10 +200,30 @@ const selectById = db.prepare(
 // setRingEscrow, setRingCarry, deleteRingOwned).
 const selectLoadout = db.prepare(`SELECT * FROM loadout WHERE player_id = ?`);
 
+/** Mint one starter ring (tier 0, full uses, no XP) and return its id. */
+function insertStarterRing(playerId: string, element: number): string {
+  return insertRingRow(
+    playerId,
+    makeRing({
+      element,
+      tier: STARTER_TIER,
+      xp: 0,
+      maxUses: STARTER_MAX_USES,
+      currentUses: STARTER_MAX_USES,
+      escrowed: 0,
+    }),
+  );
+}
+
 /**
- * Create a player with the full starter package: the player row, 10 starter
- * rings (two of each base element), and a default loadout. Runs in a single
+ * Create a player with the full starter package (EPIC #302): the player row, 6
+ * starter rings (one Wind ring in the Heart slot, five rings filling the battle
+ * hand), a default loadout, and the heart_ring_id pointer. Runs in a single
  * transaction so a partial registration can never persist.
+ *
+ * The Reliquary starts empty (no resting rings) and the heart ring is excluded
+ * from the spirit sum, so a fresh player has spirit_max = 0 — earned only by
+ * winning rings and retiring them to the Reliquary.
  *
  * @param username unique handle (uniqueness enforced by the DB).
  * @param passwordHash bcrypt hash of the player's password.
@@ -187,37 +234,28 @@ export const createPlayer = db.transaction(
     const playerId = uuidv4();
     insertPlayer.run(playerId, username, passwordHash);
 
-    // Create the starter rings, keeping their ids grouped by element so the
-    // default loadout can reference specific rings deterministically.
-    const ringsByElement: Record<number, string[]> = {};
-    for (const element of STARTER_ELEMENTS) {
-      const ringId = insertRingRow(
-        playerId,
-        makeRing({
-          element,
-          tier: STARTER_TIER,
-          xp: 0,
-          maxUses: STARTER_MAX_USES,
-          currentUses: STARTER_MAX_USES,
-          escrowed: 0,
-        }),
-      );
-      (ringsByElement[element] ??= []).push(ringId);
-    }
+    // Heart-slot ring: a Wind ring that rests (in_carry = 0) outside the battle
+    // hand and Reliquary. heart_slot = 1 excludes it from the spirit/carry sums,
+    // and players.heart_ring_id points at it as the authoritative equipped ring.
+    const heartRingId = insertStarterRing(playerId, STARTER_HEART_ELEMENT);
+    setRingHeartSlot(heartRingId, 1);
+    updateHeartRingId.run(heartRingId, playerId);
 
-    // Default loadout: thumb=Fire[0], a1=Fire[1], a2=Water[0], d1=Wood[0],
-    // d2=Earth[0] (GDD §6.1 / issue #26 spec).
+    // Battle hand: one ring per named slot (Thumb=Earth, A1/A2=Wind, D1/D2=Earth).
     const defaultSlots = {
-      thumb: ringsByElement[ElementEnum.FIRE][0],
-      a1: ringsByElement[ElementEnum.FIRE][1],
-      a2: ringsByElement[ElementEnum.WATER][0],
-      d1: ringsByElement[ElementEnum.WOOD][0],
-      d2: ringsByElement[ElementEnum.EARTH][0],
+      thumb: '' as string,
+      a1: '' as string,
+      a2: '' as string,
+      d1: '' as string,
+      d2: '' as string,
     };
+    for (const { slot, element } of STARTER_BATTLE_HAND) {
+      defaultSlots[slot] = insertStarterRing(playerId, element);
+    }
     insertLoadout.run({ player_id: playerId, ...defaultSlots });
 
-    // #40 — the five battle-slot rings start carried (in_carry = 1); the other
-    // five starter rings remain at the Sanctum, well within the carry_cap of 10.
+    // #40 — the five battle-slot rings start carried (in_carry = 1). The heart
+    // ring is intentionally NOT carried — it lives in the dedicated Heart slot.
     for (const ringId of Object.values(defaultSlots)) setRingCarry(ringId, 1);
 
     // #61 — every new player starts attuned to the Forest entry waystone so the
@@ -339,13 +377,13 @@ const updateSpiritDeductGuarded = db.prepare(
 // (in_carry = 0). It still drives ring-tier display in the HUD — it is NOT the
 // spirit_max input anymore (EPIC #279 moved that to the max_uses sum below).
 const selectAggregateRingXp = db.prepare(
-  `SELECT COALESCE(SUM(xp), 0) AS xp_sum FROM rings WHERE owner_id = ? AND in_carry = 0`,
+  `SELECT COALESCE(SUM(xp), 0) AS xp_sum FROM rings WHERE owner_id = ? AND in_carry = 0 AND heart_slot = 0`,
 );
 // EPIC #279 — spirit_max is now derived from the SUM of max_uses across the
 // player's Reliquary rings (in_carry = 0), scaled by their difficulty multiplier.
 // Must match the boot-time recompute filter in db.ts. Carried rings are excluded.
 const selectReliquaryMaxUsesSum = db.prepare(
-  `SELECT COALESCE(SUM(max_uses), 0) AS uses_sum FROM rings WHERE owner_id = ? AND in_carry = 0`,
+  `SELECT COALESCE(SUM(max_uses), 0) AS uses_sum FROM rings WHERE owner_id = ? AND in_carry = 0 AND heart_slot = 0`,
 );
 // EPIC #279 — read the player's difficulty tier for the spirit_max multiplier.
 const selectPlayerDifficulty = db.prepare(`SELECT difficulty FROM players WHERE id = ?`);
@@ -732,6 +770,12 @@ export const discardRing = db.transaction(
         });
       }
     }
+    // EPIC #302 — if the discarded ring is the equipped heart ring, null the
+    // pointer in the same transaction so it never dangles. Spirit is unaffected:
+    // the heart ring was already excluded from the spirit sum.
+    if (getHeartRingId(playerId) === ringId) {
+      updateHeartRingId.run(null, playerId);
+    }
     const info = deleteRingOwned(ringId, playerId);
     return { ok: info.changes > 0 };
   },
@@ -925,7 +969,7 @@ export const packLoadout = db.transaction(
 export function getReliquaryCount(playerId: string): number {
   const row = db
     .prepare(
-      'SELECT COUNT(*) as cnt FROM rings WHERE owner_id = ? AND in_carry = 0 AND escrowed = 0',
+      'SELECT COUNT(*) as cnt FROM rings WHERE owner_id = ? AND in_carry = 0 AND escrowed = 0 AND heart_slot = 0',
     )
     .get(playerId) as { cnt: number } | undefined;
   return row?.cnt ?? 0;
@@ -1059,6 +1103,134 @@ export function getBattleHandAvgXp(playerId: string): number {
   const atkAvg = (xp(loadout.a1) + xp(loadout.a2)) / 2;
   const defAvg = (xp(loadout.d1) + xp(loadout.d2)) / 2;
   return thumbXp * 0.5 + atkAvg * 0.25 + defAvg * 0.25;
+}
+
+// ---------------------------------------------------------------------------
+// EPIC #302 — Heart slot
+// ---------------------------------------------------------------------------
+
+/** EPIC #302 — release targets for a ring displaced out of the Heart slot. */
+export type HeartReleaseTarget = 'reliquary' | 'spare' | 'thumb' | 'a1' | 'a2' | 'd1' | 'd2';
+
+/** The battle-hand slots a displaced heart ring can be swapped directly into. */
+const BATTLE_SLOTS: ReadonlyArray<SlotKey> = ['thumb', 'a1', 'a2', 'd1', 'd2'];
+
+function isBattleSlot(target: HeartReleaseTarget): target is SlotKey {
+  return (BATTLE_SLOTS as ReadonlyArray<string>).includes(target);
+}
+
+/**
+ * The ring currently equipped in the player's Heart slot (EPIC #302), or null
+ * when the slot is empty. Joins players.heart_ring_id → rings, so a stale pointer
+ * (ring deleted) yields null.
+ */
+export function getHeartRing(playerId: string): RingRow | null {
+  return (selectHeartRing.get(playerId) as RingRow | undefined) ?? null;
+}
+
+/** The id of the player's equipped heart ring, or null when the slot is empty. */
+function getHeartRingId(playerId: string): string | null {
+  const row = selectHeartRingId.get(playerId) as { heart_ring_id: string | null } | undefined;
+  return row?.heart_ring_id ?? null;
+}
+
+/**
+ * EPIC #302 — equip `ringId` into the Heart slot (or, for a battle-slot
+ * `releaseTo`, perform a slot-for-slot swap). Atomically routes the displaced
+ * heart ring and recomputes spirit. Runs in a single transaction.
+ *
+ * Semantics:
+ *  - Battle-slot `releaseTo` ('thumb'|'a1'|'a2'|'d1'|'d2'): a slot-for-slot swap
+ *    — `ringId` is IGNORED. The current heart ring (if any) is assigned to that
+ *    loadout slot and carried; the ring previously in that slot (if any) becomes
+ *    the new heart ring (heart_slot = 1, in_carry = 0).
+ *  - 'reliquary' (default): the new `ringId` becomes the heart ring; the old
+ *    heart ring rests in the Reliquary (heart_slot = 0, in_carry = 0).
+ *  - 'spare': as 'reliquary', but the old heart ring is carried (in_carry = 1).
+ *    Throws 'carry cap exceeded' if carrying it would exceed the carry cap.
+ *  - When `ringId` is null/undefined with a non-battle `releaseTo`, the heart
+ *    slot is simply cleared (the old heart ring is routed per `releaseTo`).
+ *
+ * @throws Error when `ringId` is provided but not owned by the player, or when a
+ *   'spare' release would exceed the carry cap.
+ */
+export const setHeartRing = db.transaction(
+  (playerId: string, ringId: string | null, releaseTo: HeartReleaseTarget = 'reliquary'): void => {
+    const oldHeartId = getHeartRingId(playerId);
+
+    if (isBattleSlot(releaseTo)) {
+      // Slot-for-slot swap. `ringId` is ignored: the new heart ring is whatever
+      // currently sits in the target battle slot.
+      const loadout = selectLoadout.get(playerId) as LoadoutRow | undefined;
+      const displacedId = (loadout?.[releaseTo] ?? null) as string | null;
+
+      // The displaced battle ring leaves the carry first (it becomes the heart
+      // ring), so the net carried count is unchanged when saveLoadout runs its
+      // carry-cap guard — even for a player sitting exactly at the cap.
+      if (displacedId) {
+        setRingCarry(displacedId, 0);
+        setRingHeartSlot(displacedId, 1);
+      }
+      // Old heart ring (if any) takes the battle slot and becomes carried.
+      if (oldHeartId) {
+        setRingHeartSlot(oldHeartId, 0);
+        setRingCarry(oldHeartId, 1);
+      }
+      // Put the old heart ring into the target slot (null clears it when there
+      // was no heart ring to place). saveLoadout enforces the one-slot rule and
+      // validates ownership.
+      saveLoadout(playerId, { [releaseTo]: oldHeartId });
+
+      // The displaced battle ring (if any) is the new heart ring; an empty slot
+      // leaves the heart slot empty.
+      updateHeartRingId.run(displacedId, playerId);
+    } else {
+      // Reliquary / spare release. Validate the incoming ring (when provided).
+      if (ringId) {
+        const ring = getRingById(ringId);
+        if (!ring || ring.owner_id !== playerId) {
+          throw new Error('ring not found or not owned');
+        }
+      }
+
+      // Route the displaced old heart ring out of the slot.
+      if (oldHeartId && oldHeartId !== ringId) {
+        setRingHeartSlot(oldHeartId, 0);
+        if (releaseTo === 'spare') {
+          // Carry-cap guard: the released ring joins the carry, so the resulting
+          // carried count must not exceed the cap.
+          const carriedCount = getCarry(playerId).length;
+          if (carriedCount + 1 > getCarryCap(playerId)) {
+            throw new Error('carry cap exceeded');
+          }
+          setRingCarry(oldHeartId, 1);
+        } else {
+          // 'reliquary' — rest it (in_carry = 0).
+          setRingCarry(oldHeartId, 0);
+        }
+      }
+
+      // Equip the new ring (if any) into the heart slot.
+      if (ringId) {
+        setRingCarry(ringId, 0);
+        setRingHeartSlot(ringId, 1);
+        updateHeartRingId.run(ringId, playerId);
+      } else {
+        updateHeartRingId.run(null, playerId);
+      }
+    }
+
+    // Heart rings are excluded from the spirit sum, so equipping/unequipping one
+    // changes spirit_max. Recompute and clamp the gauge to the new ceiling.
+    const spiritMax = refreshSpiritMax(playerId);
+    clampSpiritCurrent(playerId, spiritMax);
+  },
+);
+
+/** Total lifetime XP across ALL rings the player owns (no carry/heart filter). */
+export function getTotalRingXp(playerId: string): number {
+  const row = selectTotalRingXp.get(playerId) as { xp_sum: number } | undefined;
+  return row?.xp_sum ?? 0;
 }
 
 // ---------------------------------------------------------------------------
@@ -1272,7 +1444,9 @@ export const rechargeAllWithSpirit = db.transaction(
     const carried = selectCarryByOwner.all(playerId) as RingRow[];
     const byId = new Map(carried.map((r) => [r.id, r]));
 
-    // Priority list: battle-slot rings first (in slot order), then spares.
+    // Priority list: battle-slot rings first (in slot order), then the equipped
+    // heart ring (EPIC #302 — it is in_carry = 0, so it is not in `carried`),
+    // then spares.
     const ordered: RingRow[] = [];
     const seen = new Set<string>();
     if (loadout) {
@@ -1283,6 +1457,13 @@ export const rechargeAllWithSpirit = db.transaction(
           seen.add(id);
         }
       }
+    }
+    // EPIC #302 — fold the heart ring in after the battle hand. It rests with
+    // in_carry = 0, so it never appears in `carried`; fetch its full row directly.
+    const heartRing = getHeartRing(playerId);
+    if (heartRing && !seen.has(heartRing.id)) {
+      ordered.push(heartRing);
+      seen.add(heartRing.id);
     }
     const spares = carried
       .filter((r) => !seen.has(r.id))
