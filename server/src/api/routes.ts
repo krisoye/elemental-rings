@@ -813,6 +813,7 @@ apiRouter.get('/api/overworld/npcs', requireAuth, (req: Request, res: Response):
       y: npc.ty * TILE_SIZE + TILE_SIZE / 2,
       aiSeed,
       stakeXp,
+      ...(npc.boss ? { displayName: npc.boss.name, bossTier: npc.boss.tier } : {}),
     };
   });
 

@@ -52,6 +52,10 @@ interface NpcInfo {
   battleKey?: string;
   /** Pre-computed thumb (stake) XP the player would win — shown in the approach prompt. */
   stakeXp?: number;
+  /** Boss display name (e.g. "Bogwood Warden") — present only for boss NPCs. */
+  displayName?: string;
+  /** Boss tier — present only for boss NPCs. */
+  bossTier?: 'major' | 'gate' | 'sub';
 }
 
 declare const __SERVER_URL__: string;
@@ -421,12 +425,11 @@ export abstract class BaseBiomeScene extends Phaser.Scene {
     // Duelists draw from the shared RPG-Maker charset (loaded via Player.preload
     // above); the legacy `sprite_npc_overworld.png` strip (24×32 head-tops) was
     // unusable and is no longer loaded or referenced.
-    // Per-element monster overworld sprites (#158) — marker matches the battler.
-    // The PNGs are 72×96 spritesheets (3×3 = 9 frames at 24×32); load them as
-    // spritesheets so we can render a single frame, not the whole grid (#192).
+    // Per-element monster overworld sprites (#158) — each sheet is an RPG Maker-style
+    // walk cycle with per-monster frame dimensions stored in MONSTER_OW_REGISTRY.
     for (const entry of Object.values(MONSTER_OW_REGISTRY)) {
       if (!this.textures.exists(entry.key)) {
-        this.load.spritesheet(entry.key, entry.path, { frameWidth: 24, frameHeight: 32 });
+        this.load.spritesheet(entry.key, entry.path, { frameWidth: entry.frameWidth, frameHeight: entry.frameHeight });
       }
     }
     // #195 — forage-node plants are tilemap tiles (behind/in-front layers via the
@@ -1668,10 +1671,13 @@ export abstract class BaseBiomeScene extends Phaser.Scene {
         element: nearest.element,
         stakeXp: nearest.stakeXp,
       };
-      const elementName = ELEMENT_NAMES[nearest.element] ?? '?';
-      const npcType = nearest.type === 'monster' ? 'monster' : 'duelist';
+      const isBoss = !!nearest.bossTier;
+      const tierLabel = nearest.bossTier === 'major' ? 'Major Boss' : nearest.bossTier === 'gate' ? 'Gate Boss' : nearest.bossTier === 'sub' ? 'Boss' : '';
+      const label = nearest.displayName
+        ? `${nearest.displayName}${tierLabel ? `  ·  ${tierLabel}` : ''}`
+        : `${ELEMENT_NAMES[nearest.element] ?? '?'} ${nearest.type === 'monster' ? 'monster' : 'duelist'}`;
       const xpPart = nearest.stakeXp !== undefined ? `  ${nearest.stakeXp.toLocaleString()} XP` : '';
-      this.showNpcPrompt(`${elementName} ${npcType}${xpPart}  —  Approach [E]`);
+      this.showNpcPrompt(`${label}${xpPart}  —  Approach [E]`, isBoss);
       window.__detectedNpc = { id: nearest.id, personality: nearest.personality };
     } else {
       this.detectedNpc = null;
@@ -1681,7 +1687,7 @@ export abstract class BaseBiomeScene extends Phaser.Scene {
   }
 
   /** Show (or update) the camera-pinned detection prompt. Created lazily. */
-  private showNpcPrompt(text: string): void {
+  private showNpcPrompt(text: string, isBoss = false): void {
     if (!this.npcPrompt) {
       this.npcPrompt = this.add
         .text(CANVAS_W / 2, 80, '', {
@@ -1697,6 +1703,10 @@ export abstract class BaseBiomeScene extends Phaser.Scene {
       // it renders at 1:1 through uiCam, not the zoomed world camera.
       this.uiRoot.add(this.npcPrompt);
     }
+    this.npcPrompt.setStyle({
+      color: isBoss ? '#ff8844' : '#ffeeaa',
+      backgroundColor: isBoss ? '#550000cc' : '#000000aa',
+    });
     this.npcPrompt.setText(text).setVisible(true);
   }
 

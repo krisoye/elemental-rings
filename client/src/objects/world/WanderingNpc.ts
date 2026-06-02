@@ -130,11 +130,14 @@ export class WanderingNpc {
     this.stationary = stationary;
 
     if (npc.type === 'monster' && npc.element <= 4 && MONSTER_OW_REGISTRY[npc.element]) {
-      // Static frame-0 creature art (#192): the sheets are non-uniform single-
-      // creature images, so we never frame-animate them — we bob + flip instead.
+      // Each sheet is an RPG Maker walk cycle; frame 1 (col 1, row 0) is the
+      // idle/south pose. Scale uniformly so all monsters share the same display
+      // height while preserving each sprite's natural aspect ratio.
+      const owEntry = MONSTER_OW_REGISTRY[npc.element];
+      const owScale = NPC_OW_DISPLAY_SIZE / owEntry.frameHeight;
       this.sprite = scene.add
-        .sprite(npc.x, npc.y, MONSTER_OW_REGISTRY[npc.element].key, 0)
-        .setDisplaySize(NPC_OW_DISPLAY_SIZE, NPC_OW_DISPLAY_SIZE);
+        .sprite(npc.x, npc.y, owEntry.key, 1)
+        .setScale(owScale);
       // Boss gates stand perfectly still (#229/#230) — no idle-bob so the body
       // (added below) stays pinned for the scene's blocking collider.
       if (!stationary) this.startBob();
