@@ -8,7 +8,7 @@ import { canDoubleAttack } from '../game/DoubleAttack';
 import * as StatusEffects from '../game/StatusEffects';
 import { AIController, type EnrageConfig } from '../game/ai/AIController';
 import { makeRng, AI_PROFILES, type AIProfile } from '../game/ai/AIProfiles';
-import { generateAILoadout, type SlotSpec } from '../game/ai/AILoadout';
+import { generateAILoadout, PERSONALITY_SPIRIT_MULT, type SlotSpec } from '../game/ai/AILoadout';
 import * as StakeResolver from '../game/StakeResolver';
 import * as PlayerRepo from '../persistence/PlayerRepo';
 import { NPC_SPAWNS, type BossDescriptor } from '../persistence/NpcSpawns';
@@ -156,6 +156,21 @@ export class BattleRoom extends Room<{ state: BattleState }> {
   private heartwoodCharges = 0;
 
   /**
+   * NPC spirit pool. Finite for all vsAI duels: set to
+   * floor(playerSpiritMax × npcSpiritMult) when the human player joins.
+   * Decremented in handleRecharge for AI sessions (same as a player spends from
+   * their DB balance). Infinity until the human joins (safe sentinel — any recharge
+   * before that would be a bug, but Infinity prevents a silent lock-up).
+   */
+  private _npcSpirit = Infinity;
+  /** Spirit-pool multiplier computed in onCreate from personality + boss tier. */
+  private npcSpiritMult = 0;
+
+  get npcSpirit(): number {
+    return this._npcSpirit;
+  }
+
+  /**
    * #87 Part C — the sessionId that paid AMBUSH_SPIRIT_COST to ambush this duel.
    * When set, it overrides the default ids[0] opening attacker so the ambusher
    * strikes first. null in normal duels (no first-strike purchase).
@@ -281,6 +296,10 @@ export class BattleRoom extends Room<{ state: BattleState }> {
       // that STACKS on top of the existing XP scaling: +hearts / +uses on the seat,
       // and a sharpened combat profile (tighter σ / fewer no-blocks / faster think).
       const mod = this.boss ? BOSS_MODIFIERS[this.boss.tier] : undefined;
+
+      // Spirit pool multiplier: boss tier overrides personality (bosses have fixed
+      // spiritMult in their BossModifier); roamers use the per-personality fraction.
+      this.npcSpiritMult = mod?.spiritMult ?? PERSONALITY_SPIRIT_MULT[personality];
 
       // Deterministic-test AI-strength overrides (see BattleRoomOptions): a weak
       // AI yields a guaranteed protagonist win; a tanky AI a guaranteed loss.
@@ -550,6 +569,11 @@ export class BattleRoom extends Room<{ state: BattleState }> {
         const { spirit_current, spirit_max } = PlayerRepo.getSpiritAndFood(playerId);
         ps.spiritCurrent = spirit_current;
         ps.spiritMax = spirit_max;
+        // Set the NPC spirit pool now that we have the player's spirit_max.
+        // npcSpiritMult is 0 for PvP rooms (no AI) — guard so we don't touch _npcSpirit there.
+        if (this.ai && this.npcSpiritMult > 0) {
+          this._npcSpirit = Math.floor(spirit_max * this.npcSpiritMult);
+        }
       }
 
       // Escrow the thumb ring for staking.
@@ -990,9 +1014,10 @@ export class BattleRoom extends Room<{ state: BattleState }> {
     const ring = attacker.getSlot(payload.slot);
     const cost = Math.max(0, ring.maxUses - ring.currentUses);
 
-    // Spirit is a DB-backed resource; humans (token sessions) have a balance,
-    // the AI / no-token sessions recharge "for free" (no DB row to read).
+    // Spirit is a DB-backed resource for human players; AI sessions draw from the
+    // finite _npcSpirit pool computed at join time (floor(playerSpiritMax × mult)).
     const playerId = this.sessionToPlayerId.get(id);
+    const isAI = !playerId && !!this.ai && id === AI_ID;
     let affordable = cost;
     if (cost > 0) {
       if (playerId) {
@@ -1006,6 +1031,11 @@ export class BattleRoom extends Room<{ state: BattleState }> {
           if (ringId) PlayerRepo.rechargeRingInBattle(playerId, ringId, affordable);
           else PlayerRepo.spendSpirit(playerId, affordable * SPIRIT_PER_RING_USE);
         }
+      } else if (isAI) {
+        // NPC: capped by the finite spirit pool. Each restored use costs 1 spirit
+        // (mirrors SPIRIT_PER_RING_USE = 1 for humans).
+        affordable = Math.min(cost, Math.max(0, this._npcSpirit));
+        this._npcSpirit -= affordable;
       }
       if (affordable > 0) {
         ring.currentUses = Math.min(ring.maxUses, ring.currentUses + affordable);
@@ -1016,8 +1046,7 @@ export class BattleRoom extends Room<{ state: BattleState }> {
     // #211 — for token sessions, re-read the authoritative post-spend balance and
     // mirror it into broadcast state (spiritMax is XP-derived, static mid-duel) so
     // the HUD updates live; then send a per-client result so the client can flash
-    // partial/insufficient-spirit feedback. AI / no-token sessions recharge "for
-    // free" — skip the DB re-read and the message (no playerId, nothing to surface).
+    // partial/insufficient-spirit feedback. AI sessions skip the DB re-read (no row).
     if (playerId) {
       const { spirit_current } = PlayerRepo.getSpiritAndFood(playerId);
       attacker.spiritCurrent = spirit_current;
