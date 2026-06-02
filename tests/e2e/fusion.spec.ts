@@ -7,7 +7,15 @@ const API_URL = 'http://localhost:2568';
 const FIRE = 0;
 const WATER = 1;
 const STEAM = 5;
-const TIER1_XP_CAP = 100;
+// Fusion requires both parents to reach at least Tier 1 (server/src/game/Tiers.ts:
+// tierForXp — T1 begins at 500 XP). A parent seeded to exactly 500 XP is the
+// lowest fusable tier; the summed fusion XP is 1000, which is still Tier 1
+// (T2 begins at 1500). Starter rings have max_uses 3, so the fusion ring's
+// max_uses = max(1, min(3,3) − 1) = 2 (PlayerRepo.fuseRings).
+const TIER1_XP = 500;
+const FUSED_XP = TIER1_XP * 2; // 1000 — additive parent XP (still Tier 1)
+const FUSED_TIER = 1; // tierForXp(1000) — below the Tier-2 threshold (1500)
+const FUSED_MAX_USES = 2; // max(1, min(parent max_uses) − 1) for two starter rings
 
 /** Register a fresh player and return its auth token. */
 async function registerPlayer(): Promise<string> {
@@ -47,14 +55,14 @@ function ringOfElement(rings: any[], element: number): any {
   return r;
 }
 
-// ── Scenario 1: Fuse two maxed Fire+Water rings → Steam ───────────────────────
-test('fusion: maxed Fire+Water fuse into a Steam Tier 2 ring', async () => {
+// ── Scenario 1: Fuse two Tier-1 Fire+Water rings → Steam ──────────────────────
+test('fusion: two Tier-1 Fire+Water rings fuse into a Steam ring', async () => {
   const token = await registerPlayer();
   const { rings } = await getMe(token);
   const fire = ringOfElement(rings, FIRE);
   const water = ringOfElement(rings, WATER);
-  await setRingXP(token, fire.id, TIER1_XP_CAP);
-  await setRingXP(token, water.id, TIER1_XP_CAP);
+  await setRingXP(token, fire.id, TIER1_XP);
+  await setRingXP(token, water.id, TIER1_XP);
 
   const res = await fetch(`${API_URL}/api/fusion/combine`, {
     method: 'POST',
@@ -64,10 +72,10 @@ test('fusion: maxed Fire+Water fuse into a Steam Tier 2 ring', async () => {
   expect(res.status).toBe(200);
   const { ring } = await res.json();
   expect(ring.element).toBe(STEAM);
-  expect(ring.tier).toBe(2);
-  expect(ring.max_uses).toBe(5);
-  expect(ring.current_uses).toBe(5);
-  expect(ring.xp).toBe(TIER1_XP_CAP * 2);
+  expect(ring.tier).toBe(FUSED_TIER);
+  expect(ring.max_uses).toBe(FUSED_MAX_USES);
+  expect(ring.current_uses).toBe(FUSED_MAX_USES);
+  expect(ring.xp).toBe(FUSED_XP);
 
   // The Steam ring is present in inventory.
   const { rings: after } = await getMe(token);
@@ -76,14 +84,17 @@ test('fusion: maxed Fire+Water fuse into a Steam Tier 2 ring', async () => {
   expect(steam.element).toBe(STEAM);
 });
 
-// ── Scenario 2: Un-capped parent is rejected ──────────────────────────────────
-test('fusion: un-capped parent → 400 has-not-reached-XP-cap', async () => {
+// ── Scenario 2: Below-Tier-1 parent is rejected ───────────────────────────────
+// fire is left at Tier 0 (50 XP) while water reaches Tier 1 (500 XP). Mismatched
+// tiers are rejected first (PlayerRepo.fuseRings validates tier-equality before
+// the ≥ Tier 1 floor), so the server returns "Rings must be the same tier".
+test('fusion: a below-Tier-1 parent → 400 tier mismatch', async () => {
   const token = await registerPlayer();
   const { rings } = await getMe(token);
   const fire = ringOfElement(rings, FIRE);
   const water = ringOfElement(rings, WATER);
-  await setRingXP(token, fire.id, 50); // below cap
-  await setRingXP(token, water.id, TIER1_XP_CAP);
+  await setRingXP(token, fire.id, 50); // Tier 0 — below the fusable floor
+  await setRingXP(token, water.id, TIER1_XP);
 
   const res = await fetch(`${API_URL}/api/fusion/combine`, {
     method: 'POST',
@@ -92,7 +103,7 @@ test('fusion: un-capped parent → 400 has-not-reached-XP-cap', async () => {
   });
   expect(res.status).toBe(400);
   const body = await res.json();
-  expect(body.error).toMatch(/has not reached XP cap/i);
+  expect(body.error).toMatch(/same tier/i);
 });
 
 // ── Scenario 3: Both parents deleted after fusion ─────────────────────────────
@@ -101,8 +112,8 @@ test('fusion: both parents are removed from inventory after fusing', async () =>
   const { rings } = await getMe(token);
   const fire = ringOfElement(rings, FIRE);
   const water = ringOfElement(rings, WATER);
-  await setRingXP(token, fire.id, TIER1_XP_CAP);
-  await setRingXP(token, water.id, TIER1_XP_CAP);
+  await setRingXP(token, fire.id, TIER1_XP);
+  await setRingXP(token, water.id, TIER1_XP);
 
   const res = await fetch(`${API_URL}/api/fusion/combine`, {
     method: 'POST',
@@ -122,8 +133,8 @@ test('fusion: parent assigned to A1 → loadout.a1 becomes null after fusing', a
   const { rings } = await getMe(token);
   const fire = ringOfElement(rings, FIRE);
   const water = ringOfElement(rings, WATER);
-  await setRingXP(token, fire.id, TIER1_XP_CAP);
-  await setRingXP(token, water.id, TIER1_XP_CAP);
+  await setRingXP(token, fire.id, TIER1_XP);
+  await setRingXP(token, water.id, TIER1_XP);
 
   // Carry the fire ring then assign it to A1 (battle slots require carried rings).
   await fetch(`${API_URL}/api/carry`, {
@@ -159,8 +170,8 @@ test('fusion: CampScene Fuse button creates a Steam ring in the inventory', asyn
   const { rings } = await getMe(token);
   const fire = ringOfElement(rings, FIRE);
   const water = ringOfElement(rings, WATER);
-  await setRingXP(token, fire.id, TIER1_XP_CAP);
-  await setRingXP(token, water.id, TIER1_XP_CAP);
+  await setRingXP(token, fire.id, TIER1_XP);
+  await setRingXP(token, water.id, TIER1_XP);
 
   const ctx = await browser.newContext();
   await ctx.addInitScript(`localStorage.setItem('er_token', ${JSON.stringify(token)})`);
@@ -198,25 +209,25 @@ test('fusion: CampScene Fuse button creates a Steam ring in the inventory', asyn
   );
   expect(error).toBeNull();
 
-  // The Steam Tier 2 ring appears in the reloaded camp inventory.
+  // The Steam fusion ring appears in the reloaded camp inventory.
   await page.waitForFunction(
-    (steamEl) =>
+    ({ steamEl, tier }) =>
       ((window as any).__campState?.rings ?? []).some(
-        (r: any) => r.element === steamEl && r.tier === 2,
+        (r: any) => r.element === steamEl && r.tier === tier,
       ),
-    STEAM,
+    { steamEl: STEAM, tier: FUSED_TIER },
     { timeout: 8000 },
   );
   const steam = await page.evaluate(
-    (steamEl) =>
+    ({ steamEl, tier }) =>
       ((window as any).__campState?.rings ?? []).find(
-        (r: any) => r.element === steamEl && r.tier === 2,
+        (r: any) => r.element === steamEl && r.tier === tier,
       ),
-    STEAM,
+    { steamEl: STEAM, tier: FUSED_TIER },
   );
   expect(steam).toBeTruthy();
-  expect(steam.max_uses).toBe(5);
-  expect(steam.xp).toBe(TIER1_XP_CAP * 2);
+  expect(steam.max_uses).toBe(FUSED_MAX_USES);
+  expect(steam.xp).toBe(FUSED_XP);
 
   await ctx.close();
 });

@@ -6,9 +6,12 @@ const URL = 'http://localhost:8090';
 /**
  * Issue #150 — engine: any screen renders 16px / 2× / 3-layer.
  *
- * Verifies the is16pxScreen() predicate drives the correct rendering path:
+ * Verifies the is16pxScreen() predicate drives the correct rendering path. After
+ * #149/#159 EVERY Forest screen is 16px / 2× world zoom / 3 tile layers (is16pxScreen()
+ * returns true unconditionally — ForestScene.ts), so both the hand-authored hub and a
+ * generated screen must take the rich path:
  *   - forest_anchorage  → 16px / 2× world zoom / 3 tile layers (ground+behind+in-front)
- *   - forest_glade      → 32px / 1× world zoom / 1 tile layer  (ground only)
+ *   - forest_glade      → 16px / 2× world zoom / 3 tile layers (re-authored to 16px)
  *
  * Assertions probe the live Phaser scene state via window.__game and the
  * published E2E hooks (__forestScreenId, __waystones, __zoneCenters) rather
@@ -71,8 +74,8 @@ test('16px: forest_anchorage renders at 2x world zoom with ground/behind/in-fron
   await ctx.close();
 });
 
-// ── Scenario 2: forest_glade renders at 1× zoom with ground layer only ────────
-test('16px: forest_glade renders at 1x world zoom with single ground layer (no regression)', async ({
+// ── Scenario 2: forest_glade (a generated screen) also takes the 16px path ────
+test('16px: forest_glade renders at 2x world zoom with ground/behind/in-front layers', async ({
   browser,
 }) => {
   const ctx = await browser.newContext();
@@ -89,14 +92,15 @@ test('16px: forest_glade renders at 1x world zoom with single ground layer (no r
   const screenId = await page.evaluate(() => (window as any).__forestScreenId);
   expect(screenId).toBe('forest_glade');
 
-  // cameras.main must be at zoom 1 (worldZoom() returns 1 for !is16pxScreen()).
+  // cameras.main must be at zoom 2 (worldZoom() returns 2 for is16pxScreen(), now
+  // true for every Forest screen — forest_glade was re-authored to 16px).
   const zoom = await page.evaluate(() => {
     const scene = (window as any).__game.scene.getScene('ForestScene') as Phaser.Scene;
     return scene.cameras.main.zoom;
   });
-  expect(zoom).toBe(1);
+  expect(zoom).toBe(2);
 
-  // The tilemap must have only the single 'ground' layer (no behind / in-front).
+  // The tilemap must have all three 16px layers (ground, behind, in-front).
   const layerNames = await page.evaluate(() => {
     const scene = (window as any).__game.scene.getScene('ForestScene') as Phaser.Scene;
     return scene.children.list
@@ -109,8 +113,8 @@ test('16px: forest_glade renders at 1x world zoom with single ground layer (no r
       .map((c: any) => c.layer?.name ?? c.name ?? '');
   });
   expect(layerNames).toContain('ground');
-  expect(layerNames).not.toContain('behind');
-  expect(layerNames).not.toContain('in-front');
+  expect(layerNames).toContain('behind');
+  expect(layerNames).toContain('in-front');
 
   // Player can walk: move right and confirm the x coordinate increases.
   const x0 = await page.evaluate(() => (window as any).__player?.x ?? 0);

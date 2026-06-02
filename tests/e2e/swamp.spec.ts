@@ -3,21 +3,25 @@ import { seedAuthToken, enterForestScreen } from './helpers';
 import type { Page } from '@playwright/test';
 
 /**
- * Phase 8C.2 — Swamp biome + hidden Forest alcove (#82).
+ * Phase 8C.2 — Swamp biome + the teleport-only hidden Forest alcove.
  *
- * The Forest's SW biome_exit transitions to the Swamp once `forest_sw_stone`
- * (Bogwood Sentinel) is attuned; otherwise the player hits a barrier and stays.
- * In the Swamp, Anchorages auto-attune on walk-in and the `swamp_secret_forest`
- * (Ironbark Rune) Waystone — when attuned with E — REVEALS the hidden Forest
- * alcove Anchorage (`forest_hidden_anchor`), which has no walking path and is
- * reachable only by teleporting. The Sanctum door is biome-aware: after anchoring
- * at the hidden alcove, exiting lands in the unified ForestScene on the hidden
- * alcove screen (8E folded the standalone hidden scene into a Forest region screen).
+ * The Swamp was re-authored (#311 / #287): the single `swamp_entry` screen now
+ * carries TWO Anchorages — `swamp_anchor_1` (Mire) and `swamp_anchor_2` (Deepmuck)
+ * — that auto-attune on walk-in (GDD §10.7). The old `forest_sw_stone` attunement
+ * gate and the `swamp_secret_forest` (Ironbark Rune) reveal mechanic were REMOVED:
+ *   - the Forest→Swamp biome_exit (forest_swamp_gate) is now UNGATED — a boss
+ *     physically blocks the path rather than an attunement gate (BaseBiomeScene
+ *     .tryBiomeExit no longer reads a `gate` waystone), so any player can transition.
+ *   - the hidden Forest alcove Anchorage (`forest_hidden_anchor`, on the
+ *     forest_hidden_alcove screen) has no walking path and is reached only by
+ *     teleporting to it once attuned — there is no longer a swamp Rune that reveals it.
  *
  * Every assertion reads real state — window.__waystones (the GET /api/waystones
  * payload the scenes publish), window.__activeScene, and direct server
- * round-trips — never mocks. "Walking to a zone" places the live player avatar at
- * a point and lets the per-frame overlap check register it.
+ * round-trips — never mocks. Anchorage world centers are read dynamically from
+ * window.__zoneCenters (zoneCenter below) rather than hardcoded pixel literals, so
+ * a future map re-export can't silently re-break the spec. "Walking to a zone"
+ * places the live player avatar at a point and lets the per-frame overlap register.
  */
 
 const URL = 'http://localhost:8090';
@@ -25,9 +29,6 @@ const API_URL = 'http://localhost:2568';
 
 /** Sanctum door zone center (client/public/assets/maps/sanctum.json). */
 const SANCTUM_DOOR = { x: 87, y: 152 };
-/** Swamp object centers (swamp.json — unchanged by 8E). */
-const SWAMP_ANCHOR_1 = { x: 272, y: 208 };
-const SWAMP_SECRET = { x: 912, y: 784 };
 
 /** Read a named interaction zone's world center on the current screen (#107). */
 async function zoneCenter(page: Page, name: string): Promise<{ x: number; y: number }> {
@@ -89,63 +90,36 @@ async function serverWaystones(
   }, [API_URL] as const);
 }
 
-/** Seed aggregate XP ≥ amount by setting one carried ring's XP via the test route. */
-async function seedAggregateXp(page: Page, amount: number): Promise<void> {
-  await page.waitForFunction(() => !!(window as any).__campState?.rings?.length, { timeout: 8000 });
-  const ringId = await page.evaluate(() => (window as any).__campState.rings[0].id as string);
-  const status = await page.evaluate(
-    async ([api, rid, xp]) => {
-      const token = localStorage.getItem('er_token');
-      const res = await fetch(`${api}/api/test/set-ring-xp`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ ringId: rid, xp }),
-      });
-      return res.status;
-    },
-    [API_URL, ringId, amount] as const,
-  );
-  expect(status).toBe(200);
-}
-
-// ── Scenario 1: Catalog includes the Swamp; attuning the SW stone persists ───
-test('swamp: attuning forest_sw_stone persists and the Swamp catalog is present', async ({ browser }) => {
+// ── Scenario 1: Catalog includes both Swamp Anchorages; attuning persists ────
+test('swamp: the Swamp catalog is present and attuning swamp_anchor_1 persists', async ({ browser }) => {
   const ctx = await browser.newContext();
   await seedAuthToken(ctx);
   const page = await ctx.newPage();
   await loadSanctum(page);
 
-  const status = await attune(page, 'forest_sw_stone');
-  expect(status).toBe(200);
+  // The re-authored Swamp exposes both Anchorages in the shared catalog.
+  const before = await serverWaystones(page);
+  expect(before.waystones.some((w) => w.id === 'swamp_anchor_1')).toBe(true);
+  expect(before.waystones.some((w) => w.id === 'swamp_anchor_2')).toBe(true);
 
-  const ws = await serverWaystones(page);
-  const swStone = ws.waystones.find((w) => w.id === 'forest_sw_stone');
-  expect(swStone?.attuned).toBe(true);
-  // The Swamp entries are now part of the shared catalog (server-driven).
-  expect(ws.waystones.some((w) => w.id === 'swamp_anchor_1')).toBe(true);
+  // Attuning a Swamp Anchorage persists server-side.
+  expect(await attune(page, 'swamp_anchor_1')).toBe(200);
+  const after = await serverWaystones(page);
+  expect(after.waystones.find((w) => w.id === 'swamp_anchor_1')?.attuned).toBe(true);
   await ctx.close();
 });
 
-// ── Scenario 2: Forest→Swamp biome exit gated on forest_sw_stone ─────────────
-test('swamp: SW biome_exit is barred until forest_sw_stone is attuned, then opens', async ({ browser }) => {
+// ── Scenario 2: Forest→Swamp biome exit is ungated (transitions for any player) ─
+test('swamp: the forest_swamp_gate biome_exit transitions a fresh player to SwampScene', async ({ browser }) => {
   const ctx = await browser.newContext();
-  await seedAuthToken(ctx); // fresh user → forest_sw_stone NOT attuned
+  await seedAuthToken(ctx); // fresh user — no attunement prerequisite anymore
   const page = await ctx.newPage();
   await loadSanctum(page);
   // 8E (#107): the SW biome_exit lives on the forest_swamp_gate screen.
   await enterForestScreen(page, 'forest_swamp_gate');
 
-  // Without attunement, pressing E at the biome_exit shows a barrier and stays.
-  await walkToZone(page, await zoneCenter(page, 'biome_exit'), 'biome_exit');
-  await page.evaluate(() => (window as any).__sanctumInteract());
-  await page.waitForTimeout(500);
-  expect(await page.evaluate(() => (window as any).__activeScene)).toBe('ForestScene');
-
-  // Attune the SW stone server-side, then re-enter the screen so the scene's
-  // cached payload reflects it (the gate reads window.__waystones).
-  expect(await attune(page, 'forest_sw_stone')).toBe(200);
-  await enterForestScreen(page, 'forest_swamp_gate');
-
+  // The exit is ungated (a boss physically blocks the path, not an attunement
+  // gate): pressing E at the biome_exit transitions straight into the Swamp.
   await walkToZone(page, await zoneCenter(page, 'biome_exit'), 'biome_exit');
   await page.evaluate(() => (window as any).__sanctumInteract());
   await page.waitForFunction(() => (window as any).__activeScene === 'SwampScene', {
@@ -160,7 +134,6 @@ test('swamp: walking onto swamp_anchor_1 auto-attunes it (server round-trip)', a
   await seedAuthToken(ctx);
   const page = await ctx.newPage();
   await loadSanctum(page);
-  await attune(page, 'forest_sw_stone'); // unlock the Swamp transition
   await enterForestScreen(page, 'forest_swamp_gate');
 
   await walkToZone(page, await zoneCenter(page, 'biome_exit'), 'biome_exit');
@@ -168,10 +141,12 @@ test('swamp: walking onto swamp_anchor_1 auto-attunes it (server round-trip)', a
   await page.waitForFunction(() => (window as any).__activeScene === 'SwampScene', { timeout: 8000 });
   await page.waitForFunction(() => !!(window as any).__waystones, { timeout: 8000 });
 
-  // Walk onto the Anchorage center — discovery is automatic (GDD §10.7).
+  // Walk onto the Anchorage center (read dynamically) — discovery is automatic
+  // (GDD §10.7).
+  const anchor1 = await zoneCenter(page, 'swamp_anchor_1');
   await page.evaluate(([x, y]) => (window as any).__player.setPosition(x, y), [
-    SWAMP_ANCHOR_1.x,
-    SWAMP_ANCHOR_1.y,
+    anchor1.x,
+    anchor1.y,
   ]);
   await page.waitForFunction(
     () =>
@@ -183,14 +158,12 @@ test('swamp: walking onto swamp_anchor_1 auto-attunes it (server round-trip)', a
   await ctx.close();
 });
 
-// ── Scenario 4: Ironbark Rune reveals the hidden Forest alcove Anchorage ──────
-test('swamp: pressing E at swamp_secret_forest reveals forest_hidden_anchor', async ({ browser }) => {
+// ── Scenario 4: the second Swamp Anchorage also auto-attunes on walk-in ───────
+test('swamp: walking onto swamp_anchor_2 auto-attunes it (server round-trip)', async ({ browser }) => {
   const ctx = await browser.newContext();
   await seedAuthToken(ctx);
   const page = await ctx.newPage();
   await loadSanctum(page);
-  await seedAggregateXp(page, 800); // the Ironbark Rune sits at threshold 800
-  await attune(page, 'forest_sw_stone');
   await enterForestScreen(page, 'forest_swamp_gate');
 
   await walkToZone(page, await zoneCenter(page, 'biome_exit'), 'biome_exit');
@@ -198,22 +171,24 @@ test('swamp: pressing E at swamp_secret_forest reveals forest_hidden_anchor', as
   await page.waitForFunction(() => (window as any).__activeScene === 'SwampScene', { timeout: 8000 });
   await page.waitForFunction(() => !!(window as any).__waystones, { timeout: 8000 });
 
-  // The hidden Forest Anchorage starts unrevealed (unattuned).
-  expect((await readWaystone(page, 'forest_hidden_anchor'))?.attuned).toBe(false);
+  // swamp_anchor_2 (Deepmuck) starts unattuned for a fresh user.
+  expect((await readWaystone(page, 'swamp_anchor_2'))?.attuned).toBe(false);
 
-  // Walk onto the Ironbark Rune and press E → server attunes it AND its reveal.
-  await walkToZone(page, SWAMP_SECRET, 'swamp_secret_forest');
-  await page.evaluate(() => (window as any).__sanctumInteract());
-
+  // Walk onto its center (read dynamically) — discovery is automatic (GDD §10.7).
+  const anchor2 = await zoneCenter(page, 'swamp_anchor_2');
+  await page.evaluate(([x, y]) => (window as any).__player.setPosition(x, y), [
+    anchor2.x,
+    anchor2.y,
+  ]);
   await page.waitForFunction(
     () =>
-      (window as any).__waystones?.waystones?.find((w: any) => w.id === 'forest_hidden_anchor')
+      (window as any).__waystones?.waystones?.find((w: any) => w.id === 'swamp_anchor_2')
         ?.attuned === true,
     { timeout: 8000 },
   );
-  // Confirm against a fresh server GET (the reveal is server-persisted).
+  // Confirm against a fresh server GET (the attunement is server-persisted).
   const ws = await serverWaystones(page);
-  expect(ws.waystones.find((w) => w.id === 'forest_hidden_anchor')?.attuned).toBe(true);
+  expect(ws.waystones.find((w) => w.id === 'swamp_anchor_2')?.attuned).toBe(true);
   await ctx.close();
 });
 
@@ -223,10 +198,10 @@ test('swamp: teleporting to forest_hidden_anchor routes the Sanctum door to the 
   await seedAuthToken(ctx);
   const page = await ctx.newPage();
   await loadSanctum(page);
-  await seedAggregateXp(page, 800); // ≥ forest_hidden_anchor threshold (800)
 
-  // Attuning the Ironbark Rune reveals (attunes) the hidden Anchorage server-side.
-  expect(await attune(page, 'swamp_secret_forest')).toBe(200);
+  // The hidden alcove Anchorage is a normal catalog Anchorage (the old swamp-Rune
+  // reveal is gone); attune it directly so it becomes a valid teleport destination.
+  expect(await attune(page, 'forest_hidden_anchor')).toBe(200);
   expect((await serverWaystones(page)).waystones.find((w) => w.id === 'forest_hidden_anchor')
     ?.attuned).toBe(true);
 
