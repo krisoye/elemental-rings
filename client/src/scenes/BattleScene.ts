@@ -343,6 +343,9 @@ export class BattleScene extends Phaser.Scene {
       hearts: this.playerDuelist.displayedHearts,
       // #211 — rendered ⚡ current/max (undefined when hidden: AI / no-token).
       spirit: this.hud.displayedSpirit,
+      // #313 — rendered OPPONENT ⚡ current/max (undefined when hidden: PvP /
+      // non-finite AI pool). Lets E2E assert the boss readout + PvP privacy.
+      oppSpirit: this.opponentDuelist.displayedSpirit,
     };
     // EPIC #264 / #266 — whether A1/A2 currently show the double-attack eligibility
     // cue (canDoubleAttack on the local hand, during the player's attack phase). For

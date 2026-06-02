@@ -582,6 +582,16 @@ export class BattleRoom extends Room<{ state: BattleState }> {
         // npcSpiritMult is 0 for PvP rooms (no AI) — guard so we don't touch _npcSpirit there.
         if (this.ai && this.npcSpiritMult > 0) {
           this._npcSpirit = Math.floor(spirit_max * this.npcSpiritMult);
+          // #313 — broadcast the AI's finite spirit pool so the opponent panel can
+          // render ⚡ current/max. The AI seat is created at room setup (seatPlayer
+          // AI_ID) before any human joins, so this get() always resolves here.
+          // PvP rooms have npcSpiritMult === 0 and never reach this branch, so the
+          // human opponent's seat keeps spiritMax === 0 and the readout stays hidden.
+          const aiPs = this.state.players.get(AI_ID);
+          if (aiPs) {
+            aiPs.spiritMax = this._npcSpirit;
+            aiPs.spiritCurrent = this._npcSpirit;
+          }
         }
       }
 
@@ -1056,6 +1066,10 @@ export class BattleRoom extends Room<{ state: BattleState }> {
         // (mirrors SPIRIT_PER_RING_USE = 1 for humans).
         affordable = Math.min(cost, Math.max(0, this._npcSpirit));
         this._npcSpirit -= affordable;
+        // #313 — broadcast the live AI pool so the opponent ⚡ readout decrements
+        // in real time. spiritMax stays constant mid-duel (matches the human
+        // convention below). `attacker` is the AI seat here (id === AI_ID).
+        attacker.spiritCurrent = this._npcSpirit;
       }
       if (affordable > 0) {
         setUses(ring, Math.min(ring.maxUses, ring.currentUses + affordable));

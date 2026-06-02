@@ -45,6 +45,10 @@ export class OpponentDuelist extends Phaser.GameObjects.Container {
   private readonly heartsText: Phaser.GameObjects.Text;
   private readonly atkText: Phaser.GameObjects.Text;
   private readonly defText: Phaser.GameObjects.Text;
+  // #313 — opponent spirit (recharge fuel) readout. Shown only for AI duels
+  // (broadcast spiritMax > 0); PvP human opponents broadcast spiritMax === 0 so
+  // this stays hidden, preserving PvP recharge-fuel privacy.
+  private readonly spiritText: Phaser.GameObjects.Text;
   private readonly elementDots: Phaser.GameObjects.Arc[] = [];
   private readonly statusOverlay: Phaser.GameObjects.Rectangle;
   private readonly statusBadge: Phaser.GameObjects.Text;
@@ -96,6 +100,15 @@ export class OpponentDuelist extends Phaser.GameObjects.Container {
       fontSize: '12px',
       color: '#88aaff',
     });
+    // #313 — opponent spirit readout (⚡ current/max), mirroring the local Hud
+    // gauge format/colors. Placed in the right column of the stats panel; hidden
+    // until updateFromState() confirms spiritMax > 0 (AI duels only).
+    this.spiritText = scene.add
+      .text(10, -55, '', {
+        fontSize: '12px',
+        color: '#ffffff',
+      })
+      .setVisible(false);
 
     // Five element dots: gray = unrevealed, colored = revealed.
     for (let i = 0; i < 5; i++) {
@@ -133,6 +146,7 @@ export class OpponentDuelist extends Phaser.GameObjects.Container {
       this.heartsText,
       this.atkText,
       this.defText,
+      this.spiritText,
       ...this.elementDots,
       this.statusOverlay,
       this.statusBadge,
@@ -174,6 +188,20 @@ export class OpponentDuelist extends Phaser.GameObjects.Container {
       if (ring && !ring.isExtinguished) defTotal += ring.currentUses;
     }
     this.defText.setText(`DEF: ${defTotal}`);
+
+    // #313 — opponent spirit (recharge fuel). Shown only when spiritMax > 0,
+    // which holds for AI duels (the server seeds the AI seat's finite pool) and
+    // never for PvP humans (their broadcast spiritMax stays 0). Mirrors the local
+    // Hud gauge: red when fully depleted, white otherwise.
+    const spiritMax = (opp.spiritMax as number) ?? 0;
+    if (spiritMax > 0) {
+      const spiritCurrent = (opp.spiritCurrent as number) ?? 0;
+      this.spiritText.setText(`⚡ ${spiritCurrent}/${spiritMax}`);
+      this.spiritText.setColor(spiritCurrent === 0 ? '#ff4444' : '#ffffff');
+      this.spiritText.setVisible(true);
+    } else {
+      this.spiritText.setVisible(false);
+    }
 
     // Element dots: only color base elements that have been revealed.
     for (let el = 0; el < 5; el++) {
@@ -227,5 +255,15 @@ export class OpponentDuelist extends Phaser.GameObjects.Container {
         ease: 'Quad.easeOut',
       });
     }
+  }
+
+  /**
+   * #313 — the RENDERED opponent spirit readout (current/max, without the ⚡
+   * prefix), or undefined when the readout is hidden (PvP / non-finite pool).
+   * Mirrors Hud.displayedSpirit so BattleScene.publishHudView can surface it for
+   * E2E without reading pixels.
+   */
+  get displayedSpirit(): string | undefined {
+    return this.spiritText.visible ? this.spiritText.text.replace('⚡ ', '') : undefined;
   }
 }
