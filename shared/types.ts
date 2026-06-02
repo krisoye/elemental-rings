@@ -211,6 +211,18 @@ export interface BattleSummaryPayload {
   aggregateXp: number; // post-award total from PlayerRepo.getSpiritStats(playerId).aggregateXp
 }
 
+/**
+ * Sent to the winning client when they gain the loser's staked thumb ring (or, in
+ * a vsAI win, a freshly granted ring matching the AI's thumb). The client stores
+ * the id and renders the carry/leave/discard prompt in CampScene (#40). The grant
+ * itself is server-authoritative; this payload only carries display fields.
+ */
+export interface WonRingPayload {
+  ringId: string;
+  element: number;
+  xp: number;
+}
+
 export interface BlockResult {
   timing: 'PARRY' | 'BLOCK' | 'MISTIME' | 'NO_BLOCK';
   relationship: 'STRONG' | 'NEUTRAL' | 'WEAK';

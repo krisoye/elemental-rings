@@ -14,6 +14,7 @@
 // objects — it references only a minimal structural view of PlayerState/Ring
 // (the same approach BlockResolver/ElementSystem take with their inputs).
 import { STATUS_THRESHOLD, SHADOW_GAUGE_CAP } from './constants';
+import { consumeUse } from './ringHelpers';
 
 // Re-export so existing importers (BattleRoom, tests) can keep referencing
 // StatusEffects.SHADOW_GAUGE_CAP; the value now lives in constants.ts.
@@ -110,9 +111,7 @@ function highestCapacityRingKey(
 
 /** Drain one use from the chosen ring, extinguishing it at 0. */
 function drainRing(ps: PlayerLike, key: BattleRingKey): void {
-  const ring = ps[key];
-  ring.currentUses = Math.max(0, ring.currentUses - 1);
-  ring.isExtinguished = ring.currentUses === 0;
+  consumeUse(ps[key]);
 }
 
 /**

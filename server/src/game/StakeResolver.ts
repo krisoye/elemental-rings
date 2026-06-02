@@ -12,6 +12,7 @@
 import { PlayerState } from '../schemas/PlayerState';
 import { Ring } from '../schemas/Ring';
 import { ElementEnum } from '../../../shared/types';
+import { consumeUse, setUses } from './ringHelpers';
 
 const { FIRE, WATER, EARTH, WIND, WOOD } = ElementEnum;
 
@@ -22,8 +23,7 @@ function thumbActive(ps: PlayerState): boolean {
 
 /** Charge the thumb 1 use; update extinguished flag. */
 function chargeThumb(ps: PlayerState): void {
-  ps.thumb.currentUses -= 1;
-  ps.thumb.isExtinguished = ps.thumb.currentUses === 0;
+  consumeUse(ps.thumb);
 }
 
 /**
@@ -60,9 +60,8 @@ export function applySetupPassive(ps: PlayerState): number {
   let i = 0;
   while (ps.thumb.currentUses > 0) {
     const ring = matching[i % matching.length].ring;
-    ring.currentUses += 1;
-    ring.maxUses = Math.max(ring.maxUses, ring.currentUses);
-    ring.isExtinguished = false;
+    ring.maxUses = Math.max(ring.maxUses, ring.currentUses + 1);
+    setUses(ring, ring.currentUses + 1);
     chargeThumb(ps);
     distributed += 1;
     i += 1;
@@ -84,8 +83,7 @@ export function applySetupPassive(ps: PlayerState): number {
 export function applyEarthParry(ps: PlayerState, defenderRing: Ring): boolean {
   if (!thumbActive(ps)) return false;
   if (ps.thumb.element !== EARTH) return false;
-  defenderRing.currentUses = Math.min(defenderRing.maxUses, defenderRing.currentUses + 1);
-  defenderRing.isExtinguished = false;
+  setUses(defenderRing, Math.min(defenderRing.maxUses, defenderRing.currentUses + 1));
   chargeThumb(ps);
   return true;
 }
@@ -143,9 +141,8 @@ export function applyBossSetupPassive(ps: PlayerState, bossId: string): number {
 
   if (passive.bulwarkDefenseBonus > 0) {
     for (const ring of [ps.d1, ps.d2]) {
-      ring.currentUses += passive.bulwarkDefenseBonus;
-      ring.maxUses = Math.max(ring.maxUses, ring.currentUses);
-      ring.isExtinguished = ring.currentUses === 0;
+      ring.maxUses = Math.max(ring.maxUses, ring.currentUses + passive.bulwarkDefenseBonus);
+      setUses(ring, ring.currentUses + passive.bulwarkDefenseBonus);
     }
   }
   return passive.heartwoodCharges;
