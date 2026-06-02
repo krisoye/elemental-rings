@@ -34,6 +34,13 @@ export type PhaseType = 'WAITING' | 'ATTACK_SELECT' | 'DEFEND_WINDOW' | 'RESOLVE
 // Server-side NPC personalities (§10.5). Bluffing is deferred to Phase 5.
 export type AIPersonality = 'AGGRESSIVE' | 'DEFENSIVE' | 'STATUS_HUNTER' | 'RESILIENT';
 
+// Boss tiers (EPIC #256). A boss NPC carries a tier on its NpcSpawnDef.boss
+// descriptor; the tier keys BOSS_MODIFIERS (difficulty bundle, #258), the enrage
+// thresholds (#259), gauge pressure (#260), and passives (#261). 'major' is the
+// toughest (Thornwood Warden), 'gate' an exit-blocking mid boss (Bogwood Warden),
+// 'sub' a roaming sub-boss (the fusion-shrine guardians).
+export type BossTier = 'major' | 'gate' | 'sub';
+
 // Options passed to a BattleRoom on creation. PvP `battle` rooms pass nothing;
 // `battle-ai` rooms pass `{ vsAI: true, personality, aiSeed? }` so the room
 // seats a virtual AI player and locks itself.

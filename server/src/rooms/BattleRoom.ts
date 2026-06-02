@@ -10,7 +10,7 @@ import { makeRng } from '../game/ai/AIProfiles';
 import { generateAILoadout, type SlotSpec } from '../game/ai/AILoadout';
 import * as StakeResolver from '../game/StakeResolver';
 import * as PlayerRepo from '../persistence/PlayerRepo';
-import { NPC_SPAWNS } from '../persistence/NpcSpawns';
+import { NPC_SPAWNS, type BossDescriptor } from '../persistence/NpcSpawns';
 import { verifyToken } from '../auth/auth';
 import {
   TELEGRAPH_MS,
@@ -111,6 +111,15 @@ export class BattleRoom extends Room<{ state: BattleState }> {
   private npcId: string | undefined;
 
   /**
+   * EPIC #256 — the boss descriptor for this duel's NPC (tier / name / fused
+   * thumb), resolved from NPC_SPAWNS in onCreate. undefined for non-boss vsAI
+   * duels and all PvP. Drives the fused-thumb stake (#257), the BOSS_MODIFIERS
+   * difficulty bundle (#258), enrage (#259), gauge pressure (#260), and unique
+   * passives (#261).
+   */
+  private boss: BossDescriptor | undefined;
+
+  /**
    * #87 Part C — the sessionId that paid AMBUSH_SPIRIT_COST to ambush this duel.
    * When set, it overrides the default ids[0] opening attacker so the ambusher
    * strikes first. null in normal duels (no first-strike purchase).
@@ -177,6 +186,13 @@ export class BattleRoom extends Room<{ state: BattleState }> {
       // #83 — remember which overworld NPC this duel represents (if any) so a
       // human win can be persisted as that NPC's defeat in persistBattleResult.
       this.npcId = options.npcId;
+      // EPIC #256 — resolve the boss descriptor (if this NPC is a boss) from the
+      // spawn table. Server-authoritative: the tier / fused thumb come from
+      // NPC_SPAWNS, never the client. Cached for the difficulty/passive paths.
+      const bossSpawn = options.npcId
+        ? NPC_SPAWNS.find((n) => n.id === options.npcId)
+        : undefined;
+      this.boss = bossSpawn?.boss;
       const personality = options.personality ?? 'AGGRESSIVE';
       const seed = options.aiSeed ?? (Date.now() & 0xffffffff);
       // Use a separate RNG stream for loadout generation so the combat RNG
@@ -190,15 +206,19 @@ export class BattleRoom extends Room<{ state: BattleState }> {
       const playerXp =
         options.playerBattleHandAvgXp ??
         (tokenPayload ? PlayerRepo.getBattleHandAvgXp(tokenPayload.playerId) : 0);
-      // #199 — pass the overworld NPC's intended stake element (when supplied) so
-      // the loadout's thumb matches the element shown on the overworld marker.
+      // #199/#257 — the AI's staked thumb element. A boss stakes its thematic
+      // FUSION (resolved from the spawn descriptor, server-authoritative), which
+      // generateAILoadout routes to a fused-thumb loadout. A non-boss NPC uses the
+      // overworld marker's base element (options.thumbElement). The boss's fused
+      // thumb takes precedence over any client-supplied thumbElement.
+      const thumbElement = this.boss?.fusedThumb ?? options.thumbElement;
       const aiSpec = generateAILoadout(
         personality,
         loadoutRng,
         undefined,
         undefined,
         undefined,
-        options.thumbElement,
+        thumbElement,
         playerXp,
       );
       // Deterministic-test AI-strength overrides (see BattleRoomOptions): a weak
@@ -545,8 +565,14 @@ export class BattleRoom extends Room<{ state: BattleState }> {
       } else if (!loserPlayerId && winnerPlayerId && loserId) {
         // vsAI win: AI has no DB ring to transfer, so grant the winner a new
         // ring matching the AI's thumb element (GDD §9.1).
+        //
+        // #257 — SUPPRESS this generic grant for a FUSED-THUMB BOSS. A boss stakes
+        // its thematic fusion; beating it must NOT hand the player that fusion for
+        // free (the curated rewards stand alone — the food cache below, and the
+        // Thornado Guardian's grantRingToCarry(THORNADO)). The thumb is a fusion
+        // exactly when this is a boss with a fused thumb, so guard on isFusion.
         const aiPs = this.state.players.get(loserId);
-        if (aiPs) {
+        if (aiPs && !aiPs.thumb.isFusion) {
           const t = aiPs.thumb;
           wonRingId = PlayerRepo.grantRing(winnerPlayerId, t.element, t.tier, t.maxUses, t.xp);
           wonRingElement = t.element;

@@ -65,6 +65,13 @@ const SOLO_SPECS = [
   'spirit-hud.spec.ts', // #211
   'battle-end-modal.spec.ts', // #212
   'npc-duel-return.spec.ts', // #88 / #212 migration
+  // EPIC #256 — boss combat identity. Single-context harness duels (boss-harness.html
+  // → battle-ai on 2568); parallel-safe (each create yields a fresh locked room).
+  'boss-fused-thumb.spec.ts', // #257
+  'boss-modifiers.spec.ts', // #258
+  'boss-enrage.spec.ts', // #259
+  'boss-gauge-pressure.spec.ts', // #260
+  'boss-passives.spec.ts', // #261
 ];
 
 export default defineConfig({
