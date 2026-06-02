@@ -1,5 +1,5 @@
 import Phaser from 'phaser';
-import { InteractionZone } from './InteractionZone';
+import { WorldInteractable } from './WorldInteractable';
 import { ELEMENT_NAMES } from '../../Constants';
 
 declare const __SERVER_URL__: string;
@@ -46,10 +46,7 @@ const ALTAR_DEPTH = 4; // below in-front canopy (5), above ground/player feet
  * as a coloured placeholder rectangle (dim = sealed, bright = open). Swapping in a
  * real sprite later is a localized change to `renderAltar()`.
  */
-export class ShrineZone {
-  /** The interaction zone the owning scene registers in its zone list. */
-  readonly interactionZone: InteractionZone;
-
+export class ShrineZone extends WorldInteractable {
   private readonly scene: Phaser.Scene;
   private readonly shrineId: string;
   private readonly shrineElement: number;
@@ -85,6 +82,10 @@ export class ShrineZone {
     onShrineOpen: () => void,
     alwaysOpen = false,
   ) {
+    // One zone covering the altar (via the WorldInteractable base); its callback
+    // dispatches on the live sealed/open state. The arrow only runs
+    // post-construction, so referencing `this` here is safe.
+    super(scene, shrineObj, () => this.handleInteract(), 'Examine altar [E]');
     this.scene = scene;
     this.shrineId = shrineId;
     this.shrineElement = shrineElement;
@@ -107,14 +108,6 @@ export class ShrineZone {
       .setStrokeStyle(2, 0x2a1f3a)
       .setDepth(ALTAR_DEPTH);
 
-    // One zone covering the altar; its callback dispatches on the live state.
-    this.interactionZone = new InteractionZone(
-      scene,
-      shrineObj,
-      () => this.handleInteract(),
-      'Examine altar [E]',
-    );
-
     if (alwaysOpen) {
       // No seal: render open immediately and skip the GET /api/shrines/:id fetch.
       this.renderAltar();
@@ -130,6 +123,17 @@ export class ShrineZone {
    */
   get altarObjects(): Phaser.GameObjects.GameObject[] {
     return [this.altar];
+  }
+
+  /**
+   * The world-space display objects owned by this shrine — the altar sprite plus
+   * the wrapped {@link InteractionZone}'s objects — satisfying the
+   * {@link WorldInteractable} contract. (Scenes currently route the altar via
+   * {@link altarObjects} and register the zone's display separately, so this is
+   * an additive convenience.)
+   */
+  get displayObjects(): Phaser.GameObjects.GameObject[] {
+    return [this.altar, ...this._zone.displayObjects];
   }
 
   /** True once the shrine has been unsealed (for E2E assertions). */
@@ -303,6 +307,6 @@ export class ShrineZone {
   destroy(): void {
     this.closeOverlay();
     this.altar.destroy();
-    this.interactionZone.destroy();
+    this._zone.destroy();
   }
 }

@@ -8,11 +8,10 @@ import {
   preloadCharset,
   type Facing,
 } from './charset';
+import { registerWalkAnims } from './animHelpers';
 
 /** Which of the 8 charset characters is the player (0 = top-left, red-haired). */
 const PLAYER_CHAR = 0;
-/** Walk-cycle playback rate (frames/sec). */
-const WALK_FPS = 8;
 
 /** Top-down walk speed in px/s (GDD §10 overworld traversal — feel, not a rule). */
 export const PLAYER_SPEED = 160;
@@ -63,22 +62,12 @@ export class Player extends Phaser.Physics.Arcade.Sprite {
   }
 
   /**
-   * Register the four directional walk animations once on the game-level anim
-   * manager (shared across scenes). The cycle steps left-foot → idle → right-foot
-   * → idle so a stationary frame bookends each stride.
+   * Register the four directional player walk animations once on the game-level
+   * anim manager (shared across scenes), via the shared {@link registerWalkAnims}
+   * helper — keys `player-walk-${dir}` over the player charset character.
    */
   private static ensureAnims(scene: Phaser.Scene): void {
-    for (const dir of ['down', 'left', 'right', 'up'] as Facing[]) {
-      const key = `player-walk-${dir}`;
-      if (scene.anims.exists(key)) continue;
-      const cols = [0, 1, 2, 1];
-      scene.anims.create({
-        key,
-        frames: cols.map((col) => ({ key: CHARSET_KEY, frame: charsetFrame(PLAYER_CHAR, dir, col) })),
-        frameRate: WALK_FPS,
-        repeat: -1,
-      });
-    }
+    registerWalkAnims(scene, 'player', PLAYER_CHAR);
   }
 
   /** The idle (standing) frame for the current facing. */
