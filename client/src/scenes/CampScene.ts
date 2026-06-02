@@ -43,7 +43,7 @@ const MODAL_LEFT = CANVAS_W / 2 - MODAL_W / 2; // 132
 const CONTENT_LEFT = MODAL_LEFT + 20; // 152
 const CONTENT_RIGHT = CANVAS_W / 2 + MODAL_W / 2 - 20; // 872
 const COL_RELIQUARY_X = CONTENT_LEFT; // 152
-const COL_SPARE_X = 372;              // Middle column — spares 3×3 grid
+const COL_SPARE_X = 392;              // Middle column — spares 3×3 grid (offset +20px from reliquary for visual separation)
 const COL_BATTLEHAND_X = 594;         // Right column — battle hand section
 // Battle hand ring grid: right-aligned. LoadoutPanel CARD_W=70, COL_GAP=78 → width=148.
 const BATTLEHAND_RING_X = CONTENT_RIGHT - 148; // 724 — LoadoutPanel origin
