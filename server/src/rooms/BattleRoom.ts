@@ -42,6 +42,7 @@ import {
   SelectAttackPayload,
   SelectDoubleAttackPayload,
   DoubleAttackStartPayload,
+  DoubleAttackCancelledPayload,
   SubmitDefensePayload,
   RechargePayload,
   RechargeResultPayload,
@@ -1081,6 +1082,7 @@ export class BattleRoom extends Room<{ state: BattleState }> {
     if (attackerPlayer.hearts <= 0) {
       state.winnerId = defenderId;
       state.phase = 'ENDED';
+      this.finalizeEnded();
       return { result, ended: true };
     }
 
@@ -1309,7 +1311,7 @@ export class BattleRoom extends Room<{ state: BattleState }> {
       // PARRY+STRONG on orb 1: the returning counter intercepts orb 2 mid-flight.
       // Cancel orb 2 (no resolution, no heart/gauge change) and run orb 1's rally.
       this.clearComboState();
-      this.broadcast('doubleAttackCancelled', { orb: 2 });
+      this.broadcast('doubleAttackCancelled', { orb: 2 } satisfies DoubleAttackCancelledPayload);
       this.continueAfterOrb(defenderId, orb1ParrySlot, result);
       return;
     }

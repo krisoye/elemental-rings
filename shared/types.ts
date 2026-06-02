@@ -111,6 +111,12 @@ export interface DoubleAttackStartPayload {
   secondElements: number[];
   gapMs: number;
 }
+
+// Broadcast when orb-2 of a double attack is cancelled (orb-1 PARRY or KO).
+// The client uses this to play the disperse VFX instead of an impact.
+export interface DoubleAttackCancelledPayload {
+  orb: 2;
+}
 // GDD §6.3 — recharge one of the attacker's four COMBAT rings (a1/a2/d1/d2;
 // the Thumb is never rechargeable in-duel), spending spirit (1 per use restored)
 // up to the ring's deficit. Attack rings recharge via double-tap 1/2 (Z/C);
