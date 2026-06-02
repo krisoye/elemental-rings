@@ -127,6 +127,9 @@ declare global {
       d2: string;
       hearts: string;
       spirit?: string;
+      // #313 — the rendered opponent spirit readout (current/max), or undefined
+      // when hidden (PvP / non-finite AI pool). For E2E privacy + decrement asserts.
+      oppSpirit?: string;
     };
     // #211 — the latest per-client recharge result, published by BattleScene so
     // E2E can assert partial/insufficient feedback without reading pixels.

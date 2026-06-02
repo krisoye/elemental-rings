@@ -179,6 +179,7 @@ export abstract class BaseBiomeScene extends DualCameraScene {
   private detectedNpc: {
     id: string;
     personality: string;
+    type: 'monster' | 'duelist';
     x: number;
     y: number;
     aiSeed?: number;
@@ -862,11 +863,19 @@ export abstract class BaseBiomeScene extends DualCameraScene {
         y: this.player.y,
         screenId: this.screenId,
       };
+      // #313 — mirror onNpcClick(): resolve the canonical per-element registry
+      // entry so the duel battler matches the overworld marker. Without this,
+      // BattleScene.create() rolls a random per-element variant on the E-key path.
+      const detectedOwEntry =
+        this.detectedNpc.type === 'monster'
+          ? MONSTER_OW_REGISTRY[this.detectedNpc.element]
+          : undefined;
       this.scene.start('EncounterScene', {
         npcId: this.detectedNpc.id,
         personality: this.detectedNpc.personality as AIPersonality,
         aiSeed: this.detectedNpc.aiSeed,
         spriteFrame: this.detectedNpc.spriteFrame,
+        battleKey: detectedOwEntry?.battleKey,
         // #199 — thread the NPC's staked element so the battle thumb matches the
         // overworld sprite colour + approach warning.
         thumbElement: this.detectedNpc.element,
@@ -1579,6 +1588,7 @@ export abstract class BaseBiomeScene extends DualCameraScene {
       this.detectedNpc = {
         id: found.id,
         personality: found.personality,
+        type: found.type,
         x: found.x,
         y: found.y,
         aiSeed: found.aiSeed,
