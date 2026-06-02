@@ -4,7 +4,8 @@
  * Boots a real Colyseus `Server` over the WebSocket transport, connects two SDK
  * clients, and drives full duels through `selectAttack` / `submitDefense` (now
  * keyed by named slot strings) — exercising the room's timing windows, named-slot
- * loadout, 3-gauge model, rally swap, heart logic, and phase-lock end-to-end.
+ * loadout, 3-gauge model, initiative transfer, rally chain, heart logic, and
+ * phase-lock end-to-end.
  * (Pure resolution math is in tests/unit/.)
  *
  * Default loadout (seatPlayer): thumb=FIRE, a1=FIRE, a2=WATER, d1=WOOD, d2=EARTH.

@@ -14,7 +14,7 @@ Each section lives in its own file. Read only what you need.
 | 3 | Element System | [gdd-03-element-system.md](gdd-03-element-system.md) | Triangle (Fire/Water/Wood), Wind/Earth asymmetry, fusions |
 | 4 | Ring System | [gdd-04-ring-system.md](gdd-04-ring-system.md) | Tiers, uses, XP, recharge |
 | 5 | Fusion System | [gdd-05-fusion-system.md](gdd-05-fusion-system.md) | Recipes, eligibility, fused rings, shrines |
-| 6 | Battle System | [gdd-06-battle-system.md](gdd-06-battle-system.md) | **Block Resolution Table, timing, rally** — read for any combat work; §6.3 Z/C hotkeys; §6.10 ambush initiative |
+| 6 | Battle System | [gdd-06-battle-system.md](gdd-06-battle-system.md) | **Initiative model, Block Resolution Table, timing, rally** — read for any combat work; §6.3 initiative + Z/C hotkeys; §6.4 rally chain + initiative transfer; §6.10 ambush initiative |
 | 7 | Status Effects | [gdd-07-status-effects.md](gdd-07-status-effects.md) | Gauge mechanics, statuses, Shadow curse |
 | 8 | Player Progression | [gdd-08-player-progression.md](gdd-08-player-progression.md) | Player XP, world gating, inventory |
 | 9 | Staking Economy | [gdd-09-staking-economy.md](gdd-09-staking-economy.md) | Stake rules, jewelry positions, self-regulation |
@@ -50,7 +50,7 @@ This log records **how the game's design has evolved** — the decisions that ch
 - **Biome gates are bosses, not attunement.** Passage between biomes is held by a boss NPC that physically blocks the exit until defeated, rather than by a waystone the player must attune.
 - **Fusion is XP-driven and tier-emergent.** Two same-tier rings (≥ Tier 1) of different base elements fuse into a dual-element ring whose XP is the sum of its parents; the result's tier follows from that total. Fusion happens at the Sanctum ring-wall, and at in-world **Fusion Shrines** that unlock specific recipes as a world-progression reward.
 - **The overworld is a multi-screen biome graph.** Biomes are graphs of discrete tilemap screens connected by walkable edges; the Forest is the first full region (28 screens, §10.15). The Sanctum is a walkable interior home.
-- **Combat is active timed-block with a rally chain.** The defender presses a slot inside a timing window; the outcome resolves on timing × element axes, and parries open an interactive rally volley. (Replaced an earlier simultaneous-secret turn model.)
+- **Combat uses an initiative model with active timed-block and rally chains.** One player holds initiative and chooses to attack, recharge, or forfeit; the other reacts. A STRONG PARRY fires a counter-volley, extending the current initiative phase. After any chain resolves — regardless of rally depth or who scored hits — initiative passes strictly to the other player. (Replaced an earlier simultaneous-secret turn model.)
 - **Element model is a triangle + asymmetric neutrals.** Fire > Wood > Water > Fire, with Wind (strong attack / weak defense) and Earth (weak attack / neutral defense) as neutrals — replacing the earlier five-element pentagon. Status effects are the three triangle gauges.
 - **Five-slot named loadout.** Thumb / A1 / A2 / D1 / D2, with phase-locked input (attack slots active only in the attack phase, defense slots in the defense phase). Replaced free-hand selection and the dominant/off-hand split.
 - **Stack is Phaser.js + Colyseus, server-authoritative.** All game logic runs server-side; clients send inputs and render broadcast state. (Pivoted from an earlier Godot prototype.)

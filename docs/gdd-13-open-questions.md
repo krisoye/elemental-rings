@@ -90,6 +90,9 @@ An alternative ring-progression model considered as a way to make three trade-of
 *Document version 3.0 — Updated May 2026*
 *v3.0 changes: Pivoted from Godot 4.x to **Phaser.js + Colyseus** multiplayer stack. Added §2 Tech Stack & Architecture (server-authoritative model, LAN deployment on game-da-god, Playwright E2E testing, Capacitor/Electron distribution). Rewrote §12 Build Sequence for 9 TypeScript/Playwright phases replacing Godot GDScript prompts. Updated §13 Open Questions to include tech/multiplayer items. Removed all Godot-specific implementation notes (EventBus, GDScript, Godot TileMap) from body text. Game design content (§3–§11) unchanged.*
 
+*Document version 2.3 — Updated June 2026*
+*v2.3 changes: Introduced the **initiative model** in §6.3 — one player holds initiative and chooses attack/recharge/forfeit; the other is the reactor. After any counter-chain resolves, initiative always passes to the non-holder, regardless of rally depth or who scored hits. Fixed a server bug where a neutrally-absorbed rally volley incorrectly returned initiative to the original attacker. §6.4 rally updated to clarify that counters extend the current initiative phase, not transfer it.*
+
 *Document version 2.2 — Updated May 2026*
 *v2.2 changes: Replaced the simultaneous-secret turn model (§6.3) with the **active timed-block** model and added the rally mechanic (§6.4). Rewrote §6.4 damage rules around two axes (timing: parry/block/mistime/no-block; element: strong/neutral/weak). Removed auto-reflect in favour of interactive rally volley chain walking the pentagon.*
 
