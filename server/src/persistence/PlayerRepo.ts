@@ -1,6 +1,6 @@
 import { v4 as uuidv4 } from 'uuid';
 import { db } from './db';
-import { ElementEnum } from '../../../shared/types';
+import { ElementEnum, type DifficultyTier } from '../../../shared/types';
 import { fusionOf, isFusion, componentsOf } from '../game/Fusions';
 import { tierForXp } from '../game/Tiers';
 import { getTalisman } from '../../../shared/talismans';
@@ -34,6 +34,8 @@ export interface PlayerRow {
   reliquary_cap: number;
   /** #182 — unspent Reliquary Shards held by the player. */
   reliquary_shards: number;
+  /** EPIC #279 — player-chosen difficulty tier; scales spirit_max. */
+  difficulty: DifficultyTier;
 }
 
 /** A persisted ring row. */

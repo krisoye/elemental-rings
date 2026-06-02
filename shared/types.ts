@@ -34,6 +34,23 @@ export type PhaseType = 'WAITING' | 'ATTACK_SELECT' | 'DEFEND_WINDOW' | 'RESOLVE
 // Server-side NPC personalities (§10.5). Bluffing is deferred to Phase 5.
 export type AIPersonality = 'AGGRESSIVE' | 'DEFENSIVE' | 'STATUS_HUNTER' | 'RESILIENT';
 
+// EPIC #279 — player-chosen difficulty tier. Scales the spirit_max multiplier
+// (DIFFICULTY_MULTIPLIERS) applied to the sum of Reliquary ring max_uses. Stored
+// in players.difficulty (default 'seeker'); changeable anytime via
+// PUT /api/difficulty. Lives in shared/ so client and server import one source.
+export type DifficultyTier = 'wanderer' | 'seeker' | 'ascendant';
+
+export const DIFFICULTY_MULTIPLIERS: Record<DifficultyTier, number> = {
+  wanderer: 5,
+  seeker: 4,
+  ascendant: 3,
+};
+
+/** Runtime type guard for an incoming difficulty tier value (request bodies). */
+export function isDifficultyTier(v: unknown): v is DifficultyTier {
+  return v === 'wanderer' || v === 'seeker' || v === 'ascendant';
+}
+
 // Boss tiers (EPIC #256). A boss NPC carries a tier on its NpcSpawnDef.boss
 // descriptor; the tier keys BOSS_MODIFIERS (difficulty bundle, #258), the enrage
 // thresholds (#259), gauge pressure (#260), and passives (#261). 'major' is the

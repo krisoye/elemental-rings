@@ -54,6 +54,14 @@ if (!hasPlayerCol('carry_cap')) {
   db.exec('ALTER TABLE players ADD COLUMN carry_cap INTEGER NOT NULL DEFAULT 10');
 }
 
+// EPIC #279 — difficulty tier. Scales the spirit_max multiplier (the boot
+// recompute below reads this column in its CASE). Defaults to 'seeker' so every
+// existing player migrates to the meaningful-choices baseline. Guarded like every
+// other column so the ALTER never re-runs.
+if (!hasPlayerCol('difficulty')) {
+  db.exec("ALTER TABLE players ADD COLUMN difficulty TEXT NOT NULL DEFAULT 'seeker'");
+}
+
 // #41 — spirit system: spirit gauge + food economy.
 if (!hasPlayerCol('spirit_max')) {
   db.exec(`ALTER TABLE players ADD COLUMN spirit_max INTEGER NOT NULL DEFAULT ${SPIRIT_BASE}`);
