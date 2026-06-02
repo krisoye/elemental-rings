@@ -113,11 +113,17 @@ export const TEMPLATES: Record<AIPersonality, LoadoutTemplate[]> = {
 };
 
 /**
- * Boss fused-thumb loadouts (EPIC #256 / #257). A boss stakes its thematic FUSION
- * on the thumb and fields a coherent base-ring hand around it — an attack pair
- * drawn from the fusion's components (Wind always uncounterable) and a defense
- * pair that covers the triangle counter the fusion is vulnerable to as a BASE
- * ring (the fusion thumb itself is passive; the combat rings are base elements).
+ * Boss fused-thumb loadouts (EPIC #256 / #257; A-slot composition pinned by EPIC
+ * #268). A boss stakes its thematic FUSION on the thumb and seats A1/A2 = the
+ * fusion's TWO component elements, plus a defense pair covering the triangle
+ * counter the fusion is vulnerable to (the fusion thumb itself is passive; the
+ * combat rings are base elements).
+ *
+ * EPIC #268 — A1/A2 MUST equal `componentsOf(thumb)` (as an unordered set), or the
+ * server `canDoubleAttack` predicate fails and the boss can never fire its
+ * signature fusion-thumb double attack. This is the contract the AI offense policy
+ * relies on; do not reintroduce WIND into an A-slot unless WIND is a component of
+ * the staked fusion (it is for THORNADO, not for MUD/BLOOM).
  *
  * Keyed by the fusion ElementEnum value. Only the 4 implemented bosses' fusions
  * are present; an unmapped fusion thumb falls back to FUSED_THUMB_DEFAULT.
@@ -125,9 +131,9 @@ export const TEMPLATES: Record<AIPersonality, LoadoutTemplate[]> = {
  * Design (GDD §3.4 — a fusion's triangle component carries its single strength):
  *  - THORNADO (Wood+Wind): a1 WIND (uncounterable), a2 WOOD; d1 WOOD (STRONG vs
  *    Water — Wood's counter), d2 EARTH (always-safe neutral).
- *  - MUD (Water+Earth): a1 WATER, a2 WIND; d1 WATER (STRONG vs Fire — Water's
+ *  - MUD (Water+Earth): a1 WATER, a2 EARTH; d1 WATER (STRONG vs Fire — Water's
  *    counter), d2 EARTH.
- *  - BLOOM (Wood+Earth): a1 WOOD, a2 WIND; d1 WOOD (STRONG vs Water), d2 EARTH.
+ *  - BLOOM (Wood+Earth): a1 WOOD, a2 EARTH; d1 WOOD (STRONG vs Water), d2 EARTH.
  *
  * The thumb itself is the fusion; the four combat slots stay base elements (the
  * setup passive only fires for Fire/Water/Wood THUMBS, so a fusion thumb never
@@ -136,9 +142,10 @@ export const TEMPLATES: Record<AIPersonality, LoadoutTemplate[]> = {
 type FusedSlotTemplate = { a1: number; a2: number; d1: number; d2: number };
 
 const FUSED_THUMB_TEMPLATES: Record<number, FusedSlotTemplate> = {
-  [ElementEnum.THORNADO]: { a1: WIND, a2: WOOD, d1: WOOD, d2: EARTH },
-  [ElementEnum.MUD]: { a1: WATER, a2: WIND, d1: WATER, d2: EARTH },
-  [ElementEnum.BLOOM]: { a1: WOOD, a2: WIND, d1: WOOD, d2: EARTH },
+  // A1/A2 = the fusion's two components (componentsOf order) so canDoubleAttack holds.
+  [ElementEnum.THORNADO]: { a1: WIND, a2: WOOD, d1: WOOD, d2: EARTH }, // Wood+Wind
+  [ElementEnum.MUD]: { a1: WATER, a2: EARTH, d1: WATER, d2: EARTH }, // Water+Earth
+  [ElementEnum.BLOOM]: { a1: WOOD, a2: EARTH, d1: WOOD, d2: EARTH }, // Wood+Earth
 };
 
 /**

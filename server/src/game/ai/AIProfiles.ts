@@ -1,4 +1,5 @@
 import { AIPersonality } from '../../../../shared/types';
+import { MIN_COMBO_GAP_MS } from '../constants';
 
 /**
  * Deterministic PRNG (mulberry32). Seeding the same value reproduces the exact
@@ -48,6 +49,13 @@ export function makeRng(seed: number): Rng {
  *   takes the hit instead of committing a ring (healthy / low-heart).
  * - thinkDelayMinMs / thinkDelayMaxMs: attacker "decision" pause before throwing
  *   (and the low-heart-narrowed variants).
+ * - comboGapMinMs / comboGapMaxMs: EPIC #268 — the [min,max] window (ms) the AI
+ *   draws its fusion-thumb double-attack gap from. Only consulted when the AI is
+ *   double-attack-eligible (a fused thumb whose A1/A2 are its components — i.e. a
+ *   boss with #257's loadout), so the base per-personality profiles default to the
+ *   safe minimum (parry-cancel always resolves cleanly). The boss-modified profile
+ *   (BattleRoom.buildBossProfile) tightens the window so bosses pick faster combos.
+ *   The server re-clamps to [MIN_COMBO_GAP_MS, MAX_COMBO_GAP_MS] regardless.
  */
 export interface AIProfile {
   personality: AIPersonality;
@@ -60,6 +68,8 @@ export interface AIProfile {
   lowHeartThinkDelayMinMs: number;
   lowHeartThinkDelayMaxMs: number;
   lowHeartThreshold: number;
+  comboGapMinMs: number;
+  comboGapMaxMs: number;
 }
 
 export const AI_PROFILES: Record<AIPersonality, AIProfile> = {
@@ -74,6 +84,8 @@ export const AI_PROFILES: Record<AIPersonality, AIProfile> = {
     lowHeartThinkDelayMinMs: 300,
     lowHeartThinkDelayMaxMs: 600,
     lowHeartThreshold: 1,
+    comboGapMinMs: MIN_COMBO_GAP_MS,
+    comboGapMaxMs: MIN_COMBO_GAP_MS + 100,
   },
   DEFENSIVE: {
     personality: 'DEFENSIVE',
@@ -86,6 +98,8 @@ export const AI_PROFILES: Record<AIPersonality, AIProfile> = {
     lowHeartThinkDelayMinMs: 900,
     lowHeartThinkDelayMaxMs: 1500,
     lowHeartThreshold: 1,
+    comboGapMinMs: MIN_COMBO_GAP_MS,
+    comboGapMaxMs: MIN_COMBO_GAP_MS + 100,
   },
   STATUS_HUNTER: {
     personality: 'STATUS_HUNTER',
@@ -98,6 +112,8 @@ export const AI_PROFILES: Record<AIPersonality, AIProfile> = {
     lowHeartThinkDelayMinMs: 900,
     lowHeartThinkDelayMaxMs: 1100,
     lowHeartThreshold: 1,
+    comboGapMinMs: MIN_COMBO_GAP_MS,
+    comboGapMaxMs: MIN_COMBO_GAP_MS + 100,
   },
   RESILIENT: {
     personality: 'RESILIENT',
@@ -110,6 +126,8 @@ export const AI_PROFILES: Record<AIPersonality, AIProfile> = {
     lowHeartThinkDelayMinMs: 300,
     lowHeartThinkDelayMaxMs: 400,
     lowHeartThreshold: 1,
+    comboGapMinMs: MIN_COMBO_GAP_MS,
+    comboGapMaxMs: MIN_COMBO_GAP_MS + 100,
   },
 };
 

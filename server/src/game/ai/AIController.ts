@@ -1,11 +1,13 @@
 import {
   AIPersonality,
   SelectAttackPayload,
+  SelectDoubleAttackPayload,
   SubmitDefensePayload,
   RechargePayload,
   SlotKey,
 } from '../../../../shared/types';
 import { BattleState } from '../../schemas/BattleState';
+import { canDoubleAttack } from '../DoubleAttack';
 import { AI_PROFILES, AIProfile, makeRng, Rng, isLowHearts } from './AIProfiles';
 import {
   decideAttack,
@@ -33,6 +35,10 @@ export interface AIRoomHandle {
   readonly comboInFlight: boolean;
   readonly currentImpact2Time: number;
   handleSelectAttack(id: string, payload: SelectAttackPayload): void;
+  // EPIC #268 — AI double-attack OFFENSE. When an eligible boss decides to combo,
+  // the controller calls this (the same handler a human's `selectDoubleAttack`
+  // message reaches), mirroring how handleSelectAttack is called for a single throw.
+  handleSelectDoubleAttack(id: string, payload: SelectDoubleAttackPayload): void;
   handleSubmitDefense(id: string, payload: SubmitDefensePayload): void;
   handleRecharge(id: string, payload: RechargePayload): void;
   handleForfeit(id: string): void;
@@ -176,13 +182,28 @@ export class AIController {
 
     // Elements the opponent still holds a usable ring for (full info on the
     // server; the AI is permitted to read the authoritative board). Only the
-    // four combat slots count — the thumb is passive.
+    // four combat slots count — the thumb is passive. EPIC #268 — also snapshot the
+    // opponent's TWO defense rings (d1/d2) so the policy can judge whether a double
+    // attack is favorable (can the defender PARRY orb 1 and cancel/flip the combo?).
     const opponentUsableElements: number[] = [];
+    const opponentDefenseSlots: DefenseSlotView[] = [];
     for (const [id, ps] of state.players) {
       if (id === this.aiId) continue;
       for (const key of ['a1', 'a2', 'd1', 'd2'] as const) {
         const r = ps.getSlot(key);
         if (!r.isExtinguished && r.currentUses > 0) opponentUsableElements.push(r.element);
+      }
+      for (const key of ['d1', 'd2'] as const) {
+        const r = ps.getSlot(key);
+        opponentDefenseSlots.push({
+          key,
+          ring: {
+            element: r.element,
+            currentUses: r.currentUses,
+            maxUses: r.maxUses,
+            isExtinguished: r.isExtinguished,
+          },
+        });
       }
     }
 
@@ -193,6 +214,11 @@ export class AIController {
       incomingElement,
       opponentUsableElements,
       committedElement: this.committedElement,
+      // EPIC #268 — authoritative eligibility for THIS AI's fusion-thumb combo.
+      // False for every base-thumb AI, so the policy's double-attack branch is dead
+      // code for non-bosses (they keep single-attacking).
+      canDoubleAttack: canDoubleAttack(me),
+      opponentDefenseSlots,
     };
   }
 
@@ -237,7 +263,15 @@ export class AIController {
           : { ...this.profile, personality: this.attackPersonality };
       const decision = decideAttack(v, attackProfile, this.rng);
       this.committedElement = decision.committedElement;
-      this.room.handleSelectAttack(this.aiId, { slot: decision.slot });
+      // EPIC #268 — when the policy chose a fusion-thumb DOUBLE attack (eligible +
+      // favorable; only ever set for a boss hand), fire both orbs via the same
+      // server handler a human's `selectDoubleAttack` reaches. Otherwise the normal
+      // single-attack path. The server re-validates eligibility and re-clamps gapMs.
+      if (decision.double) {
+        this.room.handleSelectDoubleAttack(this.aiId, decision.double);
+      } else {
+        this.room.handleSelectAttack(this.aiId, { slot: decision.slot });
+      }
     }, delay);
   }
 

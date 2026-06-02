@@ -39,6 +39,10 @@ function view(overrides: Partial<BoardView> = {}): BoardView {
     incomingElement: -1,
     opponentUsableElements: [],
     committedElement: -1,
+    // EPIC #268 — base boards are NOT double-attack-eligible (a base-thumb AI);
+    // double-attack tests opt in via overrides.
+    canDoubleAttack: false,
+    opponentDefenseSlots: [],
     ...overrides,
   };
 }
@@ -309,6 +313,122 @@ describe('determinism', () => {
     expect(decideAttack(view(), p, makeRng(42))).toEqual(decideAttack(view(), p, makeRng(42)));
     expect(decideDefense(view({ incomingElement: FIRE }), p, makeRng(42))).toEqual(
       decideDefense(view({ incomingElement: FIRE }), p, makeRng(42)),
+    );
+  });
+});
+
+// ── EPIC #268 — AI double-attack OFFENSE policy ─────────────────────────────
+// decideAttack upgrades a single throw to a fusion-thumb double attack only when
+// (a) the board is double-attack-eligible (view.canDoubleAttack — set by the
+// controller from the authoritative canDoubleAttack predicate) AND (b) the combo
+// is favorable (the defender cannot PARRY orb 1). Deterministic — no RNG branch.
+describe('decideAttack double-attack (EPIC #268)', () => {
+  /** Opponent defense pair as DefenseSlotView[] (for the favorability check). */
+  function oppDef(d1: number, d2: number, d1Uses = 3, d2Uses = 3): DefenseSlotView[] {
+    return [
+      { key: 'd1', ring: ring(d1, d1Uses, d1Uses === 0) },
+      { key: 'd2', ring: ring(d2, d2Uses, d2Uses === 0) },
+    ];
+  }
+
+  test('eligible + favorable (defender cannot parry orb 1) → double attack, gap clamped', () => {
+    // Eligible MUD hand: a1=WATER, a2=EARTH (EARTH is uncounterable → never
+    // parryable). Defender holds WOOD (STRONG vs WATER) + EARTH, so orb 1 must be
+    // the unparryable EARTH (a2); WATER (a1) becomes orb 2.
+    const v = view({
+      attackSlots: [
+        { key: 'a1', ring: ring(WATER) },
+        { key: 'a2', ring: ring(EARTH) },
+      ],
+      canDoubleAttack: true,
+      opponentDefenseSlots: oppDef(WOOD, EARTH),
+    });
+    const d = decideAttack(v, AI_PROFILES.RESILIENT, makeRng(7));
+    expect(d.double).toBeDefined();
+    expect(d.double!.first).toBe('a2'); // unparryable EARTH fires first
+    expect(d.double!.second).toBe('a1'); // WATER second
+    // Gap is drawn from the profile and clamped to the engine window.
+    expect(d.double!.gapMs).toBeGreaterThanOrEqual(200); // MIN_COMBO_GAP_MS
+    expect(d.double!.gapMs).toBeLessThanOrEqual(600); // MAX_COMBO_GAP_MS
+  });
+
+  test('eligible but UNFAVORABLE (defender can parry BOTH A-slot elements) → single attack', () => {
+    // Construct an eligible-but-fully-counterable hand: a1=FIRE, a2=WATER (both
+    // triangle). Defender holds WATER (STRONG vs FIRE) and WOOD (STRONG vs WATER)
+    // with uses → either orb could be parried-and-cancelled → take the safe single.
+    const v = view({
+      attackSlots: [
+        { key: 'a1', ring: ring(FIRE) },
+        { key: 'a2', ring: ring(WATER) },
+      ],
+      canDoubleAttack: true,
+      opponentDefenseSlots: oppDef(WATER, WOOD),
+    });
+    const d = decideAttack(v, AI_PROFILES.RESILIENT, makeRng(7));
+    expect(d.double).toBeUndefined(); // declined — single attack
+    expect(['a1', 'a2']).toContain(d.slot);
+  });
+
+  test('unfavorable becomes favorable once the defender PARRY counter is extinguished', () => {
+    // Same FIRE/WATER eligible hand, but the WOOD ring (the WATER-counter) is spent
+    // (0 uses → extinguished). Now WATER (a2) is unparryable → favorable; it fires
+    // first, FIRE (a1) second.
+    const v = view({
+      attackSlots: [
+        { key: 'a1', ring: ring(FIRE) },
+        { key: 'a2', ring: ring(WATER) },
+      ],
+      canDoubleAttack: true,
+      opponentDefenseSlots: oppDef(WATER, WOOD, 3, 0), // WOOD counter extinguished
+    });
+    const d = decideAttack(v, AI_PROFILES.RESILIENT, makeRng(7));
+    expect(d.double).toBeDefined();
+    expect(d.double!.first).toBe('a2'); // unparryable WATER first
+    expect(d.double!.second).toBe('a1');
+  });
+
+  test('NOT eligible (base-thumb AI: canDoubleAttack=false) → never doubles', () => {
+    // Even with an unparryable, favorable board, a non-eligible hand single-attacks.
+    const v = view({
+      attackSlots: [
+        { key: 'a1', ring: ring(WATER) },
+        { key: 'a2', ring: ring(EARTH) },
+      ],
+      canDoubleAttack: false, // base thumb — predicate failed on the controller side
+      opponentDefenseSlots: oppDef(EARTH, EARTH),
+    });
+    for (const p of [AI_PROFILES.AGGRESSIVE, AI_PROFILES.DEFENSIVE, AI_PROFILES.RESILIENT]) {
+      const d = decideAttack(v, p, makeRng(3));
+      expect(d.double).toBeUndefined();
+    }
+  });
+
+  test('eligible but an A-slot is spent (< 2 usable) → single attack (no combo)', () => {
+    // a2 EARTH is extinguished → only one usable attack slot → cannot combo.
+    const v = view({
+      attackSlots: [
+        { key: 'a1', ring: ring(WATER) },
+        { key: 'a2', ring: ring(EARTH, 0, true) },
+      ],
+      canDoubleAttack: true, // (a stale flag; the policy still guards on usable count)
+      opponentDefenseSlots: oppDef(EARTH, EARTH),
+    });
+    const d = decideAttack(v, AI_PROFILES.RESILIENT, makeRng(7));
+    expect(d.double).toBeUndefined();
+    expect(d.slot).toBe('a1'); // the only usable attack
+  });
+
+  test('double-attack decision is deterministic for a fixed seed', () => {
+    const v = view({
+      attackSlots: [
+        { key: 'a1', ring: ring(WATER) },
+        { key: 'a2', ring: ring(EARTH) },
+      ],
+      canDoubleAttack: true,
+      opponentDefenseSlots: oppDef(WOOD, EARTH),
+    });
+    expect(decideAttack(v, AI_PROFILES.RESILIENT, makeRng(99))).toEqual(
+      decideAttack(v, AI_PROFILES.RESILIENT, makeRng(99)),
     );
   });
 });

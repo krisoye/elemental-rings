@@ -36,17 +36,23 @@
   // Capture every exchangeResult broadcast so a spec can read the attacker's
   // telegraph component elements after driving the AI to attack.
   window.__exchanges = [];
+  // EPIC #268 — capture every doubleAttackStart broadcast so an AI-offense spec can
+  // assert the AI initiated a two-orb combo (and never did when ineligible).
+  window.__doubleStarts = [];
   window.onRoomReady = () => {
     room.onMessage('exchangeResult', (msg) => window.__exchanges.push(msg));
     room.onMessage('wonRing', (msg) => { window.__wonRing = msg; });
+    room.onMessage('doubleAttackStart', (msg) => window.__doubleStarts.push(msg));
   };
 
   window.sendAttack = (slot) => room.send('selectAttack', { slot });
   window.sendDefense = (slot) => room.send('submitDefense', { slot, pressTime: Date.now() });
-  // E2E_TEST_ROUTES-gated deterministic state setter (mirrors BattleRoom's
-  // __testSetState handler). Lets a spec seed the AI's exact hearts so an enrage
-  // crossing can be engineered without timed play.
+  // E2E_TEST_ROUTES-gated deterministic state setters (mirror BattleRoom's
+  // __testSetState handler). Lets a spec seed exact hearts / uses / elements so an
+  // enrage crossing or a (in)eligible double-attack hand can be engineered without
+  // timed play. setOpponentState targets the AI; setSelfState targets the human.
   window.setOpponentState = (patch) => room.send('__testSetState', { target: 'opponent', ...patch });
+  window.setSelfState = (patch) => room.send('__testSetState', { target: 'self', ...patch });
 
   window.waitForPhase = (phase, timeout = 12000) =>
     new Promise((res, rej) => {

@@ -76,6 +76,7 @@ const SOLO_SPECS = [
   'boss-passives.spec.ts', // #261
   'boss-cards.spec.ts', // #263 — two-tone fused card render + ordering (camp/REST)
   'boss-rematch.spec.ts', // #262 — TRAINING-screen rematch row + practice launch
+  'ai-double-attack-offense.spec.ts', // #268 — AI fusion-thumb double-attack offense
 ];
 
 export default defineConfig({

@@ -2,6 +2,7 @@ import { counterOf, resolve } from '../ElementSystem';
 import { TRIANGLE } from '../Fusions';
 import { AttackSlot, DefenseSlot } from '../../../../shared/types';
 import { AIProfile, Rng, isLowHearts } from './AIProfiles';
+import { MIN_COMBO_GAP_MS, MAX_COMBO_GAP_MS } from '../constants';
 
 /** Read-only snapshot of one ring in a slot. */
 export interface RingView {
@@ -47,12 +48,43 @@ export interface BoardView {
    * Persisted across turns by the controller.
    */
   committedElement: number;
+  /**
+   * EPIC #268 — true when THIS AI's hand satisfies the server `canDoubleAttack`
+   * predicate (a fused thumb whose A1/A2 are its two components, all three rings
+   * lit). Computed by the controller from the authoritative PlayerState; the pure
+   * policy only reads it. False for every base-thumb AI, so non-boss AI can never
+   * double-attack (the `decideAttack` double branch is gated on this flag).
+   */
+  canDoubleAttack: boolean;
+  /**
+   * EPIC #268 — read-only views of the OPPONENT's defense rings (d1/d2), so the
+   * policy can judge whether a double attack is favorable: if the defender holds no
+   * usable ring STRONG against orb 1's element, an orb-1 parry (which would cancel
+   * orb 2 and flip the turn) is impossible — a safe combo. Empty when the opponent
+   * is not yet seated (defensive; the controller always populates it in a duel).
+   */
+  opponentDefenseSlots: DefenseSlotView[];
+}
+
+/** EPIC #268 — a fusion-thumb double-attack: orb `first` fires, then `second` after `gapMs`. */
+export interface DoubleAttackDecision {
+  first: AttackSlot;
+  second: AttackSlot;
+  /** Held-gap (ms) between the two orbs; the server re-clamps to [MIN,MAX]_COMBO_GAP_MS. */
+  gapMs: number;
 }
 
 export interface AttackDecision {
   slot: AttackSlot;
   /** The element STATUS_HUNTER committed to (so the controller can persist it). */
   committedElement: number;
+  /**
+   * EPIC #268 — when set, the AI commits a fusion-thumb DOUBLE attack instead of a
+   * single throw from `slot`. Only ever set when `view.canDoubleAttack` and the
+   * policy judges the combo favorable; otherwise undefined (normal single attack).
+   * The controller dispatches `handleSelectDoubleAttack` when this is present.
+   */
+  double?: DoubleAttackDecision;
 }
 
 export interface DefenseDecision {
@@ -92,11 +124,35 @@ function fewestUsesAttack(slots: AttackSlotView[]): AttackSlotView {
 }
 
 /**
- * Pure attack decision. Each personality picks from the two attack slots (a1/a2).
+ * Pure attack decision. Computes the per-personality single-attack pick, then —
+ * when this AI's hand is double-attack-eligible (a boss fused thumb; `view.
+ * canDoubleAttack`) AND a combo is favorable — upgrades it to a fusion-thumb
+ * double attack via `maybeDoubleAttack`. Non-eligible (base-thumb) AI never
+ * double-attacks: `view.canDoubleAttack` is false, so the upgrade is skipped and
+ * behaviour is identical to before EPIC #268.
+ *
  * Never returns an extinguished slot as long as one usable attack slot exists;
  * the defensive fallback returns 'a1'.
  */
-export function decideAttack(view: BoardView, profile: AIProfile, _rng: Rng): AttackDecision {
+export function decideAttack(view: BoardView, profile: AIProfile, rng: Rng): AttackDecision {
+  const single = singleAttackDecision(view, profile);
+
+  // EPIC #268 — fusion-thumb double attack. Only eligible bosses reach this; a
+  // base-thumb AI has view.canDoubleAttack === false and falls straight through to
+  // the single attack (an explicit guard so non-boss AI can never combo).
+  if (view.canDoubleAttack) {
+    const double = maybeDoubleAttack(view, profile, rng);
+    if (double) return { ...single, double };
+  }
+  return single;
+}
+
+/**
+ * Per-personality single-attack pick over a1/a2 (the pre-EPIC-#268 behaviour).
+ * Never returns an extinguished slot as long as one usable attack slot exists;
+ * the defensive fallback returns 'a1'.
+ */
+function singleAttackDecision(view: BoardView, profile: AIProfile): AttackDecision {
   const usable = usableAttackSlots(view);
   if (usable.length === 0) return { slot: 'a1', committedElement: view.committedElement };
 
@@ -132,6 +188,68 @@ export function decideAttack(view: BoardView, profile: AIProfile, _rng: Rng): At
     default:
       return { slot: usable[0].key, committedElement: view.committedElement };
   }
+}
+
+/**
+ * EPIC #268 — decide whether to upgrade a single attack to a fusion-thumb DOUBLE
+ * attack, and if so order the two orbs. Returns the combo decision, or null to
+ * keep the single attack. Deterministic (no RNG branch) — the rng only seeds the
+ * gap pick, so the same board always reaches the same favorable/unfavorable call.
+ *
+ * Eligibility is the caller's gate (`view.canDoubleAttack`); here we only judge
+ * FAVORABILITY and the orb order:
+ *  - Both attack slots must be usable (lit, >0 uses). `canDoubleAttack` already
+ *    guarantees this, but we re-check defensively so the policy stands alone.
+ *  - Favorable when the defender cannot PARRY orb 1 — i.e. at least one A-slot
+ *    element has no usable opponent defense ring STRONG against it. Firing that
+ *    "unparryable-first" orb removes the parry-cancel-and-flip risk (EPIC #264:
+ *    an orb-1 PARRY cancels orb 2 and hands the turn to the defender). The other
+ *    A-slot becomes the second orb.
+ *  - Unfavorable (defender can parry BOTH A-slot elements with a usable, STRONG
+ *    ring) → null: take the safe single attack and avoid gifting a turn.
+ */
+function maybeDoubleAttack(
+  view: BoardView,
+  profile: AIProfile,
+  rng: Rng,
+): DoubleAttackDecision | null {
+  const usable = usableAttackSlots(view);
+  if (usable.length < 2) return null; // need both A-slots lit for a combo
+
+  // Order orbs so the UNPARRYABLE one fires first (defender can't parry-cancel it).
+  const safeFirst = usable.find((s) => !defenderCanParry(view, s.ring.element));
+  if (!safeFirst) return null; // defender can parry either orb → unfavorable, single-attack
+
+  const second = usable.find((s) => s.key !== safeFirst.key)!;
+  return { first: safeFirst.key, second: second.key, gapMs: pickComboGap(profile, rng) };
+}
+
+/**
+ * True when the opponent holds a usable defense ring that is STRONG against
+ * `orbElement` (role-aware) — i.e. they could PARRY an orb of that element and
+ * start a rally. WIND attacks (and fusion components that resolve NEUTRAL) are
+ * never parryable, so an uncounterable orb returns false here.
+ */
+function defenderCanParry(view: BoardView, orbElement: number): boolean {
+  return view.opponentDefenseSlots.some(
+    (s) =>
+      !s.ring.isExtinguished &&
+      s.ring.currentUses > 0 &&
+      resolve(orbElement, s.ring.element, 'defense') === 'STRONG',
+  );
+}
+
+/**
+ * Draw the double-attack gap (ms) from the profile's [comboGapMinMs, comboGapMaxMs]
+ * window and clamp to the engine's [MIN_COMBO_GAP_MS, MAX_COMBO_GAP_MS]. Bosses set
+ * a tight window (BattleRoom.buildBossProfile), so they pick fast combos; the
+ * server re-clamps the value regardless of what the policy emits.
+ */
+function pickComboGap(profile: AIProfile, rng: Rng): number {
+  const lo = Math.min(profile.comboGapMinMs, profile.comboGapMaxMs);
+  const hi = Math.max(profile.comboGapMinMs, profile.comboGapMaxMs);
+  const drawn = rng.intBetween(lo, hi);
+  return Math.min(MAX_COMBO_GAP_MS, Math.max(MIN_COMBO_GAP_MS, drawn));
 }
 
 /** First usable attack slot holding `element` (a usable TRIANGLE element), else null. */
