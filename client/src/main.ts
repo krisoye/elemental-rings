@@ -83,6 +83,19 @@ declare global {
       string,
       { element: number; stakeTier: number; stakeXp: number; totalXp: number }
     >;
+    // #262 — defeated bosses shown in the TRAINING rematch row, and the hook to
+    // launch a practice rematch by boss id (same path as a rematch-card click).
+    __encounterBosses?: Array<{
+      id: string;
+      name: string;
+      tier: string;
+      personality: AIPersonality;
+      element: number;
+      aiSeed: number;
+      spriteFrame: number;
+      spriteElement: number;
+    }>;
+    __encounterRematchBoss?: (bossId: string) => void;
     __slotPositions: { x: number; y: number }[];
     __orbLaunchCount: number;
     // #125 — true while the BattleScene forfeit confirm prompt is open. E2E reads

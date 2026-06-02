@@ -5,6 +5,26 @@ import { CANVAS_W, CANVAS_H, ELEMENT_COLORS, ELEMENT_NAMES } from '../Constants'
 import type { RingData } from '../objects/InventoryGrid';
 import { BattleHandOverlay } from '../objects/BattleHandOverlay';
 import { CHARSET_KEY, charsetFrame, preloadCharset } from '../objects/world/charset';
+import { FusedCardFill } from '../objects/fusedFill';
+import { MONSTER_OW_REGISTRY } from '../objects/world/NpcSpriteRegistry';
+
+/**
+ * #262 — a defeated boss eligible for a TRAINING-screen rematch (practice). Served
+ * by GET /api/encounter/bosses; mirrors that response shape.
+ */
+interface RematchBoss {
+  id: string;
+  name: string;
+  tier: string;
+  personality: AIPersonality;
+  /** The boss's thematic FUSION (staked on the thumb in the rematch). */
+  element: number;
+  aiSeed: number;
+  /** Overworld monster frame (no fusion frame exists). */
+  spriteFrame: number;
+  /** The boss's triangle element — keys MONSTER_OW_REGISTRY for the battle sprite. */
+  spriteElement: number;
+}
 
 // One overworld sprite per element pool — each is a 72×96 strip (3 cols × 4 rows, 24×24 per frame).
 const TRAINING_MONSTERS = [
@@ -93,6 +113,8 @@ export class EncounterScene extends Phaser.Scene {
   // the AI loadout scales to the rings the player brings. 0 until the preview
   // fetch resolves.
   private playerBattleHandAvgXp = 0;
+  // #262 — defeated bosses available for a practice rematch, fetched on create.
+  private rematchBosses: RematchBoss[] = [];
 
   constructor() {
     super({ key: 'EncounterScene' });
@@ -311,6 +333,10 @@ export class EncounterScene extends Phaser.Scene {
     window.__encounterResolveWonRing = (choice: 'carry' | 'discard'): void =>
       void this.resolveWonRing(choice);
     window.__encounterState = { pendingWonRing: null };
+    // #262 — launch a practice rematch by boss id (same code path as a card click).
+    window.__encounterRematchBoss = (bossId: string): void => this.rematchBoss(bossId);
+    // Published once the boss list resolves so E2E can assert the rematch row.
+    window.__encounterBosses = [];
     this.events.once('shutdown', () => {
       window.__encounterSelect = undefined;
       window.__encounterSelectWithOverrides = undefined;
@@ -320,11 +346,16 @@ export class EncounterScene extends Phaser.Scene {
       window.__encounterDiscardRing = undefined;
       window.__encounterState = undefined;
       window.__encounterPreview = undefined;
+      window.__encounterRematchBoss = undefined;
+      window.__encounterBosses = undefined;
       this.battleHand?.destroy();
     });
 
     // Fetch stake preview and update marker colors + labels.
     void this.loadPreview(rects, stakeLabels, diffLabels);
+
+    // #262 — fetch defeated bosses and render the rematch row below the markers.
+    void this.loadRematchBosses();
 
     // Post-battle won-ring prompt: if the just-finished duel granted a ring,
     // resolve it here before the player can pick another encounter (#40).
@@ -420,6 +451,107 @@ export class EncounterScene extends Phaser.Scene {
     } catch {
       // Non-fatal — markers keep their fallback colors.
     }
+  }
+
+  /**
+   * #262 — fetch the bosses this player has defeated and render a "Rematch" row of
+   * practice cards below the 5 training markers. Empty/failed fetch → no row.
+   * Publishes window.__encounterBosses for the E2E harness.
+   */
+  private async loadRematchBosses(): Promise<void> {
+    const token = localStorage.getItem('er_token') ?? '';
+    if (!token) return;
+    try {
+      const res = await fetch(`${API_BASE}/api/encounter/bosses`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!res.ok) return;
+      const { bosses } = (await res.json()) as { bosses: RematchBoss[] };
+      this.rematchBosses = bosses ?? [];
+      window.__encounterBosses = this.rematchBosses;
+      if (this.rematchBosses.length > 0) this.renderRematchRow();
+    } catch {
+      // Non-fatal — the rematch row simply does not appear.
+    }
+  }
+
+  /**
+   * Render one practice-rematch card per defeated boss below the training markers.
+   * Each card shows the boss name, tier, and its fused thumb element (two-tone via
+   * #263). Click/tap launches a no-npcId practice duel against that boss.
+   */
+  private renderRematchRow(): void {
+    const rowY = 380;
+    this.add
+      .text(CANVAS_W / 2, rowY - 80, 'Rematch (practice)', {
+        fontSize: '16px',
+        color: '#ffcc88',
+      })
+      .setOrigin(0.5);
+
+    const spacing = CANVAS_W / (this.rematchBosses.length + 1);
+    const CARD_W = 90;
+    const CARD_H = 96;
+
+    this.rematchBosses.forEach((boss, i) => {
+      const x = spacing * (i + 1);
+      const card = this.add.container(x, rowY);
+
+      const bg = this.add
+        .rectangle(0, 0, CARD_W, CARD_H, 0x333333)
+        .setStrokeStyle(2, 0xffaa44)
+        .setInteractive({ useHandCursor: true });
+      card.add(bg);
+
+      // #263 — two-tone fused-thumb swatch (boss.element is the fusion). No parent
+      // XP on a boss thumb → static componentsOf order, matching the duel thumb.
+      const fill = new FusedCardFill(this, card, 0, -10, 60, 40);
+      fill.paint(boss.element);
+
+      this.add
+        .text(x, rowY - 38, boss.name, {
+          fontSize: '10px',
+          color: '#ffffff',
+          align: 'center',
+          wordWrap: { width: CARD_W - 6 },
+        })
+        .setOrigin(0.5);
+      this.add
+        .text(x, rowY + 30, `${boss.tier} · ${ELEMENT_NAMES[boss.element] ?? '?'}`, {
+          fontSize: '9px',
+          color: '#ffddaa',
+          align: 'center',
+        })
+        .setOrigin(0.5);
+
+      bg.on('pointerdown', () => this.rematchBoss(boss.id));
+    });
+  }
+
+  /**
+   * #262 — launch a practice rematch against a defeated boss. Pure practice: NO
+   * npcId (so no defeat-state change, no won-ring grant, no gold penalty — all
+   * gated on the npcId path server-side), the boss's fused thumb + stable aiSeed,
+   * and the boss's overworld battle sprite. No-op if the boss id is unknown or a
+   * duel is already starting.
+   */
+  private rematchBoss(bossId: string): void {
+    if (this.busy) return;
+    const boss = this.rematchBosses.find((b) => b.id === bossId);
+    if (!boss) return;
+    this.busy = true;
+    this.statusText.setText(`Rematch vs ${boss.name}...`);
+    const battleKey = MONSTER_OW_REGISTRY[boss.spriteElement]?.battleKey;
+    void this.startAIDuel(
+      boss.personality,
+      undefined, // no aiOverrides
+      undefined, // NO npcId → practice (no reward / penalty / defeat-state change)
+      false, // no ambush
+      boss.aiSeed,
+      boss.spriteFrame,
+      battleKey,
+      boss.element, // fused thumb
+    );
   }
 
   /**
