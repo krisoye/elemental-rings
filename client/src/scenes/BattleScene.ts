@@ -101,6 +101,9 @@ export class BattleScene extends Phaser.Scene {
   private opponentDuelist!: OpponentDuelist;
   private hud!: Hud;
   revealedOpponentElements: Set<number> = new Set();
+  // #259 — one-shot latch so the boss-enrage banner flashes exactly once on the
+  // transition (the broadcast `enraged` flag stays true for the rest of the duel).
+  private enrageBannerShown = false;
   private prevPhase = '';
   private prevRallyActive = false;
   private prevCurrentAttackerId = '';
@@ -204,6 +207,7 @@ export class BattleScene extends Phaser.Scene {
       this.opponentDuelist.updateFromState(state, myId, this.revealedOpponentElements);
       this.hud.updateFromState(state, myId);
       this.publishHudView();
+      this.checkBossEnrage(state, myId);
       this.checkPhaseTransition(state, myId);
       this.checkEnded(state, myId);
     };
@@ -333,6 +337,49 @@ export class BattleScene extends Phaser.Scene {
       targets: t, alpha: 0, y: 165,
       duration: 750, ease: 'Power2',
       onComplete: () => t.destroy(),
+    });
+  }
+
+  /**
+   * #259 — boss phase-2. When the opponent's broadcast `enraged` flag first turns
+   * true, flash a one-shot banner. The opponent sprite tint/pulse is handled by
+   * OpponentDuelist.updateFromState; this only adds the headline. Presentation
+   * only — the server owns the difficulty change. `__enrageBannerCount` is a
+   * test-observable counter for the E2E spec.
+   */
+  private checkBossEnrage(state: any, myId: string): void {
+    if (this.enrageBannerShown) return;
+    const oppId = Array.from(state.players.keys()).find((id: any) => id !== myId) as
+      | string
+      | undefined;
+    if (!oppId) return;
+    const opp = state.players.get(oppId);
+    if (!opp?.enraged) return;
+
+    this.enrageBannerShown = true;
+    const w = (window as unknown as { __enrageBannerCount?: number });
+    w.__enrageBannerCount = (w.__enrageBannerCount ?? 0) + 1;
+
+    const name = opp.displayName ? opp.displayName : 'The boss';
+    const banner = this.add
+      .text(512, 120, `${name} roars!`, {
+        fontSize: '32px',
+        color: '#ff4444',
+        fontStyle: 'bold',
+        stroke: '#000000',
+        strokeThickness: 5,
+      })
+      .setOrigin(0.5)
+      .setDepth(1200)
+      .setName('enrageBanner');
+    this.cameras.main.flash(260, 120, 0, 0, true);
+    this.tweens.add({
+      targets: banner,
+      alpha: 0,
+      y: 90,
+      duration: 1400,
+      ease: 'Power2',
+      onComplete: () => banner.destroy(),
     });
   }
 

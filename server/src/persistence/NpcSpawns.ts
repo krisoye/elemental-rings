@@ -1,5 +1,21 @@
-import type { AIPersonality } from '../../../shared/types';
+import type { AIPersonality, BossTier } from '../../../shared/types';
+import { ElementEnum } from '../../../shared/types';
 import { MINI_BOSS_FOOD_DROP, BOSS_FOOD_DROP } from '../game/constants';
+
+/**
+ * Boss combat identity descriptor (EPIC #256, owned by #257). Present only on the
+ * 4 implemented Forest bosses; absent on roamers and non-boss permanents. The
+ * `tier` keys BOSS_MODIFIERS (#258) / enrage thresholds (#259) / gauge pressure
+ * (#260) / passives (#261); `name` is the display label surfaced in the encounter
+ * preview; `fusedThumb` is the thematic FUSION element the boss stakes on its thumb
+ * (threaded into BattleRoomOptions.thumbElement so generateAILoadout fields a
+ * coherent fused-thumb loadout instead of a base template).
+ */
+export interface BossDescriptor {
+  tier: BossTier;
+  name: string;
+  fusedThumb: ElementEnum;
+}
 
 /**
  * Phase 8C.3 (#83) — static per-biome NPC spawn table. Each entry pins a stable
@@ -48,6 +64,13 @@ export interface NpcSpawnDef {
    * cache. BattleRoom.persistBattleResult reads this on the recordNpcDefeat path.
    */
   foodDrop?: number;
+  /**
+   * EPIC #256 — boss combat identity. Present only on the 4 implemented Forest
+   * bosses; absent on every roamer / non-boss permanent. Drives the fused-thumb
+   * loadout (#257), the BOSS_MODIFIERS difficulty bundle (#258), enrage (#259),
+   * gauge pressure (#260), and unique passives (#261).
+   */
+  boss?: BossDescriptor;
 }
 
 // ElementEnum base values (mirrors shared/types.ts):
@@ -99,41 +122,45 @@ export const NPC_SPAWNS: NpcSpawnDef[] = [
   { id: 'forest_deepwood_2', biome: 'forest', screen: 'forest_deepwood', personality: 'AGGRESSIVE', type: 'monster', element: FIRE, spriteFrame: 0, tx: 6, ty: 4, respawnDays: 1 },
   { id: 'forest_deepwood_3', biome: 'forest', screen: 'forest_deepwood', personality: 'RESILIENT',  type: 'monster', element: WOOD, spriteFrame: 4, tx: 7, ty: 3, respawnDays: 0 },
 
-  // ── Forest: boss gates (#229/#230, GDD §10.17) ──────────────────────────────
+  // ── Forest: boss gates (#229/#230, GDD §10.17; EPIC #256) ───────────────────
   // Permanent (respawnDays: 0) boss NPCs that physically block a biome/zone exit
   // until defeated; each drops a one-time food cache (foodDrop) on first defeat.
-  // The AILoadout system only supports BASE-element thumbs (TEMPLATES has no
-  // fusion variants), so the wardens' thematic fusion (Mud / Thornado) is
-  // represented by the matching base thumb the player wins:
-  //   Bogwood  — Mud (Water+Earth): DEFENSIVE + EARTH thumb (Earth-Defender
-  //              template stakes Earth, opens with Water — the Mud components).
-  //   Thornwood— Thornado (Wood+Wind): RESILIENT + WOOD thumb (Wood-staker
-  //              template leads with Wind a1 — the Thornado components, and
-  //              RESILIENT is the toughest tier, fitting a major boss).
-  { id: 'forest_bogwood_warden',   biome: 'forest', screen: 'forest_swamp_gate',   personality: 'DEFENSIVE', type: 'monster', element: EARTH, spriteFrame: 2, tx: 14, ty: 13, respawnDays: 0, foodDrop: MINI_BOSS_FOOD_DROP },
-  { id: 'forest_thornwood_warden', biome: 'forest', screen: 'forest_boss_clearing', personality: 'RESILIENT', type: 'monster', element: WOOD,  spriteFrame: 4, tx: 14, ty: 19, respawnDays: 0, foodDrop: BOSS_FOOD_DROP },
+  // EPIC #256 gives each a `boss` descriptor: the boss now stakes its THEMATIC
+  // FUSION on the thumb (threaded into generateAILoadout as a fused-thumb
+  // loadout), not a base element. `element` stays the fusion's TRIANGLE component
+  // (drives the overworld sprite frame / approach-warning colour — the atlas has
+  // no fusion frame):
+  //   Bogwood  — Mud (Water+Earth), gate tier, DEFENSIVE. element=WATER (Mud's
+  //              triangle component) drives the sprite; the thumb stakes MUD.
+  //   Thornwood— Thornado (Wood+Wind), major tier, RESILIENT. element=WOOD
+  //              (Thornado's triangle component) drives the sprite; thumb = THORNADO.
+  { id: 'forest_bogwood_warden',   biome: 'forest', screen: 'forest_swamp_gate',   personality: 'DEFENSIVE', type: 'monster', element: WATER, spriteFrame: 1, tx: 14, ty: 13, respawnDays: 0, foodDrop: MINI_BOSS_FOOD_DROP, boss: { tier: 'gate', name: 'Bogwood Warden', fusedThumb: ElementEnum.MUD } },
+  { id: 'forest_thornwood_warden', biome: 'forest', screen: 'forest_boss_clearing', personality: 'RESILIENT', type: 'monster', element: WOOD,  spriteFrame: 4, tx: 14, ty: 19, respawnDays: 0, foodDrop: BOSS_FOOD_DROP, boss: { tier: 'major', name: 'Thornwood Warden', fusedThumb: ElementEnum.THORNADO } },
 
-  // ── Forest: Thornado Fusion Shrine sub-boss (#231, GDD §4.6) ────────────────
+  // ── Forest: Thornado Fusion Shrine sub-boss (#231, GDD §4.6; EPIC #256) ──────
   // The Shrine Guardian is a permanent (respawnDays: 0) roaming sub-boss in the
   // forest_thornado_shrine clearing. It does NOT block an exit — the player fights
-  // it to win the Thornado ring-key that unseals the altar. AILoadout supports only
-  // BASE-element thumbs, so the Guardian fields WIND (AGGRESSIVE supports WIND),
-  // thematically a component of the Thornado (Wood+Wind) fusion it guards. The
-  // actual Thornado ring drop is handled by BattleRoom.persistBattleResult (it
-  // detects this id and grants a Thornado ring to carry), not by the thumb stake.
+  // it to win the Thornado ring-key that unseals the altar. EPIC #256 gives it a
+  // `boss` descriptor (sub tier, AGGRESSIVE) so it stakes the THORNADO fusion on
+  // its thumb. `element=WOOD` (Thornado's triangle component) drives the overworld
+  // sprite. The Thornado ring-key drop stays a curated grant in
+  // BattleRoom.persistBattleResult (grantRingToCarry) — the generic won-ring grant
+  // is suppressed for fused-thumb bosses so the player never gets a free fusion.
   // No foodDrop — shrine guardians reward a ring, not a food cache.
-  { id: 'forest_thornado_shrine_guardian', biome: 'forest', screen: 'forest_thornado_shrine', personality: 'AGGRESSIVE', type: 'duelist', element: WIND, spriteFrame: D[0], tx: 20, ty: 15, respawnDays: 0 },
+  { id: 'forest_thornado_shrine_guardian', biome: 'forest', screen: 'forest_thornado_shrine', personality: 'AGGRESSIVE', type: 'duelist', element: WOOD, spriteFrame: 4, tx: 20, ty: 15, respawnDays: 0, boss: { tier: 'sub', name: 'Thornado Guardian', fusedThumb: ElementEnum.THORNADO } },
 
-  // ── Forest: Bloom Fusion Shrine sub-boss (#232, GDD §4.6) ───────────────────
+  // ── Forest: Bloom Fusion Shrine sub-boss (#232, GDD §4.6; EPIC #256) ─────────
   // The Bloom altar is ALWAYS open (no seal), so this Guardian does NOT gate the
   // altar — it is a permanent (respawnDays: 0) roaming sub-boss in the
-  // forest_bloom_hollow clearing the player may fight for the ring it stakes, but
-  // the altar is craftable whether or not the Guardian is defeated. AILoadout
-  // supports only BASE-element thumbs, so the Guardian fields WOOD with a
-  // DEFENSIVE personality (DEFENSIVE supports EARTH/WOOD): the Wood-Defender
-  // template matches the Bloom (Wood+Earth) theme and the GDD's "Defensive"
-  // characterisation of the Bloom Guardian. No foodDrop — it is not an exit gate.
-  { id: 'forest_bloom_shrine_guardian', biome: 'forest', screen: 'forest_bloom_hollow', personality: 'DEFENSIVE', type: 'duelist', element: WOOD, spriteFrame: D[1], tx: 20, ty: 15, respawnDays: 0, foodDrop: 0 },
+  // forest_bloom_hollow clearing. It is a combat challenge fought for XP; the
+  // altar remains craftable whether or not the Guardian is defeated. EPIC #256
+  // gives it a `boss` descriptor (sub tier, DEFENSIVE) so it stakes the BLOOM
+  // fusion on its thumb. `element=WOOD` (Bloom's triangle component) drives the
+  // overworld sprite. No foodDrop and no ring grant — it is not an exit gate, and
+  // the generic won-ring grant is suppressed for fused-thumb bosses. If a curated
+  // BLOOM ring reward is added later, wire grantRingToCarry(BLOOM) in
+  // BattleRoom.persistBattleResult for 'forest_bloom_shrine_guardian'.
+  { id: 'forest_bloom_shrine_guardian', biome: 'forest', screen: 'forest_bloom_hollow', personality: 'DEFENSIVE', type: 'duelist', element: WOOD, spriteFrame: 4, tx: 20, ty: 15, respawnDays: 0, foodDrop: 0, boss: { tier: 'sub', name: 'Bloom Guardian', fusedThumb: ElementEnum.BLOOM } },
 
   // ── Forest: Frost Sentinel mini-boss (#269, GDD §10.15) ─────────────────────
   // forest_snow_gate is the Forest's northern dead-end clearing. PR #255 marks it

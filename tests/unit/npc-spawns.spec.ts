@@ -13,8 +13,14 @@ const VALID_THUMBS: Record<string, Set<number>> = {
 };
 
 describe('NPC spawn table — personality/element consistency', () => {
-  it('every spawn element has a matching thumb template for its personality', () => {
+  it('every NON-BOSS spawn element has a matching thumb template for its personality', () => {
     for (const npc of NPC_SPAWNS) {
+      // Bosses (EPIC #256) stake a FUSED thumb via the fused-thumb loadout path,
+      // not a base TEMPLATES entry — their `element` is only the overworld sprite's
+      // triangle component (e.g. Bogwood is DEFENSIVE+WATER, which no DEFENSIVE base
+      // template stakes). Skip them; their fused-thumb staking is covered by the
+      // AILoadout fused-thumb unit tests + the ai-battle fused-boss integration test.
+      if (npc.boss) continue;
       const valid = VALID_THUMBS[npc.personality];
       expect(
         valid?.has(npc.element),

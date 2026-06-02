@@ -8,6 +8,8 @@
 // those bands and run WITHOUT E2E_FAST, so they are unaffected). With FAST,
 // DEFEND_WINDOW_MS = 150 + 200 = 350ms, still > the 250ms (now 80ms) E2E
 // auto-driver poll interval, so AI-driver defenses reliably arrive in-window.
+import type { BossTier } from '../../../shared/types';
+
 const E2E_FAST = process.env.E2E_FAST === '1';
 export const TELEGRAPH_MS = E2E_FAST ? 150 : 900;
 export const BLOCK_WINDOW_MS = 200;
@@ -109,5 +111,95 @@ export const MERCHANT_RING_SELL_PRICE_NEUTRAL = 8;   // GP when player sells Tie
 // continues to compile and is ready to re-enable, but no in-game path reaches it.
 export const RELIQUARY_BASE_CAP = 9;
 export const RELIQUARY_SHARD_INCREMENT = 10;
+
+// ── Boss combat difficulty bundle (EPIC #256, #258) ─────────────────────────
+/**
+ * Per-tier boss difficulty modifiers (#258). These STACK on top of the existing
+ * personality XP scaling (PERSONALITY_MULTIPLIER) — they do not replace it. Each
+ * boss vsAI room reads NPC_SPAWNS[npcId].boss.tier and applies these to the AI
+ * seat + its combat profile so a boss is sharper/tougher than a roamer of the
+ * same personality (GDD §10.5).
+ *
+ *   bonusHearts — added to STARTING_HEARTS for the AI seat (tankier boss).
+ *   sigmaMult   — multiplies the profile's timingSigmaMs (tighter timing).
+ *   noBlockMult — multiplies the profile's noBlockProb (blocks more often).
+ *   bonusUses   — added to every combat ring's maxUses (deeper loadout).
+ *   thinkMult   — multiplies the attacker think-delay (faster decisions when <1).
+ *
+ * Enrage (#259, phase-2). A boss whose hearts drop to ≤ enrageThreshold switches
+ * to an enraged profile: a further σ-tighten, a further think-speedup, and (for
+ * the major boss) a shift of attack targeting toward AGGRESSIVE (chase counters).
+ *   enrageThreshold       — hearts at/below which enrage fires; 0 = disabled.
+ *   enrageSigmaMult       — multiplies the (already modified) σ while enraged.
+ *   enrageThinkMult       — multiplies the (already modified) think-delay enraged.
+ *   enrageAggressive      — when true the enraged boss attacks like AGGRESSIVE
+ *                           (chases unparryable / counter-poking throws).
+ *
+ * Status-gauge pressure (#260). gaugeFillMult multiplies the gauge credited to the
+ * DEFENDER on an uncontested boss hit (per orb — a double attack applies it
+ * twice). Bosses with a triangle-bearing attack thus build the player's status
+ * gauge faster, putting a clock on the fight. 1.0 = no pressure.
+ *   gaugeFillMult — multiplier on the defender's per-orb gauge credit from a boss
+ *                   hit. Sub-bosses press hardest (×1.5); major/gate lighter.
+ */
+export interface BossModifier {
+  bonusHearts: number;
+  sigmaMult: number;
+  noBlockMult: number;
+  bonusUses: number;
+  thinkMult: number;
+  enrageThreshold: number;
+  enrageSigmaMult: number;
+  enrageThinkMult: number;
+  enrageAggressive: boolean;
+  gaugeFillMult: number;
+}
+
+export const BOSS_MODIFIERS: Record<BossTier, BossModifier> = {
+  // Major boss (Thornwood Warden): much tankier, far sharper, deeper loadout, and
+  // quicker to act. Enrages at ≤ 2 hearts — a real phase-2 beat (sharper still and
+  // aggressive targeting). The flagship Forest fight.
+  major: {
+    bonusHearts: 2,
+    sigmaMult: 0.5,
+    noBlockMult: 0.25,
+    bonusUses: 2,
+    thinkMult: 0.8,
+    enrageThreshold: 2,
+    enrageSigmaMult: 0.6,
+    enrageThinkMult: 0.6,
+    enrageAggressive: true,
+    gaugeFillMult: 1.0,
+  },
+  // Gate boss (Bogwood Warden): a solid step above a roamer; standard pacing. No
+  // enrage (threshold 0).
+  gate: {
+    bonusHearts: 1,
+    sigmaMult: 0.7,
+    noBlockMult: 0.5,
+    bonusUses: 1,
+    thinkMult: 1.0,
+    enrageThreshold: 0,
+    enrageSigmaMult: 1.0,
+    enrageThinkMult: 1.0,
+    enrageAggressive: false,
+    gaugeFillMult: 1.0,
+  },
+  // Sub-boss (fusion-shrine guardians): same toughness bump as a gate boss; their
+  // distinct threat is status-gauge pressure (#260) — ×1.5 gauge fill — not raw
+  // stats. No enrage.
+  sub: {
+    bonusHearts: 1,
+    sigmaMult: 0.7,
+    noBlockMult: 0.5,
+    bonusUses: 1,
+    thinkMult: 1.0,
+    enrageThreshold: 0,
+    enrageSigmaMult: 1.0,
+    enrageThinkMult: 1.0,
+    enrageAggressive: false,
+    gaugeFillMult: 1.5,
+  },
+};
 
 

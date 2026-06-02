@@ -2,6 +2,7 @@ import { AIPersonality, SlotKey } from '../../../../shared/types';
 import { ElementEnum } from '../../../../shared/types';
 import { Rng } from './AIProfiles';
 import { tierForXp, naturalMaxUses } from '../Tiers';
+import { isFusion } from '../Fusions';
 
 const { FIRE, WATER, EARTH, WIND, WOOD } = ElementEnum;
 
@@ -105,6 +106,51 @@ export const TEMPLATES: Record<AIPersonality, LoadoutTemplate[]> = {
 };
 
 /**
+ * Boss fused-thumb loadouts (EPIC #256 / #257). A boss stakes its thematic FUSION
+ * on the thumb and fields a coherent base-ring hand around it — an attack pair
+ * drawn from the fusion's components (Wind always uncounterable) and a defense
+ * pair that covers the triangle counter the fusion is vulnerable to as a BASE
+ * ring (the fusion thumb itself is passive; the combat rings are base elements).
+ *
+ * Keyed by the fusion ElementEnum value. Only the 4 implemented bosses' fusions
+ * are present; an unmapped fusion thumb falls back to FUSED_THUMB_DEFAULT.
+ *
+ * Design (GDD §3.4 — a fusion's triangle component carries its single strength):
+ *  - THORNADO (Wood+Wind): a1 WIND (uncounterable), a2 WOOD; d1 WOOD (STRONG vs
+ *    Water — Wood's counter), d2 EARTH (always-safe neutral).
+ *  - MUD (Water+Earth): a1 WATER, a2 WIND; d1 WATER (STRONG vs Fire — Water's
+ *    counter), d2 EARTH.
+ *  - BLOOM (Wood+Earth): a1 WOOD, a2 WIND; d1 WOOD (STRONG vs Water), d2 EARTH.
+ *
+ * The thumb itself is the fusion; the four combat slots stay base elements (the
+ * setup passive only fires for Fire/Water/Wood THUMBS, so a fusion thumb never
+ * triggers it — the boss keeps all four combat rings intact).
+ */
+type FusedSlotTemplate = { a1: number; a2: number; d1: number; d2: number };
+
+const FUSED_THUMB_TEMPLATES: Record<number, FusedSlotTemplate> = {
+  [ElementEnum.THORNADO]: { a1: WIND, a2: WOOD, d1: WOOD, d2: EARTH },
+  [ElementEnum.MUD]: { a1: WATER, a2: WIND, d1: WATER, d2: EARTH },
+  [ElementEnum.BLOOM]: { a1: WOOD, a2: WIND, d1: WOOD, d2: EARTH },
+};
+
+/**
+ * Fallback combat hand for any fused thumb without a curated template: Wind in
+ * a1 (uncounterable) plus Earth defenses (always-safe). Keeps an unmapped boss
+ * fusion playable rather than silently dropping back to a base template.
+ */
+const FUSED_THUMB_DEFAULT: FusedSlotTemplate = { a1: WIND, a2: WIND, d1: EARTH, d2: EARTH };
+
+/**
+ * Build the full element-per-slot loadout for a fused-thumb boss: the fusion on
+ * the thumb, the curated (or default) base combat hand around it.
+ */
+function fusedThumbLoadout(fusedThumb: number): LoadoutTemplate {
+  const hand = FUSED_THUMB_TEMPLATES[fusedThumb] ?? FUSED_THUMB_DEFAULT;
+  return { thumb: fusedThumb, a1: hand.a1, a2: hand.a2, d1: hand.d1, d2: hand.d2 };
+}
+
+/**
  * Pick a loadout variant for the given personality using the supplied RNG and
  * convert to a SlotSpec map (tier/uses/xp can be overridden for higher-level AI).
  *
@@ -143,15 +189,22 @@ export function generateAILoadout(
     : PERSONALITY_THUMB_XP[personality];
 
   const all = TEMPLATES[personality];
-  // #199 — when the caller knows the intended staked element (threaded from the
-  // overworld NPC's spawn data), restrict the variant pool to templates whose
-  // thumb matches so the duel's stake element equals the overworld marker.
-  // Fall back to all templates if none match (defensive — should not happen with
-  // consistent spawn data).
-  const candidates =
-    thumbElement !== undefined ? all.filter((t) => t.thumb === thumbElement) : all;
-  const pool = candidates.length > 0 ? candidates : all;
-  const template = pool[rng.intBetween(0, pool.length - 1)];
+  // #257 — a FUSION thumb (boss) never resolves to a base template. Stake the
+  // fusion on the thumb and field the curated base combat hand around it
+  // (FUSED_THUMB_TEMPLATES). This is the fix for the old bug where a fusion
+  // thumbElement fell through the base-template filter to a random base stake.
+  // #199 — for a BASE thumbElement, restrict the variant pool to templates whose
+  // thumb matches so the duel's stake element equals the overworld marker; fall
+  // back to all templates if none match (defensive — consistent spawn data won't).
+  let template: LoadoutTemplate;
+  if (thumbElement !== undefined && isFusion(thumbElement)) {
+    template = fusedThumbLoadout(thumbElement);
+  } else {
+    const candidates =
+      thumbElement !== undefined ? all.filter((t) => t.thumb === thumbElement) : all;
+    const pool = candidates.length > 0 ? candidates : all;
+    template = pool[rng.intBetween(0, pool.length - 1)];
+  }
   const spec: Partial<Record<SlotKey, SlotSpec>> = {};
   for (const [slot, element] of Object.entries(template) as [SlotKey, number][]) {
     // The thumb carries personality-based XP (XP-floored when scaled); every other

@@ -6,12 +6,12 @@ import { classifyTiming, resolveBlock } from '../game/BlockResolver';
 import { componentsOf, fusionParents, isFusion } from '../game/ElementSystem';
 import { canDoubleAttack } from '../game/DoubleAttack';
 import * as StatusEffects from '../game/StatusEffects';
-import { AIController } from '../game/ai/AIController';
-import { makeRng } from '../game/ai/AIProfiles';
+import { AIController, type EnrageConfig } from '../game/ai/AIController';
+import { makeRng, AI_PROFILES, type AIProfile } from '../game/ai/AIProfiles';
 import { generateAILoadout, type SlotSpec } from '../game/ai/AILoadout';
 import * as StakeResolver from '../game/StakeResolver';
 import * as PlayerRepo from '../persistence/PlayerRepo';
-import { NPC_SPAWNS } from '../persistence/NpcSpawns';
+import { NPC_SPAWNS, type BossDescriptor } from '../persistence/NpcSpawns';
 import { verifyToken } from '../auth/auth';
 import {
   TELEGRAPH_MS,
@@ -36,6 +36,8 @@ import {
   AMBUSH_SPIRIT_COST,
   SPIRIT_PER_RING_USE,
   GOLD_FORFEIT_PENALTY,
+  BOSS_MODIFIERS,
+  type BossModifier,
 } from '../game/constants';
 import {
   ElementEnum,
@@ -52,6 +54,7 @@ import {
   AttackSlot,
   DefenseSlot,
   BattleSummaryPayload,
+  AIPersonality,
 } from '../../../shared/types';
 
 /** Fixed sessionId used for the virtual AI player (it has no Colyseus client). */
@@ -132,6 +135,23 @@ export class BattleRoom extends Room<{ state: BattleState }> {
    * persistBattleResult records the defeat so the NPC respawns per its cadence.
    */
   private npcId: string | undefined;
+
+  /**
+   * EPIC #256 — the boss descriptor for this duel's NPC (tier / name / fused
+   * thumb), resolved from NPC_SPAWNS in onCreate. undefined for non-boss vsAI
+   * duels and all PvP. Drives the fused-thumb stake (#257), the BOSS_MODIFIERS
+   * difficulty bundle (#258), enrage (#259), gauge pressure (#260), and unique
+   * passives (#261).
+   */
+  private boss: BossDescriptor | undefined;
+
+  /**
+   * #261 — remaining Thornwood "Heartwood" charges: the first N heart-losses the
+   * boss AI would suffer are redirected to the Thumb (absorbed) instead of costing
+   * a heart. Seeded at AI seat from BOSS_PASSIVES; decremented per absorbed hit.
+   * 0 for every other boss / non-boss duel (no absorption).
+   */
+  private heartwoodCharges = 0;
 
   /**
    * #87 Part C — the sessionId that paid AMBUSH_SPIRIT_COST to ambush this duel.
@@ -219,6 +239,13 @@ export class BattleRoom extends Room<{ state: BattleState }> {
       // #83 — remember which overworld NPC this duel represents (if any) so a
       // human win can be persisted as that NPC's defeat in persistBattleResult.
       this.npcId = options.npcId;
+      // EPIC #256 — resolve the boss descriptor (if this NPC is a boss) from the
+      // spawn table. Server-authoritative: the tier / fused thumb come from
+      // NPC_SPAWNS, never the client. Cached for the difficulty/passive paths.
+      const bossSpawn = options.npcId
+        ? NPC_SPAWNS.find((n) => n.id === options.npcId)
+        : undefined;
+      this.boss = bossSpawn?.boss;
       const personality = options.personality ?? 'AGGRESSIVE';
       const seed = options.aiSeed ?? (Date.now() & 0xffffffff);
       // Use a separate RNG stream for loadout generation so the combat RNG
@@ -232,27 +259,150 @@ export class BattleRoom extends Room<{ state: BattleState }> {
       const playerXp =
         options.playerBattleHandAvgXp ??
         (tokenPayload ? PlayerRepo.getBattleHandAvgXp(tokenPayload.playerId) : 0);
-      // #199 — pass the overworld NPC's intended stake element (when supplied) so
-      // the loadout's thumb matches the element shown on the overworld marker.
+      // #199/#257 — the AI's staked thumb element. A boss stakes its thematic
+      // FUSION (resolved from the spawn descriptor, server-authoritative), which
+      // generateAILoadout routes to a fused-thumb loadout. A non-boss NPC uses the
+      // overworld marker's base element (options.thumbElement). The boss's fused
+      // thumb takes precedence over any client-supplied thumbElement.
+      const thumbElement = this.boss?.fusedThumb ?? options.thumbElement;
       const aiSpec = generateAILoadout(
         personality,
         loadoutRng,
         undefined,
         undefined,
         undefined,
-        options.thumbElement,
+        thumbElement,
         playerXp,
       );
+      // #258 — BOSS_MODIFIERS difficulty bundle. A boss tier resolves a modifier
+      // that STACKS on top of the existing XP scaling: +hearts / +uses on the seat,
+      // and a sharpened combat profile (tighter σ / fewer no-blocks / faster think).
+      const mod = this.boss ? BOSS_MODIFIERS[this.boss.tier] : undefined;
+
       // Deterministic-test AI-strength overrides (see BattleRoomOptions): a weak
       // AI yields a guaranteed protagonist win; a tanky AI a guaranteed loss.
       // Applied to the AI seat ONLY — the human is seated from its real loadout.
+      // E2E aiHearts/aiUses take PRECEDENCE over the boss modifier (override wins).
+      const bossHearts = mod ? STARTING_HEARTS + mod.bonusHearts : undefined;
+      const hearts = options.aiHearts ?? bossHearts;
       const aiOverrides =
-        options.aiHearts !== undefined || options.aiUses !== undefined
-          ? { hearts: options.aiHearts, uses: options.aiUses }
+        hearts !== undefined || options.aiUses !== undefined || mod !== undefined
+          ? { hearts, uses: options.aiUses, bonusUses: mod?.bonusUses ?? 0 }
           : undefined;
       this.seatPlayer(AI_ID, personality, aiSpec, aiOverrides);
-      this.ai = new AIController(this, AI_ID, personality, seed);
+
+      // #261 — boss unique passives (data-driven, keyed by boss id). Applies the
+      // seat-time effect (Bulwark: +1 use on both defense rings) and returns the
+      // Heartwood charge count (Thornwood: first N heart-losses absorbed). No-op
+      // for bosses without a passive row (the guardians) and all non-boss duels.
+      if (this.npcId) {
+        this.heartwoodCharges = StakeResolver.applyBossSetupPassive(
+          this.state.players.get(AI_ID)!,
+          this.npcId,
+        );
+      }
+
+      // Build the boss-modified AI profile (no-op when not a boss). The modifier
+      // multiplies the base profile's σ / no-block / think fields (both healthy
+      // and low-heart variants stay proportional).
+      const profileOverride = mod ? this.buildBossProfile(personality, mod) : undefined;
+      // #259 — enrage config (major boss only; threshold 0 disables it). The
+      // enraged profile sharpens the already-modified profile further.
+      const enrage: EnrageConfig | undefined =
+        mod && profileOverride && mod.enrageThreshold > 0
+          ? {
+              threshold: mod.enrageThreshold,
+              profile: this.buildEnragedProfile(profileOverride, mod),
+              aggressive: mod.enrageAggressive,
+            }
+          : undefined;
+      this.ai = new AIController(this, AI_ID, personality, seed, profileOverride, enrage);
     }
+  }
+
+  /**
+   * #259 — derive the ENRAGED profile from the already boss-modified profile by
+   * tightening σ further and speeding think further (the enrage multipliers stack
+   * on the #258 modifiers). no-block is left as the modified value (an enraged
+   * boss is already near-zero no-block). Pure — returns a fresh object.
+   */
+  private buildEnragedProfile(modified: AIProfile, mod: BossModifier): AIProfile {
+    return {
+      ...modified,
+      timingSigmaMs: modified.timingSigmaMs * mod.enrageSigmaMult,
+      lowHeartTimingSigmaMs: modified.lowHeartTimingSigmaMs * mod.enrageSigmaMult,
+      thinkDelayMinMs: modified.thinkDelayMinMs * mod.enrageThinkMult,
+      thinkDelayMaxMs: modified.thinkDelayMaxMs * mod.enrageThinkMult,
+      lowHeartThinkDelayMinMs: modified.lowHeartThinkDelayMinMs * mod.enrageThinkMult,
+      lowHeartThinkDelayMaxMs: modified.lowHeartThinkDelayMaxMs * mod.enrageThinkMult,
+    };
+  }
+
+  /**
+   * #259 — set the AI's `enraged` schema flag once its hearts cross to ≤ the boss
+   * enrage threshold. Idempotent (the flag never unsets — enrage is permanent for
+   * the rest of the duel). No-op for non-enraging bosses and non-boss AI. Called
+   * after any path that can lower the AI's hearts.
+   */
+  private updateBossEnrage(): void {
+    if (!this.boss) return;
+    const mod = BOSS_MODIFIERS[this.boss.tier];
+    if (mod.enrageThreshold <= 0) return;
+    const ai = this.state.players.get(AI_ID);
+    if (!ai || ai.enraged) return;
+    if (ai.hearts > 0 && ai.hearts <= mod.enrageThreshold) {
+      ai.enraged = true;
+    }
+  }
+
+  /**
+   * #260 — the status-gauge fill multiplier for this room's boss (1.0 for a
+   * non-boss). Applied to the DEFENDER's uncontested-hit gauge credit when the
+   * boss AI is the attacker, per orb.
+   */
+  private bossGaugeFillMult(): number {
+    return this.boss ? BOSS_MODIFIERS[this.boss.tier].gaugeFillMult : 1;
+  }
+
+  /**
+   * #261 — Thornwood "Heartwood". When `id` is the boss AI and it has Heartwood
+   * charges left, ABSORB this heart-loss: consume one charge, redirect the hit to
+   * the Thumb (spend a thumb use as the visual sink, never below 0), and return
+   * true so the caller skips the heart decrement. Returns false for any non-boss /
+   * charge-exhausted case (the heart is lost normally). Idempotent on a 0-use
+   * thumb — the absorb still works (charges are the source of truth, not thumb uses).
+   */
+  private absorbBossHeartLoss(id: string): boolean {
+    if (id !== AI_ID || this.heartwoodCharges <= 0) return false;
+    this.heartwoodCharges -= 1;
+    const ai = this.state.players.get(AI_ID);
+    if (ai && ai.thumb.currentUses > 0) {
+      ai.thumb.currentUses -= 1;
+      ai.thumb.isExtinguished = ai.thumb.currentUses === 0;
+    }
+    return true;
+  }
+
+  /**
+   * #258 — derive a boss-modified AIProfile from the base personality profile by
+   * scaling its timing-σ / no-block / think-delay fields by the tier modifier.
+   * Both the healthy and the low-heart variants are scaled so the boss stays
+   * proportionally sharper at every health level. Pure — returns a fresh object,
+   * never mutates AI_PROFILES.
+   */
+  private buildBossProfile(personality: AIPersonality, mod: BossModifier): AIProfile {
+    const base = AI_PROFILES[personality];
+    return {
+      ...base,
+      timingSigmaMs: base.timingSigmaMs * mod.sigmaMult,
+      lowHeartTimingSigmaMs: base.lowHeartTimingSigmaMs * mod.sigmaMult,
+      noBlockProb: base.noBlockProb * mod.noBlockMult,
+      lowHeartNoBlockProb: base.lowHeartNoBlockProb * mod.noBlockMult,
+      thinkDelayMinMs: base.thinkDelayMinMs * mod.thinkMult,
+      thinkDelayMaxMs: base.thinkDelayMaxMs * mod.thinkMult,
+      lowHeartThinkDelayMinMs: base.lowHeartThinkDelayMinMs * mod.thinkMult,
+      lowHeartThinkDelayMaxMs: base.lowHeartThinkDelayMaxMs * mod.thinkMult,
+    };
   }
 
   /**
@@ -271,14 +421,17 @@ export class BattleRoom extends Room<{ state: BattleState }> {
     id: string,
     displayName: string,
     spec?: Partial<Record<SlotKey, SlotSpec>>,
-    overrides?: { hearts?: number; uses?: number },
+    overrides?: { hearts?: number; uses?: number; bonusUses?: number },
   ): number {
     const ps = new PlayerState();
     ps.playerId = id;
     ps.displayName = displayName;
-    // `overrides` (deterministic E2E only, AI seat only) replaces hearts and/or
-    // sets a uniform per-slot uses value so a duel outcome can be forced.
+    // `overrides` (AI seat only) replaces hearts and/or sets a uniform per-slot
+    // uses value (deterministic E2E) or adds `bonusUses` to every COMBAT ring's
+    // depth (#258 BOSS_MODIFIERS). The E2E uniform `uses` takes precedence over
+    // bonusUses so an aiUses override still forces a duel outcome.
     ps.hearts = overrides?.hearts ?? STARTING_HEARTS;
+    const bonusUses = overrides?.bonusUses ?? 0;
 
     for (const key of Object.keys(DEFAULT_LOADOUT) as SlotKey[]) {
       const ring = ps.getSlot(key);
@@ -286,9 +439,12 @@ export class BattleRoom extends Room<{ state: BattleState }> {
       const element = slotSpec ? slotSpec.element : DEFAULT_LOADOUT[key];
       const baseCurrent = slotSpec ? slotSpec.currentUses : STARTING_USES;
       const baseMax = slotSpec ? slotSpec.maxUses : STARTING_USES;
-      const currentUses = overrides?.uses ?? baseCurrent;
+      // #258 — the boss bonusUses deepens the four COMBAT rings (not the passive
+      // thumb). Skipped when the E2E uniform `uses` override is set (it wins).
+      const slotBonus = overrides?.uses === undefined && key !== 'thumb' ? bonusUses : 0;
+      const currentUses = overrides?.uses ?? baseCurrent + slotBonus;
       const maxUses =
-        overrides?.uses !== undefined ? Math.max(baseMax, overrides.uses) : baseMax;
+        overrides?.uses !== undefined ? Math.max(baseMax, overrides.uses) : baseMax + slotBonus;
       ring.element = element;
       ring.tier = slotSpec ? slotSpec.tier : 1;
       ring.currentUses = currentUses;
@@ -498,6 +654,8 @@ export class BattleRoom extends Room<{ state: BattleState }> {
       this.finalizeEnded();
       return true;
     }
+    // #259 — a Burning heart loss on the boss's own turn may trigger enrage.
+    if (heartLost) this.updateBossEnrage();
     return false;
   }
 
@@ -587,8 +745,14 @@ export class BattleRoom extends Room<{ state: BattleState }> {
       } else if (!loserPlayerId && winnerPlayerId && loserId) {
         // vsAI win: AI has no DB ring to transfer, so grant the winner a new
         // ring matching the AI's thumb element (GDD §9.1).
+        //
+        // #257 — SUPPRESS this generic grant for a FUSED-THUMB BOSS. A boss stakes
+        // its thematic fusion; beating it must NOT hand the player that fusion for
+        // free (the curated rewards stand alone — the food cache below, and the
+        // Thornado Guardian's grantRingToCarry(THORNADO)). The thumb is a fusion
+        // exactly when this is a boss with a fused thumb, so guard on isFusion.
         const aiPs = this.state.players.get(loserId);
-        if (aiPs) {
+        if (aiPs && !aiPs.thumb.isFusion) {
           const t = aiPs.thumb;
           wonRingId = PlayerRepo.grantRing(winnerPlayerId, t.element, t.tier, t.maxUses, t.xp);
           wonRingElement = t.element;
@@ -1020,12 +1184,27 @@ export class BattleRoom extends Room<{ state: BattleState }> {
     this.awardExchangeXp(attackerId, attackerSlot, defenderId, capture.slotKey, result);
 
     // Heart-loss resolution. Each lost heart is a plain decrement (floored at 0).
+    // #261 — Thornwood "Heartwood" absorbs the boss's first N heart-losses (the
+    // hit is redirected to the Thumb) before the decrement applies.
+    let aiHeartActuallyLost = false;
     if (result.defenderHeartLost) {
-      defenderPlayer.hearts = Math.max(0, defenderPlayer.hearts - 1);
+      if (!this.absorbBossHeartLoss(defenderId)) {
+        defenderPlayer.hearts = Math.max(0, defenderPlayer.hearts - 1);
+        if (defenderId === AI_ID) aiHeartActuallyLost = true;
+      }
     }
+    // attackerHeartLost is always false in the current BlockResolver (forward compat
+    // for future rally counter-damage); the absorb wrapper is preserved in case it
+    // fires (e.g. a boss attacker taking reflected damage).
     if (result.attackerHeartLost) {
-      attackerPlayer.hearts = Math.max(0, attackerPlayer.hearts - 1);
+      if (!this.absorbBossHeartLoss(attackerId)) {
+        attackerPlayer.hearts = Math.max(0, attackerPlayer.hearts - 1);
+        if (attackerId === AI_ID) aiHeartActuallyLost = true;
+      }
     }
+    // #259 — a real AI heart change may cross the enrage threshold (broadcasts the
+    // `enraged` flag). An absorbed hit is NOT a heart change, so it never enrages.
+    if (aiHeartActuallyLost) this.updateBossEnrage();
 
     // Earth passive: timing-only parry refund (fires on PARRY regardless of
     // element match). Awards the defender's thumb mid-tier XP when it fires.
@@ -1042,11 +1221,18 @@ export class BattleRoom extends Room<{ state: BattleState }> {
     if (result.clearAllGauges) {
       this.clearAllGauges(defenderPlayer);
     } else {
-      //   hitGaugeElements — uncontested-hit components +1 each (case 1)
+      // #260 — boss status-gauge pressure. When the ATTACKER is the boss AI, an
+      // uncontested hit credits the DEFENDER's gauge at base × gaugeFillMult per
+      // triangle component (per orb — a double attack runs this twice, so each orb
+      // gets the multiplier independently). Player→player and player→non-boss gauge
+      // math is unchanged (mult = 1). Defense-side block deltas (case 2) are the
+      // defender's own ring cost and are NOT boss-scaled.
+      const hitMult = attackerId === AI_ID ? this.bossGaugeFillMult() : 1;
+      //   hitGaugeElements — uncontested-hit components +mult each (case 1)
       //   blockGaugeDeltas — each tracked parent of the defending ring += its
       //     tier-reduced delta (case 2; full rate per tracked parent, §7.1)
       //   blockedGaugeElement — strong-block beaten gauge(s) −1 (case 3)
-      for (const el of result.hitGaugeElements) this.adjustGauge(defenderPlayer, el, +1);
+      for (const el of result.hitGaugeElements) this.adjustGauge(defenderPlayer, el, hitMult);
       for (const { element, delta } of result.blockGaugeDeltas) {
         this.adjustGauge(defenderPlayer, element, delta);
       }

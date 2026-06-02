@@ -9,6 +9,12 @@ export class PlayerState extends Schema {
   @type('string') displayName: string = '';
   @type('uint8') hearts: number = 3;
 
+  // #259 — boss phase-2. Set true once on the AI PlayerState when a major boss's
+  // hearts cross to ≤ its enrage threshold; broadcast so the client can show a
+  // one-shot "roars!" banner + red tint/pulse on the opponent. Always false for
+  // humans, non-enraging bosses (gate/sub), and non-boss AI.
+  @type('boolean') enraged: boolean = false;
+
   // Named loadout slots (GDD §6.1). Each is always assigned by seatPlayer.
   // thumb is a passive staked ring — never pressed in combat.
   @type(Ring) thumb: Ring = new Ring();

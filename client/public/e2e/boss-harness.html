@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html>
+<head><title>Elemental Rings Boss Combat Harness</title></head>
+<body>
+<!--
+  Boss-combat E2E harness (EPIC #256). Connects the Colyseus 0.17 browser SDK
+  directly to a `battle-ai` room so a spec can create a BOSS duel (npcId) and
+  assert on the authoritative server state — without driving the full overworld
+  navigation to a boss screen. Points at the E2E server port 2568 (the Playwright
+  webServer stack), NOT prod 2567. Mirrors the Phase-1 test-harness.html pattern.
+-->
+<script src="https://unpkg.com/@colyseus/sdk@0.17/dist/colyseus.js"></script>
+<script>
+  let room;
+
+  // Create a vsAI room with arbitrary options (vsAI / personality / aiSeed / npcId
+  // / aiHearts / aiUses). battle-ai locks after the human joins, so each create
+  // yields a fresh isolated room. Resolves once the room reaches ATTACK_SELECT.
+  window.connectBoss = async (options) => {
+    const client = new Colyseus.Client('ws://localhost:2568');
+    room = await client.joinOrCreate('battle-ai', options);
+    await new Promise((res) => {
+      if (room.state.phase === 'ATTACK_SELECT') return res();
+      room.onStateChange.once(() => res());
+    });
+    return room.sessionId;
+  };
+
+  window.aiState = () => {
+    const ai = room.state.players.get('AI');
+    return ai ? JSON.parse(JSON.stringify(ai)) : null;
+  };
+  window.roomState = () => JSON.parse(JSON.stringify(room.state));
+  window.sessionId = () => room.sessionId;
+
+  // Capture every exchangeResult broadcast so a spec can read the attacker's
+  // telegraph component elements after driving the AI to attack.
+  window.__exchanges = [];
+  window.onRoomReady = () => {
+    room.onMessage('exchangeResult', (msg) => window.__exchanges.push(msg));
+    room.onMessage('wonRing', (msg) => { window.__wonRing = msg; });
+  };
+
+  window.sendAttack = (slot) => room.send('selectAttack', { slot });
+  window.sendDefense = (slot) => room.send('submitDefense', { slot, pressTime: Date.now() });
+  // E2E_TEST_ROUTES-gated deterministic state setter (mirrors BattleRoom's
+  // __testSetState handler). Lets a spec seed the AI's exact hearts so an enrage
+  // crossing can be engineered without timed play.
+  window.setOpponentState = (patch) => room.send('__testSetState', { target: 'opponent', ...patch });
+
+  window.waitForPhase = (phase, timeout = 12000) =>
+    new Promise((res, rej) => {
+      const start = Date.now();
+      const poll = () => {
+        if (room.state.phase === phase) return res(JSON.parse(JSON.stringify(room.state)));
+        if (Date.now() - start > timeout) return rej(new Error('timeout phase ' + phase + ' got ' + room.state.phase));
+        setTimeout(poll, 40);
+      };
+      poll();
+    });
+
+  window.waitForAiField = (field, pred, timeout = 12000) =>
+    new Promise((res, rej) => {
+      const start = Date.now();
+      const poll = () => {
+        const ai = room.state.players.get('AI');
+        if (ai && pred(ai[field])) return res(JSON.parse(JSON.stringify(ai)));
+        if (Date.now() - start > timeout) return rej(new Error('timeout AI.' + field));
+        setTimeout(poll, 40);
+      };
+      poll();
+    });
+</script>
+</body>
+</html>
