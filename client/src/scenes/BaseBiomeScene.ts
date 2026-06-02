@@ -52,6 +52,10 @@ interface NpcInfo {
   battleKey?: string;
   /** Pre-computed thumb (stake) XP the player would win — shown in the approach prompt. */
   stakeXp?: number;
+  /** Boss display name (e.g. "Bogwood Warden") — present only for boss NPCs. */
+  displayName?: string;
+  /** Boss tier — present only for boss NPCs. */
+  bossTier?: 'major' | 'gate' | 'sub';
 }
 
 declare const __SERVER_URL__: string;
@@ -1667,10 +1671,13 @@ export abstract class BaseBiomeScene extends Phaser.Scene {
         element: nearest.element,
         stakeXp: nearest.stakeXp,
       };
-      const elementName = ELEMENT_NAMES[nearest.element] ?? '?';
-      const npcType = nearest.type === 'monster' ? 'monster' : 'duelist';
+      const isBoss = !!nearest.bossTier;
+      const tierLabel = nearest.bossTier === 'major' ? 'Major Boss' : nearest.bossTier === 'gate' ? 'Gate Boss' : nearest.bossTier === 'sub' ? 'Boss' : '';
+      const label = nearest.displayName
+        ? `${nearest.displayName}${tierLabel ? `  ·  ${tierLabel}` : ''}`
+        : `${ELEMENT_NAMES[nearest.element] ?? '?'} ${nearest.type === 'monster' ? 'monster' : 'duelist'}`;
       const xpPart = nearest.stakeXp !== undefined ? `  ${nearest.stakeXp.toLocaleString()} XP` : '';
-      this.showNpcPrompt(`${elementName} ${npcType}${xpPart}  —  Approach [E]`);
+      this.showNpcPrompt(`${label}${xpPart}  —  Approach [E]`, isBoss);
       window.__detectedNpc = { id: nearest.id, personality: nearest.personality };
     } else {
       this.detectedNpc = null;
@@ -1680,7 +1687,7 @@ export abstract class BaseBiomeScene extends Phaser.Scene {
   }
 
   /** Show (or update) the camera-pinned detection prompt. Created lazily. */
-  private showNpcPrompt(text: string): void {
+  private showNpcPrompt(text: string, isBoss = false): void {
     if (!this.npcPrompt) {
       this.npcPrompt = this.add
         .text(CANVAS_W / 2, 80, '', {
@@ -1696,6 +1703,10 @@ export abstract class BaseBiomeScene extends Phaser.Scene {
       // it renders at 1:1 through uiCam, not the zoomed world camera.
       this.uiRoot.add(this.npcPrompt);
     }
+    this.npcPrompt.setStyle({
+      color: isBoss ? '#ff8844' : '#ffeeaa',
+      backgroundColor: isBoss ? '#550000cc' : '#000000aa',
+    });
     this.npcPrompt.setText(text).setVisible(true);
   }
 
