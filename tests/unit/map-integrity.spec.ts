@@ -60,6 +60,49 @@ function objectsLayer(map: TiledMap): TiledObject[] {
   return map.layers.find((l) => l.type === 'objectgroup')?.objects ?? [];
 }
 
+/**
+ * Assert the map's own firstgid sequence is internally consistent: the first
+ * tileset starts at 1, and every subsequent firstgid equals the prior tileset's
+ * firstgid + tilecount (monotonic, no gaps, no overlaps). Derives the contract
+ * from the map's own `tilesets[]` so it survives per-screen tileset recomposition
+ * (#287, #273, #270) instead of comparing against a single hardcoded tuple.
+ */
+function assertMonotonicFirstgids(map: TiledMap, label: string): void {
+  const tilesets = map.tilesets;
+  expect(tilesets.length, `${label}: map declares no tilesets`).toBeGreaterThan(0);
+  let expected = 1;
+  for (const ts of tilesets) {
+    expect(
+      ts.firstgid,
+      `${label}: tileset "${ts.name}" firstgid ${ts.firstgid} breaks the contiguous ` +
+        `sequence (expected ${expected} = prior firstgid + tilecount)`,
+    ).toBe(expected);
+    expect(
+      ts.tilecount,
+      `${label}: tileset "${ts.name}" has a non-positive tilecount ${ts.tilecount}`,
+    ).toBeGreaterThan(0);
+    expected += ts.tilecount;
+  }
+}
+
+/**
+ * Assert every tile id 0–47 in the named autotile tilesets present on this map
+ * carries collides:true. Water and cliff autotiles are blocking terrain; the set
+ * of which autotile tilesets a screen ships varies after re-authoring, so we only
+ * check the ones actually declared (resolved by name, not a fixed tileset index).
+ */
+function assertAutotileCollides(map: TiledMap, names: string[], label: string): void {
+  for (const name of names) {
+    const ts = map.tilesets.find((t) => t.name === name);
+    if (!ts) continue; // this screen does not ship this autotile — nothing to assert
+    for (let id = 0; id < 48; id++) {
+      const tile = ts.tiles?.find((t) => t.id === id);
+      const has = tile?.properties?.some((p) => p.name === 'collides' && p.value === true);
+      expect(has, `${label} ${ts.name} tile ${id} missing collides:true`).toBe(true);
+    }
+  }
+}
+
 /** GIDs that carry collides:true, read from the tileset tile-property definitions. */
 function collidingGids(map: TiledMap): Set<number> {
   const gids = new Set<number>();
@@ -138,10 +181,11 @@ const NON_HUB = FOREST_SCREENS.filter((s) => s.id !== 'forest_anchorage');
 const GENERATED = NON_HUB.filter((s) => !HAND_AUTHORED.has(s.id));
 const HAND_AUTHORED_SCREENS = NON_HUB.filter((s) => HAND_AUTHORED.has(s.id));
 
-// firstgid contracts: the curated-palette generated maps vs the legacy autotile
-// maps still used by the hand-authored screens.
+// firstgid contract for the curated-palette generated maps. The hand-authored and
+// swamp screens no longer share a single fixed tuple — each ships its own tileset
+// composition, so those suites assert the per-map monotonic invariant instead
+// (see assertMonotonicFirstgids).
 const GENERATED_FIRSTGIDS = [1, 49, 169, 224, 480, 736];
-const LEGACY_FIRSTGIDS = [1, 49, 97, 145, 193, 313];
 
 describe('generated map format', () => {
   for (const screen of GENERATED) {
@@ -160,14 +204,14 @@ describe('generated map format', () => {
 
 describe('hand-authored map format', () => {
   for (const screen of HAND_AUTHORED_SCREENS) {
-    it(`${screen.id}: 16px tile size, 4 named layers, legacy firstgid contract`, () => {
+    it(`${screen.id}: 16px tile size, 4 named layers, self-consistent firstgid sequence`, () => {
       const map = loadMap('forest', `${screen.id}.json`);
       expect(map.tilewidth).toBe(16);
       expect(map.tileheight).toBe(16);
       expect(map.layers.map((l) => l.name)).toEqual(
         expect.arrayContaining(['ground', 'behind', 'in-front', 'objects']),
       );
-      expect(map.tilesets.map((t) => t.firstgid)).toEqual(LEGACY_FIRSTGIDS);
+      assertMonotonicFirstgids(map, screen.id);
     });
   }
 });
@@ -191,17 +235,9 @@ describe('water tiles collide', () => {
 
 describe('hand-authored water and cliff tiles collide', () => {
   for (const screen of HAND_AUTHORED_SCREENS) {
-    it(`${screen.id}: every water/cliff GID id 0–47 carries collides:true`, () => {
+    it(`${screen.id}: every water/cliff autotile GID id 0–47 carries collides:true`, () => {
       const map = loadMap('forest', `${screen.id}.json`);
-      const water = map.tilesets.find((t) => t.name === 'autotile_water_16')!;
-      const cliff = map.tilesets.find((t) => t.name === 'autotile_cliff_16')!;
-      for (const ts of [water, cliff]) {
-        for (let id = 0; id < 48; id++) {
-          const tile = ts.tiles?.find((t) => t.id === id);
-          const has = tile?.properties?.some((p) => p.name === 'collides' && p.value === true);
-          expect(has, `${screen.id} ${ts.name} tile ${id} missing collides:true`).toBe(true);
-        }
-      }
+      assertAutotileCollides(map, ['autotile_water_16', 'autotile_cliff_16'], screen.id);
     });
   }
 });
@@ -258,25 +294,18 @@ describe('object tiles are walkable', () => {
 describe('swamp map integrity', () => {
   const screen = SWAMP_SCREENS[0];
 
-  it('format: 16px, 4 layers, 6-tileset firstgid contract', () => {
+  it('format: 16px, 4 layers, self-consistent firstgid sequence', () => {
     const map = loadMap('swamp', 'swamp_entry.json');
     expect(map.tilewidth).toBe(16);
     expect(map.layers.map((l) => l.name)).toEqual(
       expect.arrayContaining(['ground', 'behind', 'in-front', 'objects']),
     );
-    expect(map.tilesets.map((t) => t.firstgid)).toEqual([1, 49, 97, 145, 193, 313]);
+    assertMonotonicFirstgids(map, 'swamp_entry');
   });
 
   it('water/cliff tiles collide', () => {
     const map = loadMap('swamp', 'swamp_entry.json');
-    for (const name of ['autotile_water_16', 'autotile_cliff_16']) {
-      const ts = map.tilesets.find((t) => t.name === name)!;
-      for (let id = 0; id < 48; id++) {
-        const tile = ts.tiles?.find((t) => t.id === id);
-        const has = tile?.properties?.some((p) => p.name === 'collides' && p.value === true);
-        expect(has, `swamp ${name} tile ${id} missing collides:true`).toBe(true);
-      }
-    }
+    assertAutotileCollides(map, ['autotile_water_16', 'autotile_cliff_16'], 'swamp');
   });
 
   it('spawn reaches the north biome-exit edge', () => {

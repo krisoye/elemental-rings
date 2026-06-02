@@ -46,9 +46,8 @@ test('campfire: rest restores spirit and spends 25 food', async ({ browser }) =>
   await seedAuthToken(ctx);
   const page = await ctx.newPage();
 
-  const token = await ctx.storageState().then(() =>
-    page.evaluate(() => localStorage.getItem('er_token') ?? '')
-  );
+  // Navigate FIRST, then read storage. Reading localStorage on the page's initial
+  // about:blank document (before page.goto resolves) throws SecurityError (#312).
   await waitForForest(page, 'forest_anchorage');
 
   const tok = await page.evaluate(() => localStorage.getItem('er_token') ?? '');
@@ -89,7 +88,6 @@ test('campfire: rest restores spirit and spends 25 food', async ({ browser }) =>
     expect(meAfter.player.food_units).toBe(meBefore.player.food_units - 25);
     expect(meAfter.player.game_day).toBe(meBefore.player.game_day + 1);
   }
-  void token;
 
   await ctx.close();
 });

@@ -126,6 +126,19 @@ export default defineConfig({
       // 4 workers: enough parallelism for a 4–5× speed-up over serial while keeping
       // CPU headroom for physics-timing tests (e.g. sanctum wall-collision 4 s hold)
       // that fail when the browser's game loop is starved on a fully-loaded host.
+      //
+      // #312 partition (workers=1 vs workers=4): the failure set is NOT
+      // starvation. The wall-collision / movement physics specs (sanctum-movement,
+      // sanctum-zones bed/ring-wall/meditation) pass at BOTH worker counts. At
+      // workers=1 the suite fails *more* (80 vs ~59), not less, so do NOT "fix" E2E
+      // flake by lowering this number — it will not help and slows the run 5×.
+      // The residual failures are genuine assertion/coordinate bugs (routed to
+      // Cluster B / #311 — e.g. fusion/combine → 400, npc-xp-scaling DEFENSIVE
+      // value, 16px zoom===2) plus a host-isolation race: the shared fixed ports
+      // (2568/8090) + `reuseExistingServer` below mean a concurrently-running
+      // workspace's webServer can be attached to or torn down mid-run, producing
+      // the `mint-token 404` / `TypeError: fetch failed` cascade. Run the solo
+      // suite on an otherwise-idle host (no other E2E workspace bound to 2568/8090).
       fullyParallel: true,
       workers: 4,
     },

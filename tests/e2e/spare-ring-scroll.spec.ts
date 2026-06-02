@@ -78,10 +78,8 @@ test('spare-ring-scroll: second row scrolls into view with 8+ spare rings', asyn
   await seedAuthToken(ctx);
   const page = await ctx.newPage();
 
-  const token = await ctx.cookies().then(() =>
-    page.evaluate(() => localStorage.getItem('er_token') ?? '')
-  );
-
+  // Navigate FIRST, then read storage. Reading localStorage on the page's initial
+  // about:blank document (before page.goto resolves) throws SecurityError (#312).
   await page.goto(URL);
   await page.waitForFunction(() => (window as any).__activeScene === 'CampScene', {
     timeout: 10000,
@@ -90,7 +88,6 @@ test('spare-ring-scroll: second row scrolls into view with 8+ spare rings', asyn
   // Seed 8 spare rings.
   const tok = await page.evaluate(() => localStorage.getItem('er_token') ?? '');
   if (tok) await seedSpareRings(tok, 8);
-  void token;
 
   await enterForestScreen(page, 'forest_anchorage');
   await page.waitForFunction(
