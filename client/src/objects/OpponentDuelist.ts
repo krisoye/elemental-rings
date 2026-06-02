@@ -193,9 +193,9 @@ export class OpponentDuelist extends Phaser.GameObjects.Container {
     // which holds for AI duels (the server seeds the AI seat's finite pool) and
     // never for PvP humans (their broadcast spiritMax stays 0). Mirrors the local
     // Hud gauge: red when fully depleted, white otherwise.
-    const spiritMax = (opp.spiritMax as number) ?? 0;
+    const spiritMax = opp.spiritMax ?? 0;
     if (spiritMax > 0) {
-      const spiritCurrent = (opp.spiritCurrent as number) ?? 0;
+      const spiritCurrent = opp.spiritCurrent ?? 0;
       this.spiritText.setText(`⚡ ${spiritCurrent}/${spiritMax}`);
       this.spiritText.setColor(spiritCurrent === 0 ? '#ff4444' : '#ffffff');
       this.spiritText.setVisible(true);
