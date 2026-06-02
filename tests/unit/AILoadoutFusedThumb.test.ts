@@ -11,17 +11,20 @@
 import { describe, test, expect } from 'vitest';
 import { generateAILoadout } from '../../server/src/game/ai/AILoadout';
 import { makeRng } from '../../server/src/game/ai/AIProfiles';
-import { isFusion } from '../../server/src/game/Fusions';
+import { isFusion, componentsOf } from '../../server/src/game/Fusions';
 import { ElementEnum } from '../../shared/types';
 
 const { WATER, EARTH, WIND, WOOD } = ElementEnum;
 const SEED = 0xabcdef;
 
 describe('generateAILoadout fused-thumb routing (#257)', () => {
+  // EPIC #268 — A1/A2 = the fusion's two components (componentsOf), so the boss
+  // satisfies canDoubleAttack. THORNADO = Wood+Wind, MUD = Water+Earth,
+  // BLOOM = Wood+Earth.
   const cases: Array<{ thumb: number; a1: number; a2: number; d1: number; d2: number }> = [
     { thumb: ElementEnum.THORNADO, a1: WIND, a2: WOOD, d1: WOOD, d2: EARTH },
-    { thumb: ElementEnum.MUD, a1: WATER, a2: WIND, d1: WATER, d2: EARTH },
-    { thumb: ElementEnum.BLOOM, a1: WOOD, a2: WIND, d1: WOOD, d2: EARTH },
+    { thumb: ElementEnum.MUD, a1: WATER, a2: EARTH, d1: WATER, d2: EARTH },
+    { thumb: ElementEnum.BLOOM, a1: WOOD, a2: EARTH, d1: WOOD, d2: EARTH },
   ];
 
   for (const c of cases) {
@@ -45,6 +48,11 @@ describe('generateAILoadout fused-thumb routing (#257)', () => {
       for (const slot of ['a1', 'a2', 'd1', 'd2'] as const) {
         expect(isFusion(loadout[slot]!.element)).toBe(false);
       }
+      // EPIC #268 — A1/A2 must equal the fusion's two components (unordered) so the
+      // boss satisfies canDoubleAttack and can fire its signature double attack.
+      const aSlots = [loadout.a1!.element, loadout.a2!.element].sort();
+      const comps = componentsOf(c.thumb).sort();
+      expect(aSlots).toEqual(comps);
     });
   }
 

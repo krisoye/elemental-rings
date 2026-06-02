@@ -405,6 +405,11 @@ export class BattleRoom extends Room<{ state: BattleState }> {
       thinkDelayMaxMs: base.thinkDelayMaxMs * mod.thinkMult,
       lowHeartThinkDelayMinMs: base.lowHeartThinkDelayMinMs * mod.thinkMult,
       lowHeartThinkDelayMaxMs: base.lowHeartThinkDelayMaxMs * mod.thinkMult,
+      // EPIC #268 — a boss picks the tightest legal double-attack gap so its two
+      // orbs land in rapid succession (still ≥ MIN_COMBO_GAP_MS, so an orb-1 parry
+      // deterministically cancels orb 2 per the EPIC #264 gap contract).
+      comboGapMinMs: MIN_COMBO_GAP_MS,
+      comboGapMaxMs: MIN_COMBO_GAP_MS,
     };
   }
 
