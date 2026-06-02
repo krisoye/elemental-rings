@@ -3,7 +3,7 @@ import { InventoryGrid, type RingData } from '../objects/InventoryGrid';
 import { LoadoutPanel, type LoadoutSlot } from '../objects/LoadoutPanel';
 import { StakePanel } from '../objects/StakePanel';
 import { FusionPanel } from '../objects/FusionPanel';
-import { ELEMENT_NAMES, CANVAS_W, CANVAS_H, THUMB_PASSIVE_INFO, PASSIVE_STRIP_WIDTH } from '../Constants';
+import { ELEMENT_NAMES, CANVAS_W, CANVAS_H, THUMB_PASSIVE_INFO } from '../Constants';
 import { Player } from '../objects/world/Player';
 import { InteractionZone } from '../objects/world/InteractionZone';
 import { BlinkController } from '../objects/world/BlinkController';
@@ -18,34 +18,38 @@ const API_BASE = WS.replace(/^ws/, 'http');
 
 const BATTLE_SLOTS = ['thumb', 'a1', 'a2', 'd1', 'd2'] as const;
 
-// #78 ④ — the rendered width of the StakePanel Thumb card bg (StakePanel.CARD_W).
-// The passive-reminder strip is constrained to this width so it wraps within the
-// Thumb column (adopted at x=580) and never overlaps the LoadoutPanel battle
-// slots that begin at x=670 to its right.
-const STAKE_CARD_WIDTH = 70;
-
 // #85 Fix 2A — the inventory grids in the Ring Storage overlay clip to this many
 // rows; beyond that the ▲/▼ arrows + mouse wheel scroll the grid. 3 rows fit
 // comfortably above the status echo without colliding with the header row.
 const RINGWALL_VISIBLE_ROWS = 3;
 
-// #154 Reliquary modal layout. The modal is 760×500 centered at
-// (CANVAS_W/2, CANVAS_H/2); content is inset 20px from the panel edges. All
-// x-coordinates are canvas-space (the overlay is camera-pinned, scrollFactor 0).
-// Modal left edge = CANVAS_W/2 - 380; content left = that + 20.
+// Reliquary modal layout. The modal is 760×500 centered at (CANVAS_W/2, CANVAS_H/2);
+// content is inset 20px from the panel edges.
+//
+// Three-column layout:
+//   Left   (x=152): RELIQUARY 3×3 scrollable grid (208px wide)
+//   Middle (x=372): SPARES    3×3 scrollable grid (208px wide)
+//   Right  (x=594): BATTLE HAND — Thumb row + A1/A2 + D1/D2 (right-aligned rings)
+//
+// Battle hand detail (Option B — ring grid right-aligned to CONTENT_RIGHT=872):
+//   LoadoutPanel (A1/A2/D1/D2): CARD_W=70, COL_GAP=78 → 2-col width=148; origin x=724
+//   StakePanel (Thumb): aligns with A2/D2 (right col, center=837); origin x=802
+//   Passive effect display: x=594, width=200, sits to the left of the Thumb card.
 const MODAL_W = 760;
 const MODAL_H = 500;
 const MODAL_LEFT = CANVAS_W / 2 - MODAL_W / 2; // 132
-const MODAL_TOP = CANVAS_H / 2 - MODAL_H / 2; // 38
 const CONTENT_LEFT = MODAL_LEFT + 20; // 152
 const CONTENT_RIGHT = CANVAS_W / 2 + MODAL_W / 2 - 20; // 872
-// Column x-origins (see issue layout table).
-const COL_RELIQUARY_X = CONTENT_LEFT; // 152 — 3-col grid, 240px wide
-const COL_LOADOUT_X = 412; // LOADOUT column, 340px wide
-const COL_NECKLACE_X = 772; // NECKLACE column, 100px wide
-// Loadout sub-positions: Thumb card then the A1/A2/D1/D2 2×2 grid 10px to its right.
-const LOADOUT_THUMB_X = COL_LOADOUT_X; // 412
-const LOADOUT_GRID_X = COL_LOADOUT_X + STAKE_CARD_WIDTH + 10; // 492
+const COL_RELIQUARY_X = CONTENT_LEFT; // 152
+const COL_SPARE_X = 372;              // Middle column — spares 3×3 grid
+const COL_BATTLEHAND_X = 594;         // Right column — battle hand section
+// Battle hand ring grid: right-aligned. LoadoutPanel CARD_W=70, COL_GAP=78 → width=148.
+const BATTLEHAND_RING_X = CONTENT_RIGHT - 148; // 724 — LoadoutPanel origin
+const BATTLEHAND_RING_Y = 246;                  // 148 + one LoadoutPanel ROW_GAP (98)
+// Thumb card aligns with right ring column (A2/D2): center=837, origin=802.
+const BATTLEHAND_THUMB_X = BATTLEHAND_RING_X + 78; // 802
+// Passive effect display width: from COL_BATTLEHAND_X to just before the Thumb card.
+const BATTLEHAND_EFFECT_W = BATTLEHAND_THUMB_X - COL_BATTLEHAND_X - 6; // ≈200
 
 // The off-screen holding origin for the reusable panel instances. The panels are
 // created once and parked here while the spatial room is shown; 8A.2 re-parents
@@ -625,8 +629,9 @@ export class CampScene extends Phaser.Scene {
    *     move (the server owns spirit_max — never computed client-side).
    *   - Left panel RELIQUARY: scrollable grid of all NOT-carried rings (in_carry
    *     = 0). Locked (non-interactive) when the carry cap is full.
-   *   - Right panel LOADOUT: a fixed BATTLE HAND (Thumb + A1/A2/D1/D2) atop a
-   *     scrollable SPARE grid (carried rings not assigned to a battle slot).
+   *   - Middle panel SPARES: 3×3 scrollable grid of carried rings not in a battle slot.
+   *   - Right panel BATTLE HAND: Thumb row (effect display | Thumb card) then
+   *     Attack row (A1 | A2) and Defense row (D1 | D2), ring grid right-aligned.
    * Interaction is click-then-click (no drag): select a ring, then click the
    * target section/slot. Reuses the exact reusable panel instances.
    */
@@ -718,64 +723,43 @@ export class CampScene extends Phaser.Scene {
       .on('pointerdown', () => void this.onReliquaryDropClicked());
     c.add(reliquaryLabel);
 
-    // ── Middle column — LOADOUT ───────────────────────────────────────────────
-    c.add(
-      this.add
-        .text(COL_LOADOUT_X, 128, 'LOADOUT', { fontSize: '13px', color: '#cccccc' })
-        .setScrollFactor(0)
-        .setName('loadout-label'),
-    );
-    this.loadoutBadge = this.add
-      .text(COL_LOADOUT_X + 70, 128, '', { fontSize: '13px', color: '#aaffaa' })
-      .setScrollFactor(0)
-      .setName('loadout-badge');
-    c.add(this.loadoutBadge);
-    c.add(
-      this.add
-        .text(COL_LOADOUT_X, 148, 'BATTLE HAND', { fontSize: '11px', color: '#cc88ff' })
-        .setScrollFactor(0)
-        .setName('battle-hand-label'),
-    );
-    // SPARE label row is interactive: clicking it with a selected ring drops that
-    // ring into the Spare pool (carry it but unassign from any battle slot).
+    // ── Middle column — SPARES ───────────────────────────────────────────────
+    // Label row is interactive: clicking it with a selected ring drops into Spare pool.
     const spareLabel = this.add
-      .text(COL_LOADOUT_X, 370, 'SPARE  ↓', { fontSize: '11px', color: '#88ccaa' })
+      .text(COL_SPARE_X, 128, 'SPARES  ↓', { fontSize: '13px', color: '#88ccaa' })
       .setScrollFactor(0)
       .setName('spare-label')
       .setInteractive({ useHandCursor: true })
       .on('pointerdown', () => void this.onSpareDropClicked());
     c.add(spareLabel);
 
-    // ── Right column — NECKLACE ───────────────────────────────────────────────
+    // ── Right column — BATTLE HAND ────────────────────────────────────────────
     c.add(
       this.add
-        .text(COL_NECKLACE_X, 128, 'NECKLACE', { fontSize: '13px', color: '#cccccc' })
+        .text(COL_BATTLEHAND_X, 128, 'BATTLE HAND', { fontSize: '13px', color: '#cc88ff' })
         .setScrollFactor(0)
-        .setName('necklace-label'),
+        .setName('battle-hand-label'),
     );
-    // #81 — necklace talisman display below its label. Fetch the loadout and
-    // render the equipped talisman + remaining charges (filled/empty dots).
-    const necklaceLabel = this.add
-      .text(COL_NECKLACE_X, 148, 'Necklace: —', {
-        fontSize: '11px',
-        color: '#cfe3ff',
-        wordWrap: { width: 100 },
-      })
+    this.loadoutBadge = this.add
+      .text(COL_BATTLEHAND_X + 95, 128, '', { fontSize: '13px', color: '#aaffaa' })
       .setScrollFactor(0)
-      .setName('necklace-slot');
-    c.add(necklaceLabel);
-    void this.loadTalismanLoadout(necklaceLabel);
+      .setName('loadout-badge');
+    c.add(this.loadoutBadge);
 
     // Adopt the reusable grids/panels into the overlay at their column positions.
+    //   Reliquary (left): 3-col scrollable grid, y=148
+    //   Spares (middle): 3-col scrollable grid, y=148
+    //   Thumb (right): aligns with right ring column, row 0 → y=148
+    //   Battle ring grid (right): rows 1–2 of battle hand section → y=BATTLEHAND_RING_Y
     this.adoptPanel(c, this.sanctumGrid, COL_RELIQUARY_X, 148);
-    this.adoptPanel(c, this.stakePanel, LOADOUT_THUMB_X, 165);
-    this.adoptPanel(c, this.loadoutPanel, LOADOUT_GRID_X, 165);
-    this.adoptPanel(c, this.loadoutGrid, COL_LOADOUT_X, 390);
+    this.adoptPanel(c, this.loadoutGrid, COL_SPARE_X, 148);
+    this.adoptPanel(c, this.stakePanel, BATTLEHAND_THUMB_X, 148);
+    this.adoptPanel(c, this.loadoutPanel, BATTLEHAND_RING_X, BATTLEHAND_RING_Y);
 
     // Cap the grids at their visible-row windows. Clipping is now done by
     // visibility-windowing (cards outside the window are hidden), not GeometryMask.
     this.sanctumGrid.setVisibleRows(RINGWALL_VISIBLE_ROWS);
-    this.loadoutGrid.setVisibleRows(1);
+    this.loadoutGrid.setVisibleRows(RINGWALL_VISIBLE_ROWS);
     // Mouse wheel over a scrollable grid scrolls it; elsewhere is a no-op.
     this.input.on('wheel', this.onRingwallWheel, this);
 
@@ -2000,20 +1984,17 @@ export class CampScene extends Phaser.Scene {
       ? `${this.stakedPassive.name}\n${this.stakedPassive.effect}`
       : `No passive\n${this.stakedPassive.effect}`;
     if (!this.passiveLabel) {
-      // #154 — the Thumb card is adopted at (COL_LOADOUT_X, 165), card height 90,
-      // so its bottom sits at ~255. The passive reminder strip is rendered just
-      // below it at x=COL_LOADOUT_X (412), y≈265, in the clear band under the Thumb
-      // and left of the A1/A2/D1/D2 grid. #85 Fix 1 — PASSIVE_STRIP_WIDTH (88px)
-      // and no maxLines so the longest base passive (the all-in setup
-      // distributors, e.g. Water/Torrent) wraps in full without clipping.
+      // Thumb card is adopted at (BATTLEHAND_THUMB_X, 148). The passive effect display
+      // occupies the left portion of the thumb row: x=COL_BATTLEHAND_X, width≈200px,
+      // sitting to the left of the Thumb card inside the same row.
       this.passiveLabel = this.add
-        .text(COL_LOADOUT_X, 265, text, {
+        .text(COL_BATTLEHAND_X, 158, text, {
           fontSize: '10px',
           color: '#ffcc88',
-          wordWrap: { width: PASSIVE_STRIP_WIDTH },
+          wordWrap: { width: BATTLEHAND_EFFECT_W },
           lineSpacing: 2,
         })
-        .setFixedSize(PASSIVE_STRIP_WIDTH, 0)
+        .setFixedSize(BATTLEHAND_EFFECT_W, 0)
         .setScrollFactor(0)
         .setDepth(4001) // above the overlay container (depth 4000)
         .setName('staked-passive-strip');

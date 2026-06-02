@@ -110,8 +110,8 @@ export class InventoryGrid extends Phaser.GameObjects.Container {
   }
 
   /**
-   * Clear and re-render all ring cards. Sort by element then id for stable
-   * ordering across refreshes. Resets scroll to row 0 (#85 Fix 2A).
+   * Clear and re-render all ring cards. Sort by element, then XP descending,
+   * then id for stable ordering across refreshes. Resets scroll to row 0 (#85 Fix 2A).
    */
   populate(rings: RingData[]): void {
     // Destroy previous card game objects.
@@ -121,9 +121,11 @@ export class InventoryGrid extends Phaser.GameObjects.Container {
     this.cardRows.clear();
     this.selected = null;
 
-    const sorted = [...rings].sort((a, b) =>
-      a.element !== b.element ? a.element - b.element : a.id.localeCompare(b.id),
-    );
+    const sorted = [...rings].sort((a, b) => {
+      if (a.element !== b.element) return a.element - b.element;
+      if (b.xp !== a.xp) return b.xp - a.xp;
+      return a.id.localeCompare(b.id);
+    });
 
     sorted.forEach((ring, idx) => {
       const col = idx % this.numCols;
