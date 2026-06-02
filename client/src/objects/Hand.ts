@@ -1,6 +1,15 @@
 import Phaser from 'phaser';
 import { RingSlot } from './RingSlot';
-import { HAND_SLOT_X, HAND_Y, CANVAS_W, CANVAS_H, SLOT_KEYS, SLOT_LABELS, SlotKey } from '../Constants';
+import {
+  HAND_SLOT_X,
+  HAND_Y,
+  CANVAS_W,
+  CANVAS_H,
+  SLOT_KEYS,
+  SLOT_LABELS,
+  SlotKey,
+  ringComponents,
+} from '../Constants';
 
 /**
  * The local player's 5 named ring slots (Thumb, A1, A2, D1, D2) plus keyboard
@@ -14,10 +23,19 @@ import { HAND_SLOT_X, HAND_Y, CANVAS_W, CANVAS_H, SLOT_KEYS, SLOT_LABELS, SlotKe
 export class Hand extends Phaser.GameObjects.Container {
   private readonly slots: Record<SlotKey, RingSlot> = {} as Record<SlotKey, RingSlot>;
   private readonly onPress: (slot: SlotKey, isAlias?: boolean) => void;
+  // EPIC #264 / #266 — optional hold-cross-tap reporter. Fires on press/release of
+  // the two ATTACK slots (A1/A2) — keyboard (1/2 or Z/C) AND touch (A1/A2 cards) —
+  // so BattleScene can detect "hold one, tap the other" without re-wiring input.
+  private readonly onAttackHold?: (slot: 'a1' | 'a2', down: boolean) => void;
 
-  constructor(scene: Phaser.Scene, onPress: (slot: SlotKey, isAlias?: boolean) => void) {
+  constructor(
+    scene: Phaser.Scene,
+    onPress: (slot: SlotKey, isAlias?: boolean) => void,
+    onAttackHold?: (slot: 'a1' | 'a2', down: boolean) => void,
+  ) {
     super(scene, 0, 0);
     this.onPress = onPress;
+    this.onAttackHold = onAttackHold;
 
     SLOT_KEYS.forEach((key, i) => {
       const slot = new RingSlot(scene, HAND_SLOT_X[i], HAND_Y, SLOT_LABELS[key]);
@@ -26,6 +44,14 @@ export class Hand extends Phaser.GameObjects.Container {
       if (key !== 'thumb') {
         slot.bg.setInteractive();
         slot.bg.on('pointerdown', () => this.triggerSlot(key));
+        // Touch hold-tracking for the A-slots (combo parity with keyboard). A
+        // pointer release OR leaving the card ends the hold; pointerdown begins it.
+        if (key === 'a1' || key === 'a2') {
+          const a = key;
+          slot.bg.on('pointerdown', () => this.onAttackHold?.(a, true));
+          slot.bg.on('pointerup', () => this.onAttackHold?.(a, false));
+          slot.bg.on('pointerout', () => this.onAttackHold?.(a, false));
+        }
       }
     });
 
@@ -38,7 +64,15 @@ export class Hand extends Phaser.GameObjects.Container {
       [KC.FOUR, 'd2'],
     ];
     keyMap.forEach(([code, key]) => {
-      scene.input.keyboard!.addKey(code).on('down', () => this.triggerSlot(key));
+      const k = scene.input.keyboard!.addKey(code);
+      k.on('down', () => this.triggerSlot(key));
+      // Hold-tracking for the digit attack keys (1/2). emitOnRepeat is off by
+      // default, so 'down' fires once per physical press → no held-key spam.
+      if (key === 'a1' || key === 'a2') {
+        const a = key;
+        k.on('down', () => this.onAttackHold?.(a, true));
+        k.on('up', () => this.onAttackHold?.(a, false));
+      }
     });
 
     // #87 Part E — phase-relative slot-1/slot-2 hotkeys. Z is "slot 1" and C is
@@ -57,6 +91,12 @@ export class Hand extends Phaser.GameObjects.Container {
     [...slot1Aliases, ...slot2Aliases].forEach(([code, key]) => {
       scene.input.keyboard!.addKey(code).on('down', () => this.triggerSlot(key, true));
     });
+    // Z/C hold-tracking for the A-slot aliases (combo via Z+C). One registration
+    // per physical key (Z→a1, C→a2); the defense aliases need no hold-tracking.
+    scene.input.keyboard!.addKey(KC.Z).on('down', () => this.onAttackHold?.('a1', true));
+    scene.input.keyboard!.addKey(KC.Z).on('up', () => this.onAttackHold?.('a1', false));
+    scene.input.keyboard!.addKey(KC.C).on('down', () => this.onAttackHold?.('a2', true));
+    scene.input.keyboard!.addKey(KC.C).on('up', () => this.onAttackHold?.('a2', false));
 
     this.publishSlotPositions();
     scene.add.existing(this);
@@ -97,11 +137,49 @@ export class Hand extends Phaser.GameObjects.Container {
     this.slots.d1.setActiveGroup(defendActive);
     this.slots.d2.setActiveGroup(defendActive);
     this.slots.thumb.setActiveGroup(false);
+
+    // EPIC #264 / #266 — double-attack eligibility cue. Mirror the SERVER predicate
+    // canDoubleAttack(attacker) from the broadcast state for the LOCAL player, and
+    // glow A1/A2 only while the combo is actionable (the player's own attack phase).
+    // The cue is purely advisory; the server re-validates and silently drops an
+    // ineligible selectDoubleAttack.
+    const eligible = attackActive && this.canDoubleAttack(me);
+    this.slots.a1.setComboEligible(eligible);
+    this.slots.a2.setComboEligible(eligible);
+  }
+
+  /**
+   * EPIC #264 / #266 — client mirror of the server's canDoubleAttack predicate
+   * (BattleRoom). The thumb must be a fusion whose two component elements are
+   * exactly the set held by A1 and A2, and the thumb, A1, and A2 must each have
+   * ≥1 use. Fusion components come straight from the ring's broadcast
+   * fusionParents (via ringComponents) — the server already computed them, so
+   * this does NOT reimplement fusion logic.
+   */
+  private canDoubleAttack(me: any): boolean {
+    const thumb = me.thumb;
+    const a1 = me.a1;
+    const a2 = me.a2;
+    if (!thumb?.isFusion || !a1 || !a2) return false;
+    if (thumb.currentUses <= 0 || a1.currentUses <= 0 || a2.currentUses <= 0) return false;
+    const components = ringComponents(thumb); // the fusion's two component elements
+    if (components.length !== 2) return false;
+    const slotElements = [a1.element, a2.element];
+    // Set equality between {component pair} and {A1, A2 elements}.
+    return (
+      components.every((c) => slotElements.includes(c)) &&
+      slotElements.every((s) => components.includes(s))
+    );
   }
 
   /** The rendered use-count string for a slot (`?` when Blinded). For E2E/#135. */
   displayedUses(key: SlotKey): string {
     return this.slots[key].displayedUses;
+  }
+
+  /** Whether A1/A2 currently show the double-attack eligibility cue (for E2E/#266). */
+  get comboEligible(): boolean {
+    return this.slots.a1.comboEligible && this.slots.a2.comboEligible;
   }
 
   /**

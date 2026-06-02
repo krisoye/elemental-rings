@@ -30,6 +30,12 @@ export class RingSlot extends Phaser.GameObjects.Container {
   // local Blinded player can no longer read this ring's remaining uses).
   private _usesHidden = false;
   private _lastRing: { currentUses: number; maxUses: number } | null = null;
+  // EPIC #264 / #266 — double-attack eligibility cue. A soft glow outline shown on
+  // A1/A2 when the local hand satisfies canDoubleAttack, signalling the hold-cross
+  // -tap combo is available. Presentational only; the server is authoritative.
+  private comboGlow: Phaser.GameObjects.Rectangle | null = null;
+  private comboGlowTween: Phaser.Tweens.Tween | null = null;
+  private _comboEligible = false;
 
   constructor(scene: Phaser.Scene, x: number, y: number, slotName: string) {
     super(scene, x, y);
@@ -112,6 +118,44 @@ export class RingSlot extends Phaser.GameObjects.Container {
   /** Highlight (or dim) this slot depending on whether its group is active. */
   setActiveGroup(active: boolean): void {
     this.bg.setStrokeStyle(active ? 3 : 2, active ? 0xffff66 : 0x888888);
+  }
+
+  /**
+   * EPIC #264 / #266 — toggle the double-attack eligibility glow on this slot.
+   * When eligible, a cyan outline pulses behind the card so the player sees the
+   * hold-cross-tap combo is available; when not, it is torn down. Idempotent.
+   */
+  setComboEligible(eligible: boolean): void {
+    if (this._comboEligible === eligible) return;
+    this._comboEligible = eligible;
+    if (eligible) {
+      if (!this.comboGlow) {
+        this.comboGlow = this.scene.add
+          .rectangle(0, 0, CARD_W + 8, CARD_H + 8)
+          .setStrokeStyle(3, 0x44eeff, 0.9);
+        // Behind the card body but inside this container.
+        this.addAt(this.comboGlow, 0);
+        this.comboGlowTween = this.scene.tweens.add({
+          targets: this.comboGlow,
+          alpha: { from: 0.35, to: 1 },
+          duration: 600,
+          yoyo: true,
+          repeat: -1,
+          ease: 'Sine.easeInOut',
+        });
+      }
+      this.comboGlow.setVisible(true);
+    } else {
+      this.comboGlowTween?.remove();
+      this.comboGlowTween = null;
+      this.comboGlow?.destroy();
+      this.comboGlow = null;
+    }
+  }
+
+  /** Whether the double-attack eligibility cue is currently shown (for E2E). */
+  get comboEligible(): boolean {
+    return this._comboEligible;
   }
 
   /** The currently-rendered use-count string (`?` when Blinded). For E2E. */

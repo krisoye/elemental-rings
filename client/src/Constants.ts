@@ -130,6 +130,15 @@ export const GAUGE_THRESHOLD = 4;
 export const TELEGRAPH_MS = 900;
 export const BLOCK_WINDOW_MS = 200;
 
+// EPIC #264 / #266 — fusion-thumb double-attack gesture gap, mirrored from
+// server/src/game/constants.ts. The hold-cross-tap inter-keydown gap is the
+// duration the player held the first attack key before tapping the second; it
+// becomes orb 2's launch delay. The CLIENT only mirrors these for feedback —
+// the server re-clamps the gap it receives to [MIN_COMBO_GAP_MS, MAX_COMBO_GAP_MS]
+// authoritatively, so the client passes the raw measured gap through unclamped.
+export const MIN_COMBO_GAP_MS = 200;
+export const MAX_COMBO_GAP_MS = 600;
+
 // #62 — Phase 8B.2 Compass HUD (GDD §10.7). The compass is a camera-pinned
 // arrow that pulls toward the nearest UNATTUNED waystone within COMPASS_RANGE,
 // brightening/growing as the player approaches. Pure presentation — the

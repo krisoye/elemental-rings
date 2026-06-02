@@ -9,7 +9,10 @@ import type {
   ExchangeResultPayload,
   RechargeResultPayload,
   BattleSummaryPayload,
+  DoubleAttackStartPayload,
+  DoubleAttackCancelledPayload,
 } from '../../../shared/types';
+import type { OrbHandle } from '../objects/Orb';
 import {
   PLAYER_X,
   PLAYER_Y,
@@ -84,9 +87,8 @@ declare const __E2E_FAST__: boolean;
 // the arming window so the E2E suite's single-press attacks resolve quickly.
 const RECHARGE_DOUBLE_TAP_MS = __E2E_FAST__ ? 120 : 300;
 const FORFEIT_CHORD_MS = 50;
-// Maps each attack slot to its sibling (the other attack key) for chord detection.
-const ATTACK_SIBLING: Record<string, SlotKey> = { a1: 'a2', a2: 'a1' };
-// Maps each defense slot to its sibling, for the 3+4 forfeit chord in attack phase.
+// Maps each defense slot to its sibling, for the 3+4 forfeit chord in attack phase
+// (EPIC #266 relocated the forfeit chord from A1+A2 to D1+D2).
 const DEFENSE_SIBLING: Record<string, SlotKey> = { d1: 'd2', d2: 'd1' };
 
 /**
@@ -133,6 +135,31 @@ export class BattleScene extends Phaser.Scene {
   private forfeitPrompt: Phaser.GameObjects.Container | null = null;
   private forfeitKeyHandlers: (() => void) | null = null;
 
+  // EPIC #264 / #266 — hold-cross-tap double-attack gesture state. heldAt records
+  // the keydown time of each ATTACK slot while it is held (undefined once
+  // released); the hold callback fires a `selectDoubleAttack` when one A-slot is
+  // held and the OTHER is freshly pressed. comboFired guards against re-sending
+  // for the same hold pair (until both keys lift). gapMs = inter-keydown time.
+  private heldAt: { a1?: number; a2?: number } = {};
+  private comboFired = false;
+  // When an armed single attack's window lapses while its key is STILL physically
+  // held (a potential combo-in-progress), the attack is not fired immediately — it
+  // is deferred here and fired on key release if no combo committed. This lets a
+  // player hold one attack key for longer than RECHARGE_DOUBLE_TAP_MS before tapping
+  // the other without the held key prematurely resolving as a single attack.
+  private deferredHeldAttack: SlotKey | null = null;
+
+  // EPIC #264 / #267 — dual-orb telegraph render state. Orb 1 is auto-launched by
+  // checkPhaseTransition (the normal DEFEND_WINDOW path); doubleAttackStart marks
+  // comboRenderActive and schedules orb 2 after gapMs. comboOrbIndex keys each combo
+  // exchangeResult to its orb (1, then 2). orb2Handle lets a parry-disperse scatter
+  // orb 2 mid-flight; orb2LaunchTimer is its gapMs delayed launch (cancelled on
+  // shutdown / orb-2 cancel).
+  private comboRenderActive = false;
+  private comboOrbIndex = 0;
+  private orb2Handle: OrbHandle | null = null;
+  private orb2LaunchTimer: Phaser.Time.TimerEvent | null = null;
+
   constructor() {
     super({ key: 'BattleScene' });
   }
@@ -176,6 +203,13 @@ export class BattleScene extends Phaser.Scene {
     this.lastPressAt = {};
     this.forfeitPrompt = null;
     this.forfeitKeyHandlers = null;
+    this.heldAt = {};
+    this.comboFired = false;
+    this.deferredHeldAttack = null;
+    this.comboRenderActive = false;
+    this.comboOrbIndex = 0;
+    this.orb2Handle = null;
+    this.orb2LaunchTimer = null;
   }
 
   create(): void {
@@ -195,7 +229,11 @@ export class BattleScene extends Phaser.Scene {
           : undefined;
     this.opponentDuelist = new OpponentDuelist(this, this.opponentSpriteFrame, monsterTexKey);
     this.hud = new Hud(this);
-    this.hand = new Hand(this, (slot, isAlias) => this.onSlotPressed(slot, isAlias));
+    this.hand = new Hand(
+      this,
+      (slot, isAlias) => this.onSlotPressed(slot, isAlias),
+      (slot, down) => this.onAttackHold(slot, down),
+    );
 
     // The room outlives this scene, so clear any state-change listeners left by
     // a previous scene (LobbyScene / a prior BattleScene) before adding ours.
@@ -224,7 +262,11 @@ export class BattleScene extends Phaser.Scene {
     const offExchange = room.onMessage('exchangeResult', (result: ExchangeResultPayload) => {
       window.__lastExchangeResult = result;
       this.recordRevealedElements(result, myId);
-      this.showExchangeOutcome(result);
+      // EPIC #267 — during a combo, attribute each result to its orb (orb 1 first,
+      // orb 2 second) and tag the outcome flash so the player sees which orb it
+      // answered. Outside a combo this is a no-op (orbIndex 0).
+      const orbIndex = this.nextComboOrb();
+      this.showExchangeOutcome(result, orbIndex);
     });
 
     // NOTE: the server's `wonRing` message (post-battle ring grant, #40) is
@@ -254,11 +296,29 @@ export class BattleScene extends Phaser.Scene {
       this.showRechargeFeedback(p);
     });
 
+    // EPIC #264 / #267 — dual-orb telegraph. The server broadcasts doubleAttackStart
+    // the moment a combo commits; orb 1 is launched by the normal DEFEND_WINDOW
+    // auto-launch (checkPhaseTransition) and this handler schedules orb 2 gapMs later.
+    // Per-orb exchangeResults arrive via the normal handler and are routed to their
+    // orb by comboOrbIndex.
+    const offDoubleStart = room.onMessage('doubleAttackStart', (p: DoubleAttackStartPayload) => {
+      this.handleDoubleAttackStart(p, myId);
+    });
+    // Orb 2 cancelled (orb-1 PARRY or KO): disperse it instead of impacting.
+    const offDoubleCancel = room.onMessage(
+      'doubleAttackCancelled',
+      (_p: DoubleAttackCancelledPayload) => this.handleDoubleAttackCancelled(),
+    );
+
     this.events.once('shutdown', () => {
       room.onStateChange.remove(onState);
       offExchange();
       offSummary();
       offRecharge();
+      offDoubleStart();
+      offDoubleCancel();
+      this.orb2LaunchTimer?.remove(false);
+      this.orb2LaunchTimer = null;
       this.cancelPendingAttack();
       this.dismissForfeitPrompt();
       this.endModal?.destroy();
@@ -284,6 +344,10 @@ export class BattleScene extends Phaser.Scene {
       // #211 — rendered ⚡ current/max (undefined when hidden: AI / no-token).
       spirit: this.hud.displayedSpirit,
     };
+    // EPIC #264 / #266 — whether A1/A2 currently show the double-attack eligibility
+    // cue (canDoubleAttack on the local hand, during the player's attack phase). For
+    // E2E to assert the cue without reading pixels.
+    window.__comboEligible = this.hand.comboEligible;
   }
 
   /**
@@ -302,7 +366,7 @@ export class BattleScene extends Phaser.Scene {
    * "PERFECT" = PARRY timing band; "GOOD" = BLOCK timing band;
    * "MISSED"  = MISTIME or NO_BLOCK.
    */
-  private showExchangeOutcome(result: ExchangeResultPayload): void {
+  private showExchangeOutcome(result: ExchangeResultPayload, orbIndex = 0): void {
     type Outcome = { label: string; color: string; size: string; flash?: [number, number, number] };
     let outcome: Outcome | null = null;
 
@@ -329,12 +393,25 @@ export class BattleScene extends Phaser.Scene {
     if (outcome.flash) {
       this.cameras.main.flash(220, ...outcome.flash as [number, number, number], true);
     }
-    const t = this.add.text(512, 205, outcome.label, {
+    // EPIC #267 — during a combo, prefix the outcome with which orb it answered and
+    // stack orb 2's label below orb 1's so two rapid results stay legible. Outside
+    // a combo (orbIndex 0) the label and position are unchanged.
+    const label = orbIndex > 0 ? `Orb ${orbIndex}: ${outcome.label}` : outcome.label;
+    const y = orbIndex === 2 ? 240 : 205;
+    window.__lastOrbOutcome = orbIndex > 0 ? { orb: orbIndex, label: outcome.label } : null;
+    // E2E — append every per-orb combo outcome to a durable log (a single
+    // __lastOrbOutcome can be overwritten before a test reads it between two rapid
+    // combo results).
+    if (orbIndex > 0) {
+      window.__orbOutcomeLog = window.__orbOutcomeLog ?? [];
+      window.__orbOutcomeLog.push({ orb: orbIndex, label: outcome.label });
+    }
+    const t = this.add.text(512, y, label, {
       fontSize: outcome.size, color: outcome.color, fontStyle: 'bold',
       stroke: '#000000', strokeThickness: 4,
     }).setOrigin(0.5).setDepth(1100);
     this.tweens.add({
-      targets: t, alpha: 0, y: 165,
+      targets: t, alpha: 0, y: y - 40,
       duration: 750, ease: 'Power2',
       onComplete: () => t.destroy(),
     });
@@ -436,8 +513,9 @@ export class BattleScene extends Phaser.Scene {
    *   - single attack key → `selectAttack` (armed for RECHARGE_DOUBLE_TAP_MS so a
    *     double-tap can reinterpret it)
    *   - double-tap the same attack key → `recharge` that slot (+ a slot pulse)
-   *   - the two siblings within FORFEIT_CHORD_MS (Z+C → a1+a2, or 3+4 → d1+d2) →
-   *     a forfeit confirm prompt
+   *   - the two DEFENSE siblings within FORFEIT_CHORD_MS (3+4 → d1+d2) → a forfeit
+   *     confirm prompt (EPIC #266 relocated this off A1+A2; that chord space now
+   *     belongs to the hold-cross-tap double attack — see onAttackHold)
    */
   private onSlotPressed(slot: SlotKey, isAlias = false): void {
     const state = window.__room?.state;
@@ -484,14 +562,16 @@ export class BattleScene extends Phaser.Scene {
     const prev = this.lastPressAt[slot];
     this.lastPressAt[slot] = now;
 
-    // Forfeit chord: the two attack siblings (a1+a2, from Z+C) or the two defense
-    // siblings (d1+d2, from 3+4) pressed within FORFEIT_CHORD_MS during the attack
-    // phase. Defense-slot presses otherwise do nothing in this phase.
-    const sibling = ATTACK_SIBLING[slot] ?? DEFENSE_SIBLING[slot];
+    // Forfeit chord (EPIC #264 / #266): the two DEFENSE siblings (d1+d2, from 3+4)
+    // pressed within FORFEIT_CHORD_MS during the attack phase. The former A1+A2
+    // (Z+C) attack-sibling chord NO LONGER forfeits — that gesture space is freed
+    // for the hold-cross-tap double attack (handled in onAttackHold). Defense-slot
+    // presses otherwise do nothing in this phase.
+    const sibling = DEFENSE_SIBLING[slot];
     if (sibling) {
       const siblingAt = this.lastPressAt[sibling];
       if (siblingAt !== undefined && now - siblingAt <= FORFEIT_CHORD_MS) {
-        this.cancelPendingAttack(); // a half-armed single attack is part of the chord
+        this.cancelPendingAttack(); // discard any half-armed A-key press before prompting
         this.showForfeitPrompt();
         return;
       }
@@ -532,24 +612,185 @@ export class BattleScene extends Phaser.Scene {
       this.pendingAttackTimer = null;
       const pending = this.pendingAttackSlot;
       this.pendingAttackSlot = null;
-      // Re-check the live phase: the turn may have advanced while armed.
-      const s = window.__room?.state;
-      const myId = window.__room?.sessionId;
-      const slotState = pending && myId ? s?.players?.get(myId)?.[pending] : null;
-      if (pending && s?.phase === 'ATTACK_SELECT' && s.currentAttackerId === myId &&
-          slotState && slotState.currentUses > 0) {
-        window.__room!.send('selectAttack', { slot: pending });
+      if (!pending) return;
+      // EPIC #266 — if the key is STILL physically held, this could be the first
+      // half of a hold-cross-tap combo. Defer the single attack until release rather
+      // than throwing it now (which would end the attacker's turn and forfeit the
+      // combo). On release, fireDeferredHeldAttack resolves it if no combo committed.
+      if (this.heldAt[pending as 'a1' | 'a2'] !== undefined) {
+        this.deferredHeldAttack = pending;
+        return;
       }
+      this.sendSingleAttack(pending);
     });
   }
 
-  /** Cancel any armed single-attack press (the double-tap timer). */
+  /**
+   * EPIC #266 — fire a single attack that was deferred while its key was held, now
+   * that the key has been released. Skips if a combo committed (comboFired) or the
+   * deferred slot does not match. Clearing deferredHeldAttack is unconditional so a
+   * stale defer never leaks into a later turn.
+   */
+  private fireDeferredHeldAttack(slot: SlotKey): void {
+    if (this.deferredHeldAttack !== slot) return;
+    this.deferredHeldAttack = null;
+    if (this.comboFired) return; // the hold became a combo — no single attack
+    this.sendSingleAttack(slot);
+  }
+
+  /** Send a single `selectAttack` for `slot` if the turn is still the player's. */
+  private sendSingleAttack(slot: SlotKey): void {
+    const s = window.__room?.state;
+    const myId = window.__room?.sessionId;
+    const slotState = myId ? s?.players?.get(myId)?.[slot] : null;
+    if (
+      s?.phase === 'ATTACK_SELECT' &&
+      s.currentAttackerId === myId &&
+      slotState &&
+      slotState.currentUses > 0
+    ) {
+      window.__room!.send('selectAttack', { slot });
+    }
+  }
+
+  /**
+   * EPIC #264 / #266 — hold-cross-tap double-attack gesture. Tracks each ATTACK
+   * slot's held state (keyboard 1/2 or Z/C, or a touch hold on the A-card). When
+   * one A-slot is held and the OTHER is freshly pressed, fire a single
+   * `selectDoubleAttack { first, second, gapMs }`:
+   *   - `first`  = the slot that was already held (its keydown came first)
+   *   - `second` = the slot just tapped
+   *   - `gapMs`  = inter-keydown time (the held duration); the server re-clamps it.
+   * Order-independent. Cancels any single-attack/recharge armed for these slots,
+   * since the combo supersedes them.
+   *
+   * Eligibility is mirrored locally (Hand.canDoubleAttack) ONLY to avoid a wasted
+   * round-trip — the server re-validates authoritatively and drops an ineligible
+   * send. An ineligible hand sends nothing here; its keys still arm single attacks
+   * through handleAttackPhasePress as normal.
+   */
+  private onAttackHold(slot: 'a1' | 'a2', down: boolean): void {
+    if (!down) {
+      this.heldAt[slot] = undefined;
+      // If a single attack was deferred while this key was held (waiting to see if
+      // it became the first half of a combo), fire it now on release — provided no
+      // combo committed and the turn is still live.
+      this.fireDeferredHeldAttack(slot);
+      // Re-arm the gesture once BOTH attack keys have lifted.
+      if (this.heldAt.a1 === undefined && this.heldAt.a2 === undefined) {
+        this.comboFired = false;
+      }
+      return;
+    }
+
+    const now = Date.now();
+    const other: 'a1' | 'a2' = slot === 'a1' ? 'a2' : 'a1';
+    const otherAt = this.heldAt[other];
+    this.heldAt[slot] = now;
+
+    // Only the SECOND key of a held pair fires the combo, once per hold.
+    if (this.comboFired || otherAt === undefined) return;
+
+    // Gate the send on local eligibility + the live attack phase (presentation
+    // mirror only — the server is the authority).
+    const state = window.__room?.state;
+    const myId = window.__room?.sessionId;
+    if (!state || !myId) return;
+    if (state.phase !== 'ATTACK_SELECT' || state.currentAttackerId !== myId) return;
+    if (!this.hand.comboEligible) return;
+
+    // first = the already-held slot (earlier keydown); second = this tap. gapMs is
+    // the inter-keydown interval; the server clamps to [MIN,MAX]_COMBO_GAP_MS.
+    const first = other;
+    const second = slot;
+    const gapMs = now - otherAt;
+
+    this.comboFired = true;
+    this.cancelPendingAttack(); // supersede any single attack armed for these slots
+    window.__room!.send('selectDoubleAttack', { first, second, gapMs });
+  }
+
+  /**
+   * EPIC #264 / #267 — render a committed double attack. Orb 1 is launched by the
+   * normal DEFEND_WINDOW auto-launch in checkPhaseTransition (it reads
+   * attackerSlot=first and gets orb 1's elements) — this handler does NOT re-launch
+   * it, which sidesteps any doubleAttackStart-message vs state-patch ordering race.
+   * It only marks the combo render active (so per-orb result routing engages) and
+   * schedules orb 2 `gapMs` later, keeping orb 2's handle for a possible disperse.
+   * The two orbs render their own component colours and arrive in sequence.
+   */
+  private handleDoubleAttackStart(p: DoubleAttackStartPayload, myId: string): void {
+    const state = window.__room?.state;
+    if (!state) return;
+
+    this.comboRenderActive = true;
+    this.comboOrbIndex = 0;
+
+    const imAttacker = state.currentAttackerId === myId;
+    const from = imAttacker ? { x: PLAYER_X, y: PLAYER_Y } : { x: OPPONENT_X, y: OPPONENT_Y };
+    const to = imAttacker ? { x: OPPONENT_X, y: OPPONENT_Y } : { x: PLAYER_X, y: PLAYER_Y };
+
+    // Orb 2 fires gapMs after orb 1's auto-launch; keep its handle so a parry-disperse
+    // can scatter it. (secondElements are the fired ring's component elements.)
+    this.orb2LaunchTimer?.remove(false);
+    this.orb2LaunchTimer = this.time.delayedCall(p.gapMs, () => {
+      this.orb2LaunchTimer = null;
+      if (!this.comboRenderActive) return; // cancelled before it launched
+      this.orb2Handle = Orb.launch(
+        this,
+        p.secondElements.length ? p.secondElements : [0],
+        from,
+        to,
+      );
+    });
+  }
+
+  /**
+   * EPIC #264 / #267 — orb-2 cancellation (orb-1 PARRY or KO). If orb 2 is already
+   * in flight, disperse it (the returning counter scatters it mid-air); if it has
+   * not launched yet, cancel its pending launch so it never appears. Either way the
+   * combo render is finished.
+   */
+  private handleDoubleAttackCancelled(): void {
+    if (this.orb2LaunchTimer) {
+      this.orb2LaunchTimer.remove(false);
+      this.orb2LaunchTimer = null;
+    }
+    this.orb2Handle?.disperse();
+    this.orb2Handle = null;
+    window.__orbDispersed = (window.__orbDispersed ?? 0) + 1;
+    this.endComboRender();
+  }
+
+  /**
+   * EPIC #267 — return the orb index (1, then 2) the next combo exchangeResult
+   * belongs to, advancing the per-combo counter. Returns 0 outside a combo. After
+   * orb 2's result the combo render is closed.
+   */
+  private nextComboOrb(): number {
+    if (!this.comboRenderActive) return 0;
+    this.comboOrbIndex += 1;
+    const index = this.comboOrbIndex;
+    // Close the combo epoch AFTER capturing the index — endComboRender resets the
+    // counter, so reading this.comboOrbIndex post-call would wrongly return 0.
+    if (index >= 2) this.endComboRender();
+    return index;
+  }
+
+  /** Close the combo render epoch (after orb 2 resolves or orb 2 is cancelled). */
+  private endComboRender(): void {
+    this.comboRenderActive = false;
+    this.comboOrbIndex = 0;
+  }
+
+  /** Cancel any armed single-attack press (the double-tap timer + any deferral). */
   private cancelPendingAttack(): void {
     if (this.pendingAttackTimer) {
       this.pendingAttackTimer.remove(false);
       this.pendingAttackTimer = null;
     }
     this.pendingAttackSlot = null;
+    this.deferredHeldAttack = null;
   }
 
   /**
