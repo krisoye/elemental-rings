@@ -1,9 +1,10 @@
 import Phaser from 'phaser';
-import { CANVAS_W, CANVAS_H, ELEMENT_COLORS, ELEMENT_NAMES, THUMB_PASSIVE_INFO } from '../Constants';
+import { CANVAS_W, CANVAS_H, ELEMENT_COLORS, ELEMENT_NAMES, THUMB_PASSIVE_INFO, SLOT_KEYS } from '../Constants';
+import type { SlotKey } from '../Constants';
 import type { RingData } from './InventoryGrid';
 
-const BATTLE_SLOTS = ['thumb', 'a1', 'a2', 'd1', 'd2'] as const;
-type BattleSlot = (typeof BATTLE_SLOTS)[number];
+// Local alias kept for readability; the canonical slot keys/type live in shared/.
+type BattleSlot = SlotKey;
 
 declare const __SERVER_URL__: string;
 const _WS_BHO = __SERVER_URL__ || `ws://${window.location.hostname}:2567`;
@@ -211,7 +212,7 @@ export class BattleHandOverlay {
     // Battle slots row (top). Filled slots show the same 4-line info as the Sanctum
     // and get a small [×] discard button.
     const slotY = CANVAS_H / 2 - 70;
-    BATTLE_SLOTS.forEach((slot, i) => {
+    SLOT_KEYS.forEach((slot, i) => {
       const sx = CANVAS_W / 2 - 240 + i * 120;
       const ringId = this.manageLoadout[slot] ?? null;
       const ring = ringId ? this.manageRings.find((r) => r.id === ringId) : null;

@@ -1,6 +1,20 @@
 // Client-only rendering constants. Game logic lives entirely on the Colyseus
 // server (see server/src/game/constants.ts) — these values are used purely for
 // visual layout and orb-travel timing of the telegraph animation.
+//
+// Cross-tier constants (element names, slot keys, combat timing) are NOT defined
+// here — they are hoisted into shared/ (EPIC #292) and re-exported below so every
+// existing `../Constants` import site keeps resolving from one source of truth.
+export { ELEMENT_NAMES, SLOT_KEYS, type SlotKey } from '../../shared/elements';
+export {
+  TELEGRAPH_MS,
+  BLOCK_WINDOW_MS,
+  MIN_COMBO_GAP_MS,
+  MAX_COMBO_GAP_MS,
+  STATUS_THRESHOLD,
+} from '../../shared/timing';
+import { STATUS_THRESHOLD as STATUS_THRESHOLD_SHARED } from '../../shared/timing';
+import type { SlotKey } from '../../shared/elements';
 
 // Base element colors (indices 0-4). Fusion rings (5-14) reuse their component
 // colors for the orb telegraph (componentsOf yields the two parents), so the
@@ -22,46 +36,6 @@ export const ELEMENT_COLORS: number[] = [
   0x668822, // BLOOM    (13) — Wood+Earth
   0xaab488, // DUST     (14) — Wind+Earth
   0x2a1a3a, // SHADOW   (15) — dark purple/black (rare overworld drop, §3.5)
-];
-
-export const ELEMENT_NAMES: string[] = [
-  'FIRE',
-  'WATER',
-  'EARTH',
-  'WIND',
-  'WOOD',
-  'STEAM',
-  'WILDFIRE',
-  'INFERNO',
-  'MAGMA',
-  'TIDAL',
-  'STORM',
-  'MUD',
-  'THORNADO',
-  'BLOOM',
-  'DUST',
-  'SHADOW',
-];
-
-// #47 — The 10 Tier 2 fusion recipes (GDD §5.2), one per distinct base-element
-// pair. Display-only: the server (fusionOf / POST /api/fusion/combine) is the
-// sole authority on what fuses into what. Parents/result are element indices;
-// resolve labels through ELEMENT_NAMES. Order matches ElementEnum (5-14).
-export interface FusionRecipe {
-  parents: [number, number]; // two base element indices
-  result: number; // fusion element index
-}
-export const FUSION_RECIPES: ReadonlyArray<FusionRecipe> = [
-  { parents: [0, 1], result: 5 }, // FIRE + WATER → STEAM
-  { parents: [0, 4], result: 6 }, // FIRE + WOOD  → WILDFIRE
-  { parents: [0, 3], result: 7 }, // FIRE + WIND  → INFERNO
-  { parents: [0, 2], result: 8 }, // FIRE + EARTH → MAGMA
-  { parents: [1, 4], result: 9 }, // WATER + WOOD → TIDAL
-  { parents: [1, 3], result: 10 }, // WATER + WIND → STORM
-  { parents: [1, 2], result: 11 }, // WATER + EARTH → MUD
-  { parents: [4, 3], result: 12 }, // WOOD + WIND → THORNADO
-  { parents: [4, 2], result: 13 }, // WOOD + EARTH → BLOOM
-  { parents: [3, 2], result: 14 }, // WIND + EARTH → DUST
 ];
 
 // #47 — XP a Tier 1 ring must reach before it can be a fusion parent (mirrors
@@ -121,23 +95,10 @@ export function ringComponents(ring: { element: number; isFusion?: boolean; fusi
 }
 
 // GDD §6.1 status threshold — when a gauge reaches this value the element's
-// status effect activates. Mirrored from the server for display only.
-export const GAUGE_THRESHOLD = 4;
-
-// Telegraph / block-window timings mirrored from server/src/game/constants.ts.
-// Used only to animate the orb so the visual impact lines up with the server's
-// authoritative window. The server, not the client, decides BLOCK vs PARRY.
-export const TELEGRAPH_MS = 900;
-export const BLOCK_WINDOW_MS = 200;
-
-// EPIC #264 / #266 — fusion-thumb double-attack gesture gap, mirrored from
-// server/src/game/constants.ts. The hold-cross-tap inter-keydown gap is the
-// duration the player held the first attack key before tapping the second; it
-// becomes orb 2's launch delay. The CLIENT only mirrors these for feedback —
-// the server re-clamps the gap it receives to [MIN_COMBO_GAP_MS, MAX_COMBO_GAP_MS]
-// authoritatively, so the client passes the raw measured gap through unclamped.
-export const MIN_COMBO_GAP_MS = 200;
-export const MAX_COMBO_GAP_MS = 600;
+// status effect activates. Aliased to the shared STATUS_THRESHOLD (server-
+// authoritative) so the HUD's active-status indicator and the server agree by
+// construction; display only.
+export const GAUGE_THRESHOLD = STATUS_THRESHOLD_SHARED;
 
 // #62 — Phase 8B.2 Compass HUD (GDD §10.7). The compass is a camera-pinned
 // arrow that pulls toward the nearest UNATTUNED waystone within COMPASS_RANGE,
@@ -193,11 +154,9 @@ export const PLAYER_Y = 260;
 export const OPPONENT_X = 256;
 export const OPPONENT_Y = 260;
 
-// Named loadout slots (GDD §6.1). thumb is passive (never pressed); a1/a2 fire
-// during ATTACK_SELECT, d1/d2 during DEFEND_WINDOW. Keyboard: a1='1', a2='2',
-// d1='3', d2='4'. Rendered left→right: Thumb, A1, A2, D1, D2.
-export const SLOT_KEYS = ['thumb', 'a1', 'a2', 'd1', 'd2'] as const;
-export type SlotKey = (typeof SLOT_KEYS)[number];
+// Named loadout slots (GDD §6.1): SLOT_KEYS / SlotKey now come from
+// shared/elements.ts (re-exported at the top of this file). Keyboard bindings:
+// a1='1', a2='2', d1='3', d2='4'. SLOT_LABELS stays client-only (display text).
 export const SLOT_LABELS: Record<SlotKey, string> = {
   thumb: 'THUMB',
   a1: 'A1',

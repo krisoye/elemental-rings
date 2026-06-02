@@ -22,8 +22,13 @@ export enum ElementEnum {
   SHADOW = 15,
 }
 
+// Canonical ordering of the named loadout slots (GDD §6.1). thumb is passive
+// (never pressed); a1/a2 fire during ATTACK_SELECT, d1/d2 during DEFEND_WINDOW.
+// Rendered left→right: Thumb, A1, A2, D1, D2. Single source of truth — the
+// client Hand/BattleHandOverlay/CampScene and server PlayerRepo all iterate this.
+export const SLOT_KEYS = ['thumb', 'a1', 'a2', 'd1', 'd2'] as const;
 /** Every named loadout slot on the dominant hand (GDD §6.1). */
-export type SlotKey = 'thumb' | 'a1' | 'a2' | 'd1' | 'd2';
+export type SlotKey = (typeof SLOT_KEYS)[number];
 /** The two attack slots (A1/A2 buttons). */
 export type AttackSlot = 'a1' | 'a2';
 /** The two defense slots (D1/D2 buttons). */

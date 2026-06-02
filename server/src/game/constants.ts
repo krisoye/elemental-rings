@@ -9,28 +9,33 @@
 // DEFEND_WINDOW_MS = 150 + 200 = 350ms, still > the 250ms (now 80ms) E2E
 // auto-driver poll interval, so AI-driver defenses reliably arrive in-window.
 import type { BossTier } from '../../../shared/types';
+import {
+  TELEGRAPH_MS as TELEGRAPH_MS_PROD,
+  BLOCK_WINDOW_MS,
+  MIN_COMBO_GAP_MS,
+  MAX_COMBO_GAP_MS,
+  STATUS_THRESHOLD,
+} from '../../../shared/timing';
+
+// Re-export the shared timing constants so existing server imports of
+// `../constants` keep resolving from one place (the shared module is the single
+// source of truth — EPIC #292). PARRY_WINDOW_MS stays server-only: the client
+// never references it.
+export { BLOCK_WINDOW_MS, MIN_COMBO_GAP_MS, MAX_COMBO_GAP_MS, STATUS_THRESHOLD };
 
 const E2E_FAST = process.env.E2E_FAST === '1';
-export const TELEGRAPH_MS = E2E_FAST ? 150 : 900;
-export const BLOCK_WINDOW_MS = 200;
+// Server applies the E2E_FAST telegraph shortening locally; production length
+// comes from the shared module. Only TELEGRAPH_MS is shortened (dead wind-up
+// time) — the catch bands stay at their production widths so classification is
+// identical with or without E2E_FAST.
+export const TELEGRAPH_MS = E2E_FAST ? 150 : TELEGRAPH_MS_PROD;
 export const PARRY_WINDOW_MS = 175;
 export const STARTING_HEARTS = 3;
 export const STARTING_USES = 3;
 export const DEFEND_WINDOW_MS = TELEGRAPH_MS + BLOCK_WINDOW_MS; // 1100 (350 under E2E_FAST)
 
-// EPIC #264 / #265 — fusion-thumb double attack orb gap. The two orbs land
-// `gapMs` apart; the server clamps the client-supplied gap to this range. The
-// floor equals BLOCK_WINDOW_MS so orb 1's parry-determination margin is always
-// cleared before orb 2 lands — making the orb-1-parry-cancels-orb-2 rule
-// deterministic (EPIC #264 "Key design decision"). Tune MIN after feel-testing.
-export const MIN_COMBO_GAP_MS = 200; // = BLOCK_WINDOW_MS
-export const MAX_COMBO_GAP_MS = 600;
-
-// GDD §7 — status effects. A triangle gauge (FIRE/WATER/WOOD) at or above
-// STATUS_THRESHOLD activates that element's status (Burning/Drowning/Entangled).
-// GAUGE_SOFT_CAP (2× threshold) caps the broadcast gauge value so HUD numbers
-// stay readable.
-export const STATUS_THRESHOLD = 4;
+// GAUGE_SOFT_CAP (2× STATUS_THRESHOLD) caps the broadcast gauge value so HUD
+// numbers stay readable.
 export const GAUGE_SOFT_CAP = 8;
 // Shadow gauge hard cap (#134, GDD §7.1). The shadow gauge clamps at 5 on
 // increment; the triangle gauges use the separate GAUGE_SOFT_CAP.

@@ -4,7 +4,7 @@ import { LoadoutPanel, type LoadoutSlot } from '../objects/LoadoutPanel';
 import { StakePanel } from '../objects/StakePanel';
 import { FusionPanel } from '../objects/FusionPanel';
 import { DifficultyModal } from '../objects/DifficultyModal';
-import { ELEMENT_NAMES, CANVAS_W, CANVAS_H, THUMB_PASSIVE_INFO } from '../Constants';
+import { ELEMENT_NAMES, CANVAS_W, CANVAS_H, THUMB_PASSIVE_INFO, SLOT_KEYS } from '../Constants';
 import { type DifficultyTier } from '../../../shared/types';
 import { Player } from '../objects/world/Player';
 import { InteractionZone } from '../objects/world/InteractionZone';
@@ -17,8 +17,6 @@ declare const __SERVER_URL__: string;
 
 const WS = __SERVER_URL__ || `ws://${window.location.hostname}:2567`;
 const API_BASE = WS.replace(/^ws/, 'http');
-
-const BATTLE_SLOTS = ['thumb', 'a1', 'a2', 'd1', 'd2'] as const;
 
 // #85 Fix 2A — the inventory grids in the Ring Storage overlay clip to this many
 // rows; beyond that the ▲/▼ arrows + mouse wheel scroll the grid. 3 rows fit
@@ -1113,7 +1111,7 @@ export class CampScene extends Phaser.Scene {
     source: 'reliquary' | 'spare' | 'battle',
   ): void {
     if (source === 'battle') {
-      const slot = (BATTLE_SLOTS as readonly string[]).find((s) => this.loadout[s] === ringId) as
+      const slot = (SLOT_KEYS as readonly string[]).find((s) => this.loadout[s] === ringId) as
         | 'thumb'
         | LoadoutSlot
         | undefined;
@@ -1195,7 +1193,7 @@ export class CampScene extends Phaser.Scene {
       return;
     }
     const wasCarried = ring.in_carry === 1;
-    const inBattleSlot = (BATTLE_SLOTS as readonly string[]).find((s) => this.loadout[s] === ringId);
+    const inBattleSlot = (SLOT_KEYS as readonly string[]).find((s) => this.loadout[s] === ringId);
 
     if (target === 'reliquary') {
       // Leave at the Reliquary: drop from carry. If it was in a battle slot, null
@@ -1967,7 +1965,7 @@ export class CampScene extends Phaser.Scene {
     this.statLineText.setText(this.buildStatLine(player));
 
     const battleHandIds = new Set(
-      BATTLE_SLOTS.map((s) => this.loadout[s]).filter(Boolean) as string[],
+      SLOT_KEYS.map((s) => this.loadout[s]).filter(Boolean) as string[],
     );
     const atSanctum = this.rings.filter((r) => r.in_carry === 0);
     const loadoutPool = this.rings.filter((r) => r.in_carry === 1 && !battleHandIds.has(r.id));
@@ -2006,7 +2004,7 @@ export class CampScene extends Phaser.Scene {
       loadout: this.loadout,
       atSanctum,
       loadout_pool: loadoutPool,
-      battleHand: BATTLE_SLOTS.map((s) => this.loadout[s])
+      battleHand: SLOT_KEYS.map((s) => this.loadout[s])
         .filter(Boolean)
         .map((id) => this.ringMap.get(id as string))
         .filter(Boolean) as RingData[],
