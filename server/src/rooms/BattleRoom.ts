@@ -137,6 +137,13 @@ export class BattleRoom extends Room<{ state: BattleState }> {
   private npcId: string | undefined;
   // #262 — true when launched as a boss practice rematch (no economy impact).
   private isPracticeRematch = false;
+  /**
+   * The session ID of the player who held initiative when the current chain
+   * began (i.e. who was currentAttackerId at the last ATTACK_SELECT entry).
+   * After any chain resolves — regardless of rally depth — the next
+   * ATTACK_SELECT always goes to the OTHER player. Never flips mid-chain.
+   */
+  private initiativeHolderId: string = '';
 
   /**
    * EPIC #256 — the boss descriptor for this duel's NPC (tier / name / fused
@@ -609,6 +616,7 @@ export class BattleRoom extends Room<{ state: BattleState }> {
       // otherwise the first-seated session attacks first (default initiative).
       this.state.currentAttackerId =
         this.firstStrikeId && ids.includes(this.firstStrikeId) ? this.firstStrikeId : ids[0];
+      this.initiativeHolderId = this.state.currentAttackerId;
       this.state.phase = 'ATTACK_SELECT';
       if (this.applyAttackerTurnStart()) {
         this.notifyAI();
@@ -1093,6 +1101,7 @@ export class BattleRoom extends Room<{ state: BattleState }> {
     const ids = Array.from(state.players.keys());
     const opponentId = ids.find((pid) => pid !== state.currentAttackerId)!;
     state.currentAttackerId = opponentId;
+    this.initiativeHolderId = opponentId;
     state.attackerSlot = '';
     state.defenderSlot = '';
     state.rallyActive = false;
@@ -1365,8 +1374,14 @@ export class BattleRoom extends Room<{ state: BattleState }> {
       // attacker with no usable attack ring must recharge or forfeit voluntarily.
       this.notifyAI();
     } else {
-      // Normal: swap roles, go to ATTACK_SELECT.
-      state.currentAttackerId = defenderId;
+      // Chain resolved: initiative passes to the non-holder (GDD §6.3).
+      // Using initiativeHolderId (not defenderId) ensures a rally that ends
+      // with the original attacker absorbing the counter-volley still gives
+      // the turn to the reactor, not back to the original attacker.
+      const ids = Array.from(state.players.keys());
+      const nextId = ids.find((pid) => pid !== this.initiativeHolderId)!;
+      state.currentAttackerId = nextId;
+      this.initiativeHolderId = nextId;
       state.attackerSlot = '';
       state.defenderSlot = '';
       state.rallyActive = false;
