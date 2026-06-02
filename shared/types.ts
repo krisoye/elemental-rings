@@ -130,6 +130,10 @@ export interface ExchangeResultPayload {
   attackerElements: number[];
   timing: 'PARRY' | 'BLOCK' | 'MISTIME' | 'NO_BLOCK';
   relationship: 'STRONG' | 'NEUTRAL' | 'WEAK';
+  // Pre-absorption verdict from BlockResolver — true if the resolver judged the
+  // defender's hearts should decrease. May not match the actual heart delta when
+  // a boss passive (e.g. Heartwood) absorbs the hit server-side; use state patches
+  // for the authoritative hearts value.
   defenderHeartLost: boolean;
   rallyContinues: boolean;
   volleyedElement: number;

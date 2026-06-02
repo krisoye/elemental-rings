@@ -152,12 +152,14 @@ export const NPC_SPAWNS: NpcSpawnDef[] = [
   // ── Forest: Bloom Fusion Shrine sub-boss (#232, GDD §4.6; EPIC #256) ─────────
   // The Bloom altar is ALWAYS open (no seal), so this Guardian does NOT gate the
   // altar — it is a permanent (respawnDays: 0) roaming sub-boss in the
-  // forest_bloom_hollow clearing the player may fight for the ring it stakes, but
-  // the altar is craftable whether or not the Guardian is defeated. EPIC #256
+  // forest_bloom_hollow clearing. It is a combat challenge fought for XP; the
+  // altar remains craftable whether or not the Guardian is defeated. EPIC #256
   // gives it a `boss` descriptor (sub tier, DEFENSIVE) so it stakes the BLOOM
   // fusion on its thumb. `element=WOOD` (Bloom's triangle component) drives the
-  // overworld sprite. No foodDrop — it is not an exit gate, and the generic
-  // won-ring grant is suppressed for fused-thumb bosses (no free Bloom on win).
+  // overworld sprite. No foodDrop and no ring grant — it is not an exit gate, and
+  // the generic won-ring grant is suppressed for fused-thumb bosses. If a curated
+  // BLOOM ring reward is added later, wire grantRingToCarry(BLOOM) in
+  // BattleRoom.persistBattleResult for 'forest_bloom_shrine_guardian'.
   { id: 'forest_bloom_shrine_guardian', biome: 'forest', screen: 'forest_bloom_hollow', personality: 'DEFENSIVE', type: 'duelist', element: WOOD, spriteFrame: 4, tx: 20, ty: 15, respawnDays: 0, foodDrop: 0, boss: { tier: 'sub', name: 'Bloom Guardian', fusedThumb: ElementEnum.BLOOM } },
 
   // ── Swamp ─────────────────────────────────────────────────────────────────────

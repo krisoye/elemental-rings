@@ -1089,6 +1089,9 @@ export class BattleRoom extends Room<{ state: BattleState }> {
         if (defenderId === AI_ID) aiHeartActuallyLost = true;
       }
     }
+    // attackerHeartLost is always false in the current BlockResolver (forward compat
+    // for future rally counter-damage); the absorb wrapper is preserved in case it
+    // fires (e.g. a boss attacker taking reflected damage).
     if (result.attackerHeartLost) {
       if (!this.absorbBossHeartLoss(attackerId)) {
         attackerPlayer.hearts = Math.max(0, attackerPlayer.hearts - 1);
