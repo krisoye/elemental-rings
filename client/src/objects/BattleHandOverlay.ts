@@ -3,7 +3,34 @@ import { CANVAS_W, CANVAS_H, ELEMENT_COLORS, ELEMENT_NAMES, THUMB_PASSIVE_INFO, 
 import type { SlotKey } from '../Constants';
 import type { RingData } from './InventoryGrid';
 import { usePips } from './ui/RingCard';
+import { CLOSE_GLYPH } from './ui/ModalShell';
+import { attachTooltip } from './ui/Tooltip';
 import { apiFetch, fetchMe, getToken } from '../net/api';
+
+/**
+ * EPIC #302 / #305 — sentinel slot identifier for the dedicated Heart slot. It
+ * sits leftmost in the 6-card top row but is NOT a battle-hand loadout slot, so
+ * it is tracked separately from {@link BattleSlot}. The heart card participates
+ * in the existing selection system via this sentinel.
+ */
+const HEART_SLOT = 'heart' as const;
+type HeartSel = typeof HEART_SLOT;
+
+/**
+ * #305 — the heart card's display state, published on `window.__heartCardState`
+ * on each render so the manage-battle-rings E2E spec can assert recharge heals HP
+ * and the empty-slot placeholder appears. Set to `undefined` while the overlay is
+ * closed. Declared locally (cast at the write sites) to avoid threading a new
+ * field through the shared global Window typing.
+ */
+type HeartCardState =
+  | { equipped: true; element: number; currentUses: number; maxUses: number }
+  | { equipped: false };
+
+/** Narrow window accessor for the #305 E2E heart-card-state hook. */
+function setHeartCardState(state: HeartCardState | undefined): void {
+  (window as unknown as { __heartCardState?: HeartCardState }).__heartCardState = state;
+}
 
 // Local alias kept for readability; the canonical slot keys/type live in shared/.
 type BattleSlot = SlotKey;
@@ -43,9 +70,17 @@ export class BattleHandOverlay {
   private spareScrollRow = 0;
   private spareWheelHandler: ((p: unknown, g: unknown, dx: number, dy: number) => void) | null = null;
   private manageSelectedRingId: string | null = null;
-  /** Slot the selected ring came from, or null when selection is from the spare row. */
-  private manageSelectedFromSlot: BattleSlot | null = null;
+  /**
+   * Slot the selected ring came from, or null when selection is from the spare
+   * row. #305 — widened to the {@link HEART_SLOT} sentinel so the heart card
+   * participates in the same select-then-click swap system as the battle slots.
+   */
+  private manageSelectedFromSlot: BattleSlot | HeartSel | null = null;
   private manageRings: RingData[] = [];
+  /** #305 — the equipped heart ring from /api/me (`heart_ring`), or null when the slot is empty. */
+  private heartRing: RingData | null = null;
+  /** #305 — detacher for the Thumb-passive hover tooltip, called on each re-render + close. */
+  private thumbTooltipDetach: (() => void) | null = null;
   private manageLoadout: Record<string, string | null> = {};
   /** Full /api/me ring list (carried or not) — needed to show a pending won ring. */
   private allRings: RingData[] = [];
@@ -92,13 +127,14 @@ export class BattleHandOverlay {
 
     try {
       const data = await fetchMe<{
-        player: BattleHandOverlay['managePlayer'];
+        player: (BattleHandOverlay['managePlayer'] & { heart_ring?: RingData | null }) | null;
         rings: RingData[];
         loadout: Record<string, string | null>;
       }>();
       this.managePlayer = data.player;
       this.allRings = data.rings;
       this.manageRings = data.rings.filter((r) => r.in_carry === 1);
+      this.heartRing = data.player?.heart_ring ?? null;
       this.manageLoadout = data.loadout ?? {};
     } catch {
       return;
@@ -115,6 +151,12 @@ export class BattleHandOverlay {
     if (this.spareWheelHandler) {
       this.scene.input.off('wheel', this.spareWheelHandler);
       this.spareWheelHandler = null;
+    }
+    // #305 — the previous render's Thumb-passive tooltip is bound to objects in the
+    // about-to-be-destroyed container; detach it before rebuilding.
+    if (this.thumbTooltipDetach) {
+      this.thumbTooltipDetach();
+      this.thumbTooltipDetach = null;
     }
     if (this.manageModal) {
       this.manageModal.destroy(true);
@@ -134,14 +176,14 @@ export class BattleHandOverlay {
       .setScrollFactor(0)
       .setStrokeStyle(2, 0xffcc88);
     const title = this.scene.add
-      .text(CANVAS_W / 2, CANVAS_H / 2 - 245, 'Manage Battle Hand', {
+      .text(CANVAS_W / 2, CANVAS_H / 2 - 245, 'Manage Battle Rings', {
         fontSize: '18px',
         color: '#ffffff',
       })
       .setScrollFactor(0)
       .setOrigin(0.5);
     const close = this.scene.add
-      .text(CANVAS_W / 2 + 290, CANVAS_H / 2 - 245, '✕', { fontSize: '18px', color: '#ff8888' })
+      .text(CANVAS_W / 2 + 290, CANVAS_H / 2 - 245, CLOSE_GLYPH, { fontSize: '18px', color: '#ff8888' })
       .setScrollFactor(0)
       .setOrigin(0.5)
       .setInteractive({ useHandCursor: true })
@@ -202,11 +244,20 @@ export class BattleHandOverlay {
       }
     }
 
-    // Battle slots row (top). Filled slots show the same 4-line info as the Sanctum
-    // and get a small [×] discard button.
+    // Top row (#305): 6 cards across — the Heart slot leftmost (index 0), then the
+    // 5 battle-hand slots (indices 1–5). Tightened from 120px to 100px pitch so all
+    // six 92px cards clear the 640px panel (leftmost center −270, rightmost +230,
+    // each card spanning ±46px → 46px clearance from each panel edge).
     const slotY = CANVAS_H / 2 - 70;
+    const topCardX = (index: number): number => CANVAS_W / 2 - 270 + index * 100;
+
+    // Heart card at index 0 — element + HP pips, recharge/swap selectable, discardable.
+    this.renderHeartCard(container, topCardX(0), slotY);
+
+    // Battle slots (indices 1–5). Filled slots show the same 4-line info as the
+    // Sanctum and get a small [×] discard button.
     SLOT_KEYS.forEach((slot, i) => {
-      const sx = CANVAS_W / 2 - 240 + i * 120;
+      const sx = topCardX(i + 1);
       const ringId = this.manageLoadout[slot] ?? null;
       const ring = ringId ? this.manageRings.find((r) => r.id === ringId) : null;
       const color = ring ? ELEMENT_COLORS[ring.element] ?? 0x333333 : 0x333333;
@@ -221,7 +272,10 @@ export class BattleHandOverlay {
         .on('pointerdown', () => {
           const selId = this.manageSelectedRingId;
           const selSlot = this.manageSelectedFromSlot;
-          if (selId !== null && selSlot === null) {
+          if (selSlot === HEART_SLOT) {
+            // Heart ring selected — swap it slot-for-slot with this battle slot.
+            void this.swapHeartWithBattleSlot(slot);
+          } else if (selId !== null && selSlot === null) {
             // Spare ring selected — assign it to this slot (existing path).
             void this.assignManageSlot(slot);
           } else if (selId !== null && selSlot !== null) {
@@ -245,6 +299,13 @@ export class BattleHandOverlay {
         .setScrollFactor(0)
         .setOrigin(0.5);
       container.add([slotRect, slotLbl]);
+      // #305 — the Thumb passive is now a hover tooltip on the Thumb card (replacing
+      // the always-on strip below it), keeping the tightened 6-card row uncluttered.
+      if (slot === 'thumb') {
+        this.thumbTooltipDetach = attachTooltip(this.scene, slotRect, () => this.thumbPassiveText(), {
+          maxWidth: 180,
+        });
+      }
       if (ring) {
         this.addRingInfo(container, sx, slotY, ring);
         const slotX = this.scene.add
@@ -265,9 +326,6 @@ export class BattleHandOverlay {
         container.add(dash);
       }
     });
-
-    // #78 ④ — Thumb passive reminder (mirrors the Sanctum ring-storage overlay).
-    this.renderManagePassive(container, slotY);
 
     // Carried rings row (selectable) — exclude rings already in a battle slot so
     // the player only sees spare carried rings available for assignment.
@@ -340,7 +398,11 @@ export class BattleHandOverlay {
         .on('pointerdown', () => {
           const selSlot = this.manageSelectedFromSlot;
           const selId = this.manageSelectedRingId;
-          if (selSlot !== null && selId !== null) {
+          if (selSlot === HEART_SLOT) {
+            // #305 — heart ring selected, then a spare clicked: equip this spare into
+            // the heart slot, releasing the old heart ring to spare.
+            void this.equipHeartFromSpare(ring.id);
+          } else if (selSlot !== null && selId !== null) {
             void this.swapSlotWithSpare(selSlot, selId, ring.id);
           } else {
             this.manageSelectedRingId = selected ? null : ring.id;
@@ -436,31 +498,108 @@ export class BattleHandOverlay {
   }
 
   /**
-   * Render the Thumb passive reminder beneath the Thumb battle slot (#78 ④),
-   * matching the Sanctum ring-storage overlay's strip. Reads the staked Thumb ring
+   * The Thumb passive reminder text (#78 ④), shown on hover over the Thumb card
+   * (#305 — replacing the always-on strip). Reads the staked Thumb ring
    * (loadout.thumb) and resolves its passive via THUMB_PASSIVE_INFO — display-only;
-   * the server owns the real passive resolution at duel start. #85 Fix 3 dropped
-   * the line cap so the longest base passive renders in full.
+   * the server owns the real passive resolution at duel start. Returns '' when no
+   * Thumb is staked, which {@link attachTooltip} treats as "no tooltip".
    */
-  private renderManagePassive(container: Phaser.GameObjects.Container, slotY: number): void {
-    const thumbX = CANVAS_W / 2 - 240;
+  private thumbPassiveText(): string {
     const thumbRingId = this.manageLoadout.thumb ?? null;
     const thumbRing = thumbRingId ? this.manageRings.find((r) => r.id === thumbRingId) : undefined;
-    if (!thumbRing) return; // no Thumb staked → no reminder
+    if (!thumbRing) return ''; // no Thumb staked → no tooltip
     const info = THUMB_PASSIVE_INFO[thumbRing.element];
-    const text = info ? `${info.name}\n${info.effect}` : `No passive\nFused rings grant no passive`;
-    const strip = this.scene.add
-      .text(thumbX, slotY + 46, text, {
-        fontSize: '9px',
-        color: '#ffcc88',
-        align: 'center',
-        wordWrap: { width: 100 },
-        lineSpacing: 1,
-      })
+    return info ? `${info.name}\n${info.effect}` : 'No passive\nFused rings grant no passive';
+  }
+
+  /**
+   * #305 — render the dedicated Heart-slot card (leftmost in the top row). The
+   * equipped heart ring shows the standard element + HP-pip info and an [×] discard
+   * button; an empty slot shows a grayed-out ♥ placeholder. The card participates
+   * in the existing select-then-click system via the {@link HEART_SLOT} sentinel:
+   *  - heart selected + [Recharge] → POST /api/spirit/recharge (heart ring id)
+   *  - heart selected + click spare/battle slot (or the reverse) → PUT /api/heart-slot
+   * An EMPTY heart slot means 0 HP = cannot duel (#304 guard); it can still receive
+   * a spare/battle ring (select the other card, then click here).
+   */
+  private renderHeartCard(container: Phaser.GameObjects.Container, cx: number, cy: number): void {
+    const heart = this.heartRing;
+    const selected = this.manageSelectedFromSlot === HEART_SLOT;
+    const color = heart ? ELEMENT_COLORS[heart.element] ?? 0x333333 : 0x2a2a33;
+    const rect = this.scene.add
+      .rectangle(cx, cy, 92, 80, color)
       .setScrollFactor(0)
-      .setOrigin(0.5, 0)
-      .setName('manage-staked-passive');
-    container.add(strip);
+      .setStrokeStyle(selected ? 3 : 2, selected ? 0xffff00 : 0x888888)
+      .setAlpha(heart ? 1 : 0.5)
+      .setInteractive({ useHandCursor: true })
+      .on('pointerdown', () => this.onHeartCardClick());
+    const lbl = this.scene.add
+      .text(cx, cy - 34, '♥ HEART', { fontSize: '11px', color: heart ? '#ff99aa' : '#777777' })
+      .setScrollFactor(0)
+      .setOrigin(0.5);
+    container.add([rect, lbl]);
+
+    if (heart) {
+      this.addRingInfo(container, cx, cy, heart);
+      const discard = this.scene.add
+        .text(cx + 38, cy - 32, '×', { fontSize: '13px', color: '#ff3333' })
+        .setScrollFactor(0)
+        .setOrigin(0.5)
+        .setInteractive({ useHandCursor: true })
+        .on('pointerdown', (_p: unknown, _x: number, _y: number, evt: { stopPropagation?: () => void }) => {
+          evt?.stopPropagation?.();
+          void this.discardHeartRing(heart.id);
+        });
+      container.add(discard);
+    } else {
+      const placeholder = this.scene.add
+        .text(cx, cy, '♥\nempty\n0 HP', {
+          fontSize: '10px',
+          color: '#777777',
+          align: 'center',
+          lineSpacing: 1,
+        })
+        .setScrollFactor(0)
+        .setOrigin(0.5);
+      container.add(placeholder);
+    }
+
+    // #305 — E2E hook: the heart card's display state, read by the spec to assert
+    // pips heal on recharge and the empty placeholder shows when the slot is clear.
+    setHeartCardState(
+      heart
+        ? { equipped: true, element: heart.element, currentUses: heart.current_uses, maxUses: heart.max_uses }
+        : { equipped: false },
+    );
+  }
+
+  /**
+   * Heart-card click dispatcher (#305). Resolves the click against the current
+   * selection: a selected spare/battle ring swaps INTO the heart slot; clicking the
+   * already-selected heart deselects; an unselected occupied heart becomes selected
+   * (for recharge or to swap out).
+   */
+  private onHeartCardClick(): void {
+    const selId = this.manageSelectedRingId;
+    const selSlot = this.manageSelectedFromSlot;
+    if (selId !== null && selSlot === null) {
+      // Spare ring selected — equip it into the heart slot, releasing the old heart
+      // ring to spare (server 400s 'carry cap exceeded' → "Free a slot first").
+      void this.equipHeartFromSpare(selId);
+    } else if (selId !== null && selSlot !== null && selSlot !== HEART_SLOT) {
+      // Battle-slot ring selected — slot-for-slot swap with the heart slot.
+      void this.swapHeartWithBattleSlot(selSlot);
+    } else if (selSlot === HEART_SLOT) {
+      // The heart was already selected — toggle it off.
+      this.manageSelectedRingId = null;
+      this.manageSelectedFromSlot = null;
+      this.renderManageModal();
+    } else if (this.heartRing) {
+      // Nothing selected and the heart is occupied — select it (recharge / swap-out).
+      this.manageSelectedRingId = this.heartRing.id;
+      this.manageSelectedFromSlot = HEART_SLOT;
+      this.renderManageModal();
+    }
   }
 
   /**
@@ -572,6 +711,79 @@ export class BattleHandOverlay {
     await this.refreshManageData();
   }
 
+  /**
+   * #305 — equip the selected spare ring into the Heart slot, releasing the old
+   * heart ring to spare. PUT /api/heart-slot { ringId, releaseTo: 'spare' }. A 400
+   * means carrying the displaced heart ring would exceed the carry cap; surface the
+   * canonical "Free a slot first" prompt instead of the raw server message.
+   */
+  private async equipHeartFromSpare(spareRingId: string): Promise<void> {
+    if (!getToken()) return;
+    try {
+      const res = await apiFetch('/api/heart-slot', {
+        method: 'PUT',
+        json: { ringId: spareRingId, releaseTo: 'spare' },
+      });
+      if (res.status === 400) {
+        this.setManageStatus('Free a slot first');
+        return;
+      }
+      if (!res.ok) {
+        this.setManageStatus(`Heart swap failed (${res.status})`);
+        return;
+      }
+    } catch {
+      this.setManageStatus('Network error during heart swap');
+      return;
+    }
+    this.manageSelectedRingId = null;
+    this.manageSelectedFromSlot = null;
+    await this.refreshManageData();
+  }
+
+  /**
+   * #305 — slot-for-slot swap between the Heart slot and a battle-hand slot. PUT
+   * /api/heart-slot { releaseTo: <slot> } (no ringId — the ring in that battle slot
+   * becomes the new heart ring, and the old heart ring takes the battle slot). The
+   * net carried count is unchanged, so this never trips the carry cap.
+   */
+  private async swapHeartWithBattleSlot(slot: BattleSlot): Promise<void> {
+    if (!getToken()) return;
+    try {
+      const res = await apiFetch('/api/heart-slot', {
+        method: 'PUT',
+        json: { releaseTo: slot },
+      });
+      if (!res.ok) {
+        this.setManageStatus(`Heart swap failed (${res.status})`);
+        return;
+      }
+    } catch {
+      this.setManageStatus('Network error during heart swap');
+      return;
+    }
+    this.manageSelectedRingId = null;
+    this.manageSelectedFromSlot = null;
+    await this.refreshManageData();
+  }
+
+  /**
+   * #305 — permanently discard the equipped heart ring (DELETE /api/rings/:id, the
+   * same path as a carried-ring discard). The slot is then empty = 0 HP (the #304
+   * server guard blocks dueling); the placeholder card communicates this.
+   */
+  private async discardHeartRing(ringId: string): Promise<void> {
+    try {
+      await apiFetch(`/api/rings/${ringId}`, { method: 'DELETE' });
+    } catch {
+      this.status('Network error during discard');
+      return;
+    }
+    this.manageSelectedRingId = null;
+    this.manageSelectedFromSlot = null;
+    await this.refreshManageData();
+  }
+
   /** Close the modal and fire the close callback (host re-enables movement). */
   close(): void {
     if (this.spareWheelHandler) {
@@ -579,6 +791,11 @@ export class BattleHandOverlay {
       this.spareWheelHandler = null;
     }
     this.spareScrollRow = 0;
+    // #305 — tear down the Thumb-passive hover tooltip before the modal is gone.
+    if (this.thumbTooltipDetach) {
+      this.thumbTooltipDetach();
+      this.thumbTooltipDetach = null;
+    }
     if (this.manageModal) {
       this.manageModal.destroy(true);
       this.manageModal = null;
@@ -587,6 +804,7 @@ export class BattleHandOverlay {
     this.manageSelectedFromSlot = null;
     this.manageStatusText = null;
     window.__battleHandOpen = false; // #212
+    setHeartCardState(undefined); // #305
     delete window.__encounterDiscardRing;
     const cb = this.onCloseCb;
     this.onCloseCb = undefined;
@@ -647,13 +865,14 @@ export class BattleHandOverlay {
     if (!getToken()) return;
     try {
       const data = await fetchMe<{
-        player: BattleHandOverlay['managePlayer'];
+        player: (BattleHandOverlay['managePlayer'] & { heart_ring?: RingData | null }) | null;
         rings: RingData[];
         loadout: Record<string, string | null>;
       }>();
       this.managePlayer = data.player;
       this.allRings = data.rings;
       this.manageRings = data.rings.filter((r) => r.in_carry === 1);
+      this.heartRing = data.player?.heart_ring ?? null;
       this.manageLoadout = data.loadout ?? {};
     } catch {
       return;
@@ -743,12 +962,17 @@ export class BattleHandOverlay {
       this.scene.input.off('wheel', this.spareWheelHandler);
       this.spareWheelHandler = null;
     }
+    if (this.thumbTooltipDetach) {
+      this.thumbTooltipDetach(); // #305
+      this.thumbTooltipDetach = null;
+    }
     if (this.manageModal) {
       this.manageModal.destroy(true);
       this.manageModal = null;
     }
     this.manageStatusText = null;
     this.onCloseCb = undefined;
+    setHeartCardState(undefined); // #305
     delete window.__encounterDiscardRing;
   }
 }
