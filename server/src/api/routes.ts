@@ -38,7 +38,7 @@ import {
   rechargeNecklace,
   getCarry,
   getCarryCap,
-  getSpareCapacity,
+  getSpareSlots,
   getDefeatedNpcs,
   recordNpcDefeat,
   forage,
@@ -198,7 +198,7 @@ apiRouter.get('/api/me', requireAuth, (req: Request, res: Response): void => {
       reliquaryCap: getReliquaryCap(playerId),
       reliquaryShards: getReliquaryShards(playerId),
       reliquaryCount: getReliquaryCount(playerId),
-      spareCapacity: getSpareCapacity(playerId),
+      spareCapacity: getSpareSlots(),
     },
     rings: getRingsByOwner(playerId),
     loadout: getLoadout(playerId) ?? null,
@@ -361,7 +361,7 @@ apiRouter.put('/api/loadout', requireAuth, (req: Request, res: Response): void =
   const carriedCount = getCarry(playerId).length;
   const cap = getCarryCap(playerId);
   if (carriedCount > cap) {
-    const spare = getSpareCapacity(playerId);
+    const spare = getSpareSlots();
     res
       .status(400)
       .json({ error: `carry cap exceeded: ${carriedCount} carried > ${cap} (5 + ${spare} spare)` });

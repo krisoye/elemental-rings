@@ -561,7 +561,7 @@ export class BattleRoom extends Room<{ state: BattleState }> {
       // reflects the correct carry headroom as soon as the battle room opens.
       const ps = this.state.players.get(sessionId);
       if (ps) {
-        ps.spareCapacity = PlayerRepo.getSpareCapacity(playerId);
+        ps.spareCapacity = PlayerRepo.getSpareSlots();
         // #211 — seed the spirit gauge from the DB so the local HUD shows the
         // ⚡ current/max readout immediately (and recharge feedback has a baseline).
         // Only token sessions reach this branch; AI / no-token sessions leave
@@ -851,7 +851,7 @@ export class BattleRoom extends Room<{ state: BattleState }> {
       for (const [sessionId, ps] of this.state.players) {
         const pid = this.sessionToPlayerId.get(sessionId);
         if (!pid) continue; // AI / no-token: skip
-        ps.spareCapacity = PlayerRepo.getSpareCapacity(pid);
+        ps.spareCapacity = PlayerRepo.getSpareSlots();
       }
 
       // Release escrow on every human thumb ring still escrowed.

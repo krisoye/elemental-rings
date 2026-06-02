@@ -23,16 +23,24 @@ Both constants are in one file — changing them automatically updates the boot-
 - Lose a ring through staking → aggregate drops → spirit max may decrease
 - The protagonist IS their rings. There is no "self" apart from the collection.
 
-### 12.2 Spirit Capacity = Carry Capacity
+### 12.2 Carry Capacity
 
-Rings are not heavy — they are spiritually demanding. Attuning to too many simultaneously fragments the wielder's focus. The number of rings a protagonist can carry on an expedition is determined by their **spirit gauge maximum**, not physical weight.
+Rings are not heavy — they are spiritually demanding. Attuning to too many simultaneously fragments the wielder's focus. Carry capacity is a **fixed constant** for every protagonist, new or seasoned:
 
-- Base spirit capacity → `carry_cap = 10` rings (starting)
-- As spirit max grows, carry cap grows proportionally — the exact ratio is an **open question** (§13); currently `carry_cap` is fixed at 10
-- Garments from merchants can further expand carry cap beyond the spirit-derived baseline
-- Only Reliquary rings count toward `aggregate_xp` — rings in the carry loadout are excluded
+```
+carry_cap = CORE_SLOTS(5) + SPARE_SLOTS(9) = 14
+```
 
-This is why the 11th ring feels impossible to carry at the start — not weight, but spiritual bandwidth.
+- **5 core slots** — the named battle-hand: Thumb, A1, A2, D1, D2
+- **9 spare slots** — a fixed spare pouch, the same for every player
+- Combined with the 9-slot Reliquary cap (§10.6), the **total rings held at any time is bounded at 23** (14 carried + 9 in the Reliquary)
+
+| Constant | Location | Notes |
+|---|---|---|
+| `CORE_SLOTS` | `server/src/game/constants.ts` | The five named battle-hand slots |
+| `SPARE_SLOTS` | `server/src/game/constants.ts` | Fixed spare pouch — tune here, never hardcode in the GDD |
+
+The spare count no longer scales with aggregate Reliquary XP: the former logarithmic curve is retired in favour of one predictable number that every player can plan around.
 
 ### 12.3 Recharging Rings
 

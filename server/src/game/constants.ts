@@ -68,6 +68,15 @@ export const MERCHANT_FOOD_MARKUP = 2;
 // flat 30 default).
 export const SPIRIT_BASE = 50;
 
+// EPIC #279 — carry-cap composition. The carry cap is a flat constant for every
+// player: CORE_SLOTS (the five named battle-hand slots: thumb + a1 + a2 + d1 + d2)
+// plus SPARE_SLOTS (the fixed spare pouch). carry_cap = CORE_SLOTS + SPARE_SLOTS =
+// 14. This replaces the former XP-driven ceil(log_2(aggregate_xp)) curve
+// (SPARE_LOG_BASE) — every player, new or veteran, now carries the same 14 rings.
+// Combined with the 9-slot Reliquary cap, total rings at any time is bounded at 23.
+export const CORE_SLOTS = 5;
+export const SPARE_SLOTS = 9;
+
 // #229/#230 — boss-gate food drops (GDD §10.5/§10.17). A permanent boss NPC
 // (respawnDays === 0) drops a one-time food cache the first time the player beats
 // it. Tuned relative to the food economy (FOOD_PER_SLEEP = 25): a mini-boss drops

@@ -18,6 +18,8 @@ import {
   MERCHANT_RING_SELL_PRICE_NEUTRAL,
   RELIQUARY_BASE_CAP,
   RELIQUARY_SHARD_INCREMENT,
+  CORE_SLOTS,
+  SPARE_SLOTS,
 } from '../game/constants';
 
 /** A persisted player row (no password hash exposed to callers of read helpers). */
@@ -834,32 +836,23 @@ export const fuseRings = db.transaction(
   },
 );
 
-/** Logarithm base for spare-slot scaling (GDD §4.1). */
-const SPARE_LOG_BASE = 2.0;
-
 /**
- * The player's spare carry capacity (#171, GDD §4.1).
- * spare_slots = ceil(log_2(aggregate_xp)), where aggregate_xp = SUM(xp) WHERE
- * in_carry = 0 (Reliquary rings only — same filter as spirit_max derivation).
- * Ceiling of log base 2 gives 0 at xp=1, 1 at xp=2, then grows quickly early
- * and flattens to a soft ceiling. Returns 0 for aggregate_xp <= 0 (including a
- * fresh player with no Reliquary XP), guarding against log(0) = -Infinity.
+ * The player's spare carry slots (EPIC #279, GDD §4.1). Fixed at SPARE_SLOTS (9)
+ * for every player — the former XP-driven ceil(log_2(aggregate_xp)) curve is
+ * retired. Takes no arguments: the value no longer depends on the player.
  */
-export function getSpareCapacity(playerId: string): number {
-  const { aggregateXp } = getSpiritStats(playerId);
-  if (aggregateXp <= 0) return 0;
-  return Math.ceil(Math.log(aggregateXp) / Math.log(SPARE_LOG_BASE));
+export function getSpareSlots(): number {
+  return SPARE_SLOTS;
 }
 
 /**
- * The player's carry cap (rings carryable on an expedition). XP-derived (#171):
- * carry_cap = 5 + ceil(log_2(aggregate_xp)). Base = 5 spare slots for a fresh
- * player; aggregate Reliquary XP grants additional spare slots on a logarithmic
- * curve. Single-sourced here so packLoadout, merchantBuyRing, and route
- * validation all agree on the same cap.
+ * The player's carry cap (rings carryable on an expedition). Flat constant for
+ * everyone (EPIC #279): carry_cap = CORE_SLOTS(5) + SPARE_SLOTS(9) = 14. The
+ * playerId parameter is retained so the four call sites (packLoadout,
+ * merchantBuyRing, the route check, /api/me) need no churn.
  */
-export function getCarryCap(playerId: string): number {
-  return 5 + getSpareCapacity(playerId);
+export function getCarryCap(_playerId: string): number {
+  return CORE_SLOTS + SPARE_SLOTS;
 }
 
 /**
