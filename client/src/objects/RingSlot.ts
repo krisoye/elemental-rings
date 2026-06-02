@@ -1,6 +1,5 @@
 import Phaser from 'phaser';
-import { ELEMENT_NAMES } from '../Constants';
-import { FusedCardFill } from './fusedFill';
+import { RingCard, usePips } from './ui/RingCard';
 
 // Card dimensions. Height raised to 90px to fit five rows (slot label /
 // element name / tier / xp / use pips) without overlap.
@@ -14,16 +13,16 @@ const CARD_H = 90;
  * for the phase. Purely presentational — driven by the server's Ring schema.
  * Stat layout mirrors the Sanctum InventoryGrid / Manage Battle Hand tiles so a
  * ring card looks identical across BattleScene, CampScene, and the modal.
+ *
+ * The shared card body (bg + fused fill + element/pips/xp/tier rows + selection
+ * stroke) lives in {@link RingCard}; this slot adds its slot label, dim overlay,
+ * Blinded `?` substitution, and the double-attack combo glow.
  */
 export class RingSlot extends Phaser.GameObjects.Container {
   public readonly bg: Phaser.GameObjects.Rectangle;
+  private readonly card: RingCard;
   private readonly slotLabel: Phaser.GameObjects.Text;
-  private readonly elementLabel: Phaser.GameObjects.Text;
-  private readonly tierText: Phaser.GameObjects.Text;
-  private readonly xpText: Phaser.GameObjects.Text;
-  private readonly usesText: Phaser.GameObjects.Text;
   private readonly dimOverlay: Phaser.GameObjects.Rectangle;
-  private readonly fusedFill: FusedCardFill;
   private _element = 0;
   private _isExtinguished = false;
   // #135 Blinded — when true, the use-count row renders `?` instead of pips (the
@@ -39,37 +38,31 @@ export class RingSlot extends Phaser.GameObjects.Container {
 
   constructor(scene: Phaser.Scene, x: number, y: number, slotName: string) {
     super(scene, x, y);
-    this.bg = scene.add.rectangle(0, 0, CARD_W, CARD_H, 0x333333).setStrokeStyle(2, 0x888888);
-    this.add(this.bg);
-    // #263 — two-tone fill sits ON TOP of bg (which keeps the stroke/hit area)
-    // and BELOW the labels added next. Centered on the card origin (0,0).
-    this.fusedFill = new FusedCardFill(scene, this, 0, 0, CARD_W, CARD_H);
-    // Five stacked rows within the −45..+45 card range.
+    // Shared card body. Rows mirror the legacy RingSlot layout: element (−20),
+    // tier (−6), xp (8), use pips (26, yellow). The slot label + dim overlay are
+    // added on top below.
+    this.card = new RingCard(scene, 0, 0, {
+      width: CARD_W,
+      height: CARD_H,
+      textColor: '#ffffff',
+      pipsColor: '#ffff88',
+      pipsFontSize: '12px',
+      elementY: -20,
+      tierY: -6,
+      xpY: 8,
+      pipsY: 26,
+      xpPrefix: 'Xp: ',
+    });
+    this.add(this.card);
+    this.bg = this.card.bg;
+    // Five stacked rows within the −45..+45 card range; the slot label is the
+    // top row above the shared card body.
     this.slotLabel = scene.add
       .text(0, -36, slotName, { fontSize: '9px', color: '#cccccc' })
       .setOrigin(0.5);
-    this.elementLabel = scene.add
-      .text(0, -20, '', { fontSize: '9px', color: '#ffffff' })
-      .setOrigin(0.5);
-    this.tierText = scene.add
-      .text(0, -6, '', { fontSize: '9px', color: '#ffffff' })
-      .setOrigin(0.5);
-    this.xpText = scene.add
-      .text(0, 8, '', { fontSize: '9px', color: '#ffffff' })
-      .setOrigin(0.5);
-    this.usesText = scene.add
-      .text(0, 26, '', { fontSize: '12px', color: '#ffff88' })
-      .setOrigin(0.5);
     this.dimOverlay = scene.add.rectangle(0, 0, CARD_W, CARD_H, 0x000000, 0.6);
     this.dimOverlay.setVisible(false);
-    this.add([
-      this.slotLabel,
-      this.elementLabel,
-      this.tierText,
-      this.xpText,
-      this.usesText,
-      this.dimOverlay,
-    ]);
+    this.add([this.slotLabel, this.dimOverlay]);
     scene.add.existing(this);
   }
 
@@ -84,10 +77,14 @@ export class RingSlot extends Phaser.GameObjects.Container {
     const ordered = ring.fusionParents
       ? Array.from(ring.fusionParents as ArrayLike<number>)
       : undefined;
-    this.fusedFill.paint(ring.element, ordered);
-    this.elementLabel.setText(ELEMENT_NAMES[ring.element] ?? '?');
-    this.tierText.setText(`T${ring.tier}`);
-    this.xpText.setText(`Xp: ${ring.xp}`);
+    this.card.setRing({
+      element: ring.element,
+      tier: ring.tier,
+      xp: ring.xp,
+      currentUses: ring.currentUses,
+      maxUses: ring.maxUses,
+      fusionParents: ordered,
+    });
     this.renderUses();
     this.dimOverlay.setVisible(ring.isExtinguished);
   }
@@ -106,18 +103,17 @@ export class RingSlot extends Phaser.GameObjects.Container {
   /** Render the use-count row, honoring the Blinded `?` substitution. */
   private renderUses(): void {
     if (this._usesHidden) {
-      this.usesText.setText('?');
+      this.card.setPipsText('?');
       return;
     }
     const r = this._lastRing;
     if (!r) return;
-    const used = r.maxUses - r.currentUses;
-    this.usesText.setText('●'.repeat(r.currentUses) + '○'.repeat(Math.max(0, used)));
+    this.card.setPipsText(usePips(r.currentUses, r.maxUses));
   }
 
   /** Highlight (or dim) this slot depending on whether its group is active. */
   setActiveGroup(active: boolean): void {
-    this.bg.setStrokeStyle(active ? 3 : 2, active ? 0xffff66 : 0x888888);
+    this.card.setStroke(active ? 3 : 2, active ? 0xffff66 : 0x888888);
   }
 
   /**
@@ -160,7 +156,7 @@ export class RingSlot extends Phaser.GameObjects.Container {
 
   /** The currently-rendered use-count string (`?` when Blinded). For E2E. */
   get displayedUses(): string {
-    return this.usesText.text;
+    return this.card.pipsText;
   }
 
   get element(): number {

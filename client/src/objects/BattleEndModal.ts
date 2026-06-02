@@ -1,5 +1,6 @@
 import Phaser from 'phaser';
 import { CANVAS_W, CANVAS_H, ELEMENT_NAMES } from '../Constants';
+import { createOverlay } from './ui/ModalShell';
 
 /** The win/lose result + reward lines the modal renders (all server-authoritative). */
 export interface BattleEndResult {
@@ -65,14 +66,20 @@ export class BattleEndModal {
     const cx = CANVAS_W / 2;
     const cy = CANVAS_H / 2;
 
-    const container = this.scene.add.container(0, 0).setDepth(2000);
-    const overlay = this.scene.add
-      .rectangle(cx, cy, CANVAS_W, CANVAS_H, 0x000000, 0.7)
-      .setInteractive();
-    const panel = this.scene.add
-      .rectangle(cx, cy, 520, 320, 0x1a1a2e)
-      .setStrokeStyle(3, won ? 0x44ff44 : 0xff4444);
-    container.add([overlay, panel]);
+    // Shared modal scaffold (backdrop + panel). The title is suppressed (the
+    // banner below is the heading) and the panel stroke is recolored win/lose. The
+    // corner ✕ collapses the modal to the frozen board rather than closing it.
+    const { container, panel } = createOverlay(this.scene, {
+      width: 520,
+      height: 320,
+      title: '',
+      onClose: () => this.collapse(),
+      depth: 2000,
+      backdropAlpha: 0.7,
+      panelColor: 0x1a1a2e,
+      strokeColor: won ? 0x44ff44 : 0xff4444,
+      strokeWidth: 3,
+    });
 
     // Banner — same colors as the old inline WIN/LOSE text.
     const banner = this.scene.add
@@ -102,14 +109,7 @@ export class BattleEndModal {
       this.choose('overworld'),
     ));
 
-    // Corner [X] — collapses the modal to the frozen board.
-    const close = this.scene.add
-      .text(cx + 245, cy - 145, '✕', { fontSize: '22px', color: '#ff8888' })
-      .setOrigin(0.5)
-      .setInteractive({ useHandCursor: true })
-      .on('pointerdown', () => this.collapse());
-    container.add(close);
-
+    // The corner ✕ (collapse-to-frozen-board) is provided by the shared shell.
     this.modal = container;
   }
 

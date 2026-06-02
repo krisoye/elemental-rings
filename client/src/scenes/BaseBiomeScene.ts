@@ -18,6 +18,7 @@ import { MONSTER_OW_REGISTRY } from '../objects/world/NpcSpriteRegistry';
 import { WanderingNpc } from '../objects/world/WanderingNpc';
 import { FusionPanel } from '../objects/FusionPanel';
 import type { RingData } from '../objects/InventoryGrid';
+import { showTransientText } from '../objects/ui/toast';
 import { apiFetch, fetchMe, getToken } from '../net/api';
 import { DualCameraScene } from './DualCameraScene';
 import { withinRadius, nearest } from '../util/geometry';
@@ -1047,35 +1048,7 @@ export abstract class BaseBiomeScene extends DualCameraScene {
 
   /** Show a brief, camera-pinned barrier message that fades out. */
   private showBarrierMessage(text: string): void {
-    const existing = this.children.getByName('biome-barrier') as Phaser.GameObjects.Text | null;
-    if (existing) {
-      this.unignoreMain(existing);
-      existing.destroy();
-    }
-    const msg = this.add
-      .text(CANVAS_W / 2, CANVAS_H - 80, text, {
-        fontSize: '14px',
-        color: '#ffdddd',
-        backgroundColor: '#000000aa',
-        padding: { x: 8, y: 4 },
-      })
-      .setOrigin(0.5, 1)
-      .setScrollFactor(0)
-      .setDepth(1000)
-      .setName('biome-barrier');
-    // #137 — render at 1:1 through uiCam, not the zoomed world camera. Kept at the
-    // scene root (not uiRoot) so single-level E2E flatMap traversal still reaches it.
-    this.routeToUi(msg);
-    this.tweens.add({
-      targets: msg,
-      alpha: { from: 1, to: 0 },
-      delay: 1200,
-      duration: 600,
-      onComplete: () => {
-        this.unignoreMain(msg);
-        msg.destroy();
-      },
-    });
+    this.showFadingMessage('biome-barrier', text, CANVAS_H - 80, '#ffdddd');
   }
 
   /**
@@ -1085,33 +1058,37 @@ export abstract class BaseBiomeScene extends DualCameraScene {
    * a time) without stacking.
    */
   private showToast(text: string, color = '#ffffff'): void {
-    const existing = this.children.getByName('biome-toast') as Phaser.GameObjects.Text | null;
+    this.showFadingMessage('biome-toast', text, CANVAS_H - 110, color);
+  }
+
+  /**
+   * Shared body for {@link showBarrierMessage} and {@link showToast}: a
+   * camera-pinned, named, single-at-a-time label that fades out and destroys
+   * itself. Concurrent calls with the same `name` replace each other (no
+   * stacking). Routing to the 1:1 UI camera and the pre-destroy main-camera
+   * un-ignore are wired through {@link showTransientText}'s setup/destroy hooks so
+   * the fade/teardown logic lives in one place (EPIC #291 / WS D).
+   */
+  private showFadingMessage(name: string, text: string, y: number, color: string): void {
+    const existing = this.children.getByName(name) as Phaser.GameObjects.Text | null;
     if (existing) {
       this.unignoreMain(existing);
       existing.destroy();
     }
-    const msg = this.add
-      .text(CANVAS_W / 2, CANVAS_H - 110, text, {
-        fontSize: '14px',
-        color,
-        backgroundColor: '#000000aa',
-        padding: { x: 8, y: 4 },
-      })
-      .setOrigin(0.5, 1)
-      .setScrollFactor(0)
-      .setDepth(1000)
-      .setName('biome-toast');
-    // #137 — render at 1:1 through uiCam (kept at scene root for E2E traversal).
-    this.routeToUi(msg);
-    this.tweens.add({
-      targets: msg,
-      alpha: { from: 1, to: 0 },
-      delay: 1200,
-      duration: 600,
-      onComplete: () => {
-        this.unignoreMain(msg);
-        msg.destroy();
-      },
+    showTransientText(this, {
+      x: CANVAS_W / 2,
+      y,
+      text,
+      color,
+      backgroundColor: '#000000aa',
+      padding: { x: 8, y: 4 },
+      originX: 0.5,
+      originY: 1,
+      depth: 1000,
+      name,
+      // #137 — render at 1:1 through uiCam (kept at scene root for E2E traversal).
+      onSetup: (msg) => this.routeToUi(msg),
+      onDestroy: (msg) => this.unignoreMain(msg),
     });
   }
 

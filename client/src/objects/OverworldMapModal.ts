@@ -1,5 +1,6 @@
 import Phaser from 'phaser';
 import { CANVAS_W, CANVAS_H } from '../Constants';
+import { createOverlay } from './ui/ModalShell';
 
 // ── Layout constants ────────────────────────────────────────────────────────
 
@@ -212,46 +213,27 @@ export class OverworldMapModal {
   ): void {
     if (this.container) return;
     const s = this.scene;
-    const c = s.add.container(0, 0).setScrollFactor(0).setDepth(1200);
 
-    // Backdrop
-    c.add(
-      s.add
-        .rectangle(CANVAS_W / 2, CANVAS_H / 2, CANVAS_W, CANVAS_H, 0x000000, 0.78)
-        .setScrollFactor(0),
-    );
-
-    // Panel background + border
+    // Shared modal scaffold (backdrop + panel + title + canonical ✕), anchored to
+    // the computed map-panel rect rather than the canvas center.
     const panelCx = PANEL_X + PANEL_W / 2;
     const panelCy = PANEL_Y + PANEL_H / 2;
-    c.add(s.add.rectangle(panelCx, panelCy, PANEL_W, PANEL_H, 0x0d1523, 1).setScrollFactor(0));
-    c.add(
-      s.add.rectangle(panelCx, panelCy, PANEL_W, PANEL_H, 0x000000, 0)
-        .setStrokeStyle(1, 0x3d5577)
-        .setScrollFactor(0),
-    );
-
-    // Title
-    c.add(
-      s.add
-        .text(PANEL_X + PANEL_W / 2, PANEL_Y + 14, 'World Map', {
-          fontSize: '15px', color: '#99bbdd',
-        })
-        .setOrigin(0.5, 0)
-        .setScrollFactor(0),
-    );
-
-    // Close button
-    c.add(
-      s.add
-        .text(PANEL_X + PANEL_W - 14, PANEL_Y + 14, '✕', {
-          fontSize: '15px', color: '#cc5555',
-        })
-        .setOrigin(0.5)
-        .setScrollFactor(0)
-        .setInteractive({ useHandCursor: true })
-        .on('pointerdown', () => this.hide()),
-    );
+    const { container: c } = createOverlay(s, {
+      width: PANEL_W,
+      height: PANEL_H,
+      title: 'World Map',
+      onClose: () => this.hide(),
+      depth: 1200,
+      backdropAlpha: 0.78,
+      panelColor: 0x0d1523,
+      strokeColor: 0x3d5577,
+      strokeWidth: 1,
+      titleColor: '#99bbdd',
+      titleSize: '15px',
+      centered: false,
+      panelX: panelCx,
+      panelY: panelCy,
+    });
 
     // ── Graphics layer (edges + node fills) ─────────────────────────────────
     const gfx = s.add.graphics().setScrollFactor(0);

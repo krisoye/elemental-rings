@@ -1,7 +1,6 @@
 import Phaser from 'phaser';
-import { ELEMENT_NAMES } from '../Constants';
 import type { RingData } from './InventoryGrid';
-import { FusedCardFill } from './fusedFill';
+import { RingCard } from './ui/RingCard';
 
 const CARD_W = 70;
 const CARD_H = 90;
@@ -10,16 +9,15 @@ const CARD_H = 90;
  * Displays the Thumb (staked) ring slot with escrow indicator. Clicking the
  * card fires `onAssign()` to trigger ring assignment. If the ring is escrowed,
  * `onEscrowed()` is called instead so the host can surface a status message.
+ *
+ * The shared card body (bg + fused fill + element/pips/xp/tier rows + selection
+ * stroke) lives in {@link RingCard}; this panel adds the THUMB title, the escrow
+ * LOCKED label, and the "click to stake" hint.
  */
 export class StakePanel extends Phaser.GameObjects.Container {
   private readonly bg: Phaser.GameObjects.Rectangle;
-  // #263 — two-tone fused fill for the thumb card.
-  private readonly fusedFill: FusedCardFill;
+  private readonly card: RingCard;
   private readonly titleLbl: Phaser.GameObjects.Text;
-  private readonly elemLbl: Phaser.GameObjects.Text;
-  private readonly usesLbl: Phaser.GameObjects.Text;
-  private readonly xpLbl: Phaser.GameObjects.Text;
-  private readonly tierLbl: Phaser.GameObjects.Text;
   private readonly lockLbl: Phaser.GameObjects.Text;
   private readonly hintLbl: Phaser.GameObjects.Text;
 
@@ -40,33 +38,29 @@ export class StakePanel extends Phaser.GameObjects.Container {
     const cx = CARD_W / 2;
     const cy = CARD_H / 2;
 
-    this.bg = scene.add.rectangle(cx, cy, CARD_W, CARD_H, 0x333333);
-    // Match the camera-pinned ring-storage overlay so the hit area aligns with
-    // the render position under camera scroll (#78 ①).
-    this.bg.setScrollFactor(0);
-    this.bg.setStrokeStyle(2, 0xaa8800);
-    this.add(this.bg);
-    // #263 — two-tone fill above bg (stroke/hit kept), below labels added next.
-    this.fusedFill = new FusedCardFill(scene, this, cx, cy, CARD_W, CARD_H, 0);
+    // Shared card body — camera-pinned (scrollFactor 0) so the hit area aligns
+    // with the render position under camera scroll (#78 ①). Rows mirror the legacy
+    // thumb layout: element (−22), use pips (−5), xp (12), tier (27).
+    this.card = new RingCard(scene, 0, 0, {
+      width: CARD_W,
+      height: CARD_H,
+      cx,
+      cy,
+      scrollFactor: 0,
+      strokeColor: 0xaa8800,
+      textColor: '#000000',
+      fontSize: '9px',
+      elementY: -22,
+      pipsY: -5,
+      xpY: 12,
+      tierY: 27,
+      xpPrefix: 'XP:',
+    });
+    this.add(this.card);
+    this.bg = this.card.bg;
 
     this.titleLbl = scene.add
       .text(cx, cy - 36, 'THUMB', { fontSize: '9px', color: '#ffcc44' })
-      .setOrigin(0.5);
-
-    this.elemLbl = scene.add
-      .text(cx, cy - 22, '—', { fontSize: '10px', color: '#888888' })
-      .setOrigin(0.5);
-
-    this.usesLbl = scene.add
-      .text(cx, cy - 5, '', { fontSize: '9px', color: '#ffff88' })
-      .setOrigin(0.5);
-
-    this.xpLbl = scene.add
-      .text(cx, cy + 12, '', { fontSize: '9px', color: '#000000' })
-      .setOrigin(0.5);
-
-    this.tierLbl = scene.add
-      .text(cx, cy + 27, '', { fontSize: '9px', color: '#000000' })
       .setOrigin(0.5);
 
     this.lockLbl = scene.add
@@ -77,13 +71,16 @@ export class StakePanel extends Phaser.GameObjects.Container {
       .text(cx, cy + 41, 'click to stake', { fontSize: '8px', color: '#666666' })
       .setOrigin(0.5);
 
+    // The empty-slot element row is a dim em-dash until a ring is staked.
+    this.card.setElementText('—', '#888888');
+
     this.bg.setInteractive({ useHandCursor: true });
     this.bg.on('pointerdown', () => {
       if (this.escrowed) onEscrowed?.();
       else onAssign();
     });
 
-    this.add([this.titleLbl, this.elemLbl, this.usesLbl, this.xpLbl, this.tierLbl, this.lockLbl, this.hintLbl]);
+    this.add([this.titleLbl, this.lockLbl, this.hintLbl]);
     scene.add.existing(this);
   }
 
@@ -96,27 +93,23 @@ export class StakePanel extends Phaser.GameObjects.Container {
     const ring = thumbRingId ? ringMap.get(thumbRingId) : null;
 
     if (ring) {
-      this.bg.setFillStyle(0x333333);
-      this.fusedFill.paint(ring.element, ring.fusionParents);
-      this.elemLbl.setText(ELEMENT_NAMES[ring.element] ?? '?').setColor('#000000');
-      const used = ring.max_uses - ring.current_uses;
-      this.usesLbl
-        .setText('●'.repeat(ring.current_uses) + '○'.repeat(Math.max(0, used)))
-        .setColor('#000000');
-      this.xpLbl.setText(`XP:${ring.xp}`).setColor('#000000');
-      this.tierLbl.setText(`T${ring.tier}`).setColor('#000000');
+      this.card.setRing({
+        element: ring.element,
+        tier: ring.tier,
+        xp: ring.xp,
+        currentUses: ring.current_uses,
+        maxUses: ring.max_uses,
+        fusionParents: ring.fusionParents,
+      });
+      this.card.setTextColor('#000000');
       this.hintLbl.setText('');
 
       this.escrowed = ring.escrowed === 1;
       this.lockLbl.setText(this.escrowed ? 'LOCKED' : '');
     } else {
       this.escrowed = false;
-      this.bg.setFillStyle(0x333333);
-      this.fusedFill.clear();
-      this.elemLbl.setText('—').setColor('#888888');
-      this.usesLbl.setText('');
-      this.xpLbl.setText('');
-      this.tierLbl.setText('');
+      this.card.clear();
+      this.card.setElementText('—', '#888888');
       this.lockLbl.setText('');
       this.hintLbl.setText('click to stake');
     }
@@ -134,8 +127,8 @@ export class StakePanel extends Phaser.GameObjects.Container {
 
   /** Draw the border: yellow when selected, red when escrowed, else gold. */
   private applyStroke(): void {
-    if (this.selected) this.bg.setStrokeStyle(3, 0xffff00);
-    else if (this.escrowed) this.bg.setStrokeStyle(2, 0xff6666);
-    else this.bg.setStrokeStyle(2, 0xaa8800);
+    if (this.selected) this.card.setStroke(3, 0xffff00);
+    else if (this.escrowed) this.card.setStroke(2, 0xff6666);
+    else this.card.setStroke(2, 0xaa8800);
   }
 }

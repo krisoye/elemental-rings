@@ -9,14 +9,15 @@ import {
 } from '../Constants';
 import { charsetFrame } from './world/charset';
 import { FusedCardFill } from './fusedFill';
+import { STATUS_BADGES, heartsString } from './ui/format';
 
 // Combat slots whose remaining uses count toward the opponent's aggregate (the
 // thumb is a passive staked ring and is excluded from ATK/DEF totals).
 const ATTACK_SLOTS = ['a1', 'a2'] as const;
 const DEFENSE_SLOTS = ['d1', 'd2'] as const;
 
-// GDD §7.2 status badges — index-aligned with GAUGE_KEYS / GAUGE_ELEMENTS.
-const STATUS_BADGES = ['🔥 BURN', '💧 DROWN', '🌿 TANGLE'];
+// GDD §7.2 status badges (STATUS_BADGES) are shared with PlayerDuelist via
+// ui/format.ts — the canonical {label,color}[] table. This panel uses only `.label`.
 
 /**
  * Partial-information panel for the opponent. Shows hearts, ATK and DEF
@@ -156,7 +157,7 @@ export class OpponentDuelist extends Phaser.GameObjects.Container {
     if (!opp) return;
 
     const hearts = opp.hearts ?? 0;
-    this.heartsText.setText('♥'.repeat(hearts) + '♡'.repeat(Math.max(0, 3 - hearts)));
+    this.heartsText.setText(heartsString(hearts));
 
     // ATK total = sum of non-extinguished attack slot uses.
     let atkTotal = 0;
@@ -186,7 +187,7 @@ export class OpponentDuelist extends Phaser.GameObjects.Container {
     for (let i = 0; i < GAUGE_KEYS.length; i++) {
       if ((opp[GAUGE_KEYS[i]] ?? 0) >= GAUGE_THRESHOLD) {
         if (activeEl < 0) activeEl = GAUGE_ELEMENTS[i];
-        activeBadges.push(STATUS_BADGES[i]);
+        activeBadges.push(STATUS_BADGES[i].label);
       }
     }
     if (activeEl >= 0) {

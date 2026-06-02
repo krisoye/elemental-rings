@@ -2,6 +2,7 @@ import Phaser from 'phaser';
 import { InventoryGrid, type RingData } from '../objects/InventoryGrid';
 import { LoadoutPanel, type LoadoutSlot } from '../objects/LoadoutPanel';
 import { StakePanel } from '../objects/StakePanel';
+import { usePips } from '../objects/ui/RingCard';
 import { FusionPanel } from '../objects/FusionPanel';
 import { DifficultyModal } from '../objects/DifficultyModal';
 import { ELEMENT_NAMES, CANVAS_W, CANVAS_H, THUMB_PASSIVE_INFO, SLOT_KEYS } from '../Constants';
@@ -1346,9 +1347,7 @@ export class CampScene extends DualCameraScene {
     const def = getTalisman(payload.necklaceId);
     const name = def?.name ?? payload.necklaceId;
     const max = def?.maxCharges ?? payload.necklaceCharges;
-    const filled = '●'.repeat(payload.necklaceCharges);
-    const empty = '○'.repeat(Math.max(0, max - payload.necklaceCharges));
-    label.setText(`${name} ${filled}${empty}`);
+    label.setText(`${name} ${usePips(payload.necklaceCharges, max)}`);
   }
 
   /**

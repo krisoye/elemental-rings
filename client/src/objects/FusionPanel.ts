@@ -3,6 +3,7 @@ import { CANVAS_W, CANVAS_H, ELEMENT_NAMES } from '../Constants';
 import { ElementEnum } from '../../../shared/types';
 import { isFusion, componentsOf } from '../../../shared/fusions';
 import type { RingData } from './InventoryGrid';
+import { createOverlay } from './ui/ModalShell';
 
 /** A single previewable fusion: its two base-element parents and its result. */
 interface FusionRecipe {
@@ -98,29 +99,26 @@ export class FusionPanel {
   open(rings: RingData[], filterElement?: number): void {
     this.close();
 
-    const container = this.scene.add.container(0, 0).setDepth(3000);
-    const overlay = this.scene.add
-      .rectangle(CANVAS_W / 2, CANVAS_H / 2, CANVAS_W, CANVAS_H, 0x000000, 0.78)
-      .setInteractive();
-    const panel = this.scene.add
-      .rectangle(CANVAS_W / 2, CANVAS_H / 2, 720, 520, 0x1d1d2e)
-      .setStrokeStyle(2, 0xcc88ff);
-    const title = this.scene.add
-      .text(CANVAS_W / 2, 50, 'FUSE RINGS', { fontSize: '20px', color: '#ffffff' })
-      .setOrigin(0.5);
+    // Shared modal scaffold (backdrop + panel + title + canonical ✕). The fusion
+    // panel is re-parented to uiCam by CampScene (routeToUi), so it keeps its
+    // depth-3000 ordering rather than the shell default.
+    const { container } = createOverlay(this.scene, {
+      width: 720,
+      height: 520,
+      title: 'FUSE RINGS',
+      onClose: () => this.close(),
+      depth: 3000,
+      panelColor: 0x1d1d2e,
+      strokeColor: 0xcc88ff,
+    });
     const subtitle = this.scene.add
       .text(CANVAS_W / 2, 76, 'Both rings must be the same tier and reach Tier 2', {
         fontSize: '12px',
         color: '#aaaaaa',
       })
       .setOrigin(0.5);
-    const closeBtn = this.scene.add
-      .text(CANVAS_W / 2 + 340, 44, '[×]', { fontSize: '16px', color: '#ff8888' })
-      .setOrigin(0.5)
-      .setInteractive({ useHandCursor: true })
-      .on('pointerdown', () => this.close());
 
-    container.add([overlay, panel, title, subtitle, closeBtn]);
+    container.add([subtitle]);
 
     // #231 — when a filterElement is supplied, restrict the grid to the single
     // recipe whose RESULT element matches (the Fusion Shrine pre-filter). The

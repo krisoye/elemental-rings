@@ -2,6 +2,7 @@ import Phaser from 'phaser';
 import { CANVAS_W, CANVAS_H, ELEMENT_COLORS, ELEMENT_NAMES, THUMB_PASSIVE_INFO, SLOT_KEYS } from '../Constants';
 import type { SlotKey } from '../Constants';
 import type { RingData } from './InventoryGrid';
+import { usePips } from './ui/RingCard';
 import { apiFetch, fetchMe, getToken } from '../net/api';
 
 // Local alias kept for readability; the canonical slot keys/type live in shared/.
@@ -349,8 +350,7 @@ export class BattleHandOverlay {
         });
       ringGrp.add(rect);
 
-      const used = ring.max_uses - ring.current_uses;
-      const pips = '●'.repeat(ring.current_uses) + '○'.repeat(Math.max(0, used));
+      const pips = usePips(ring.current_uses, ring.max_uses);
       ringGrp.add([
         this.scene.add.text(0, -22, ELEMENT_NAMES[ring.element] ?? '?', { fontSize: '9px', color: '#000000' }).setScrollFactor(0).setOrigin(0.5),
         this.scene.add.text(0, -6, pips, { fontSize: '10px', color: '#000000' }).setScrollFactor(0).setOrigin(0.5),
@@ -474,8 +474,7 @@ export class BattleHandOverlay {
     cy: number,
     ring: RingData,
   ): void {
-    const used = ring.max_uses - ring.current_uses;
-    const pips = '●'.repeat(ring.current_uses) + '○'.repeat(Math.max(0, used));
+    const pips = usePips(ring.current_uses, ring.max_uses);
     const nameLbl = this.scene.add
       .text(cx, cy - 22, ELEMENT_NAMES[ring.element] ?? '?', { fontSize: '9px', color: '#000000' })
       .setScrollFactor(0)
