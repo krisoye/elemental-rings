@@ -1,4 +1,4 @@
-import { Room, Client } from 'colyseus';
+import { Room, Client, ServerError } from 'colyseus';
 import { BattleState } from '../schemas/BattleState';
 import { PlayerState } from '../schemas/PlayerState';
 import { classifyTiming, resolveBlock } from '../game/BlockResolver';
@@ -192,6 +192,13 @@ export class BattleRoom extends Room<{ state: BattleState }> {
   private sessionToPlayerId = new Map<string, string>();
   /** Maps Colyseus sessionId → ring id per slot (null when slot used default). */
   private sessionToRingIds = new Map<string, Record<SlotKey, string | null>>();
+  /**
+   * EPIC #302 / #304 — maps Colyseus sessionId → the player's equipped heart ring
+   * id (null when the heart slot was empty). Cached at seat time so
+   * persistBattleResult can write the surviving HP back to the heart ring without
+   * re-querying the DB. Only present for token-authenticated human seats.
+   */
+  private sessionToHeartRingId = new Map<string, string | null>();
   /**
    * Outcome-based XP accrued during the duel: sessionId → slotKey → xp delta.
    * Only humans are tracked (a key exists per human session). Persisted in
@@ -566,6 +573,31 @@ export class BattleRoom extends Room<{ state: BattleState }> {
       // All-in setup thumb XP: 1 per use distributed at seat time.
       if (buffed > 0) this.addXp(sessionId, 'thumb', XP_THUMB_BUFF * buffed);
 
+      // EPIC #302 / #304 — a human's starting HP comes from their equipped heart
+      // ring (current_uses, clamped to max_uses), NOT the default STARTING_HEARTS.
+      // An empty heart slot is 0 HP, which the 0-HP guard below rejects. The heart
+      // ring id is cached so persistBattleResult can write surviving HP back.
+      const heartRing = PlayerRepo.getHeartRing(playerId);
+      this.sessionToHeartRingId.set(sessionId, heartRing ? heartRing.id : null);
+      const seatPs = this.state.players.get(sessionId);
+      if (seatPs) {
+        seatPs.hearts = heartRing ? Math.min(heartRing.current_uses, heartRing.max_uses) : 0;
+      }
+      // Reject the duel before it starts when this human has no usable HP (empty
+      // heart slot, or a fully-drained heart ring). Throwing in onJoin rejects only
+      // this client's seat — no consequences are persisted (we throw before any
+      // escrow / spirit spend below). Unwind the partial seat (state row + session
+      // maps) first so a rejected join leaves no stale player behind, then throw;
+      // the message surfaces on the client.
+      if (seatPs && seatPs.hearts === 0) {
+        this.state.players.delete(sessionId);
+        this.sessionToPlayerId.delete(sessionId);
+        this.sessionToRingIds.delete(sessionId);
+        this.sessionToHeartRingId.delete(sessionId);
+        this.xpAccumulator.delete(sessionId);
+        throw new ServerError(4000, 'No HP: equip and recharge your heart ring first');
+      }
+
       // #171 — seed spareCapacity from the live Reliquary XP so the client HUD
       // reflects the correct carry headroom as soon as the battle room opens.
       const ps = this.state.players.get(sessionId);
@@ -765,6 +797,14 @@ export class BattleRoom extends Room<{ state: BattleState }> {
           const ring = ps.getSlot(key);
           PlayerRepo.saveRingUses(ringId, ring.currentUses);
         }
+
+        // EPIC #302 / #304 — write the surviving HP back to the heart ring as its
+        // current_uses (HP is the heart ring's depleting use pool). The heart ring
+        // is NOT a battle slot and earns NO XP from the duel; it is intentionally
+        // absent from sessionToRingIds / xpAccumulator. Skipped when the heart slot
+        // was empty (id null). Practice rematches never reach here (early return).
+        const heartRingId = this.sessionToHeartRingId.get(sessionId);
+        if (heartRingId) PlayerRepo.saveRingUses(heartRingId, ps.hearts);
 
         if (sessionId === winnerId) PlayerRepo.addGold(playerId, GOLD_PER_WIN);
       }
