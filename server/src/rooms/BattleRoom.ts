@@ -5,7 +5,7 @@ import { Ring } from '../schemas/Ring';
 import { classifyTiming, resolveBlock } from '../game/BlockResolver';
 import { componentsOf, fusionParents, isFusion } from '../game/ElementSystem';
 import * as StatusEffects from '../game/StatusEffects';
-import { AIController } from '../game/ai/AIController';
+import { AIController, type EnrageConfig } from '../game/ai/AIController';
 import { makeRng, AI_PROFILES, type AIProfile } from '../game/ai/AIProfiles';
 import { generateAILoadout, type SlotSpec } from '../game/ai/AILoadout';
 import * as StakeResolver from '../game/StakeResolver';
@@ -245,7 +245,52 @@ export class BattleRoom extends Room<{ state: BattleState }> {
       // multiplies the base profile's σ / no-block / think fields (both healthy
       // and low-heart variants stay proportional).
       const profileOverride = mod ? this.buildBossProfile(personality, mod) : undefined;
-      this.ai = new AIController(this, AI_ID, personality, seed, profileOverride);
+      // #259 — enrage config (major boss only; threshold 0 disables it). The
+      // enraged profile sharpens the already-modified profile further.
+      const enrage: EnrageConfig | undefined =
+        mod && profileOverride && mod.enrageThreshold > 0
+          ? {
+              threshold: mod.enrageThreshold,
+              profile: this.buildEnragedProfile(profileOverride, mod),
+              aggressive: mod.enrageAggressive,
+            }
+          : undefined;
+      this.ai = new AIController(this, AI_ID, personality, seed, profileOverride, enrage);
+    }
+  }
+
+  /**
+   * #259 — derive the ENRAGED profile from the already boss-modified profile by
+   * tightening σ further and speeding think further (the enrage multipliers stack
+   * on the #258 modifiers). no-block is left as the modified value (an enraged
+   * boss is already near-zero no-block). Pure — returns a fresh object.
+   */
+  private buildEnragedProfile(modified: AIProfile, mod: BossModifier): AIProfile {
+    return {
+      ...modified,
+      timingSigmaMs: modified.timingSigmaMs * mod.enrageSigmaMult,
+      lowHeartTimingSigmaMs: modified.lowHeartTimingSigmaMs * mod.enrageSigmaMult,
+      thinkDelayMinMs: modified.thinkDelayMinMs * mod.enrageThinkMult,
+      thinkDelayMaxMs: modified.thinkDelayMaxMs * mod.enrageThinkMult,
+      lowHeartThinkDelayMinMs: modified.lowHeartThinkDelayMinMs * mod.enrageThinkMult,
+      lowHeartThinkDelayMaxMs: modified.lowHeartThinkDelayMaxMs * mod.enrageThinkMult,
+    };
+  }
+
+  /**
+   * #259 — set the AI's `enraged` schema flag once its hearts cross to ≤ the boss
+   * enrage threshold. Idempotent (the flag never unsets — enrage is permanent for
+   * the rest of the duel). No-op for non-enraging bosses and non-boss AI. Called
+   * after any path that can lower the AI's hearts.
+   */
+  private updateBossEnrage(): void {
+    if (!this.boss) return;
+    const mod = BOSS_MODIFIERS[this.boss.tier];
+    if (mod.enrageThreshold <= 0) return;
+    const ai = this.state.players.get(AI_ID);
+    if (!ai || ai.enraged) return;
+    if (ai.hearts > 0 && ai.hearts <= mod.enrageThreshold) {
+      ai.enraged = true;
     }
   }
 
@@ -520,6 +565,8 @@ export class BattleRoom extends Room<{ state: BattleState }> {
       this.finalizeEnded();
       return true;
     }
+    // #259 — a Burning heart loss on the boss's own turn may trigger enrage.
+    if (heartLost) this.updateBossEnrage();
     return false;
   }
 
@@ -992,6 +1039,9 @@ export class BattleRoom extends Room<{ state: BattleState }> {
     if (result.attackerHeartLost) {
       attackerPlayer.hearts = Math.max(0, attackerPlayer.hearts - 1);
     }
+    // #259 — a heart change may cross the boss enrage threshold (broadcasts the
+    // `enraged` flag). Runs before any KO early-return so the transition is seen.
+    if (result.defenderHeartLost || result.attackerHeartLost) this.updateBossEnrage();
 
     // Earth passive: timing-only parry refund (fires on PARRY regardless of
     // element match). Awards the defender's thumb mid-tier XP when it fires.

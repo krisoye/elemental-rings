@@ -48,6 +48,10 @@ export class OpponentDuelist extends Phaser.GameObjects.Container {
   private readonly statusBadge: Phaser.GameObjects.Text;
   private readonly thumbCard: Phaser.GameObjects.Rectangle;
   private readonly thumbDimOverlay: Phaser.GameObjects.Rectangle;
+  // #259 — the opponent battle sprite, tinted red + pulsed once on boss enrage.
+  private readonly spriteImg: Phaser.GameObjects.Image;
+  /** #259 — true once the enrage tint/pulse has been applied (one-shot). */
+  private enrageShown = false;
 
   constructor(scene: Phaser.Scene, spriteFrame = 0, monsterTexKey?: string) {
     super(scene, OPPONENT_X, OPPONENT_Y);
@@ -71,6 +75,7 @@ export class OpponentDuelist extends Phaser.GameObjects.Container {
         .setScale(2)
         .setOrigin(0.5, 0.5);
     }
+    this.spriteImg = spriteImg;
 
     // Semi-transparent panel behind the stats text (shrunken to stats area only)
     const panel = scene.add.rectangle(0, 0, 80, 40, 0x444444, 0.8).setStrokeStyle(1, 0x888888);
@@ -192,6 +197,22 @@ export class OpponentDuelist extends Phaser.GameObjects.Container {
     if (thumb) {
       this.thumbCard.setFillStyle(ELEMENT_COLORS[thumb.element] ?? 0x555555);
       this.thumbDimOverlay.setVisible(!!thumb.isExtinguished);
+    }
+
+    // #259 — boss enrage (phase-2): the first time the broadcast `enraged` flag is
+    // true, red-tint the opponent sprite and pulse it once. One-shot — guarded by
+    // enrageShown so repeated patches do not re-pulse. Presentation only; the
+    // server owns the actual difficulty change.
+    if (opp.enraged && !this.enrageShown) {
+      this.enrageShown = true;
+      this.spriteImg.setTint(0xff5555);
+      this.scene.tweens.add({
+        targets: this.spriteImg,
+        scale: this.spriteImg.scale * 1.25,
+        duration: 180,
+        yoyo: true,
+        ease: 'Quad.easeOut',
+      });
     }
   }
 }

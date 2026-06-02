@@ -37,8 +37,21 @@ export interface AIRoomHandle {
  * timer models the think-delay (as attacker) or the scheduled press (as
  * defender); it is cleared on every phase entry and on dispose.
  */
+/**
+ * #259 — boss phase-2 enrage. When the boss's hearts drop to ≤ `threshold`, the
+ * controller swaps to `profile` (a sharper enraged profile built by BattleRoom)
+ * and, if `aggressive`, drives attack selection like AGGRESSIVE (chase counters).
+ */
+export interface EnrageConfig {
+  threshold: number;
+  profile: AIProfile;
+  aggressive: boolean;
+}
+
 export class AIController {
-  private readonly profile: AIProfile;
+  /** Base (or #258 boss-modified) combat profile, used while NOT enraged. */
+  private readonly baseProfile: AIProfile;
+  private readonly enrage: EnrageConfig | null;
   private readonly rng: Rng;
   private pending: ReturnType<typeof setTimeout> | null = null;
   /** STATUS_HUNTER commits to one element across turns; persisted here. */
@@ -47,16 +60,36 @@ export class AIController {
   constructor(
     private readonly room: AIRoomHandle,
     private readonly aiId: string,
-    personality: AIPersonality,
+    private readonly personality: AIPersonality,
     seed: number,
     profileOverride?: AIProfile,
+    enrage?: EnrageConfig,
   ) {
     // #258 — a boss room passes a tier-modified profile (tighter σ / lower no-block
     // / faster think) so the boss fights sharper than a roamer of the same
     // personality. Omitted for normal duels → the unmodified per-personality
     // profile, no behaviour change.
-    this.profile = profileOverride ?? AI_PROFILES[personality];
+    this.baseProfile = profileOverride ?? AI_PROFILES[personality];
+    // #259 — enrage config (major boss only). Disabled when threshold ≤ 0.
+    this.enrage = enrage && enrage.threshold > 0 ? enrage : null;
     this.rng = makeRng(seed);
+  }
+
+  /** True when this boss is currently enraged (hearts ≤ threshold). */
+  private isEnraged(): boolean {
+    if (!this.enrage) return false;
+    const me = this.room.state.players.get(this.aiId);
+    return !!me && me.hearts <= this.enrage.threshold;
+  }
+
+  /** The profile in force right now: enraged when enraged, else the base. */
+  private get profile(): AIProfile {
+    return this.isEnraged() && this.enrage ? this.enrage.profile : this.baseProfile;
+  }
+
+  /** Personality driving attack selection: AGGRESSIVE while enraged-aggressive. */
+  private get attackPersonality(): AIPersonality {
+    return this.isEnraged() && this.enrage?.aggressive ? 'AGGRESSIVE' : this.personality;
   }
 
   /**
@@ -177,7 +210,14 @@ export class AIController {
     this.pending = setTimeout(() => {
       this.pending = null;
       const v = this.readBoard();
-      const decision = decideAttack(v, this.profile, this.rng);
+      // #259 — while enraged-aggressive the boss SELECTS attacks like AGGRESSIVE
+      // (chase counters), keeping the enraged profile's timing fields. Off-enrage
+      // (or non-aggressive enrage) this is just the active profile unchanged.
+      const attackProfile =
+        this.profile.personality === this.attackPersonality
+          ? this.profile
+          : { ...this.profile, personality: this.attackPersonality };
+      const decision = decideAttack(v, attackProfile, this.rng);
       this.committedElement = decision.committedElement;
       this.room.handleSelectAttack(this.aiId, { slot: decision.slot });
     }, delay);

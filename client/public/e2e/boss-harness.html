@@ -43,6 +43,10 @@
 
   window.sendAttack = (slot) => room.send('selectAttack', { slot });
   window.sendDefense = (slot) => room.send('submitDefense', { slot, pressTime: Date.now() });
+  // E2E_TEST_ROUTES-gated deterministic state setter (mirrors BattleRoom's
+  // __testSetState handler). Lets a spec seed the AI's exact hearts so an enrage
+  // crossing can be engineered without timed play.
+  window.setOpponentState = (patch) => room.send('__testSetState', { target: 'opponent', ...patch });
 
   window.waitForPhase = (phase, timeout = 12000) =>
     new Promise((res, rej) => {

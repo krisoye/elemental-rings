@@ -187,3 +187,71 @@ describe('#258 — BOSS_MODIFIERS difficulty bundle', () => {
     }
   });
 });
+
+describe('#259 — boss enrage / phase-2', () => {
+  /**
+   * Drive the human to attack every turn (and never defend) until the AI's hearts
+   * reach `target` or the duel ENDS. Returns the AI snapshot at that point. Uses
+   * the human's a1 (FIRE) — most boss thumbs/defenses are not Fire-strong, so hits
+   * land often enough to whittle a 3-heart AI to 2 within the loop budget.
+   */
+  async function driveAiTo(room: any, human: any, target: number): Promise<any> {
+    for (let i = 0; i < 60 && room.state.phase !== 'ENDED'; i++) {
+      const ai = room.state.players.get('AI');
+      if (ai && ai.hearts <= target) return ai;
+      if (
+        room.state.phase === 'ATTACK_SELECT' &&
+        room.state.currentAttackerId === human.sessionId
+      ) {
+        human.send('selectAttack', { slot: 'a1' });
+      }
+      await sleep(200);
+    }
+    return room.state.players.get('AI');
+  }
+
+  test('major boss (Thornwood) enrages when hearts cross to ≤ threshold', async () => {
+    // Seat the major boss at 3 hearts (threshold 2). It starts un-enraged; once a
+    // hit drops it to ≤ 2, the enraged flag broadcasts.
+    const { room, human } = await joinBoss('forest_thornwood_warden', 'RESILIENT', 31, {
+      aiHearts: 3,
+    });
+    expect(room.state.players.get('AI').enraged).toBe(false);
+
+    const ai = await driveAiTo(room, human, 2);
+    // Either the AI reached ≤ 2 hearts (and is enraged) or the duel ended first.
+    if (room.state.phase !== 'ENDED' && ai.hearts <= 2) {
+      expect(ai.enraged).toBe(true);
+    }
+  }, 20000);
+
+  test('a gate boss never enrages (threshold 0), even at 1 heart', async () => {
+    const { room, human } = await joinBoss('forest_bogwood_warden', 'DEFENSIVE', 5, {
+      aiHearts: 1,
+    });
+    // Already at 1 heart; drive a few turns. enraged must stay false.
+    await driveAiTo(room, human, 0);
+    const ai = room.state.players.get('AI');
+    expect(ai.enraged).toBe(false);
+  }, 20000);
+
+  test('sub bosses never enrage', async () => {
+    const { room } = await joinBoss('forest_thornado_shrine_guardian', 'AGGRESSIVE', 1, {
+      aiHearts: 1,
+    });
+    expect(room.state.players.get('AI').enraged).toBe(false);
+  });
+
+  test('non-boss AI never carries the enraged flag', async () => {
+    const room = await colyseus.createRoom<any>('battle-ai', {
+      vsAI: true,
+      personality: 'AGGRESSIVE',
+      aiSeed: 1,
+      aiHearts: 1,
+    });
+    await colyseus.connectTo(room);
+    await room.waitForNextPatch();
+    await sleep(20);
+    expect(room.state.players.get('AI').enraged).toBe(false);
+  });
+});

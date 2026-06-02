@@ -117,6 +117,15 @@ export const RELIQUARY_SHARD_INCREMENT = 10;
  *   noBlockMult — multiplies the profile's noBlockProb (blocks more often).
  *   bonusUses   — added to every combat ring's maxUses (deeper loadout).
  *   thinkMult   — multiplies the attacker think-delay (faster decisions when <1).
+ *
+ * Enrage (#259, phase-2). A boss whose hearts drop to ≤ enrageThreshold switches
+ * to an enraged profile: a further σ-tighten, a further think-speedup, and (for
+ * the major boss) a shift of attack targeting toward AGGRESSIVE (chase counters).
+ *   enrageThreshold       — hearts at/below which enrage fires; 0 = disabled.
+ *   enrageSigmaMult       — multiplies the (already modified) σ while enraged.
+ *   enrageThinkMult       — multiplies the (already modified) think-delay enraged.
+ *   enrageAggressive      — when true the enraged boss attacks like AGGRESSIVE
+ *                           (chases unparryable / counter-poking throws).
  */
 export interface BossModifier {
   bonusHearts: number;
@@ -124,17 +133,53 @@ export interface BossModifier {
   noBlockMult: number;
   bonusUses: number;
   thinkMult: number;
+  enrageThreshold: number;
+  enrageSigmaMult: number;
+  enrageThinkMult: number;
+  enrageAggressive: boolean;
 }
 
 export const BOSS_MODIFIERS: Record<BossTier, BossModifier> = {
   // Major boss (Thornwood Warden): much tankier, far sharper, deeper loadout, and
-  // quicker to act. The flagship Forest fight.
-  major: { bonusHearts: 2, sigmaMult: 0.5, noBlockMult: 0.25, bonusUses: 2, thinkMult: 0.8 },
-  // Gate boss (Bogwood Warden): a solid step above a roamer; standard pacing.
-  gate: { bonusHearts: 1, sigmaMult: 0.7, noBlockMult: 0.5, bonusUses: 1, thinkMult: 1.0 },
+  // quicker to act. Enrages at ≤ 2 hearts — a real phase-2 beat (sharper still and
+  // aggressive targeting). The flagship Forest fight.
+  major: {
+    bonusHearts: 2,
+    sigmaMult: 0.5,
+    noBlockMult: 0.25,
+    bonusUses: 2,
+    thinkMult: 0.8,
+    enrageThreshold: 2,
+    enrageSigmaMult: 0.6,
+    enrageThinkMult: 0.6,
+    enrageAggressive: true,
+  },
+  // Gate boss (Bogwood Warden): a solid step above a roamer; standard pacing. No
+  // enrage (threshold 0).
+  gate: {
+    bonusHearts: 1,
+    sigmaMult: 0.7,
+    noBlockMult: 0.5,
+    bonusUses: 1,
+    thinkMult: 1.0,
+    enrageThreshold: 0,
+    enrageSigmaMult: 1.0,
+    enrageThinkMult: 1.0,
+    enrageAggressive: false,
+  },
   // Sub-boss (fusion-shrine guardians): same toughness bump as a gate boss; their
-  // distinct threat is status-gauge pressure (#260), not raw stats.
-  sub: { bonusHearts: 1, sigmaMult: 0.7, noBlockMult: 0.5, bonusUses: 1, thinkMult: 1.0 },
+  // distinct threat is status-gauge pressure (#260), not raw stats. No enrage.
+  sub: {
+    bonusHearts: 1,
+    sigmaMult: 0.7,
+    noBlockMult: 0.5,
+    bonusUses: 1,
+    thinkMult: 1.0,
+    enrageThreshold: 0,
+    enrageSigmaMult: 1.0,
+    enrageThinkMult: 1.0,
+    enrageAggressive: false,
+  },
 };
 
 
