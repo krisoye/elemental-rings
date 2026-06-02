@@ -5,6 +5,7 @@ import type { RingData } from './InventoryGrid';
 import { usePips } from './ui/RingCard';
 import { CLOSE_GLYPH } from './ui/ModalShell';
 import { attachTooltip } from './ui/Tooltip';
+import { SlotSwapManager, type SwapSlot } from './ui/SlotSwapManager';
 import { apiFetch, fetchMe, getToken } from '../net/api';
 
 /**
@@ -69,13 +70,24 @@ export class BattleHandOverlay {
   private manageModal: Phaser.GameObjects.Container | null = null;
   private spareScrollRow = 0;
   private spareWheelHandler: ((p: unknown, g: unknown, dx: number, dy: number) => void) | null = null;
-  private manageSelectedRingId: string | null = null;
   /**
-   * Slot the selected ring came from, or null when selection is from the spare
-   * row. #305 — widened to the {@link HEART_SLOT} sentinel so the heart card
-   * participates in the same select-then-click swap system as the battle slots.
+   * EPIC #291 WS I (#307) — the shared click-then-click swap state machine,
+   * replacing the bespoke `manageSelectedRingId` + `manageSelectedFromSlot` pair.
+   * The held ring's section is the manager's `selection.source` (`'spare'` for the
+   * spare row, a battle slot, or `'heart'`). The field modal has no Reliquary
+   * access, so `validSlots` excludes `'reliquary'`. `resolveMove` routes each
+   * single-target drop (onto a battle slot or the heart) through the existing
+   * server helpers (PUT /api/loadout, PUT /api/heart-slot), which self-refresh —
+   * so `onAfter` is a no-op. Two-ring swaps onto a SPECIFIC spare card stay
+   * dispatched inline (the spare's id is needed), mirroring CampScene.applySwap.
    */
-  private manageSelectedFromSlot: BattleSlot | HeartSel | null = null;
+  private readonly swap = new SlotSwapManager({
+    validSlots: ['spare', 'thumb', 'a1', 'a2', 'd1', 'd2', 'heart'],
+    resolveMove: (ringId, from, to) => this.resolveManageMove(ringId, from, to),
+    onAfter: () => {
+      /* the delegated helpers already refreshManageData(). */
+    },
+  });
   private manageRings: RingData[] = [];
   /** #305 — the equipped heart ring from /api/me (`heart_ring`), or null when the slot is empty. */
   private heartRing: RingData | null = null;
@@ -111,6 +123,26 @@ export class BattleHandOverlay {
 
   private status(msg: string): void {
     this.onStatus?.(msg);
+  }
+
+  /**
+   * The held ring id from the swap manager (or null). Mirrors the old
+   * `manageSelectedRingId` read sites.
+   */
+  private get selRingId(): string | null {
+    return this.swap.selection?.ringId ?? null;
+  }
+
+  /**
+   * The slot the held ring came from in the old representation: a battle slot, the
+   * {@link HEART_SLOT} sentinel, or `null` when the held ring is a spare (the swap
+   * manager models that section as `'spare'`). Mirrors the old
+   * `manageSelectedFromSlot` read sites so the render/dispatch logic is unchanged.
+   */
+  private get selFromSlot(): BattleSlot | HeartSel | null {
+    const src = this.swap.selection?.source;
+    if (!src || src === 'spare') return null;
+    return src as BattleSlot | HeartSel;
   }
 
   /**
@@ -261,7 +293,7 @@ export class BattleHandOverlay {
       const ringId = this.manageLoadout[slot] ?? null;
       const ring = ringId ? this.manageRings.find((r) => r.id === ringId) : null;
       const color = ring ? ELEMENT_COLORS[ring.element] ?? 0x333333 : 0x333333;
-      const slotSelected = this.manageSelectedFromSlot === slot;
+      const slotSelected = this.selFromSlot === slot;
       const strokeColor = slotSelected ? 0xffff00 : 0x888888;
       const strokeWidth = slotSelected ? 3 : 2;
       const slotRect = this.scene.add
@@ -270,27 +302,25 @@ export class BattleHandOverlay {
         .setStrokeStyle(strokeWidth, strokeColor)
         .setInteractive({ useHandCursor: true })
         .on('pointerdown', () => {
-          const selId = this.manageSelectedRingId;
-          const selSlot = this.manageSelectedFromSlot;
+          const selId = this.selRingId;
+          const selSlot = this.selFromSlot;
           if (selSlot === HEART_SLOT) {
             // Heart ring selected — swap it slot-for-slot with this battle slot.
-            void this.swapHeartWithBattleSlot(slot);
+            void this.swap.moveTo(slot);
           } else if (selId !== null && selSlot === null) {
             // Spare ring selected — assign it to this slot (existing path).
-            void this.assignManageSlot(slot);
+            void this.swap.moveTo(slot);
           } else if (selId !== null && selSlot !== null) {
             // Slot ring selected — swap the two slots or deselect.
             if (selSlot === slot) {
-              this.manageSelectedRingId = null;
-              this.manageSelectedFromSlot = null;
+              this.swap.clear();
               this.renderManageModal();
             } else {
-              void this.swapManageSlots(selSlot, selId, slot, ringId);
+              void this.swap.moveTo(slot);
             }
           } else if (ringId) {
             // Nothing selected and slot occupied — select this slot's ring.
-            this.manageSelectedRingId = ringId;
-            this.manageSelectedFromSlot = slot;
+            this.swap.select(ringId, slot);
             this.renderManageModal();
           }
         });
@@ -384,7 +414,7 @@ export class BattleHandOverlay {
       const row = Math.floor(i / 6);
       const rx = CANVAS_W / 2 - 250 + col * 90;
       const ry = ringY + row * SPARE_ROW_H;
-      const selected = this.manageSelectedRingId === ring.id && this.manageSelectedFromSlot === null;
+      const selected = this.selRingId === ring.id && this.selFromSlot === null;
       const cardAlpha = spareFull ? 0.45 : 1;
 
       const ringGrp = this.scene.add.container(rx, ry);
@@ -396,8 +426,8 @@ export class BattleHandOverlay {
         .setAlpha(cardAlpha)
         .setInteractive({ useHandCursor: !spareFull })
         .on('pointerdown', () => {
-          const selSlot = this.manageSelectedFromSlot;
-          const selId = this.manageSelectedRingId;
+          const selSlot = this.selFromSlot;
+          const selId = this.selRingId;
           if (selSlot === HEART_SLOT) {
             // #305 — heart ring selected, then a spare clicked: equip this spare into
             // the heart slot, releasing the old heart ring to spare.
@@ -405,8 +435,7 @@ export class BattleHandOverlay {
           } else if (selSlot !== null && selId !== null) {
             void this.swapSlotWithSpare(selSlot, selId, ring.id);
           } else {
-            this.manageSelectedRingId = selected ? null : ring.id;
-            this.manageSelectedFromSlot = null;
+            if (selected) { this.swap.clear(); } else { this.swap.select(ring.id, 'spare'); }
             this.renderManageModal();
           }
         });
@@ -524,7 +553,7 @@ export class BattleHandOverlay {
    */
   private renderHeartCard(container: Phaser.GameObjects.Container, cx: number, cy: number): void {
     const heart = this.heartRing;
-    const selected = this.manageSelectedFromSlot === HEART_SLOT;
+    const selected = this.selFromSlot === HEART_SLOT;
     const color = heart ? ELEMENT_COLORS[heart.element] ?? 0x333333 : 0x2a2a33;
     const rect = this.scene.add
       .rectangle(cx, cy, 92, 80, color)
@@ -580,24 +609,22 @@ export class BattleHandOverlay {
    * (for recharge or to swap out).
    */
   private onHeartCardClick(): void {
-    const selId = this.manageSelectedRingId;
-    const selSlot = this.manageSelectedFromSlot;
+    const selId = this.selRingId;
+    const selSlot = this.selFromSlot;
     if (selId !== null && selSlot === null) {
       // Spare ring selected — equip it into the heart slot, releasing the old heart
       // ring to spare (server 400s 'carry cap exceeded' → "Free a slot first").
-      void this.equipHeartFromSpare(selId);
+      void this.swap.moveTo('heart');
     } else if (selId !== null && selSlot !== null && selSlot !== HEART_SLOT) {
       // Battle-slot ring selected — slot-for-slot swap with the heart slot.
-      void this.swapHeartWithBattleSlot(selSlot);
+      void this.swap.moveTo('heart');
     } else if (selSlot === HEART_SLOT) {
       // The heart was already selected — toggle it off.
-      this.manageSelectedRingId = null;
-      this.manageSelectedFromSlot = null;
+      this.swap.clear();
       this.renderManageModal();
     } else if (this.heartRing) {
       // Nothing selected and the heart is occupied — select it (recharge / swap-out).
-      this.manageSelectedRingId = this.heartRing.id;
-      this.manageSelectedFromSlot = HEART_SLOT;
+      this.swap.select(this.heartRing.id, HEART_SLOT);
       this.renderManageModal();
     }
   }
@@ -633,9 +660,47 @@ export class BattleHandOverlay {
     container.add([nameLbl, pipsLbl, xpLbl, tierLbl]);
   }
 
+  /**
+   * EPIC #291 WS I (#307) — {@link SlotSwapManager} resolveMove for the field
+   * modal. Routes a single-target drop of the held ring (`from`) onto `to` to the
+   * existing server helper. Only `to === 'heart'` or a battle slot reach here —
+   * drops onto a SPECIFIC spare card are dispatched inline (the spare's id is
+   * needed). The delegated helpers self-refresh, so the manager's onAfter is a
+   * no-op. Behaviour is identical to the pre-extraction inline dispatch.
+   */
+  private async resolveManageMove(_ringId: string, from: SwapSlot, to: SwapSlot): Promise<void> {
+    if (to === 'heart') {
+      // Equip into the heart slot. A spare source releases the old heart ring to
+      // spare; a battle-slot source is a slot-for-slot swap.
+      if (from === 'spare') {
+        await this.equipHeartFromSpare(_ringId);
+      } else {
+        await this.swapHeartWithBattleSlot(from as BattleSlot);
+      }
+      return;
+    }
+    // `to` is a battle slot (validSlots excludes 'reliquary'; 'spare' targets never
+    // reach resolveMove).
+    const toSlot = to as BattleSlot;
+    if (from === 'heart') {
+      // Heart ring dropped onto a battle slot — slot-for-slot swap.
+      await this.swapHeartWithBattleSlot(toSlot);
+    } else if (from === 'spare') {
+      // Spare ring assigned to the battle slot (server clears any prior slot). The
+      // manager's selection is still set during resolveMove, so assignManageSlot's
+      // `this.selRingId` read resolves to the held spare ring.
+      await this.assignManageSlot(toSlot);
+    } else {
+      // Battle slot ↔ battle slot — swap the two assignments.
+      const toRingId = this.manageLoadout[toSlot] ?? null;
+      await this.swapManageSlots(from as BattleSlot, _ringId, toSlot, toRingId);
+    }
+  }
+
+
   /** Assign the selected carried ring to a battle slot via PUT /api/loadout. */
   private async assignManageSlot(slot: BattleSlot): Promise<void> {
-    if (!this.manageSelectedRingId) {
+    if (!this.selRingId) {
       this.status('Select a carried ring first');
       this.setManageStatus('Select a carried ring first');
       return;
@@ -644,14 +709,13 @@ export class BattleHandOverlay {
     try {
       const res = await apiFetch('/api/loadout', {
         method: 'PUT',
-        json: { [slot]: this.manageSelectedRingId },
+        json: { [slot]: this.selRingId },
       });
       if (!res.ok) return;
     } catch {
       return;
     }
-    this.manageSelectedRingId = null;
-    this.manageSelectedFromSlot = null;
+    this.swap.clear();
     await this.refreshManageData();
   }
 
@@ -678,8 +742,7 @@ export class BattleHandOverlay {
       this.setManageStatus('Network error during swap');
       return;
     }
-    this.manageSelectedRingId = null;
-    this.manageSelectedFromSlot = null;
+    this.swap.clear();
     await this.refreshManageData();
   }
 
@@ -706,8 +769,7 @@ export class BattleHandOverlay {
       this.setManageStatus('Network error during swap');
       return;
     }
-    this.manageSelectedRingId = null;
-    this.manageSelectedFromSlot = null;
+    this.swap.clear();
     await this.refreshManageData();
   }
 
@@ -736,8 +798,7 @@ export class BattleHandOverlay {
       this.setManageStatus('Network error during heart swap');
       return;
     }
-    this.manageSelectedRingId = null;
-    this.manageSelectedFromSlot = null;
+    this.swap.clear();
     await this.refreshManageData();
   }
 
@@ -762,8 +823,7 @@ export class BattleHandOverlay {
       this.setManageStatus('Network error during heart swap');
       return;
     }
-    this.manageSelectedRingId = null;
-    this.manageSelectedFromSlot = null;
+    this.swap.clear();
     await this.refreshManageData();
   }
 
@@ -779,8 +839,7 @@ export class BattleHandOverlay {
       this.status('Network error during discard');
       return;
     }
-    this.manageSelectedRingId = null;
-    this.manageSelectedFromSlot = null;
+    this.swap.clear();
     await this.refreshManageData();
   }
 
@@ -800,8 +859,7 @@ export class BattleHandOverlay {
       this.manageModal.destroy(true);
       this.manageModal = null;
     }
-    this.manageSelectedRingId = null;
-    this.manageSelectedFromSlot = null;
+    this.swap.clear();
     this.manageStatusText = null;
     window.__battleHandOpen = false; // #212
     setHeartCardState(undefined); // #305
@@ -813,11 +871,11 @@ export class BattleHandOverlay {
 
   /** Recharge the currently selected ring using spirit. */
   private async doManageRechargeSelected(): Promise<void> {
-    if (!this.manageSelectedRingId) {
+    if (!this.selRingId) {
       this.setManageStatus('Select a ring to recharge');
       return;
     }
-    await this.doManageRechargeById(this.manageSelectedRingId);
+    await this.doManageRechargeById(this.selRingId);
   }
 
   /** POST /api/spirit/recharge for a specific ring id. */

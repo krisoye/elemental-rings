@@ -4,6 +4,7 @@ import { LoadoutPanel, type LoadoutSlot } from '../objects/LoadoutPanel';
 import { StakePanel } from '../objects/StakePanel';
 import { RingCard, usePips } from '../objects/ui/RingCard';
 import { attachTooltip } from '../objects/ui/Tooltip';
+import { SlotSwapManager, type SwapSlot } from '../objects/ui/SlotSwapManager';
 import { FusionPanel } from '../objects/FusionPanel';
 import { DifficultyModal } from '../objects/DifficultyModal';
 import { ELEMENT_NAMES, CANVAS_W, CANVAS_H, THUMB_PASSIVE_INFO, SLOT_KEYS } from '../Constants';
@@ -167,19 +168,17 @@ export class CampScene extends DualCameraScene {
    */
   private loadoutBadge: Phaser.GameObjects.Text | null = null;
   /**
-   * The current swap selection: which ring is "picked up" and where it came from
-   * (#154 universal-swap model). `null` when nothing is selected. The Reliquary
-   * and Spare sources are the InventoryGrids (their own selection stroke shows);
-   * a battle-slot source (thumb/a1/a2/d1/d2) highlights that slot card. Clicking a
-   * second ring with a DIFFERENT source performs a swap. Cleared after every
-   * completed move and on overlay close.
+   * EPIC #291 WS I (#307) — the shared click-then-click swap state machine. Holds
+   * the current "picked up" selection ({@link SlotSwapManager.selection}) and
+   * orchestrates a move when a target slot is clicked. Its `resolveMove` delegates
+   * to {@link reliquaryMove} (the same PUT /api/carry|loadout|heart-slot calls as
+   * before); `onAfter` reloads /api/me and re-renders the header. Built lazily on
+   * first use so `this` is available. The Reliquary and Spare sources are the
+   * InventoryGrids (their own selection stroke shows); a battle-slot source
+   * (thumb/a1/a2/d1/d2) highlights that slot card; 'heart' paints the Heart card
+   * stroke. Cleared after every completed move and on overlay close.
    */
-  private reliquarySelection:
-    | {
-        ringId: string;
-        source: 'reliquary' | 'spare' | 'thumb' | 'heart' | LoadoutSlot;
-      }
-    | null = null;
+  private swapManager: SlotSwapManager | null = null;
   // #78 ④ — last-computed Thumb passive reminder (recomputed every refreshPools),
   // mirrored into __campState and surfaced as the Thumb hover tooltip (EPIC #302).
   private stakedPassive: { name: string | null; effect: string } | null = null;
@@ -687,7 +686,7 @@ export class CampScene extends DualCameraScene {
       this.reliquaryHeaderRight = null;
       this.heartCard = null;
       this.loadoutBadge = null;
-      this.reliquarySelection = null;
+      this.swapManager?.clear();
       window.__campHitTestRing = undefined;
       window.__reliquaryMove = undefined;
       window.__reliquarySelect = undefined;
@@ -966,7 +965,7 @@ export class CampScene extends DualCameraScene {
       this.heartCard.clear();
       this.heartCard.setElementText('—', '#888888');
     }
-    const selected = this.reliquarySelection?.source === 'heart';
+    const selected = this.swapManager?.selection?.source === 'heart';
     this.heartCard.setStroke(selected ? 3 : 2, selected ? 0xffff00 : 0xcc4466);
   }
 
@@ -1072,11 +1071,8 @@ export class CampScene extends DualCameraScene {
    * the click replaces the selection. Carry-cap lock only blocks a fresh Reliquary
    * pick-up (swaps that free a carried slot are still allowed).
    */
-  private async onRingClicked(
-    ringId: string,
-    source: 'reliquary' | 'spare' | 'thumb' | 'heart' | LoadoutSlot,
-  ): Promise<void> {
-    const sel = this.reliquarySelection;
+  private async onRingClicked(ringId: string, source: SwapSlot): Promise<void> {
+    const sel = this.swapManager?.selection ?? null;
     if (sel && sel.ringId === ringId) {
       // Same ring clicked twice — deselect.
       this.clearReliquarySelection();
@@ -1085,19 +1081,14 @@ export class CampScene extends DualCameraScene {
     if (sel && sel.source !== source) {
       // EPIC #302 — the Heart slot has dedicated server semantics (PUT
       // /api/heart-slot), so any swap touching it routes through reliquaryMove's
-      // 'heart' path rather than the carry/loadout machinery in applySwap.
-      if (source === 'heart') {
-        // A selected ring is dropped onto the heart slot: equip it, releasing the
-        // old heart ring back to the selected ring's section.
-        this.clearReliquarySelection();
-        await this.reliquaryMove(sel.ringId, 'heart', sel.source);
-        return;
-      }
-      if (sel.source === 'heart') {
-        // The heart ring is selected, then a target is clicked: unequip the heart
-        // ring to that target (reliquaryMove's 'heart' source path).
-        this.clearReliquarySelection();
-        await this.reliquaryMove(sel.ringId, source);
+      // 'heart' path (the manager's resolveMove) rather than the carry/loadout
+      // machinery in applySwap.
+      if (source === 'heart' || sel.source === 'heart') {
+        // A selected ring dropped onto the heart slot (equip, releasing the old
+        // heart ring to the selected ring's section), OR the heart ring dropped
+        // onto another section (unequip to that target). Both are a single move
+        // of the held ring onto `source`, routed through the manager.
+        await this.swapManager?.moveTo(source);
         return;
       }
       // Two distinct rings from distinct sources — perform the swap. The first
@@ -1123,8 +1114,8 @@ export class CampScene extends DualCameraScene {
    * authoritative server effect is driven by reliquaryMove for each leg.
    */
   private async applySwap(
-    a: { ringId: string; source: 'reliquary' | 'spare' | 'thumb' | 'heart' | LoadoutSlot },
-    b: { ringId: string; source: 'reliquary' | 'spare' | 'thumb' | 'heart' | LoadoutSlot },
+    a: { ringId: string; source: SwapSlot },
+    b: { ringId: string; source: SwapSlot },
   ): Promise<void> {
     // EPIC #302 — heart sources/targets are routed before applySwap (onRingClicked),
     // so neither leg is ever 'heart' here. The wider type only satisfies the caller.
@@ -1232,11 +1223,8 @@ export class CampScene extends DualCameraScene {
    * non-grid sections and the opposite grid — never the grid that just selected
    * (clearing it would re-fire its onSelect(null) callback and recurse).
    */
-  private setSelection(sel: {
-    ringId: string;
-    source: 'reliquary' | 'spare' | 'thumb' | 'heart' | LoadoutSlot;
-  }): void {
-    this.reliquarySelection = sel;
+  private setSelection(sel: { ringId: string; source: SwapSlot }): void {
+    this.swapManager?.select(sel.ringId, sel.source);
     // Always drop the battle-hand + heart highlights — they are never the grid source.
     this.stakePanel.setSelected(false);
     this.loadoutPanel.setSelectedSlot(null);
@@ -1291,15 +1279,14 @@ export class CampScene extends DualCameraScene {
    */
   private async onBattleSlotClicked(slot: 'thumb' | LoadoutSlot): Promise<void> {
     const occupant = this.loadout[slot];
-    const sel = this.reliquarySelection;
     if (occupant) {
       await this.onRingClicked(occupant, slot);
       return;
     }
-    // Empty slot. If a ring is selected from elsewhere, assign it here directly.
-    if (sel) {
-      this.clearReliquarySelection();
-      await this.reliquaryMove(sel.ringId, slot);
+    // Empty slot. If a ring is selected from elsewhere, assign it here (the
+    // manager's moveTo resolves the move via reliquaryMove and clears selection).
+    if (this.swapManager?.selection) {
+      await this.swapManager.moveTo(slot);
     }
   }
 
@@ -1313,15 +1300,14 @@ export class CampScene extends DualCameraScene {
    */
   private async onHeartCardClicked(): Promise<void> {
     const heart = window.__campState?.heart_ring as RingData | null | undefined;
-    const sel = this.reliquarySelection;
     if (heart) {
       await this.onRingClicked(heart.id, 'heart');
       return;
     }
-    // Empty heart slot. If a ring is selected from elsewhere, equip it here.
-    if (sel) {
-      this.clearReliquarySelection();
-      await this.reliquaryMove(sel.ringId, 'heart', sel.source);
+    // Empty heart slot. If a ring is selected from elsewhere, equip it here — the
+    // manager's moveTo passes the from-section as reliquaryMove's releaseFrom.
+    if (this.swapManager?.selection) {
+      await this.swapManager.moveTo('heart');
     }
   }
 
@@ -1331,10 +1317,9 @@ export class CampScene extends DualCameraScene {
    * selection or no selection is a no-op.
    */
   private async onReliquaryDropClicked(): Promise<void> {
-    const sel = this.reliquarySelection;
+    const sel = this.swapManager?.selection ?? null;
     if (!sel || sel.source === 'reliquary') return;
-    this.clearReliquarySelection();
-    await this.reliquaryMove(sel.ringId, 'reliquary');
+    await this.swapManager!.moveTo('reliquary');
   }
 
   /**
@@ -1343,10 +1328,9 @@ export class CampScene extends DualCameraScene {
    * no-op.
    */
   private async onSpareDropClicked(): Promise<void> {
-    const sel = this.reliquarySelection;
+    const sel = this.swapManager?.selection ?? null;
     if (!sel || sel.source === 'spare') return;
-    this.clearReliquarySelection();
-    await this.reliquaryMove(sel.ringId, 'spare');
+    await this.swapManager!.moveTo('spare');
   }
 
   /**
@@ -1363,8 +1347,8 @@ export class CampScene extends DualCameraScene {
    */
   private async reliquaryMove(
     ringId: string,
-    target: 'reliquary' | 'spare' | 'thumb' | 'heart' | LoadoutSlot,
-    releaseFrom?: 'reliquary' | 'spare' | 'thumb' | 'heart' | LoadoutSlot,
+    target: SwapSlot,
+    releaseFrom?: SwapSlot,
   ): Promise<void> {
     const ring = this.ringMap.get(ringId);
     if (!ring) {
@@ -1452,8 +1436,8 @@ export class CampScene extends DualCameraScene {
    */
   private async heartSlotMove(
     ringId: string,
-    target: 'reliquary' | 'spare' | 'thumb' | 'heart' | LoadoutSlot,
-    releaseFrom?: 'reliquary' | 'spare' | 'thumb' | 'heart' | LoadoutSlot,
+    target: SwapSlot,
+    releaseFrom?: SwapSlot,
   ): Promise<void> {
     // Build the { ringId?, releaseTo? } body. Equip vs unequip is decided by
     // whether the heart is the move target. 'heart' is never a valid releaseTo.
@@ -1495,13 +1479,13 @@ export class CampScene extends DualCameraScene {
 
   /** Clear the pending selection and every section's selection highlight. */
   private clearReliquarySelection(): void {
-    this.reliquarySelection = null;
+    this.swapManager?.clear();
     this.clearSelectionHighlights();
   }
 
   /**
    * Clear the yellow selection stroke on both grids and both battle-hand panels
-   * without touching `reliquarySelection`. Used before re-applying a fresh
+   * without touching the swap manager's selection. Used before re-applying a fresh
    * highlight and when clearing the selection entirely.
    */
   private clearSelectionHighlights(): void {
@@ -1510,7 +1494,7 @@ export class CampScene extends DualCameraScene {
     this.stakePanel.setSelected(false);
     this.loadoutPanel.setSelectedSlot(null);
     // EPIC #302 — re-paint the heart card so its selection stroke clears in step
-    // with `reliquarySelection` (renderHeartCard reads the live selection source).
+    // with the swap manager (renderHeartCard reads the live selection source).
     this.renderHeartCard();
   }
 
@@ -2035,6 +2019,19 @@ export class CampScene extends DualCameraScene {
    * modal overlay containers when a zone is interacted with.
    */
   private buildPanels(): void {
+    // EPIC #291 WS I (#307) — the shared click-then-click swap state machine. Its
+    // `resolveMove` routes each completed move through reliquaryMove (the same PUT
+    // /api/carry|loadout|heart-slot calls as before, with the from-section as the
+    // `releaseFrom` hint for heart equips). reliquaryMove self-reloads /api/me and
+    // re-renders, so `onAfter` is a no-op. CampScene exposes every SwapSlot
+    // including 'reliquary'.
+    this.swapManager = new SlotSwapManager({
+      validSlots: ['reliquary', 'spare', 'thumb', 'a1', 'a2', 'd1', 'd2', 'heart'],
+      resolveMove: (ringId, from, to) => this.reliquaryMove(ringId, to, from),
+      onAfter: () => {
+        /* reliquaryMove already reloads /api/me + re-renders the header. */
+      },
+    });
     // #154 — the two grids drive the universal-swap selection. Both are 3-column
     // (Reliquary and Spare). The Reliquary grid (sanctumGrid) selecting a card
     // picks it up as a 'reliquary' source; the Spare grid (loadoutGrid) as 'spare'.
