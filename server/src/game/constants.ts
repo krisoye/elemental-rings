@@ -43,8 +43,7 @@ export const STARTER_GOLD = 200;
 export const GOLD_FORFEIT_PENALTY = 25;
 
 // Outcome-based ring XP. Rings earn XP from exchange results, not per use.
-// spirit_max = SPIRIT_BASE + floor(aggregate_xp / XP_SCALER).
-export const XP_SCALER = 50;
+// (EPIC #279 — XP no longer feeds spirit_max; it drives ring tiers only.)
 // Attack ring XP by outcome.
 export const XP_ATK_HIT = 5; // attack lands (defender loses a heart)
 export const XP_ATK_BLOCK = 2; // attack is blocked
@@ -62,11 +61,6 @@ export const XP_THUMB_MID = 2; // per Tailwind (Wind) or Precision Parry (Earth)
 export const FOOD_PER_SLEEP = 25;
 export const SPIRIT_PER_RING_USE = 1;
 export const MERCHANT_FOOD_MARKUP = 2;
-
-// Spirit gauge maximum is XP-derived: spirit_max = SPIRIT_BASE + aggregate ring
-// XP. SPIRIT_BASE is the flat floor every player starts with (replaces the old
-// flat 30 default).
-export const SPIRIT_BASE = 50;
 
 // EPIC #279 — carry-cap composition. The carry cap is a flat constant for every
 // player: CORE_SLOTS (the five named battle-hand slots: thumb + a1 + a2 + d1 + d2)

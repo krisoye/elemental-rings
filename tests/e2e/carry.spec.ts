@@ -29,13 +29,13 @@ async function me(token: string): Promise<{ player: any; rings: Ring[]; loadout:
   return res.json();
 }
 
-// ── GET /api/me exposes the computed carry_cap (5 for a fresh player) ────────
-// #171: /api/me now returns the XP-derived carry_cap (5 + ceil(log_2(aggregate_xp))),
-// NOT the stale DB column. Fresh player has aggregate_xp=0 → cap=5.
-test('carry: GET /api/me returns computed carry_cap 5 for a fresh player', async () => {
+// ── GET /api/me exposes the computed carry_cap (14, flat for all players) ────
+// EPIC #279: /api/me returns the flat carry_cap = CORE_SLOTS(5) + SPARE_SLOTS(9)
+// = 14, NOT the stale DB column and no longer XP-derived.
+test('carry: GET /api/me returns computed carry_cap 14 for a fresh player', async () => {
   const { token } = await register();
   const { player } = await me(token);
-  expect(player.carry_cap).toBe(5);
+  expect(player.carry_cap).toBe(14);
 });
 
 // ── PUT /api/carry sets in_carry flags correctly ──────────────────────────────
@@ -57,17 +57,24 @@ test('carry: PUT /api/carry sets in_carry on exactly the named rings', async () 
   expect(carried).toEqual([...target].sort());
 });
 
-// ── PUT /api/carry enforces the carry cap ─────────────────────────────────────
-// #171: the effective carry cap is now XP-derived: 5 + ceil(log_2(aggregate_xp)).
-// A fresh player (aggregate_xp = 0) has cap = 5. Carrying exactly 5 rings is
-// allowed; 6 rings is rejected.
-test('carry: PUT /api/carry returns 400 when count exceeds carry_cap', async () => {
+// ── PUT /api/carry enforces the flat carry cap of 14 ─────────────────────────
+// EPIC #279: carry_cap = 14 for every player. A fresh player owns 10 starter
+// rings; we seed 5 more into the Reliquary (15 owned total) so the cap boundary
+// is reachable. Carrying exactly 14 is allowed; 15 is rejected.
+test('carry: PUT /api/carry returns 400 when count exceeds carry_cap (14)', async () => {
   const { token } = await register();
+  // Seed 5 extra resting rings → 15 owned, enough to exceed the cap of 14.
+  const seed = await fetch(`${API_URL}/api/test/seed-resting-rings`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+    body: JSON.stringify({ count: 5 }),
+  });
+  expect(seed.status).toBe(200);
   const { rings } = await me(token);
-  expect(rings.length).toBe(10); // 10 starter rings
+  expect(rings.length).toBe(15); // 10 starters + 5 seeded
 
-  // Exactly 5 rings is at the cap for a fresh player (5 + 0 spare) → 200.
-  const atCap = rings.slice(0, 5).map((r) => r.id);
+  // Exactly 14 rings is at the cap → 200.
+  const atCap = rings.slice(0, 14).map((r) => r.id);
   const ok = await fetch(`${API_URL}/api/carry`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
@@ -75,8 +82,8 @@ test('carry: PUT /api/carry returns 400 when count exceeds carry_cap', async () 
   });
   expect(ok.status).toBe(200);
 
-  // 6 rings exceeds the cap (6 > 5) → 400.
-  const overCap = rings.slice(0, 6).map((r) => r.id);
+  // 15 rings exceeds the cap (15 > 14) → 400.
+  const overCap = rings.slice(0, 15).map((r) => r.id);
   const overflow = await fetch(`${API_URL}/api/carry`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
@@ -106,9 +113,9 @@ test('carry: __campState separates atSanctum / loadout / battleHand', async ({ b
   });
   const state = await page.evaluate(() => (window as any).__campState);
 
-  // #171: carry_cap is now XP-derived. Fresh player has aggregate_xp=0 → cap=5.
-  // /api/me now returns the computed cap, so CampScene's __campState reflects it.
-  expect(state.carry_cap).toBe(5);
+  // EPIC #279: carry_cap is a flat 14 for every player. /api/me returns the
+  // computed cap, so CampScene's __campState reflects it.
+  expect(state.carry_cap).toBe(14);
   expect(Array.isArray(state.atSanctum)).toBe(true);
   expect(Array.isArray(state.loadout_pool)).toBe(true);
   expect(Array.isArray(state.battleHand)).toBe(true);
@@ -123,9 +130,9 @@ test('carry: __campState separates atSanctum / loadout / battleHand', async ({ b
 });
 
 // ── Add to Loadout moves a Sanctum ring into carry (when cap allows) ─────────
-// #171: effective carry cap is now 5 + ceil(log_2(aggregate_xp)). A fresh player
-// starts with 5 battle-slot rings carried (= cap). We free one slot first, then
-// add a Sanctum ring to confirm the carry flow works within the new cap model.
+// EPIC #279: carry cap is a flat 14. A fresh player starts with 5 battle-slot
+// rings carried (well under cap). We free one slot first, then add a Sanctum ring
+// to confirm the carry flow works.
 test('carry: __campAddToLoadout carries a Sanctum ring', async ({ browser }) => {
   const { token } = await register();
   const { rings } = await me(token);
@@ -180,8 +187,8 @@ test('carry: __campAddToLoadout carries a Sanctum ring', async ({ browser }) => 
 // ── Post-battle won-ring modal: room case (Add) ──────────────────────────────
 // The prompt now fires in EncounterScene (the post-battle destination), so we
 // seed a pending ring and navigate into EncounterScene to exercise it.
-// #171: effective cap is now 5. We free one carry slot first to create room for
-// the pending ring, then confirm the Add path works.
+// EPIC #279: cap is a flat 14, and a fresh player carries 5 (under cap), so the
+// won-ring prompt uses the room-case modal. We confirm the Add path works.
 test('carry: won-ring modal Add carries the pending ring (room case)', async ({ browser }) => {
   const { token } = await register();
   // Reduce carry to 4 rings to make room for the pending ring (cap=5, 4 < 5).
@@ -233,43 +240,58 @@ test('carry: won-ring modal Add carries the pending ring (room case)', async ({ 
 //
 // End-to-end via a REAL forced win: a 1-heart AI with extinguished rings
 // (aiHearts:1, aiUses:0) forfeits its first attack turn (§6.6) → guaranteed
-// protagonist win → a genuine granted 11th ring stored in er_pending_ring.
+// protagonist win → a genuine granted ring stored in er_pending_ring.
 //
-// #171: effective carry cap is now 5. A fresh player already has 5 rings carried
-// (the battle slots), so carry is AT the cap immediately after winning. The
-// redesigned full-carry flow has no swap modal: when carry is at the cap the
-// won-ring prompt routes straight to Manage Battle Hand, which shows the pending
-// ring. Discarding a carried ring frees a slot and auto-carries the pending ring
+// EPIC #279: carry cap is now a flat 14. To reach the full-carry routing (the
+// won-ring prompt goes straight to Manage Battle Hand, not the room-case modal),
+// the player must be carrying exactly 14 rings. We seed 4 extra rings (10 + 4 =
+// 14 owned), carry all 14, then win → the granted ring becomes pending. Discarding
+// a carried ring frees a slot and auto-carries the pending ring
 // (tryAutoCarryPending). Asserts: the discarded ring is gone (deleted), the won
-// ring is now carried, carry holds at the cap, and er_pending_ring is cleared.
+// ring is now carried, carry holds at the cap (14), and er_pending_ring is cleared.
 test('carry: full-carry win → discard in Manage Battle Hand auto-carries the won ring', async ({
   browser,
 }) => {
   const { token } = await register();
+  // Seed 4 extra rings → 14 owned, then carry all 14 (at the cap).
+  const seed = await fetch(`${API_URL}/api/test/seed-resting-rings`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+    body: JSON.stringify({ count: 4 }),
+  });
+  expect(seed.status).toBe(200);
+  const seeded = await me(token);
+  expect(seeded.rings.length).toBe(14); // 10 starters + 4 seeded
+  const allFourteen = seeded.rings.map((r) => r.id);
+  const carryAll = await fetch(`${API_URL}/api/carry`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+    body: JSON.stringify({ ringIds: allFourteen }),
+  });
+  expect(carryAll.status).toBe(200);
+
   const ctx = await browser.newContext();
   await ctx.addInitScript(`localStorage.setItem('er_token', ${JSON.stringify(token)})`);
   const page = await ctx.newPage();
   await page.goto(URL);
 
-  // Forced WIN → a real granted 11th ring. driveAiDuel lands in EncounterScene.
+  // Forced WIN → a real granted 15th ring. driveAiDuel lands in EncounterScene.
   const wonRingId = await driveAiDuel(page, { personality: 'AGGRESSIVE', aiHearts: 1, aiUses: 0 });
   expect(wonRingId).not.toBeNull();
 
-  // With cap=5 and 5 rings already carried, the fresh player is AT the cap.
+  // With cap=14 and 14 rings already carried, the player is AT the cap.
   // The win prompt should route DIRECTLY to Manage Battle Hand (full-carry case),
   // not the room-case modal. The won ring stays uncarried as a pending ring.
   const { rings } = await me(token);
-  expect(rings.length).toBe(11); // 10 starters + 1 won
+  expect(rings.length).toBe(15); // 14 owned + 1 won
 
-  // Confirm the won ring is uncarried (it was granted but carry is full).
-  // The client placed it in er_pending_ring. Re-arm it to be certain.
   const currentlyCarried = rings.filter((r) => r.in_carry === 1);
-  expect(currentlyCarried.length).toBe(5); // exactly at cap
+  expect(currentlyCarried.length).toBe(14); // exactly at cap
 
   const discardId = currentlyCarried[0].id; // one carried ring to discard
 
   // Re-arm the won ring as pending, reload, and enter EncounterScene. Because
-  // carry is full (5/5), checkPendingWonRing routes to Manage Battle Hand
+  // carry is full (14/14), checkPendingWonRing routes to Manage Battle Hand
   // rather than the room-case modal.
   await page.evaluate((id) => localStorage.setItem('er_pending_ring', id), wonRingId!);
   await page.reload();
@@ -286,7 +308,7 @@ test('carry: full-carry win → discard in Manage Battle Hand auto-carries the w
   // back to Node (it returns undefined), so checking typeof here is mandatory.
   expect(await page.evaluate(() => typeof (window as any).__encounterDiscardRing)).toBe('function');
   // Confirm the FULL case before the discard (real server state).
-  expect((await me(token)).rings.filter((r) => r.in_carry === 1).length).toBe(5);
+  expect((await me(token)).rings.filter((r) => r.in_carry === 1).length).toBe(14);
 
   // Discard a carried ring → frees a slot → tryAutoCarryPending carries the won
   // ring and clears er_pending_ring.
@@ -300,8 +322,8 @@ test('carry: full-carry win → discard in Manage Battle Hand auto-carries the w
   expect(final.find((r) => r.id === wonRingId)?.in_carry).toBe(1);
   // Discarded ring is permanently gone (deleted, not returned to the Sanctum).
   expect(final.find((r) => r.id === discardId)).toBeUndefined();
-  // Carry holds at the cap; total drops by the one discarded ring (11 → 10).
-  expect(final.filter((r) => r.in_carry === 1).length).toBe(5);
-  expect(final.length).toBe(10);
+  // Carry holds at the cap; total drops by the one discarded ring (15 → 14).
+  expect(final.filter((r) => r.in_carry === 1).length).toBe(14);
+  expect(final.length).toBe(14);
   await ctx.close();
 }, 90000);

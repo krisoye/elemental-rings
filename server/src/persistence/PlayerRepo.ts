@@ -1,13 +1,11 @@
 import { v4 as uuidv4 } from 'uuid';
 import { db } from './db';
-import { ElementEnum, type DifficultyTier } from '../../../shared/types';
+import { ElementEnum, DIFFICULTY_MULTIPLIERS, type DifficultyTier } from '../../../shared/types';
 import { fusionOf, isFusion, componentsOf } from '../game/Fusions';
 import { tierForXp } from '../game/Tiers';
 import { getTalisman } from '../../../shared/talismans';
 import {
   SPIRIT_PER_RING_USE,
-  SPIRIT_BASE,
-  XP_SCALER,
   FORAGE_YIELD,
   FORAGE_RESPAWN_DAYS,
   FOOD_SELL_PRICE,
@@ -330,13 +328,20 @@ const updateSpiritDeduct = db.prepare(
 const updateSpiritDeductGuarded = db.prepare(
   `UPDATE players SET spirit_current = spirit_current - ? WHERE id = ? AND spirit_current >= ?`,
 );
-// spirit_max is XP-derived (SPIRIT_BASE + floor(aggregate_xp / XP_SCALER)), so
-// restoring sets spirit_current to the freshly computed max, not the column.
-// Only Reliquary rings (in_carry = 0) count toward aggregate_xp — carried rings
-// are excluded. Must match the boot-time recompute filter in db.ts.
+// aggregate_xp is the raw sum of XP across the player's Reliquary rings
+// (in_carry = 0). It still drives ring-tier display in the HUD — it is NOT the
+// spirit_max input anymore (EPIC #279 moved that to the max_uses sum below).
 const selectAggregateRingXp = db.prepare(
   `SELECT COALESCE(SUM(xp), 0) AS xp_sum FROM rings WHERE owner_id = ? AND in_carry = 0`,
 );
+// EPIC #279 — spirit_max is now derived from the SUM of max_uses across the
+// player's Reliquary rings (in_carry = 0), scaled by their difficulty multiplier.
+// Must match the boot-time recompute filter in db.ts. Carried rings are excluded.
+const selectReliquaryMaxUsesSum = db.prepare(
+  `SELECT COALESCE(SUM(max_uses), 0) AS uses_sum FROM rings WHERE owner_id = ? AND in_carry = 0`,
+);
+// EPIC #279 — read the player's difficulty tier for the spirit_max multiplier.
+const selectPlayerDifficulty = db.prepare(`SELECT difficulty FROM players WHERE id = ?`);
 const updateSpiritCurrent = db.prepare(
   `UPDATE players SET spirit_current = ? WHERE id = ?`,
 );
@@ -1006,16 +1011,24 @@ export function spendSpiritAtomic(playerId: string, cost: number): boolean {
 }
 
 /**
- * Single query returning both the raw aggregate ring XP and the derived
- * spirit_max. Use this wherever both values are needed to avoid a second
- * DB round-trip.
- *   aggregate_xp = SUM(xp) WHERE in_carry = 0   -- Reliquary rings only
- *   spirit_max   = SPIRIT_BASE + floor(aggregate_xp / XP_SCALER)
+ * Both the raw aggregate ring XP (for HUD ring-tier display) and the derived
+ * spirit_max (EPIC #279). Use this wherever both values are needed.
+ *   aggregate_xp = SUM(xp) WHERE in_carry = 0        -- Reliquary rings only
+ *   spirit_max   = SUM(max_uses) WHERE in_carry = 0
+ *                  × DIFFICULTY_MULTIPLIERS[player.difficulty]
+ * An empty Reliquary yields spirit_max = 0 by design — a new player earns their
+ * first spirit by winning a ring and retiring it to the Reliquary. There is no
+ * floor or starting grant.
  */
 export function getSpiritStats(playerId: string): { aggregateXp: number; spiritMax: number } {
-  const row = selectAggregateRingXp.get(playerId) as { xp_sum: number } | undefined;
-  const aggregateXp = row?.xp_sum ?? 0;
-  return { aggregateXp, spiritMax: SPIRIT_BASE + Math.floor(aggregateXp / XP_SCALER) };
+  const xpRow = selectAggregateRingXp.get(playerId) as { xp_sum: number } | undefined;
+  const aggregateXp = xpRow?.xp_sum ?? 0;
+  const usesRow = selectReliquaryMaxUsesSum.get(playerId) as { uses_sum: number } | undefined;
+  const usesSum = usesRow?.uses_sum ?? 0;
+  const diffRow = selectPlayerDifficulty.get(playerId) as { difficulty: string } | undefined;
+  const tier = (diffRow?.difficulty ?? 'seeker') as DifficultyTier;
+  const multiplier = DIFFICULTY_MULTIPLIERS[tier] ?? DIFFICULTY_MULTIPLIERS.seeker;
+  return { aggregateXp, spiritMax: usesSum * multiplier };
 }
 
 /** Return the raw sum of XP across all rings owned by the player. */
