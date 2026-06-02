@@ -117,7 +117,73 @@ describe('#257 — boss is seated and reaches ATTACK_SELECT', () => {
     expect(room.state.players.size).toBe(2);
     expect(room.locked).toBe(true);
     expect(room.state.currentAttackerId).toBe('AI');
-    // Non-major-modifier baseline reference (filled in by #258).
     expect(room.state.players.get('AI').hearts).toBeGreaterThanOrEqual(STARTING_HEARTS);
+  });
+});
+
+describe('#258 — BOSS_MODIFIERS difficulty bundle', () => {
+  test('major boss (Thornwood) seats STARTING_HEARTS + 2', async () => {
+    const { room } = await joinBoss('forest_thornwood_warden', 'RESILIENT', 1);
+    expect(room.state.players.get('AI').hearts).toBe(STARTING_HEARTS + 2);
+  });
+
+  test('gate boss (Bogwood) seats STARTING_HEARTS + 1', async () => {
+    const { room } = await joinBoss('forest_bogwood_warden', 'DEFENSIVE', 1);
+    expect(room.state.players.get('AI').hearts).toBe(STARTING_HEARTS + 1);
+  });
+
+  test('sub bosses (guardians) seat STARTING_HEARTS + 1', async () => {
+    const a = await joinBoss('forest_thornado_shrine_guardian', 'AGGRESSIVE', 1);
+    expect(a.room.state.players.get('AI').hearts).toBe(STARTING_HEARTS + 1);
+    const b = await joinBoss('forest_bloom_shrine_guardian', 'DEFENSIVE', 1);
+    expect(b.room.state.players.get('AI').hearts).toBe(STARTING_HEARTS + 1);
+  });
+
+  test('non-boss vsAI still seats exactly STARTING_HEARTS', async () => {
+    const room = await colyseus.createRoom<any>('battle-ai', {
+      vsAI: true,
+      personality: 'AGGRESSIVE',
+      aiSeed: 1,
+    });
+    await colyseus.connectTo(room);
+    await room.waitForNextPatch();
+    await sleep(20);
+    expect(room.state.players.get('AI').hearts).toBe(STARTING_HEARTS);
+  });
+
+  test('boss combat rings seat with +bonusUses maxUses over the unscaled baseline', async () => {
+    // No playerBattleHandAvgXp → unscaled loadout (tier 1, naturalMaxUses default 3
+    // for the AILoadout default path). The gate modifier adds +1 use to each combat
+    // ring; the passive thumb is NOT boosted.
+    const { room } = await joinBoss('forest_bogwood_warden', 'DEFENSIVE', 1);
+    const ai = room.state.players.get('AI');
+    for (const key of ['a1', 'a2', 'd1', 'd2'] as const) {
+      // Default unscaled AI ring maxUses is 3; gate bonusUses = +1 → 4.
+      expect(ai[key].maxUses).toBe(4);
+      expect(ai[key].currentUses).toBe(4);
+    }
+  });
+
+  test('major boss combat rings get +2 uses', async () => {
+    const { room } = await joinBoss('forest_thornwood_warden', 'RESILIENT', 1);
+    const ai = room.state.players.get('AI');
+    for (const key of ['a1', 'a2', 'd1', 'd2'] as const) {
+      expect(ai[key].maxUses).toBe(5); // 3 + 2
+    }
+  });
+
+  test('E2E aiHearts override takes precedence over the boss modifier', async () => {
+    const { room } = await joinBoss('forest_thornwood_warden', 'RESILIENT', 1, { aiHearts: 1 });
+    // Override wins over the +2 major modifier.
+    expect(room.state.players.get('AI').hearts).toBe(1);
+  });
+
+  test('E2E aiUses override takes precedence over boss bonusUses', async () => {
+    const { room } = await joinBoss('forest_thornwood_warden', 'RESILIENT', 1, { aiUses: 0 });
+    const ai = room.state.players.get('AI');
+    // Uniform uses=0 override applies; bonusUses is ignored.
+    for (const key of ['a1', 'a2', 'd1', 'd2'] as const) {
+      expect(ai[key].currentUses).toBe(0);
+    }
   });
 });

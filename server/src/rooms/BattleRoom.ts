@@ -6,7 +6,7 @@ import { classifyTiming, resolveBlock } from '../game/BlockResolver';
 import { componentsOf, fusionParents, isFusion } from '../game/ElementSystem';
 import * as StatusEffects from '../game/StatusEffects';
 import { AIController } from '../game/ai/AIController';
-import { makeRng } from '../game/ai/AIProfiles';
+import { makeRng, AI_PROFILES, type AIProfile } from '../game/ai/AIProfiles';
 import { generateAILoadout, type SlotSpec } from '../game/ai/AILoadout';
 import * as StakeResolver from '../game/StakeResolver';
 import * as PlayerRepo from '../persistence/PlayerRepo';
@@ -33,6 +33,8 @@ import {
   AMBUSH_SPIRIT_COST,
   SPIRIT_PER_RING_USE,
   GOLD_FORFEIT_PENALTY,
+  BOSS_MODIFIERS,
+  type BossModifier,
 } from '../game/constants';
 import {
   ElementEnum,
@@ -46,6 +48,7 @@ import {
   AttackSlot,
   DefenseSlot,
   BattleSummaryPayload,
+  AIPersonality,
 } from '../../../shared/types';
 
 /** Fixed sessionId used for the virtual AI player (it has no Colyseus client). */
@@ -221,16 +224,51 @@ export class BattleRoom extends Room<{ state: BattleState }> {
         thumbElement,
         playerXp,
       );
+      // #258 — BOSS_MODIFIERS difficulty bundle. A boss tier resolves a modifier
+      // that STACKS on top of the existing XP scaling: +hearts / +uses on the seat,
+      // and a sharpened combat profile (tighter σ / fewer no-blocks / faster think).
+      const mod = this.boss ? BOSS_MODIFIERS[this.boss.tier] : undefined;
+
       // Deterministic-test AI-strength overrides (see BattleRoomOptions): a weak
       // AI yields a guaranteed protagonist win; a tanky AI a guaranteed loss.
       // Applied to the AI seat ONLY — the human is seated from its real loadout.
+      // E2E aiHearts/aiUses take PRECEDENCE over the boss modifier (override wins).
+      const bossHearts = mod ? STARTING_HEARTS + mod.bonusHearts : undefined;
+      const hearts = options.aiHearts ?? bossHearts;
       const aiOverrides =
-        options.aiHearts !== undefined || options.aiUses !== undefined
-          ? { hearts: options.aiHearts, uses: options.aiUses }
+        hearts !== undefined || options.aiUses !== undefined || mod !== undefined
+          ? { hearts, uses: options.aiUses, bonusUses: mod?.bonusUses ?? 0 }
           : undefined;
       this.seatPlayer(AI_ID, personality, aiSpec, aiOverrides);
-      this.ai = new AIController(this, AI_ID, personality, seed);
+
+      // Build the boss-modified AI profile (no-op when not a boss). The modifier
+      // multiplies the base profile's σ / no-block / think fields (both healthy
+      // and low-heart variants stay proportional).
+      const profileOverride = mod ? this.buildBossProfile(personality, mod) : undefined;
+      this.ai = new AIController(this, AI_ID, personality, seed, profileOverride);
     }
+  }
+
+  /**
+   * #258 — derive a boss-modified AIProfile from the base personality profile by
+   * scaling its timing-σ / no-block / think-delay fields by the tier modifier.
+   * Both the healthy and the low-heart variants are scaled so the boss stays
+   * proportionally sharper at every health level. Pure — returns a fresh object,
+   * never mutates AI_PROFILES.
+   */
+  private buildBossProfile(personality: AIPersonality, mod: BossModifier): AIProfile {
+    const base = AI_PROFILES[personality];
+    return {
+      ...base,
+      timingSigmaMs: base.timingSigmaMs * mod.sigmaMult,
+      lowHeartTimingSigmaMs: base.lowHeartTimingSigmaMs * mod.sigmaMult,
+      noBlockProb: base.noBlockProb * mod.noBlockMult,
+      lowHeartNoBlockProb: base.lowHeartNoBlockProb * mod.noBlockMult,
+      thinkDelayMinMs: base.thinkDelayMinMs * mod.thinkMult,
+      thinkDelayMaxMs: base.thinkDelayMaxMs * mod.thinkMult,
+      lowHeartThinkDelayMinMs: base.lowHeartThinkDelayMinMs * mod.thinkMult,
+      lowHeartThinkDelayMaxMs: base.lowHeartThinkDelayMaxMs * mod.thinkMult,
+    };
   }
 
   /**
@@ -249,14 +287,17 @@ export class BattleRoom extends Room<{ state: BattleState }> {
     id: string,
     displayName: string,
     spec?: Partial<Record<SlotKey, SlotSpec>>,
-    overrides?: { hearts?: number; uses?: number },
+    overrides?: { hearts?: number; uses?: number; bonusUses?: number },
   ): number {
     const ps = new PlayerState();
     ps.playerId = id;
     ps.displayName = displayName;
-    // `overrides` (deterministic E2E only, AI seat only) replaces hearts and/or
-    // sets a uniform per-slot uses value so a duel outcome can be forced.
+    // `overrides` (AI seat only) replaces hearts and/or sets a uniform per-slot
+    // uses value (deterministic E2E) or adds `bonusUses` to every COMBAT ring's
+    // depth (#258 BOSS_MODIFIERS). The E2E uniform `uses` takes precedence over
+    // bonusUses so an aiUses override still forces a duel outcome.
     ps.hearts = overrides?.hearts ?? STARTING_HEARTS;
+    const bonusUses = overrides?.bonusUses ?? 0;
 
     for (const key of Object.keys(DEFAULT_LOADOUT) as SlotKey[]) {
       const ring = ps.getSlot(key);
@@ -264,9 +305,12 @@ export class BattleRoom extends Room<{ state: BattleState }> {
       const element = slotSpec ? slotSpec.element : DEFAULT_LOADOUT[key];
       const baseCurrent = slotSpec ? slotSpec.currentUses : STARTING_USES;
       const baseMax = slotSpec ? slotSpec.maxUses : STARTING_USES;
-      const currentUses = overrides?.uses ?? baseCurrent;
+      // #258 — the boss bonusUses deepens the four COMBAT rings (not the passive
+      // thumb). Skipped when the E2E uniform `uses` override is set (it wins).
+      const slotBonus = overrides?.uses === undefined && key !== 'thumb' ? bonusUses : 0;
+      const currentUses = overrides?.uses ?? baseCurrent + slotBonus;
       const maxUses =
-        overrides?.uses !== undefined ? Math.max(baseMax, overrides.uses) : baseMax;
+        overrides?.uses !== undefined ? Math.max(baseMax, overrides.uses) : baseMax + slotBonus;
       ring.element = element;
       ring.tier = slotSpec ? slotSpec.tier : 1;
       ring.currentUses = currentUses;

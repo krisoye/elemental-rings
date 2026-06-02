@@ -49,8 +49,13 @@ export class AIController {
     private readonly aiId: string,
     personality: AIPersonality,
     seed: number,
+    profileOverride?: AIProfile,
   ) {
-    this.profile = AI_PROFILES[personality];
+    // #258 — a boss room passes a tier-modified profile (tighter σ / lower no-block
+    // / faster think) so the boss fights sharper than a roamer of the same
+    // personality. Omitted for normal duels → the unmodified per-personality
+    // profile, no behaviour change.
+    this.profile = profileOverride ?? AI_PROFILES[personality];
     this.rng = makeRng(seed);
   }
 

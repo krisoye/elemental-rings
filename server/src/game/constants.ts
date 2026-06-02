@@ -8,6 +8,8 @@
 // those bands and run WITHOUT E2E_FAST, so they are unaffected). With FAST,
 // DEFEND_WINDOW_MS = 150 + 200 = 350ms, still > the 250ms (now 80ms) E2E
 // auto-driver poll interval, so AI-driver defenses reliably arrive in-window.
+import type { BossTier } from '../../../shared/types';
+
 const E2E_FAST = process.env.E2E_FAST === '1';
 export const TELEGRAPH_MS = E2E_FAST ? 150 : 900;
 export const BLOCK_WINDOW_MS = 200;
@@ -101,5 +103,38 @@ export const MERCHANT_RING_SELL_PRICE_NEUTRAL = 8;   // GP when player sells Tie
 // continues to compile and is ready to re-enable, but no in-game path reaches it.
 export const RELIQUARY_BASE_CAP = 9;
 export const RELIQUARY_SHARD_INCREMENT = 10;
+
+// ── Boss combat difficulty bundle (EPIC #256, #258) ─────────────────────────
+/**
+ * Per-tier boss difficulty modifiers (#258). These STACK on top of the existing
+ * personality XP scaling (PERSONALITY_MULTIPLIER) — they do not replace it. Each
+ * boss vsAI room reads NPC_SPAWNS[npcId].boss.tier and applies these to the AI
+ * seat + its combat profile so a boss is sharper/tougher than a roamer of the
+ * same personality (GDD §10.5).
+ *
+ *   bonusHearts — added to STARTING_HEARTS for the AI seat (tankier boss).
+ *   sigmaMult   — multiplies the profile's timingSigmaMs (tighter timing).
+ *   noBlockMult — multiplies the profile's noBlockProb (blocks more often).
+ *   bonusUses   — added to every combat ring's maxUses (deeper loadout).
+ *   thinkMult   — multiplies the attacker think-delay (faster decisions when <1).
+ */
+export interface BossModifier {
+  bonusHearts: number;
+  sigmaMult: number;
+  noBlockMult: number;
+  bonusUses: number;
+  thinkMult: number;
+}
+
+export const BOSS_MODIFIERS: Record<BossTier, BossModifier> = {
+  // Major boss (Thornwood Warden): much tankier, far sharper, deeper loadout, and
+  // quicker to act. The flagship Forest fight.
+  major: { bonusHearts: 2, sigmaMult: 0.5, noBlockMult: 0.25, bonusUses: 2, thinkMult: 0.8 },
+  // Gate boss (Bogwood Warden): a solid step above a roamer; standard pacing.
+  gate: { bonusHearts: 1, sigmaMult: 0.7, noBlockMult: 0.5, bonusUses: 1, thinkMult: 1.0 },
+  // Sub-boss (fusion-shrine guardians): same toughness bump as a gate boss; their
+  // distinct threat is status-gauge pressure (#260), not raw stats.
+  sub: { bonusHearts: 1, sigmaMult: 0.7, noBlockMult: 0.5, bonusUses: 1, thinkMult: 1.0 },
+};
 
 
