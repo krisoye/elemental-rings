@@ -1,5 +1,6 @@
 import Phaser from 'phaser';
-import { ELEMENT_COLORS, ELEMENT_NAMES } from '../Constants';
+import { ELEMENT_NAMES } from '../Constants';
+import { FusedCardFill } from './fusedFill';
 
 // Card dimensions. Height raised to 90px to fit five rows (slot label /
 // element name / tier / xp / use pips) without overlap.
@@ -22,6 +23,7 @@ export class RingSlot extends Phaser.GameObjects.Container {
   private readonly xpText: Phaser.GameObjects.Text;
   private readonly usesText: Phaser.GameObjects.Text;
   private readonly dimOverlay: Phaser.GameObjects.Rectangle;
+  private readonly fusedFill: FusedCardFill;
   private _element = 0;
   private _isExtinguished = false;
   // #135 Blinded — when true, the use-count row renders `?` instead of pips (the
@@ -32,6 +34,10 @@ export class RingSlot extends Phaser.GameObjects.Container {
   constructor(scene: Phaser.Scene, x: number, y: number, slotName: string) {
     super(scene, x, y);
     this.bg = scene.add.rectangle(0, 0, CARD_W, CARD_H, 0x333333).setStrokeStyle(2, 0x888888);
+    this.add(this.bg);
+    // #263 — two-tone fill sits ON TOP of bg (which keeps the stroke/hit area)
+    // and BELOW the labels added next. Centered on the card origin (0,0).
+    this.fusedFill = new FusedCardFill(scene, this, 0, 0, CARD_W, CARD_H);
     // Five stacked rows within the −45..+45 card range.
     this.slotLabel = scene.add
       .text(0, -36, slotName, { fontSize: '9px', color: '#cccccc' })
@@ -51,7 +57,6 @@ export class RingSlot extends Phaser.GameObjects.Container {
     this.dimOverlay = scene.add.rectangle(0, 0, CARD_W, CARD_H, 0x000000, 0.6);
     this.dimOverlay.setVisible(false);
     this.add([
-      this.bg,
       this.slotLabel,
       this.elementLabel,
       this.tierText,
@@ -67,7 +72,13 @@ export class RingSlot extends Phaser.GameObjects.Container {
     this._element = ring.element;
     this._isExtinguished = ring.isExtinguished;
     this._lastRing = { currentUses: ring.currentUses, maxUses: ring.maxUses };
-    this.bg.setFillStyle(ELEMENT_COLORS[ring.element] ?? 0x333333);
+    // #263 — two-tone fill from the ring's dominant-first fusionParents (the
+    // server's broadcast ArraySchema, index 0 = top/left). A base ring renders a
+    // single fill; a fusion with no broadcast order falls back to static order.
+    const ordered = ring.fusionParents
+      ? Array.from(ring.fusionParents as ArrayLike<number>)
+      : undefined;
+    this.fusedFill.paint(ring.element, ordered);
     this.elementLabel.setText(ELEMENT_NAMES[ring.element] ?? '?');
     this.tierText.setText(`T${ring.tier}`);
     this.xpText.setText(`Xp: ${ring.xp}`);

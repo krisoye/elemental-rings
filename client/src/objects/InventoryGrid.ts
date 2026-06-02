@@ -1,5 +1,6 @@
 import Phaser from 'phaser';
-import { ELEMENT_COLORS, ELEMENT_NAMES } from '../Constants';
+import { ELEMENT_NAMES } from '../Constants';
+import { FusedCardFill } from './fusedFill';
 
 export interface RingData {
   id: string;
@@ -10,6 +11,12 @@ export interface RingData {
   xp: number;
   escrowed: number; // 0 or 1
   in_carry: number; // 0 or 1 (#40 — carried on expedition)
+  /**
+   * #263 — dominant-first fusion component order from /api/me ([dominant, other]
+   * for a fusion, [] for a base ring). Drives the two-tone card fill. Optional so
+   * older payloads / preview rows without it fall back to static componentsOf.
+   */
+  fusionParents?: number[];
 }
 
 const CARD_W = 64;
@@ -47,6 +54,11 @@ export class InventoryGrid extends Phaser.GameObjects.Container {
   // Background rectangle per ring id, used to toggle selection stroke without
   // relying on the card container's child ordering.
   private readonly cardBgs: Map<string, Phaser.GameObjects.Rectangle> = new Map();
+  // #263 — rendered two-tone fill order per ring id (the actual colors painted on
+  // the card, in top/left → bottom/right order). For a fusion this is
+  // [dominant, other]; for a base ring it is [element]. Exposed via fusedFillOrder()
+  // so an E2E test can assert which color leads without sampling pixels.
+  private readonly cardFillOrder: Map<string, number[]> = new Map();
   private readonly onSelect: (ring: RingData | null) => void;
 
   // #85 Fix 2A — scroll state. Cards render into cardContainer (scrolled by row);
@@ -118,6 +130,7 @@ export class InventoryGrid extends Phaser.GameObjects.Container {
     this.cards.forEach((c) => c.destroy());
     this.cards.clear();
     this.cardBgs.clear();
+    this.cardFillOrder.clear();
     this.cardRows.clear();
     this.selected = null;
 
@@ -135,12 +148,19 @@ export class InventoryGrid extends Phaser.GameObjects.Container {
 
       const container = this.scene.add.container(cx, cy);
 
-      const bg = this.scene.add.rectangle(0, 0, CARD_W, CARD_H, ELEMENT_COLORS[ring.element] ?? 0x444444);
+      const bg = this.scene.add.rectangle(0, 0, CARD_W, CARD_H, 0x444444);
       // The ring-storage overlay is camera-pinned (scrollFactor 0). The leaf bg's
       // own scrollFactor must match, or Phaser's hit-test offsets the hit area by
       // the camera scroll amount (card renders right, clicks land off — #78 ①).
       bg.setScrollFactor(0);
       bg.setStrokeStyle(2, DESELECTED_STROKE);
+      container.add(bg);
+
+      // #263 — two-tone fill above bg (which keeps stroke/hit), below the labels.
+      // scrollFactor 0 matches the camera-pinned overlay. Reads the ring's
+      // dominant-first fusionParents; base rings render a single fill.
+      const fill = new FusedCardFill(this.scene, container, 0, 0, CARD_W, CARD_H, 0);
+      this.cardFillOrder.set(ring.id, fill.paint(ring.element, ring.fusionParents));
 
       const nameText = this.scene.add
         .text(0, -32, ELEMENT_NAMES[ring.element] ?? '?', { fontSize: '9px', color: '#000000' })
@@ -160,7 +180,7 @@ export class InventoryGrid extends Phaser.GameObjects.Container {
         .text(0, 26, `T${ring.tier}`, { fontSize: '9px', color: '#000000' })
         .setOrigin(0.5);
 
-      container.add([bg, nameText, pipsText, xpText, tierText]);
+      container.add([nameText, pipsText, xpText, tierText]);
 
       if (ring.escrowed) {
         container.setAlpha(0.4);
@@ -208,6 +228,20 @@ export class InventoryGrid extends Phaser.GameObjects.Container {
   /** Returns the interactive background rectangle for a card by ring id (E2E). */
   getCardBg(ringId: string): Phaser.GameObjects.Rectangle | undefined {
     return this.cardBgs.get(ringId);
+  }
+
+  /**
+   * #263 — the rendered two-tone fill order for a card (top/left → bottom/right
+   * component element indices). [dominant, other] for a fusion, [element] for a
+   * base ring. Undefined for an unknown id. Read by E2E to assert color order.
+   */
+  fusedFillOrder(ringId: string): number[] | undefined {
+    return this.cardFillOrder.get(ringId);
+  }
+
+  /** All rendered fill orders keyed by ring id (E2E snapshot). */
+  allFusedFillOrders(): Record<string, number[]> {
+    return Object.fromEntries(this.cardFillOrder);
   }
 
   clearSelection(): void {

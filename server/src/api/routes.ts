@@ -40,6 +40,7 @@ import {
   getCarryCap,
   getSpareCapacity,
   getDefeatedNpcs,
+  recordNpcDefeat,
   forage,
   getForageStatus,
   merchantBuyFood,
@@ -462,6 +463,43 @@ apiRouter.get('/api/encounter/preview', (req: Request, res: Response): void => {
     preview[p] = { element, aiSeed, stakeTier, stakeXp, totalXp, npcEffectiveXp };
   });
   res.status(200).json(preview);
+});
+
+/**
+ * GET /api/encounter/bosses — the bosses this player has DEFEATED, for the
+ * TRAINING-screen rematch row (#262, EPIC #256). Intersects the player's defeated
+ * NPCs with NPC_SPAWNS entries that carry a `boss` descriptor, so only beaten
+ * bosses appear. Each entry feeds a practice (no-npcId) vsAI duel:
+ *   { id, name, tier, personality, element /* fusedThumb *​/, aiSeed }
+ * `element` is the boss's THEMATIC FUSION (boss.fusedThumb) so the rematch fights
+ * the real fused-thumb boss; `aiSeed = hashNpcId(id)` reproduces the boss loadout.
+ * A rematch is pure practice — no reward, no penalty, no defeat-state change — so
+ * a boss stays permanently beaten yet endlessly re-fightable. Requires auth.
+ */
+apiRouter.get('/api/encounter/bosses', requireAuth, (req: Request, res: Response): void => {
+  const playerId = req.playerId as string;
+  const defeated = getDefeatedNpcs(playerId);
+  const bosses = NPC_SPAWNS.filter((npc) => npc.boss !== undefined && defeated.has(npc.id)).map(
+    (npc) => {
+      const boss = npc.boss!;
+      return {
+        id: npc.id,
+        name: boss.name,
+        tier: boss.tier,
+        personality: npc.personality,
+        // The boss's thematic FUSION — the rematch stakes the real fused thumb.
+        element: boss.fusedThumb,
+        aiSeed: hashNpcId(npc.id),
+        // The boss's overworld TRIANGLE element + frame (the atlas has no fusion
+        // frame). spriteFrame matches the overworld monster; spriteElement keys the
+        // client's MONSTER_OW_REGISTRY so the rematch resolves the same battle sprite
+        // the overworld duel would.
+        spriteFrame: npc.spriteFrame,
+        spriteElement: npc.element,
+      };
+    },
+  );
+  res.status(200).json({ bosses });
 });
 
 /**
@@ -1061,6 +1099,23 @@ if (process.env.E2E_TEST_ROUTES === '1') {
     const playerId = req.playerId as string;
     grantShard(playerId);
     res.status(200).json({ ok: true, reliquaryShards: getReliquaryShards(playerId) });
+  });
+
+  /**
+   * POST /api/test/seed-npc-defeat — record a defeat of `npcId` for the
+   * authenticated player (#262), so the boss-rematch row appears without driving a
+   * full win duel. Mirrors the recordNpcDefeat the BattleRoom calls on a real win.
+   * Body: { npcId: string }. Test-only.
+   */
+  apiRouter.post('/api/test/seed-npc-defeat', requireAuth, (req: Request, res: Response): void => {
+    const playerId = req.playerId as string;
+    const { npcId } = req.body ?? {};
+    if (typeof npcId !== 'string' || !npcId) {
+      res.status(400).json({ error: 'npcId (string) is required' });
+      return;
+    }
+    recordNpcDefeat(playerId, npcId);
+    res.status(200).json({ ok: true });
   });
 
   /**

@@ -8,6 +8,7 @@ import {
   OPPONENT_Y,
 } from '../Constants';
 import { charsetFrame } from './world/charset';
+import { FusedCardFill } from './fusedFill';
 
 // Combat slots whose remaining uses count toward the opponent's aggregate (the
 // thumb is a passive staked ring and is excluded from ATK/DEF totals).
@@ -47,6 +48,8 @@ export class OpponentDuelist extends Phaser.GameObjects.Container {
   private readonly statusOverlay: Phaser.GameObjects.Rectangle;
   private readonly statusBadge: Phaser.GameObjects.Text;
   private readonly thumbCard: Phaser.GameObjects.Rectangle;
+  // #263 — two-tone fused fill for the opponent's staked thumb card.
+  private readonly thumbFill: FusedCardFill;
   private readonly thumbDimOverlay: Phaser.GameObjects.Rectangle;
   // #259 — the opponent battle sprite, tinted red + pulsed once on boss enrage.
   private readonly spriteImg: Phaser.GameObjects.Image;
@@ -133,9 +136,11 @@ export class OpponentDuelist extends Phaser.GameObjects.Container {
       this.statusOverlay,
       this.statusBadge,
       this.thumbCard,
-      thumbLbl,
-      this.thumbDimOverlay,
     ]);
+    // #263 — two-tone fill above thumbCard (which keeps the stroke), below the
+    // THUMB label + dim overlay so both render on top.
+    this.thumbFill = new FusedCardFill(this.scene, this, -90, 20, 40, 56);
+    this.add([thumbLbl, this.thumbDimOverlay]);
 
     scene.add.existing(this);
   }
@@ -195,7 +200,14 @@ export class OpponentDuelist extends Phaser.GameObjects.Container {
     // Thumb card: element always visible (per GDD §9). Dim when extinguished.
     const thumb = opp.thumb;
     if (thumb) {
-      this.thumbCard.setFillStyle(ELEMENT_COLORS[thumb.element] ?? 0x555555);
+      // #263 — two-tone fill from the broadcast dominant-first fusionParents
+      // (index 0 = top/left). Boss fused thumbs have no parent XP, so the server
+      // pushes the static componentsOf order; base thumbs render a single fill.
+      this.thumbCard.setFillStyle(0x555555);
+      const ordered = thumb.fusionParents
+        ? Array.from(thumb.fusionParents as ArrayLike<number>)
+        : undefined;
+      this.thumbFill.paint(thumb.element, ordered);
       this.thumbDimOverlay.setVisible(!!thumb.isExtinguished);
     }
 

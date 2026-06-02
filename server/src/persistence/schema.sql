@@ -18,7 +18,11 @@ CREATE TABLE IF NOT EXISTS rings (
   current_uses INTEGER NOT NULL DEFAULT 3,
   xp           INTEGER NOT NULL DEFAULT 0,
   escrowed     INTEGER NOT NULL DEFAULT 0,
-  in_carry     INTEGER NOT NULL DEFAULT 0
+  in_carry     INTEGER NOT NULL DEFAULT 0,
+  -- #263 — element index of the higher-XP parent at fusion time (the "dominant"
+  -- component, rendered top/left on the two-tone fused card). -1 = base ring, or
+  -- a fusion created without parent context (AI/granted thumbs) → static order.
+  parent_dominant INTEGER NOT NULL DEFAULT -1
 );
 CREATE TABLE IF NOT EXISTS loadout (
   player_id TEXT PRIMARY KEY REFERENCES players(id),

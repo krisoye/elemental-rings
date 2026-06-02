@@ -83,6 +83,19 @@ declare global {
       string,
       { element: number; stakeTier: number; stakeXp: number; totalXp: number }
     >;
+    // #262 — defeated bosses shown in the TRAINING rematch row, and the hook to
+    // launch a practice rematch by boss id (same path as a rematch-card click).
+    __encounterBosses?: Array<{
+      id: string;
+      name: string;
+      tier: string;
+      personality: AIPersonality;
+      element: number;
+      aiSeed: number;
+      spriteFrame: number;
+      spriteElement: number;
+    }>;
+    __encounterRematchBoss?: (bossId: string) => void;
     __slotPositions: { x: number; y: number }[];
     __orbLaunchCount: number;
     // #125 — true while the BattleScene forfeit confirm prompt is open. E2E reads
@@ -146,6 +159,9 @@ declare global {
     // #47 fusion hooks — open the fusion modal / fuse two parents directly.
     __campOpenFusion?: () => void;
     __campFuse?: (ringId1: string, ringId2: string) => Promise<string | null>;
+    // #263 — rendered two-tone fill order per ring id across the camp grids
+    // ([dominant, other] for a fusion, [element] for a base ring). For E2E.
+    __campFusedFills?: Record<string, number[]>;
     // #63 teleport hooks — open the teleport modal / travel to a waystone.
     __campOpenTeleport?: () => Promise<void>;
     __campTeleport?: (waystoneId: string) => Promise<void>;

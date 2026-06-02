@@ -1,6 +1,7 @@
 import Phaser from 'phaser';
-import { ELEMENT_COLORS, ELEMENT_NAMES } from '../Constants';
+import { ELEMENT_NAMES } from '../Constants';
 import type { RingData } from './InventoryGrid';
+import { FusedCardFill } from './fusedFill';
 
 export type LoadoutSlot = 'a1' | 'a2' | 'd1' | 'd2';
 
@@ -26,6 +27,8 @@ const DESELECTED_STROKE = 0x666666;
 
 export class LoadoutPanel extends Phaser.GameObjects.Container {
   private readonly slotBgs: Map<LoadoutSlot, Phaser.GameObjects.Rectangle> = new Map();
+  // #263 — two-tone fused fill per slot card.
+  private readonly slotFills: Map<LoadoutSlot, FusedCardFill> = new Map();
   private readonly slotLabels: Map<LoadoutSlot, Phaser.GameObjects.Text[]> = new Map();
   // #154 — the slot currently highlighted as the active swap selection (yellow
   // border), or null. updateFromLoadout preserves this stroke across refreshes.
@@ -49,6 +52,10 @@ export class LoadoutPanel extends Phaser.GameObjects.Container {
       bg.setScrollFactor(0);
       bg.setStrokeStyle(2, 0x666666);
       bg.setInteractive({ useHandCursor: true });
+      this.add(bg);
+      // #263 — two-tone fill above bg (stroke/hit kept), below labels added next.
+      const fill = new FusedCardFill(scene, this, cx, cy, CARD_W, CARD_H, 0);
+      this.slotFills.set(def.slot, fill);
 
       const slotLbl = scene.add
         .text(cx, cy - 36, def.label, { fontSize: '10px', color: '#aaaaaa' })
@@ -71,7 +78,7 @@ export class LoadoutPanel extends Phaser.GameObjects.Container {
       this.slotBgs.set(def.slot, bg);
       this.slotLabels.set(def.slot, [slotLbl, elemLbl, usesLbl, xpLbl, tierLbl]);
 
-      this.add([bg, slotLbl, elemLbl, usesLbl, xpLbl, tierLbl]);
+      this.add([slotLbl, elemLbl, usesLbl, xpLbl, tierLbl]);
     }
 
     scene.add.existing(this);
@@ -87,10 +94,12 @@ export class LoadoutPanel extends Phaser.GameObjects.Container {
       const ringId = loadout[def.slot] ?? null;
       const ring = ringId ? ringMap.get(ringId) : null;
       const bg = this.slotBgs.get(def.slot)!;
+      const fill = this.slotFills.get(def.slot)!;
       const [, elemLbl, usesLbl, xpLbl, tierLbl] = this.slotLabels.get(def.slot)!;
 
       if (ring) {
-        bg.setFillStyle(ELEMENT_COLORS[ring.element] ?? 0x333333);
+        bg.setFillStyle(0x333333);
+        fill.paint(ring.element, ring.fusionParents);
         elemLbl.setText(ELEMENT_NAMES[ring.element] ?? '?').setColor('#000000');
         const used = ring.max_uses - ring.current_uses;
         usesLbl
@@ -100,6 +109,7 @@ export class LoadoutPanel extends Phaser.GameObjects.Container {
         tierLbl.setText(`T${ring.tier}`).setColor('#000000');
       } else {
         bg.setFillStyle(0x333333);
+        fill.clear();
         elemLbl.setText('—').setColor('#888888');
         usesLbl.setText('');
         xpLbl.setText('');
