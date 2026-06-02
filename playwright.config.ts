@@ -38,6 +38,7 @@ const SOLO_SPECS = [
   'carry.spec.ts',
   'compass.spec.ts',
   'difficulty.spec.ts', // EPIC #279 (#280 + #283) — difficulty tier + PUT /api/difficulty
+  'difficulty-modal.spec.ts', // EPIC #279 (#284) — CampScene Settings button + DifficultyModal UI
   'forage.spec.ts',
   'forage-client.spec.ts',
   'frost-sentinel.spec.ts', // #269

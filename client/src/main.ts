@@ -13,6 +13,7 @@ import type {
   AIPersonality,
   BattleRoomOptions,
   BattleSummaryPayload,
+  DifficultyTier,
 } from '../../shared/types';
 import { CANVAS_W, CANVAS_H } from './Constants';
 
@@ -173,6 +174,12 @@ declare global {
     // #47 fusion hooks — open the fusion modal / fuse two parents directly.
     __campOpenFusion?: () => void;
     __campFuse?: (ringId1: string, ringId2: string) => Promise<string | null>;
+    // EPIC #279 — open the difficulty selector (same path as the Settings button).
+    __campOpenSettings?: () => void;
+    // EPIC #279 — difficulty modal snapshot: the current tier + tier order.
+    // Set by DifficultyModal.open; cleared on close. E2E reads it to assert which
+    // tier is highlighted without pixel hit-testing.
+    __difficultyState?: { current: DifficultyTier; tiers: DifficultyTier[] };
     // #263 — rendered two-tone fill order per ring id across the camp grids
     // ([dominant, other] for a fusion, [element] for a base ring). For E2E.
     __campFusedFills?: Record<string, number[]>;
@@ -282,6 +289,9 @@ declare global {
       food_units: number;
       // Aggregate XP across the player's Reliquary rings (server-computed).
       aggregate_xp: number;
+      // EPIC #279 — player's difficulty tier (from /api/me). Drives the spirit_max
+      // multiplier server-side; shown as a bracketed label in the stats header.
+      difficulty?: DifficultyTier;
       // #182 — Reliquary cap fields, read from /api/me player sub-object.
       reliquaryCap?: number;
       reliquaryShards?: number;
