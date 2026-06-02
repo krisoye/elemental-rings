@@ -27,6 +27,7 @@ const PVP_SPECS = [
   'shadow-element.spec.ts', // #133
   'shadow-gauge.spec.ts', // #134
   'shadow-hud.spec.ts', // #135
+  'double-attack.spec.ts', // #265 — fusion-thumb double-attack engine
 ];
 const SOLO_SPECS = [
   'auth.spec.ts',

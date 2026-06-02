@@ -4,6 +4,7 @@ import { PlayerState } from '../schemas/PlayerState';
 import { Ring } from '../schemas/Ring';
 import { classifyTiming, resolveBlock } from '../game/BlockResolver';
 import { componentsOf, fusionParents, isFusion } from '../game/ElementSystem';
+import { canDoubleAttack } from '../game/DoubleAttack';
 import * as StatusEffects from '../game/StatusEffects';
 import { AIController } from '../game/ai/AIController';
 import { makeRng } from '../game/ai/AIProfiles';
@@ -17,6 +18,8 @@ import {
   DEFEND_WINDOW_MS,
   BLOCK_WINDOW_MS,
   PARRY_WINDOW_MS,
+  MIN_COMBO_GAP_MS,
+  MAX_COMBO_GAP_MS,
   STARTING_HEARTS,
   STARTING_USES,
   GOLD_PER_WIN,
@@ -37,6 +40,9 @@ import {
 import {
   ElementEnum,
   SelectAttackPayload,
+  SelectDoubleAttackPayload,
+  DoubleAttackStartPayload,
+  DoubleAttackCancelledPayload,
   SubmitDefensePayload,
   RechargePayload,
   RechargeResultPayload,
@@ -101,6 +107,23 @@ export class BattleRoom extends Room<{ state: BattleState }> {
   private defenseSlotKey: DefenseSlot | '' = '';
   private defensePressTime: number = 0;
   private windowTimer: ReturnType<typeof setTimeout> | null = null;
+
+  // EPIC #264 / #265 — fusion-thumb double-attack combo state. comboActive is
+  // true between orb 1's launch and orb 2's resolution. Orb 1 reuses the primary
+  // defense capture (defenseSubmitted/defenseSlotKey/defensePressTime + impactTime
+  // above); orb 2 carries its OWN second capture and impact2 below. The orb-2
+  // launch timer fires `gapMs` after orb 1; orb2Timer schedules orb 2's resolution.
+  private comboActive: boolean = false;
+  private comboSecondSlot: AttackSlot | '' = '';
+  private comboGapMs: number = 0;
+  private impact2: number = 0;
+  private defense2Submitted: boolean = false;
+  private defense2SlotKey: DefenseSlot | '' = '';
+  private defense2PressTime: number = 0;
+  /** Fires gapMs after orb 1 to launch orb 2 (set impact2, open its window). */
+  private orb2LaunchTimer: ReturnType<typeof setTimeout> | null = null;
+  /** Fires DEFEND_WINDOW_MS after orb 2's launch to resolve it. */
+  private orb2Timer: ReturnType<typeof setTimeout> | null = null;
   /** Non-null only in vsAI (`battle-ai`) rooms; a no-op via notifyAI() in PvP. */
   private ai: AIController | null = null;
   /**
@@ -142,12 +165,31 @@ export class BattleRoom extends Room<{ state: BattleState }> {
     return this.impactTime;
   }
 
+  /**
+   * EPIC #265 — true while a fusion-thumb double attack is mid-flight (between
+   * orb 1's launch and orb 2's resolution). The AI reads this to schedule a
+   * SECOND defense press for orb 2.
+   */
+  get comboInFlight(): boolean {
+    return this.comboActive;
+  }
+
+  /** EPIC #265 — orb 2's impact time (impact1 + clamped gapMs); read by the AI. */
+  get currentImpact2Time(): number {
+    return this.impact2;
+  }
+
   onCreate(options: BattleRoomOptions = {}): void {
     this.setState(new BattleState());
     this.maxClients = 2;
 
     this.onMessage('selectAttack', (client, payload: SelectAttackPayload) =>
       this.handleSelectAttack(client.sessionId, payload),
+    );
+    // EPIC #264 / #265 — fusion-thumb double attack. Eligibility is re-validated
+    // server-side (canDoubleAttack); an ineligible request is silently dropped.
+    this.onMessage('selectDoubleAttack', (client, payload: SelectDoubleAttackPayload) =>
+      this.handleSelectDoubleAttack(client.sessionId, payload),
     );
     this.onMessage('submitDefense', (client, payload: SubmitDefensePayload) =>
       this.handleSubmitDefense(client.sessionId, payload),
@@ -690,15 +732,51 @@ export class BattleRoom extends Room<{ state: BattleState }> {
     // An exhausted defense ring cannot catch — mirror the attack-side guard
     // (handleSelectAttack) so a 0-use ring can't be committed to a block/parry.
     // Mirrors only the GUARD; the defense use is still spent later, in
-    // _resolveExchange → BlockResolver.spendUse (outcome-dependent), not here.
+    // resolveOrb → BlockResolver.spendUse (outcome-dependent), not here.
     const defender = state.players.get(id)!;
     if (defender.getSlot(payload.slot).isExtinguished) return;
+
+    const now = Date.now();
+
+    // EPIC #265 — during a double attack both orb windows can overlap (gap ≥
+    // BLOCK_WINDOW_MS). Route this press to whichever orb's impact it is closer
+    // to, among the orbs whose capture is still OPEN (first-write-wins per orb).
+    // This lets the defender block one orb and parry the other, or skip orb 1 and
+    // only defend orb 2. orb2Launched: impact2 set means orb 2 is airborne.
+    if (this.comboActive) {
+      const orb2Launched = this.impact2 > 0;
+      const canCapture1 = !this.defenseSubmitted;
+      const canCapture2 = orb2Launched && !this.defense2Submitted;
+
+      let routeToOrb2: boolean;
+      if (canCapture1 && canCapture2) {
+        // Both open → nearest-impact wins (deterministic routing).
+        routeToOrb2 = Math.abs(now - this.impact2) < Math.abs(now - this.impactTime);
+      } else if (canCapture2) {
+        routeToOrb2 = true;
+      } else if (canCapture1) {
+        routeToOrb2 = false;
+      } else {
+        return; // both captures already taken — ignore extra presses
+      }
+
+      if (routeToOrb2) {
+        this.defense2Submitted = true;
+        this.defense2SlotKey = payload.slot;
+        this.defense2PressTime = now;
+      } else {
+        this.defenseSubmitted = true;
+        this.defenseSlotKey = payload.slot;
+        this.defensePressTime = now;
+      }
+      return;
+    }
 
     if (!this.defenseSubmitted) {
       this.defenseSubmitted = true;
       this.defenseSlotKey = payload.slot;
       // Server-authoritative timing: timestamp on message ARRIVAL.
-      this.defensePressTime = Date.now();
+      this.defensePressTime = now;
     }
   }
 
@@ -881,39 +959,65 @@ export class BattleRoom extends Room<{ state: BattleState }> {
     ps.shadowGauge = 0;
   }
 
-  private _resolveExchange(): void {
-    if (this.windowTimer) {
-      clearTimeout(this.windowTimer);
-      this.windowTimer = null;
-    }
+  /**
+   * Capture of one orb's defender response (which ring caught it, when). Orb 1
+   * uses the primary defense fields; orb 2 uses the `defense2*` fields. Bundling
+   * them lets `resolveOrb` resolve either orb through one code path.
+   */
+  private orbDefenseCapture(which: 1 | 2): {
+    submitted: boolean;
+    slotKey: DefenseSlot | '';
+    pressTime: number;
+    impactTime: number;
+  } {
+    return which === 1
+      ? {
+          submitted: this.defenseSubmitted,
+          slotKey: this.defenseSlotKey,
+          pressTime: this.defensePressTime,
+          impactTime: this.impactTime,
+        }
+      : {
+          submitted: this.defense2Submitted,
+          slotKey: this.defense2SlotKey,
+          pressTime: this.defense2PressTime,
+          impactTime: this.impact2,
+        };
+  }
+
+  /**
+   * Resolve ONE orb (single attack, rally volley, or one orb of a double attack)
+   * against the supplied defense capture: classify timing → resolveBlock → award
+   * XP → apply hearts → Earth parry refund → four-case gauges → broadcast
+   * `exchangeResult` → check KO. Pure of any rally/turn-swap logic — the caller
+   * decides what happens AFTER this orb resolves (rally, advance, schedule orb 2).
+   *
+   * `attackerSlot` is the firing slot ('a1'/'a2' for an attack, 'd1'/'d2' for a
+   * rally volley). Mutates state.defenderSlot for HUD continuity. Returns the
+   * BlockResult plus `ended` (true if this orb KO'd either player — the duel is
+   * over and the caller must stop). Owns NO notifyAI() (the caller does).
+   */
+  private resolveOrb(
+    attackerId: string,
+    defenderId: string,
+    attackerSlot: SlotKey,
+    capture: { submitted: boolean; slotKey: DefenseSlot | ''; pressTime: number; impactTime: number },
+  ): { result: ReturnType<typeof resolveBlock>; ended: boolean } {
     const state = this.state;
-    state.phase = 'RESOLVE';
-
-    const attackerId = state.currentAttackerId;
-    const ids = Array.from(state.players.keys());
-    const defenderId = ids.find((pid) => pid !== attackerId)!;
-
     const attackerPlayer = state.players.get(attackerId)!;
     const defenderPlayer = state.players.get(defenderId)!;
 
-    const attackerRing = attackerPlayer.getSlot(state.attackerSlot as SlotKey);
+    const attackerRing = attackerPlayer.getSlot(attackerSlot);
     const defenderRing =
-      this.defenseSubmitted && this.defenseSlotKey
-        ? defenderPlayer.getSlot(this.defenseSlotKey)
-        : null;
+      capture.submitted && capture.slotKey ? defenderPlayer.getSlot(capture.slotKey) : null;
 
-    const offsetMs = this.defensePressTime - this.impactTime;
-    const timing = classifyTiming(offsetMs, this.defenseSubmitted, PARRY_WINDOW_MS, BLOCK_WINDOW_MS);
+    const offsetMs = capture.pressTime - capture.impactTime;
+    const timing = classifyTiming(offsetMs, capture.submitted, PARRY_WINDOW_MS, BLOCK_WINDOW_MS);
 
     const result = resolveBlock(attackerRing, defenderRing, timing);
 
-    // Snapshot the slots for this exchange before any rally swap mutates them,
-    // so outcome XP is attributed to the rings that actually engaged.
-    const xpAttackerSlot = state.attackerSlot as string;
-    const xpDefenderSlot = this.defenseSlotKey as string;
-
     // Award outcome-based XP for the engaged attack/defense rings.
-    this.awardExchangeXp(attackerId, xpAttackerSlot, defenderId, xpDefenderSlot, result);
+    this.awardExchangeXp(attackerId, attackerSlot, defenderId, capture.slotKey, result);
 
     // Heart-loss resolution. Each lost heart is a plain decrement (floored at 0).
     if (result.defenderHeartLost) {
@@ -949,17 +1053,17 @@ export class BattleRoom extends Room<{ state: BattleState }> {
       for (const el of result.blockedGaugeElement) this.adjustGauge(defenderPlayer, el, -1);
     }
 
-    if (defenderRing && this.defenseSlotKey) {
-      state.defenderSlot = this.defenseSlotKey;
+    if (defenderRing && capture.slotKey) {
+      state.defenderSlot = capture.slotKey;
     }
 
-    // Broadcast THIS exchange's result BEFORE any KO early-return or the rally
-    // swap, so the slots/ids captured reflect this exchange.
+    // Broadcast THIS orb's result BEFORE any KO early-return or rally swap, so
+    // the slots/ids captured reflect this orb.
     const exchangeResult: ExchangeResultPayload = {
       attackerId,
       defenderId,
-      attackerSlot: state.attackerSlot,
-      defenderSlot: this.defenseSlotKey,
+      attackerSlot,
+      defenderSlot: capture.slotKey,
       attackerElements: componentsOf(attackerRing.element),
       timing,
       relationship: result.relationship,
@@ -973,17 +1077,33 @@ export class BattleRoom extends Room<{ state: BattleState }> {
       state.winnerId = attackerId;
       state.phase = 'ENDED';
       this.finalizeEnded();
-      this.notifyAI();
-      return;
+      return { result, ended: true };
     }
     if (attackerPlayer.hearts <= 0) {
       state.winnerId = defenderId;
       state.phase = 'ENDED';
       this.finalizeEnded();
-      this.notifyAI();
-      return;
+      return { result, ended: true };
     }
 
+    return { result, ended: false };
+  }
+
+  /**
+   * After an orb's resolution (single attack or orb 2 of a combo), continue the
+   * turn from the BlockResult: a PARRY+STRONG (rallyContinues) swaps roles into a
+   * rally volley in DEFEND_WINDOW; anything else swaps to ATTACK_SELECT and runs
+   * the §7 turn-start tick. The defender (`defenderId`) becomes the next
+   * attacker, firing `parrySlot` (their parrying defense slot) on a rally. Owns
+   * its single notifyAI() per transition. The caller must NOT call this when the
+   * orb ended the duel.
+   */
+  private continueAfterOrb(
+    defenderId: string,
+    parrySlot: DefenseSlot | '',
+    result: ReturnType<typeof resolveBlock>,
+  ): void {
+    const state = this.state;
     state.rallyActive = result.rallyContinues;
     state.volleyedElement = result.volleyedElement;
 
@@ -992,7 +1112,7 @@ export class BattleRoom extends Room<{ state: BattleState }> {
       // attacker slot is the defense slot they parried with ('d1'/'d2'). The
       // parry already cost 1 use — no extra charge for the volley.
       state.currentAttackerId = defenderId;
-      state.attackerSlot = this.defenseSlotKey;
+      state.attackerSlot = parrySlot;
       this.defenseSubmitted = false;
       this.defenseSlotKey = '';
       this.defensePressTime = 0;
@@ -1022,8 +1142,236 @@ export class BattleRoom extends Room<{ state: BattleState }> {
     }
   }
 
+  private _resolveExchange(): void {
+    if (this.windowTimer) {
+      clearTimeout(this.windowTimer);
+      this.windowTimer = null;
+    }
+    const state = this.state;
+    state.phase = 'RESOLVE';
+
+    const attackerId = state.currentAttackerId;
+    const ids = Array.from(state.players.keys());
+    const defenderId = ids.find((pid) => pid !== attackerId)!;
+
+    const { result, ended } = this.resolveOrb(
+      attackerId,
+      defenderId,
+      state.attackerSlot as SlotKey,
+      this.orbDefenseCapture(1),
+    );
+    if (ended) {
+      this.notifyAI();
+      return;
+    }
+
+    this.continueAfterOrb(defenderId, this.defenseSlotKey, result);
+  }
+
+  /**
+   * EPIC #264 / #265 — fusion-thumb double attack. Validates phase / sender /
+   * distinct attack slots and the authoritative `canDoubleAttack` predicate;
+   * an ineligible request is SILENTLY DROPPED (phase-lock convention) so the
+   * client falls back to the normal single-attack flow with NO use spent.
+   *
+   * On commit: A1 −1, A2 −1, thumb −1 (no Tailwind / setup / Earth passive — those
+   * are base-thumb only). Orb 1 launches immediately (impact = now + TELEGRAPH_MS,
+   * phase DEFEND_WINDOW); orb 2 launches after the clamped gap with its own impact.
+   */
+  handleSelectDoubleAttack(id: string, payload: SelectDoubleAttackPayload): void {
+    const state = this.state;
+    // PHASE-LOCK: wrong-phase / wrong-sender / wrong-slot messages are silently
+    // ignored (protective, not punishing).
+    if (state.phase !== 'ATTACK_SELECT') return;
+    if (id !== state.currentAttackerId) return;
+    if (!ATTACK_SLOTS.has(payload.first) || !ATTACK_SLOTS.has(payload.second)) return;
+    if (payload.first === payload.second) return;
+
+    const attacker = state.players.get(id)!;
+    // Authoritative eligibility: fusion thumb + A1/A2 = its components + all lit.
+    if (!canDoubleAttack(attacker)) return;
+
+    const firstRing = attacker.getSlot(payload.first);
+    const secondRing = attacker.getSlot(payload.second);
+
+    // Charge at commit: A1 −1, A2 −1, thumb −1. NO base-thumb passive (Tailwind /
+    // setup / Earth) applies — fusion thumbs spend their own use for the combo.
+    this.chargeRing(firstRing);
+    this.chargeRing(secondRing);
+    this.chargeRing(attacker.thumb);
+
+    // Server-authoritative gap clamp regardless of the client value.
+    const gapMs = Math.min(MAX_COMBO_GAP_MS, Math.max(MIN_COMBO_GAP_MS, payload.gapMs));
+
+    // Launch orb 1 immediately (reuses the primary defense capture + impactTime).
+    state.attackerSlot = payload.first;
+    state.phase = 'DEFEND_WINDOW';
+    this.impactTime = Date.now() + TELEGRAPH_MS;
+    this.defenseSubmitted = false;
+    this.defenseSlotKey = '';
+    this.defensePressTime = 0;
+
+    // Combo state: orb 2 fires gapMs after orb 1 with its own impact + capture.
+    this.comboActive = true;
+    this.comboSecondSlot = payload.second;
+    this.comboGapMs = gapMs;
+    this.impact2 = 0;
+    this.defense2Submitted = false;
+    this.defense2SlotKey = '';
+    this.defense2PressTime = 0;
+
+    this.broadcast('doubleAttackStart', {
+      first: payload.first,
+      second: payload.second,
+      firstElements: componentsOf(firstRing.element),
+      secondElements: componentsOf(secondRing.element),
+      gapMs,
+    } satisfies DoubleAttackStartPayload);
+
+    // Orb 1 resolves DEFEND_WINDOW_MS after its launch.
+    this.windowTimer = setTimeout(() => this._resolveCombo(), DEFEND_WINDOW_MS);
+
+    // Orb 2 launches gapMs after orb 1: open its own impact + defense window.
+    this.orb2LaunchTimer = setTimeout(() => {
+      this.orb2LaunchTimer = null;
+      // If the duel already ended (orb 1 KO) the launch is a no-op.
+      if (!this.comboActive || this.state.phase === 'ENDED') return;
+      this.impact2 = Date.now() + TELEGRAPH_MS;
+      // Orb 2 resolves DEFEND_WINDOW_MS after ITS launch.
+      this.orb2Timer = setTimeout(() => this._resolveOrb2(), DEFEND_WINDOW_MS);
+    }, gapMs);
+
+    this.notifyAI();
+  }
+
+  /** Spend one use on a ring and update its extinguished flag (floored at 0). */
+  private chargeRing(ring: Ring): void {
+    ring.currentUses = Math.max(0, ring.currentUses - 1);
+    ring.isExtinguished = ring.currentUses === 0;
+  }
+
+  /** Clear all combo state + timers (after orb 2, or a cancel/KO). */
+  private clearComboState(): void {
+    if (this.orb2LaunchTimer) {
+      clearTimeout(this.orb2LaunchTimer);
+      this.orb2LaunchTimer = null;
+    }
+    if (this.orb2Timer) {
+      clearTimeout(this.orb2Timer);
+      this.orb2Timer = null;
+    }
+    this.comboActive = false;
+    this.comboSecondSlot = '';
+    this.comboGapMs = 0;
+    this.impact2 = 0;
+    this.defense2Submitted = false;
+    this.defense2SlotKey = '';
+    this.defense2PressTime = 0;
+  }
+
+  /**
+   * EPIC #265 — resolve ORB 1 of a double attack. Resolves the first orb fully,
+   * then branches on the outcome:
+   *   - KO          → duel ends; orb 2 is cancelled (clearComboState).
+   *   - orb 1 PARRY → cancel orb 2 (the returning counter disperses it); broadcast
+   *                   a `doubleAttackCancelled` marker; run orb 1's rally swap. The
+   *                   combo's 3 uses remain spent.
+   *   - otherwise   → orb 2 stays in flight; it resolves independently in
+   *                   `_resolveOrb2`. Phase stays DEFEND_WINDOW for orb 2.
+   */
+  private _resolveCombo(): void {
+    if (this.windowTimer) {
+      clearTimeout(this.windowTimer);
+      this.windowTimer = null;
+    }
+    const state = this.state;
+    state.phase = 'RESOLVE';
+
+    const attackerId = state.currentAttackerId;
+    const ids = Array.from(state.players.keys());
+    const defenderId = ids.find((pid) => pid !== attackerId)!;
+
+    const orb1Slot = state.attackerSlot as SlotKey;
+    const orb1ParrySlot = this.defenseSlotKey;
+    const { result, ended } = this.resolveOrb(
+      attackerId,
+      defenderId,
+      orb1Slot,
+      this.orbDefenseCapture(1),
+    );
+
+    if (ended) {
+      // KO on orb 1 — duel over, orb 2 cancelled.
+      this.clearComboState();
+      this.notifyAI();
+      return;
+    }
+
+    if (result.rallyContinues) {
+      // PARRY+STRONG on orb 1: the returning counter intercepts orb 2 mid-flight.
+      // Cancel orb 2 (no resolution, no heart/gauge change) and run orb 1's rally.
+      this.clearComboState();
+      this.broadcast('doubleAttackCancelled', { orb: 2 } satisfies DoubleAttackCancelledPayload);
+      this.continueAfterOrb(defenderId, orb1ParrySlot, result);
+      return;
+    }
+
+    // Non-PARRY, no KO: orb 2 proceeds. Stay in DEFEND_WINDOW for it. Its launch
+    // timer (set in handleSelectDoubleAttack) opens its window; _resolveOrb2 ends
+    // the combo. If orb 2 already launched (gap < orb-1 resolution), its window is
+    // already open; if not, the launch timer is still pending.
+    state.phase = 'DEFEND_WINDOW';
+    state.attackerSlot = this.comboSecondSlot;
+    // The defender continues defending; orb 2's capture is separate (defense2*).
+    this.notifyAI();
+  }
+
+  /**
+   * EPIC #265 — resolve ORB 2 of a double attack as an INDEPENDENT exchange (its
+   * own timing/heart/gauge/XP/exchangeResult). Only reached when orb 1 did NOT
+   * parry and did NOT KO. A PARRY+STRONG on orb 2 starts ITS OWN rally; anything
+   * else swaps to ATTACK_SELECT as a normal turn end. Clears combo state.
+   */
+  private _resolveOrb2(): void {
+    if (this.orb2Timer) {
+      clearTimeout(this.orb2Timer);
+      this.orb2Timer = null;
+    }
+    if (!this.comboActive || this.state.phase === 'ENDED') {
+      this.clearComboState();
+      return;
+    }
+    const state = this.state;
+    state.phase = 'RESOLVE';
+
+    const attackerId = state.currentAttackerId;
+    const ids = Array.from(state.players.keys());
+    const defenderId = ids.find((pid) => pid !== attackerId)!;
+
+    const orb2Slot = this.comboSecondSlot as SlotKey;
+    const orb2ParrySlot = this.defense2SlotKey;
+    const { result, ended } = this.resolveOrb(
+      attackerId,
+      defenderId,
+      orb2Slot,
+      this.orbDefenseCapture(2),
+    );
+
+    // Orb 2 is the last orb: combo is fully resolved either way.
+    this.clearComboState();
+
+    if (ended) {
+      this.notifyAI();
+      return;
+    }
+
+    this.continueAfterOrb(defenderId, orb2ParrySlot, result);
+  }
+
   onDispose(): void {
     if (this.windowTimer) clearTimeout(this.windowTimer);
+    if (this.orb2LaunchTimer) clearTimeout(this.orb2LaunchTimer);
+    if (this.orb2Timer) clearTimeout(this.orb2Timer);
     if (this.ai) {
       this.ai.dispose();
       this.ai = null;

@@ -16,6 +16,14 @@ export const STARTING_HEARTS = 3;
 export const STARTING_USES = 3;
 export const DEFEND_WINDOW_MS = TELEGRAPH_MS + BLOCK_WINDOW_MS; // 1100 (350 under E2E_FAST)
 
+// EPIC #264 / #265 — fusion-thumb double attack orb gap. The two orbs land
+// `gapMs` apart; the server clamps the client-supplied gap to this range. The
+// floor equals BLOCK_WINDOW_MS so orb 1's parry-determination margin is always
+// cleared before orb 2 lands — making the orb-1-parry-cancels-orb-2 rule
+// deterministic (EPIC #264 "Key design decision"). Tune MIN after feel-testing.
+export const MIN_COMBO_GAP_MS = 200; // = BLOCK_WINDOW_MS
+export const MAX_COMBO_GAP_MS = 600;
+
 // GDD §7 — status effects. A triangle gauge (FIRE/WATER/WOOD) at or above
 // STATUS_THRESHOLD activates that element's status (Burning/Drowning/Entangled).
 // GAUGE_SOFT_CAP (2× threshold) caps the broadcast gauge value so HUD numbers
