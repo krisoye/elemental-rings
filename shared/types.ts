@@ -223,6 +223,24 @@ export interface WonRingPayload {
   xp: number;
 }
 
+/**
+ * The shape of GET /api/me — the canonical player snapshot the client reads to
+ * repopulate carry/loadout pools, HUDs, and overlays. The server is the single
+ * source of truth; the client only renders what it receives here.
+ *
+ * `player` is intentionally a broad index map: the underlying row carries many
+ * optional fields (gold, food_units, spirit_current/max, carry_cap, difficulty,
+ * reliquary caps, …) that individual call sites narrow as needed, so the type is
+ * kept permissive rather than enumerating every column. `rings` and `loadout`
+ * use `unknown`/loose shapes for the same reason — callers cast to their local
+ * RingData view.
+ */
+export interface MeState {
+  player: Record<string, unknown>;
+  rings: unknown[];
+  loadout: Record<string, string | null> | null;
+}
+
 export interface BlockResult {
   timing: 'PARRY' | 'BLOCK' | 'MISTIME' | 'NO_BLOCK';
   relationship: 'STRONG' | 'NEUTRAL' | 'WEAK';

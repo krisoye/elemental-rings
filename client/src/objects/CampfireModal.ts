@@ -1,10 +1,7 @@
 import Phaser from 'phaser';
 import { CANVAS_W, CANVAS_H } from '../Constants';
 import { restAtCamp, summonSanctum } from '../net/campActions';
-
-declare const __SERVER_URL__: string;
-const _WS_CFM = __SERVER_URL__ || `ws://${window.location.hostname}:2567`;
-const API_BASE_CFM = _WS_CFM.replace(/^ws/, 'http');
+import { getToken } from '../net/api';
 
 /**
  * Overworld Anchorage campfire overlay (#191).
@@ -143,9 +140,9 @@ export class CampfireModal {
   }
 
   private async doRest(): Promise<void> {
-    const token = localStorage.getItem('er_token');
+    const token = getToken();
     if (!token) return;
-    const result = await restAtCamp(API_BASE_CFM, token);
+    const result = await restAtCamp(token);
     if ('error' in result) {
       this.setStatus(result.error, '#ff8888');
       return;
@@ -155,10 +152,10 @@ export class CampfireModal {
   }
 
   private async doSummon(summonCost: number): Promise<void> {
-    const token = localStorage.getItem('er_token');
+    const token = getToken();
     if (!token) return;
     void summonCost; // cost shown in label; server validates
-    const result = await summonSanctum(API_BASE_CFM, token, this.anchorageId);
+    const result = await summonSanctum(token, this.anchorageId);
     if ('error' in result) {
       this.setStatus(result.error, '#ff8888');
       return;

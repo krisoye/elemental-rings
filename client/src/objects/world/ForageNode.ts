@@ -1,9 +1,6 @@
 import Phaser from 'phaser';
 import { WorldInteractable } from './WorldInteractable';
-
-declare const __SERVER_URL__: string;
-const _WS_FN = __SERVER_URL__ || `ws://${window.location.hostname}:2567`;
-const API_BASE_FN = _WS_FN.replace(/^ws/, 'http');
+import { apiFetch, getToken } from '../../net/api';
 
 /** The Tiled tileset name carrying the berry/fruit-tree plant frames. */
 const BERRY_TILESET = 'berry_and_trees';
@@ -188,16 +185,11 @@ export class ForageNode extends WorldInteractable {
       onToast('Already foraged', '#ff8888');
       return;
     }
-    const token = localStorage.getItem('er_token');
-    if (!token) return;
+    if (!getToken()) return;
     try {
-      const res = await fetch(`${API_BASE_FN}/api/overworld/forage`, {
+      const res = await apiFetch('/api/overworld/forage', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify({ node_id: this.nodeId }),
+        json: { node_id: this.nodeId },
       });
       if (res.status === 409) {
         // Server confirms depleted (could have been foraged via another path).

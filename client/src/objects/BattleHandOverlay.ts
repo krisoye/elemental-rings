@@ -2,13 +2,10 @@ import Phaser from 'phaser';
 import { CANVAS_W, CANVAS_H, ELEMENT_COLORS, ELEMENT_NAMES, THUMB_PASSIVE_INFO, SLOT_KEYS } from '../Constants';
 import type { SlotKey } from '../Constants';
 import type { RingData } from './InventoryGrid';
+import { apiFetch, fetchMe, getToken } from '../net/api';
 
 // Local alias kept for readability; the canonical slot keys/type live in shared/.
 type BattleSlot = SlotKey;
-
-declare const __SERVER_URL__: string;
-const _WS_BHO = __SERVER_URL__ || `ws://${window.location.hostname}:2567`;
-const API_BASE = _WS_BHO.replace(/^ws/, 'http');
 
 /**
  * Manage Battle-Hand overlay (#87 Part D — extracted from EncounterScene #40/#85).
@@ -90,19 +87,14 @@ export class BattleHandOverlay {
     if (this.manageModal) return;
     this.spareScrollRow = 0;
     if (onClose) this.onCloseCb = onClose;
-    const token = localStorage.getItem('er_token');
-    if (!token) return;
+    if (!getToken()) return;
 
     try {
-      const res = await fetch(`${API_BASE}/api/me`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      if (!res.ok) return;
-      const data: {
+      const data = await fetchMe<{
         player: BattleHandOverlay['managePlayer'];
         rings: RingData[];
         loadout: Record<string, string | null>;
-      } = await res.json();
+      }>();
       this.managePlayer = data.player;
       this.allRings = data.rings;
       this.manageRings = data.rings.filter((r) => r.in_carry === 1);
@@ -510,13 +502,11 @@ export class BattleHandOverlay {
       this.setManageStatus('Select a carried ring first');
       return;
     }
-    const token = localStorage.getItem('er_token');
-    if (!token) return;
+    if (!getToken()) return;
     try {
-      const res = await fetch(`${API_BASE}/api/loadout`, {
+      const res = await apiFetch('/api/loadout', {
         method: 'PUT',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ [slot]: this.manageSelectedRingId }),
+        json: { [slot]: this.manageSelectedRingId },
       });
       if (!res.ok) return;
     } catch {
@@ -538,15 +528,10 @@ export class BattleHandOverlay {
     toSlot: BattleSlot,
     toBringId: string | null,
   ): Promise<void> {
-    const token = localStorage.getItem('er_token');
-    if (!token) return;
+    if (!getToken()) return;
     const body: Record<string, string | null> = { [toSlot]: fromRingId, [fromSlot]: toBringId };
     try {
-      const res = await fetch(`${API_BASE}/api/loadout`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify(body),
-      });
+      const res = await apiFetch('/api/loadout', { method: 'PUT', json: body });
       if (!res.ok) {
         this.setManageStatus('Swap failed');
         return;
@@ -569,13 +554,11 @@ export class BattleHandOverlay {
     _slotRingId: string,
     spareRingId: string,
   ): Promise<void> {
-    const token = localStorage.getItem('er_token');
-    if (!token) return;
+    if (!getToken()) return;
     try {
-      const res = await fetch(`${API_BASE}/api/loadout`, {
+      const res = await apiFetch('/api/loadout', {
         method: 'PUT',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ [fromSlot]: spareRingId }),
+        json: { [fromSlot]: spareRingId },
       });
       if (!res.ok) {
         this.setManageStatus('Swap failed');
@@ -622,13 +605,11 @@ export class BattleHandOverlay {
 
   /** POST /api/spirit/recharge for a specific ring id. */
   private async doManageRechargeById(ringId: string): Promise<void> {
-    const token = localStorage.getItem('er_token');
-    if (!token) return;
+    if (!getToken()) return;
     try {
-      const res = await fetch(`${API_BASE}/api/spirit/recharge`, {
+      const res = await apiFetch('/api/spirit/recharge', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ ringId }),
+        json: { ringId },
       });
       if (res.status === 400) {
         const body = await res.json().catch(() => ({}));
@@ -648,13 +629,9 @@ export class BattleHandOverlay {
 
   /** POST /api/spirit/recharge-all — fill carried rings in priority order. */
   private async doManageRechargeAll(): Promise<void> {
-    const token = localStorage.getItem('er_token');
-    if (!token) return;
+    if (!getToken()) return;
     try {
-      const res = await fetch(`${API_BASE}/api/spirit/recharge-all`, {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${token}` },
-      });
+      const res = await apiFetch('/api/spirit/recharge-all', { method: 'POST' });
       if (!res.ok) {
         this.setManageStatus(`Recharge-all failed (${res.status})`);
         return;
@@ -668,18 +645,13 @@ export class BattleHandOverlay {
 
   /** Re-fetch /api/me and re-render the manage modal with fresh data. */
   private async refreshManageData(): Promise<void> {
-    const token = localStorage.getItem('er_token');
-    if (!token) return;
+    if (!getToken()) return;
     try {
-      const res = await fetch(`${API_BASE}/api/me`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      if (!res.ok) return;
-      const data: {
+      const data = await fetchMe<{
         player: BattleHandOverlay['managePlayer'];
         rings: RingData[];
         loadout: Record<string, string | null>;
-      } = await res.json();
+      }>();
       this.managePlayer = data.player;
       this.allRings = data.rings;
       this.manageRings = data.rings.filter((r) => r.in_carry === 1);
@@ -700,12 +672,8 @@ export class BattleHandOverlay {
    * auto-carry it afterward.
    */
   private async discardCarriedRing(ringId: string): Promise<void> {
-    const token = localStorage.getItem('er_token') ?? '';
     try {
-      await fetch(`${API_BASE}/api/rings/${ringId}`, {
-        method: 'DELETE',
-        headers: { Authorization: `Bearer ${token}` },
-      });
+      await apiFetch(`/api/rings/${ringId}`, { method: 'DELETE' });
     } catch {
       this.status('Network error during discard');
       return;
@@ -718,12 +686,8 @@ export class BattleHandOverlay {
   private async discardPendingWonRing(): Promise<void> {
     const ringId = localStorage.getItem('er_pending_ring');
     if (!ringId) return;
-    const token = localStorage.getItem('er_token') ?? '';
     try {
-      await fetch(`${API_BASE}/api/rings/${ringId}`, {
-        method: 'DELETE',
-        headers: { Authorization: `Bearer ${token}` },
-      });
+      await apiFetch(`/api/rings/${ringId}`, { method: 'DELETE' });
     } catch {
       this.status('Network error during discard');
     }
@@ -740,17 +704,12 @@ export class BattleHandOverlay {
   private async tryAutoCarryPending(): Promise<void> {
     const pendingId = localStorage.getItem('er_pending_ring');
     if (!pendingId) return;
-    const token = localStorage.getItem('er_token');
-    if (!token) return;
+    if (!getToken()) return;
 
     let rings: RingData[];
     let carryCap: number;
     try {
-      const res = await fetch(`${API_BASE}/api/me`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      if (!res.ok) return;
-      const data: { player: { carry_cap?: number }; rings: RingData[] } = await res.json();
+      const data = await fetchMe<{ player: { carry_cap?: number }; rings: RingData[] }>();
       rings = data.rings;
       carryCap = data.player.carry_cap ?? 10;
     } catch {
@@ -768,11 +727,7 @@ export class BattleHandOverlay {
     const carried = new Set(rings.filter((r) => r.in_carry === 1).map((r) => r.id));
     carried.add(pendingId);
     try {
-      await fetch(`${API_BASE}/api/carry`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ ringIds: Array.from(carried) }),
-      });
+      await apiFetch('/api/carry', { method: 'PUT', json: { ringIds: Array.from(carried) } });
     } catch {
       this.status('Network error during carry update');
       return;

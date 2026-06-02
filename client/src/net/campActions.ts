@@ -1,6 +1,4 @@
-declare const __SERVER_URL__: string;
-const _WS_CA = __SERVER_URL__ || `ws://${window.location.hostname}:2567`;
-const API_BASE_CA = _WS_CA.replace(/^ws/, 'http');
+import { apiFetch, fetchMe } from './api';
 
 export interface RestResult {
   spirit_current: number;
@@ -16,25 +14,18 @@ export interface SummonResult {
 
 /** POST /api/camp/sleep — spend 25 food, restore spirit to max, advance game day. */
 export async function restAtCamp(
-  _apiBase: string,
   token: string,
 ): Promise<RestResult | { error: string }> {
+  void token; // auth is read live from localStorage by apiFetch/fetchMe.
   try {
-    const res = await fetch(`${API_BASE_CA}/api/camp/sleep`, {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${token}` },
-    });
+    const res = await apiFetch('/api/camp/sleep', { method: 'POST' });
     if (!res.ok) {
       const body = await res.json().catch(() => ({}));
       return { error: (body as { error?: string }).error ?? `Sleep failed (${res.status})` };
     }
-    const meRes = await fetch(`${API_BASE_CA}/api/me`, {
-      headers: { Authorization: `Bearer ${token}` },
-    });
-    if (!meRes.ok) return { error: 'Could not read updated state' };
-    const meData = (await meRes.json()) as {
+    const meData = await fetchMe<{
       player: { spirit_current: number; food_units: number; game_day: number };
-    };
+    }>();
     return {
       spirit_current: meData.player.spirit_current,
       food_units: meData.player.food_units,
@@ -47,15 +38,14 @@ export async function restAtCamp(
 
 /** POST /api/sanctum/summon — re-anchor the Sanctum to the given anchorage. */
 export async function summonSanctum(
-  _apiBase: string,
   token: string,
   anchorageId: string,
 ): Promise<SummonResult | { error: string }> {
+  void token; // auth is read live from localStorage by apiFetch.
   try {
-    const res = await fetch(`${API_BASE_CA}/api/sanctum/summon`, {
+    const res = await apiFetch('/api/sanctum/summon', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-      body: JSON.stringify({ anchorageId }),
+      json: { anchorageId },
     });
     const body = await res.json().catch(() => ({})) as {
       anchor?: string;

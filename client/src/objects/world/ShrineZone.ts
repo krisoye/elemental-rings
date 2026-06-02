@@ -1,11 +1,7 @@
 import Phaser from 'phaser';
 import { WorldInteractable } from './WorldInteractable';
 import { ELEMENT_NAMES } from '../../Constants';
-
-declare const __SERVER_URL__: string;
-
-const WS = __SERVER_URL__ || `ws://${window.location.hostname}:2567`;
-const API_BASE = WS.replace(/^ws/, 'http');
+import { apiFetch, fetchMe, getToken } from '../../net/api';
 
 /** Minimal slice of a /api/me ring row the shrine needs for the ring-key check. */
 interface ShrineRing {
@@ -143,12 +139,9 @@ export class ShrineZone extends WorldInteractable {
 
   /** Fetch GET /api/shrines/:id and reflect the sealed/open state on the altar. */
   private async loadState(): Promise<void> {
-    const token = localStorage.getItem('er_token');
-    if (!token) return;
+    if (!getToken()) return;
     try {
-      const res = await fetch(`${API_BASE}/api/shrines/${this.shrineId}`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
+      const res = await apiFetch(`/api/shrines/${this.shrineId}`);
       if (!res.ok) return;
       const body = (await res.json()) as { unlocked: boolean };
       this.unlocked = body.unlocked;
@@ -200,14 +193,9 @@ export class ShrineZone extends WorldInteractable {
    * null when the player carries none. Reads /api/me (the canonical ring source).
    */
   private async findRingKey(): Promise<ShrineRing | null> {
-    const token = localStorage.getItem('er_token');
-    if (!token) return null;
+    if (!getToken()) return null;
     try {
-      const res = await fetch(`${API_BASE}/api/me`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      if (!res.ok) return null;
-      const body = (await res.json()) as { rings: ShrineRing[] };
+      const body = await fetchMe<{ rings: ShrineRing[] }>();
       return (
         body.rings.find(
           (r) => r.element === this.shrineElement && r.in_carry === 1,
@@ -282,13 +270,11 @@ export class ShrineZone extends WorldInteractable {
    */
   private async confirmUnseal(ringId: string): Promise<void> {
     this.closeOverlay();
-    const token = localStorage.getItem('er_token');
-    if (!token) return;
+    if (!getToken()) return;
     try {
-      const res = await fetch(`${API_BASE}/api/shrines/${this.shrineId}/unlock`, {
+      const res = await apiFetch(`/api/shrines/${this.shrineId}/unlock`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ ringId }),
+        json: { ringId },
       });
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));

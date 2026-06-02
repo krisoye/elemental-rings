@@ -18,6 +18,7 @@ import { MONSTER_OW_REGISTRY } from '../objects/world/NpcSpriteRegistry';
 import { WanderingNpc } from '../objects/world/WanderingNpc';
 import { FusionPanel } from '../objects/FusionPanel';
 import type { RingData } from '../objects/InventoryGrid';
+import { apiFetch, fetchMe, getToken } from '../net/api';
 import {
   COMPASS_RANGE,
   SANCTUM_Y_ABOVE,
@@ -57,11 +58,6 @@ interface NpcInfo {
   /** Boss tier — present only for boss NPCs. */
   bossTier?: 'major' | 'gate' | 'sub';
 }
-
-declare const __SERVER_URL__: string;
-
-const WS = __SERVER_URL__ || `ws://${window.location.hostname}:2567`;
-const API_BASE = WS.replace(/^ws/, 'http');
 
 /**
  * px from a map edge at which an edge transition fires (8E.1).
@@ -330,13 +326,11 @@ export abstract class BaseBiomeScene extends Phaser.Scene {
 
   /** POST /api/fusion/combine for the shrine modal; reopens on success (#231). */
   private async doShrineFuse(ringId1: string, ringId2: string): Promise<string | null> {
-    const token = localStorage.getItem('er_token');
-    if (!token) return 'Not authenticated';
+    if (!getToken()) return 'Not authenticated';
     try {
-      const res = await fetch(`${API_BASE}/api/fusion/combine`, {
+      const res = await apiFetch('/api/fusion/combine', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ ringId1, ringId2 }),
+        json: { ringId1, ringId2 },
       });
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));
@@ -355,14 +349,9 @@ export abstract class BaseBiomeScene extends Phaser.Scene {
 
   /** Fetch the player's current ring inventory from /api/me (#231). */
   private async fetchRings(): Promise<RingData[]> {
-    const token = localStorage.getItem('er_token');
-    if (!token) return [];
+    if (!getToken()) return [];
     try {
-      const res = await fetch(`${API_BASE}/api/me`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      if (!res.ok) return [];
-      const body = (await res.json()) as { rings: RingData[] };
+      const body = await fetchMe<{ rings: RingData[] }>();
       return body.rings ?? [];
     } catch {
       return [];
@@ -1355,15 +1344,12 @@ export abstract class BaseBiomeScene extends Phaser.Scene {
 
   /** GET /api/waystones with the stored Bearer token. Null on auth failure. */
   private async fetchWaystones(): Promise<WaystonesPayload | null> {
-    const token = localStorage.getItem('er_token');
-    if (!token) {
+    if (!getToken()) {
       this.scene.start('LoginScene');
       return null;
     }
     try {
-      const res = await fetch(`${API_BASE}/api/waystones`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
+      const res = await apiFetch('/api/waystones');
       if (res.status === 401) {
         localStorage.removeItem('er_token');
         this.scene.start('LoginScene');
@@ -1381,16 +1367,14 @@ export abstract class BaseBiomeScene extends Phaser.Scene {
    * attuned and cache the refreshed payload. The server is authoritative.
    */
   private async onAttune(waystoneId: string): Promise<void> {
-    const token = localStorage.getItem('er_token');
-    if (!token) {
+    if (!getToken()) {
       this.scene.start('LoginScene');
       return;
     }
     try {
-      const res = await fetch(`${API_BASE}/api/waystones/attune`, {
+      const res = await apiFetch('/api/waystones/attune', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ waystoneId }),
+        json: { waystoneId },
       });
       if (!res.ok) return;
       const payload = (await res.json()) as WaystonesPayload;
@@ -1448,12 +1432,9 @@ export abstract class BaseBiomeScene extends Phaser.Scene {
     anchorageName: string,
     spiritCost: number,
   ): Promise<void> {
-    const token = localStorage.getItem('er_token');
-    if (!token) return;
+    if (!getToken()) return;
     try {
-      const res = await fetch(`${API_BASE}/api/me`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
+      const res = await apiFetch('/api/me');
       if (!res.ok || !this.campfireModal?.isOpen()) return;
       const data = (await res.json()) as {
         player: { food_units: number; spirit_current: number };
@@ -1514,12 +1495,9 @@ export abstract class BaseBiomeScene extends Phaser.Scene {
 
   /** #81 — GET /api/talisman-loadout and cache it (also published for E2E). */
   private async loadTalismanLoadout(): Promise<void> {
-    const token = localStorage.getItem('er_token');
-    if (!token) return;
+    if (!getToken()) return;
     try {
-      const res = await fetch(`${API_BASE}/api/talisman-loadout`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
+      const res = await apiFetch('/api/talisman-loadout');
       if (!res.ok) return;
       const payload = (await res.json()) as { necklaceId: string | null; necklaceCharges: number };
       this.talismanLoadout = payload;
@@ -1536,14 +1514,12 @@ export abstract class BaseBiomeScene extends Phaser.Scene {
    * (relocated) Sanctum (CampScene). A 400 is left silent.
    */
   private async activateSanctumStone(anchorageId: string): Promise<void> {
-    const token = localStorage.getItem('er_token');
-    if (!token) return;
+    if (!getToken()) return;
     let res: Response;
     try {
-      res = await fetch(`${API_BASE}/api/talisman/activate`, {
+      res = await apiFetch('/api/talisman/activate', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ talismanlId: 'sanctum_stone', anchorageId }),
+        json: { talismanlId: 'sanctum_stone', anchorageId },
       });
     } catch {
       return;
@@ -1565,13 +1541,11 @@ export abstract class BaseBiomeScene extends Phaser.Scene {
    * leaves the roster empty. The server is the authority on which NPCs are present.
    */
   private async loadOverworldNpcs(): Promise<void> {
-    const token = localStorage.getItem('er_token');
-    if (!token) return;
+    if (!getToken()) return;
     const biome = this.scene.key === 'SwampScene' ? 'swamp' : 'forest';
     try {
-      const res = await fetch(
-        `${API_BASE}/api/overworld/npcs?biome=${biome}&screen=${this.screenId}`,
-        { headers: { Authorization: `Bearer ${token}` } },
+      const res = await apiFetch(
+        `/api/overworld/npcs?biome=${biome}&screen=${this.screenId}`,
       );
       if (!res.ok) return;
       this.overworldNpcs = (await res.json()) as NpcInfo[];
@@ -1734,12 +1708,10 @@ export abstract class BaseBiomeScene extends Phaser.Scene {
    */
   private async loadForageNodeStatus(): Promise<void> {
     if (this.forageNodes.size === 0) return;
-    const token = localStorage.getItem('er_token');
-    if (!token) return;
+    if (!getToken()) return;
     try {
-      const res = await fetch(
-        `${API_BASE}/api/overworld/forage-status?screen=${this.screenId}`,
-        { headers: { Authorization: `Bearer ${token}` } },
+      const res = await apiFetch(
+        `/api/overworld/forage-status?screen=${this.screenId}`,
       );
       if (!res.ok) return;
       const data = (await res.json()) as {
@@ -1762,12 +1734,9 @@ export abstract class BaseBiomeScene extends Phaser.Scene {
    * source of truth; on any network/auth failure the HUD is left as-is.
    */
   private async refreshHud(): Promise<void> {
-    const token = localStorage.getItem('er_token');
-    if (!token || !this.hudText) return;
+    if (!getToken() || !this.hudText) return;
     try {
-      const res = await fetch(`${API_BASE}/api/me`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
+      const res = await apiFetch('/api/me');
       // The scene may have shut down during the await; bail if the text is gone.
       if (!res.ok || !this.hudText) return;
       const data: {

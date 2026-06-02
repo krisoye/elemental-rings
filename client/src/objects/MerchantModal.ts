@@ -1,9 +1,6 @@
 import Phaser from 'phaser';
 import { CANVAS_W, CANVAS_H, ELEMENT_NAMES } from '../Constants';
-
-declare const __SERVER_URL__: string;
-const _WS_MM = __SERVER_URL__ || `ws://${window.location.hostname}:2567`;
-const API_BASE_MM = _WS_MM.replace(/^ws/, 'http');
+import { API_BASE, apiFetch, fetchMe, getToken } from '../net/api';
 
 type Tab = 'buy' | 'sell';
 
@@ -114,25 +111,22 @@ export class MerchantModal {
   }
 
   private async fetchData(): Promise<void> {
-    const token = localStorage.getItem('er_token');
-    if (!token) return;
+    if (!getToken()) return;
     try {
-      const [catRes, meRes] = await Promise.all([
-        fetch(`${API_BASE_MM}/api/merchant/catalog`),
-        fetch(`${API_BASE_MM}/api/me`, { headers: { Authorization: `Bearer ${token}` } }),
-      ]);
-      if (catRes.ok) this.catalog = (await catRes.json()) as Catalog;
-      if (meRes.ok) {
-        const meData = (await meRes.json()) as {
+      // The catalog endpoint is public (no auth); /api/me is authenticated.
+      const [catRes, meData] = await Promise.all([
+        fetch(`${API_BASE}/api/merchant/catalog`),
+        fetchMe<{
           player: { gold: number; food_units: number };
           rings: RingRecord[];
           loadout: Record<string, string | null> | null;
-        };
-        this.gold = meData.player.gold;
-        this.food = meData.player.food_units;
-        this.allRings = meData.rings;
-        this.loadout = meData.loadout ?? {};
-      }
+        }>(),
+      ]);
+      if (catRes.ok) this.catalog = (await catRes.json()) as Catalog;
+      this.gold = meData.player.gold;
+      this.food = meData.player.food_units;
+      this.allRings = meData.rings;
+      this.loadout = meData.loadout ?? {};
     } catch {
       // Keep defaults.
     }
@@ -364,13 +358,11 @@ export class MerchantModal {
   // ── Transaction helpers ────────────────────────────────────────────────────
 
   private async executeBuyFood(qty: number): Promise<void> {
-    const token = localStorage.getItem('er_token');
-    if (!token) return;
+    if (!getToken()) return;
     try {
-      const res = await fetch(`${API_BASE_MM}/api/merchant/buy`, {
+      const res = await apiFetch('/api/merchant/buy', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ item: 'food', quantity: qty }),
+        json: { item: 'food', quantity: qty },
       });
       const body = (await res.json()) as { gold?: number; food_units?: number; error?: string };
       if (!res.ok) { this.status(body.error ?? 'Purchase failed', '#ff8888'); return; }
@@ -384,16 +376,14 @@ export class MerchantModal {
   }
 
   private async executeBuyRing(elementIndex: number): Promise<void> {
-    const token = localStorage.getItem('er_token');
-    if (!token) return;
+    if (!getToken()) return;
     // Map element integer index back to the server's element name string.
     const ELEMENT_MAP: Record<number, string> = { 0: 'fire', 1: 'water', 2: 'earth', 3: 'wind', 4: 'wood' };
     const element = ELEMENT_MAP[elementIndex] ?? 'fire';
     try {
-      const res = await fetch(`${API_BASE_MM}/api/merchant/buy`, {
+      const res = await apiFetch('/api/merchant/buy', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ item: 'ring', element, tier: 1 }),
+        json: { item: 'ring', element, tier: 1 },
       });
       const body = (await res.json()) as { gold?: number; ring?: RingRecord; error?: string };
       if (!res.ok) { this.status(body.error ?? 'Purchase failed', '#ff8888'); return; }
@@ -407,13 +397,11 @@ export class MerchantModal {
   }
 
   private async executeSellFood(qty: number): Promise<void> {
-    const token = localStorage.getItem('er_token');
-    if (!token) return;
+    if (!getToken()) return;
     try {
-      const res = await fetch(`${API_BASE_MM}/api/merchant/sell`, {
+      const res = await apiFetch('/api/merchant/sell', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ item: 'food', quantity: qty }),
+        json: { item: 'food', quantity: qty },
       });
       const body = (await res.json()) as { gold?: number; food_units?: number; error?: string };
       if (!res.ok) { this.status(body.error ?? 'Sale failed', '#ff8888'); return; }
@@ -427,13 +415,11 @@ export class MerchantModal {
   }
 
   private async executeSellRing(ringId: string): Promise<void> {
-    const token = localStorage.getItem('er_token');
-    if (!token) return;
+    if (!getToken()) return;
     try {
-      const res = await fetch(`${API_BASE_MM}/api/merchant/sell`, {
+      const res = await apiFetch('/api/merchant/sell', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ item: 'ring', ring_id: ringId }),
+        json: { item: 'ring', ring_id: ringId },
       });
       const body = (await res.json()) as { gold?: number; error?: string };
       if (!res.ok) { this.status(body.error ?? 'Sale failed', '#ff8888'); return; }

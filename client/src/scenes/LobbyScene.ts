@@ -1,9 +1,6 @@
 import Phaser from 'phaser';
 import { connectToRoom } from '../net/Connection';
-
-declare const __SERVER_URL__: string;
-const _WS_LOBBY = __SERVER_URL__ || `ws://${window.location.hostname}:2567`;
-const API_BASE = _WS_LOBBY.replace(/^ws/, 'http');
+import { apiFetch, getToken } from '../net/api';
 
 /**
  * PvP lobby. Connects to the `battle` room and waits for a second human player.
@@ -33,16 +30,13 @@ export class LobbyScene extends Phaser.Scene {
   }
 
   private async connect(): Promise<void> {
-    const token = localStorage.getItem('er_token') ?? '';
+    const token = getToken() ?? '';
     // E2E-only keyed-room id (#67), forwarded from EncounterScene via scene data.
     // Undefined for real PvP, so production matchmaking stays a pure global pool.
     const { e2eRoomId } = (this.scene.settings.data as { e2eRoomId?: string }) ?? {};
     // Best-effort stake lock before connecting (non-fatal if it fails).
     try {
-      await fetch(`${API_BASE}/api/stake/lock`, {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${token}` },
-      });
+      await apiFetch('/api/stake/lock', { method: 'POST' });
     } catch { /* non-fatal */ }
     const room = await connectToRoom('battle', { token, e2eRoomId });
     this.statusText.setText('Waiting for opponent...');

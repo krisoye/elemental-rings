@@ -12,11 +12,7 @@ import { BlinkController } from '../objects/world/BlinkController';
 import { getTalisman } from '../../../shared/talismans';
 import { FOREST_SCREENS } from '../../../shared/world/forest';
 import { restAtCamp, summonSanctum as summonSanctumHelper } from '../net/campActions';
-
-declare const __SERVER_URL__: string;
-
-const WS = __SERVER_URL__ || `ws://${window.location.hostname}:2567`;
-const API_BASE = WS.replace(/^ws/, 'http');
+import { API_BASE, apiFetch, fetchMe, getToken } from '../net/api';
 
 // #85 Fix 2A — the inventory grids in the Ring Storage overlay clip to this many
 // rows; beyond that the ▲/▼ arrows + mouse wheel scroll the grid. 3 rows fit
@@ -481,12 +477,9 @@ export class CampScene extends Phaser.Scene {
    */
   private async routeToBiome(): Promise<void> {
     let anchor = 'forest_entry';
-    const token = localStorage.getItem('er_token');
-    if (token) {
+    if (getToken()) {
       try {
-        const res = await fetch(`${API_BASE}/api/waystones`, {
-          headers: { Authorization: `Bearer ${token}` },
-        });
+        const res = await apiFetch('/api/waystones');
         if (res.ok) {
           anchor = ((await res.json()) as { anchor: string }).anchor ?? anchor;
         }
@@ -1353,13 +1346,10 @@ export class CampScene extends Phaser.Scene {
    * or auth failure leaves the placeholder label as-is.
    */
   private async loadTalismanLoadout(label: Phaser.GameObjects.Text): Promise<void> {
-    const token = localStorage.getItem('er_token');
-    if (!token) return;
+    if (!getToken()) return;
     let payload: { necklaceId: string | null; necklaceCharges: number };
     try {
-      const res = await fetch(`${API_BASE}/api/talisman-loadout`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
+      const res = await apiFetch('/api/talisman-loadout');
       if (!res.ok) return;
       payload = await res.json();
     } catch {
@@ -1435,8 +1425,7 @@ export class CampScene extends Phaser.Scene {
    * full payload is published to window.__teleportState for E2E before render.
    */
   private async openTeleportModal(): Promise<void> {
-    const token = localStorage.getItem('er_token');
-    if (!token) return;
+    if (!getToken()) return;
     let payload: {
       aggregateXp: number;
       spiritCurrent?: number;
@@ -1451,9 +1440,7 @@ export class CampScene extends Phaser.Scene {
       }>;
     };
     try {
-      const res = await fetch(`${API_BASE}/api/waystones`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
+      const res = await apiFetch('/api/waystones');
       if (!res.ok) return;
       payload = await res.json();
     } catch {
@@ -1619,15 +1606,10 @@ export class CampScene extends Phaser.Scene {
    * can read the new state without a re-fetch.
    */
   private async doTeleport(waystoneId: string, waystoneName: string): Promise<void> {
-    const token = localStorage.getItem('er_token');
-    if (!token) return;
+    if (!getToken()) return;
     let res: Response;
     try {
-      res = await fetch(`${API_BASE}/api/teleport`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ waystoneId }),
-      });
+      res = await apiFetch('/api/teleport', { method: 'POST', json: { waystoneId } });
     } catch {
       this.showTeleportError('Network error during teleport');
       return;
@@ -1791,12 +1773,12 @@ export class CampScene extends Phaser.Scene {
     anchorageId: string,
     setStatus: (msg: string, color?: string) => void,
   ): Promise<void> {
-    const token = localStorage.getItem('er_token');
+    const token = getToken();
     if (!token) {
       this.scene.start('LoginScene');
       return;
     }
-    const result = await summonSanctumHelper(API_BASE, token, anchorageId);
+    const result = await summonSanctumHelper(token, anchorageId);
     if ('error' in result) {
       setStatus(result.error);
       return;
@@ -1865,7 +1847,7 @@ export class CampScene extends Phaser.Scene {
     this.difficultyModal = new DifficultyModal(
       this,
       API_BASE,
-      () => localStorage.getItem('er_token'),
+      () => getToken(),
       (tier, spiritMax) => this.applyDifficultyChange(tier, spiritMax),
       (container) => {
         // #118: clear the main-camera ignore flag before the modal destroys it.
@@ -1897,17 +1879,14 @@ export class CampScene extends Phaser.Scene {
 
   /** Fetch /api/me and repopulate all three pools. */
   private async loadData(): Promise<void> {
-    const token = localStorage.getItem('er_token');
-    if (!token) {
+    if (!getToken()) {
       this.scene.start('LoginScene');
       return;
     }
 
     let data: { player: any; rings: RingData[]; loadout: Record<string, string | null> };
     try {
-      const res = await fetch(`${API_BASE}/api/me`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
+      const res = await apiFetch('/api/me');
       if (res.status === 401) {
         localStorage.removeItem('er_token');
         this.scene.start('LoginScene');
@@ -2101,17 +2080,12 @@ export class CampScene extends Phaser.Scene {
    * can batch a carry + loadout change into a single reload. Returns success.
    */
   private async putCarry(ringIds: string[], reload = true): Promise<boolean> {
-    const token = localStorage.getItem('er_token');
-    if (!token) {
+    if (!getToken()) {
       this.scene.start('LoginScene');
       return false;
     }
     try {
-      const res = await fetch(`${API_BASE}/api/carry`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ ringIds }),
-      });
+      const res = await apiFetch('/api/carry', { method: 'PUT', json: { ringIds } });
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));
         this.setStatus(body?.error ?? `Carry update failed (${res.status})`);
@@ -2138,17 +2112,12 @@ export class CampScene extends Phaser.Scene {
    * whether the request succeeded.
    */
   private async putLoadout(partial: Record<string, string | null>): Promise<boolean> {
-    const token = localStorage.getItem('er_token');
-    if (!token) {
+    if (!getToken()) {
       this.scene.start('LoginScene');
       return false;
     }
     try {
-      const res = await fetch(`${API_BASE}/api/loadout`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify(partial),
-      });
+      const res = await apiFetch('/api/loadout', { method: 'PUT', json: partial });
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));
         this.setStatus(body?.error ?? `Assignment failed (${res.status})`);
@@ -2165,12 +2134,12 @@ export class CampScene extends Phaser.Scene {
 
   /** POST /api/camp/sleep — spend food, restore spirit, advance the day. */
   private async doSleep(): Promise<void> {
-    const token = localStorage.getItem('er_token');
+    const token = getToken();
     if (!token) {
       this.scene.start('LoginScene');
       return;
     }
-    const result = await restAtCamp(API_BASE, token);
+    const result = await restAtCamp(token);
     if ('error' in result) {
       this.setStatus(result.error);
       return;
@@ -2192,17 +2161,12 @@ export class CampScene extends Phaser.Scene {
 
   /** POST /api/spirit/recharge for a specific ring id (full top-off). */
   async doRechargeById(ringId: string): Promise<void> {
-    const token = localStorage.getItem('er_token');
-    if (!token) {
+    if (!getToken()) {
       this.scene.start('LoginScene');
       return;
     }
     try {
-      const res = await fetch(`${API_BASE}/api/spirit/recharge`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ ringId }),
-      });
+      const res = await apiFetch('/api/spirit/recharge', { method: 'POST', json: { ringId } });
       if (res.status === 400) {
         const body = await res.json().catch(() => ({}));
         this.setStatus(body?.error ?? 'Recharge not available');
@@ -2221,16 +2185,12 @@ export class CampScene extends Phaser.Scene {
 
   /** POST /api/spirit/recharge-all — fill carried rings in priority order. */
   async doRechargeAll(): Promise<void> {
-    const token = localStorage.getItem('er_token');
-    if (!token) {
+    if (!getToken()) {
       this.scene.start('LoginScene');
       return;
     }
     try {
-      const res = await fetch(`${API_BASE}/api/spirit/recharge-all`, {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${token}` },
-      });
+      const res = await apiFetch('/api/spirit/recharge-all', { method: 'POST' });
       if (!res.ok) {
         this.setStatus(`Recharge-all failed (${res.status})`);
         return;
@@ -2295,16 +2255,14 @@ export class CampScene extends Phaser.Scene {
    * error message on a 400 (surfaced inline by the panel).
    */
   private async doFuse(ringId1: string, ringId2: string): Promise<string | null> {
-    const token = localStorage.getItem('er_token');
-    if (!token) {
+    if (!getToken()) {
       this.scene.start('LoginScene');
       return 'Not authenticated';
     }
     try {
-      const res = await fetch(`${API_BASE}/api/fusion/combine`, {
+      const res = await apiFetch('/api/fusion/combine', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ ringId1, ringId2 }),
+        json: { ringId1, ringId2 },
       });
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));
@@ -2331,16 +2289,12 @@ export class CampScene extends Phaser.Scene {
    * surfaces the message via setStatus.
    */
   private async doExpandReliquary(): Promise<void> {
-    const token = localStorage.getItem('er_token');
-    if (!token) {
+    if (!getToken()) {
       this.scene.start('LoginScene');
       return;
     }
     try {
-      const res = await fetch(`${API_BASE}/api/sanctum/expand-reliquary`, {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${token}` },
-      });
+      const res = await apiFetch('/api/sanctum/expand-reliquary', { method: 'POST' });
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));
         this.setStatus(body?.error ?? `Expand failed (${res.status})`);
