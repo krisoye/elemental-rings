@@ -64,6 +64,8 @@ export interface BoardView {
    * is not yet seated (defensive; the controller always populates it in a duel).
    */
   opponentDefenseSlots: DefenseSlotView[];
+  /** Remaining NPC spirit pool. 0 means no more recharges available; attacks exhausted + spirit 0 → forfeit. */
+  spirit: number;
 }
 
 /** EPIC #268 — a fusion-thumb double-attack: orb `first` fires, then `second` after `gapMs`. */
@@ -297,23 +299,29 @@ function mostDepleted<T extends AttackSlotView | DefenseSlotView>(slots: T[]): T
 
 /**
  * Pure recharge decision, evaluated before decideAttack(). Returns the combat
- * slot to recharge (consuming the turn), or null to attack normally instead.
+ * slot to recharge (consuming the turn), or null to attack normally / forfeit instead.
  *
  * Priority:
- *   1. Both attack rings spent → MUST recharge the most-depleted attack slot.
- *      Forfeiting is no longer an option, so this never returns null.
+ *   1. Both attack rings spent AND spirit > 0 → MUST recharge the most-depleted attack slot.
+ *   1a. Both attack rings spent AND spirit = 0 → return null; caller (scheduleAttack) forfeits.
  *   2. Attack rings available but a defense ring is at 0 uses → personality-gated:
  *      AGGRESSIVE / STATUS_HUNTER never sacrifice an attack turn for defense;
  *      DEFENSIVE recharges a defense ring if either d-slot is at 0;
  *      RESILIENT recharges the more-depleted defense ring if either is at 0.
+ *      Defense recharge is also skipped when spirit = 0.
  *   3. Otherwise → null (attack normally).
  */
 export function decideRecharge(view: BoardView, profile: AIProfile): RechargeDecision | null {
   const attackSpent = view.attackSlots.every(isSlotDepleted);
   if (attackSpent) {
+    // Spirit depleted: cannot recharge. Caller detects no usable attacks → forfeit.
+    if (view.spirit <= 0) return null;
     // Forced recharge: pick the attack slot missing the most uses.
     return { slot: mostDepleted(view.attackSlots).key };
   }
+
+  // No spirit left — skip optional defense recharges too.
+  if (view.spirit <= 0) return null;
 
   // Attack rings are available — defense recharge is a personality choice.
   const depletedDefense = view.defenseSlots.filter(isSlotDepleted);

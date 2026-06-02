@@ -52,6 +52,19 @@ const PERSONALITY_MULTIPLIER: Record<AIPersonality, number> = {
 };
 
 /**
+ * Per-personality spirit pool multiplier for roamer NPC duels.
+ * npcSpirit = floor(playerSpiritMax × PERSONALITY_SPIRIT_MULT[personality]).
+ * Calibrated so the player can fight 3–5 roamers before needing to rest.
+ * Boss tiers override this via BossModifier.spiritMult.
+ */
+export const PERSONALITY_SPIRIT_MULT: Record<AIPersonality, number> = {
+  AGGRESSIVE: 0.25,
+  DEFENSIVE: 0.30,
+  STATUS_HUNTER: 0.35,
+  RESILIENT: 0.40,
+};
+
+/**
  * The NPC's effective XP for a personality, scaled to the player's battle-hand
  * weighted-average XP (#244). A player with an empty/zero-XP hand yields 0 here;
  * the floor at PERSONALITY_THUMB_XP keeps such opponents non-trivial.

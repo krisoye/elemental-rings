@@ -153,6 +153,8 @@ export interface BossModifier {
   enrageThinkMult: number;
   enrageAggressive: boolean;
   gaugeFillMult: number;
+  /** NPC spirit pool = floor(playerSpiritMax × spiritMult). Overrides personality mult. */
+  spiritMult: number;
 }
 
 export const BOSS_MODIFIERS: Record<BossTier, BossModifier> = {
@@ -170,6 +172,7 @@ export const BOSS_MODIFIERS: Record<BossTier, BossModifier> = {
     enrageThinkMult: 0.6,
     enrageAggressive: true,
     gaugeFillMult: 1.0,
+    spiritMult: 1.0,
   },
   // Gate boss (Bogwood Warden): a solid step above a roamer; standard pacing. No
   // enrage (threshold 0).
@@ -184,6 +187,7 @@ export const BOSS_MODIFIERS: Record<BossTier, BossModifier> = {
     enrageThinkMult: 1.0,
     enrageAggressive: false,
     gaugeFillMult: 1.0,
+    spiritMult: 0.75,
   },
   // Sub-boss (fusion-shrine guardians): same toughness bump as a gate boss; their
   // distinct threat is status-gauge pressure (#260) — ×1.5 gauge fill — not raw
@@ -199,6 +203,7 @@ export const BOSS_MODIFIERS: Record<BossTier, BossModifier> = {
     enrageThinkMult: 1.0,
     enrageAggressive: false,
     gaugeFillMult: 1.5,
+    spiritMult: 0.60,
   },
 };
 

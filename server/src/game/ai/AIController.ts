@@ -34,6 +34,8 @@ export interface AIRoomHandle {
   // AI uses these to schedule a SECOND defense press when defending a double attack.
   readonly comboInFlight: boolean;
   readonly currentImpact2Time: number;
+  /** Remaining NPC spirit pool (BattleRoom-owned). 0 once exhausted. */
+  readonly npcSpirit: number;
   handleSelectAttack(id: string, payload: SelectAttackPayload): void;
   // EPIC #268 — AI double-attack OFFENSE. When an eligible boss decides to combo,
   // the controller calls this (the same handler a human's `selectDoubleAttack`
@@ -219,6 +221,7 @@ export class AIController {
       // code for non-bosses (they keep single-attacking).
       canDoubleAttack: canDoubleAttack(me),
       opponentDefenseSlots,
+      spirit: this.room.npcSpirit,
     };
   }
 
@@ -227,16 +230,28 @@ export class AIController {
 
     // GDD §6.3 (#197): recharge policy. Before attacking, the AI checks whether it
     // should spend the turn restoring a combat ring instead. When both attack rings
-    // are spent it MUST recharge (forfeiting is no longer the fallback); some
-    // personalities also recharge a depleted defense ring. handleRecharge consumes
-    // the turn, so the opponent attacks next and the AI re-enters ATTACK_SELECT with
-    // restored uses — a natural loop, no forfeit.
+    // are spent AND spirit remains it MUST recharge; some personalities also recharge
+    // a depleted defense ring. When spirit is exhausted AND no attack uses remain the
+    // AI forfeits — it can no longer sustain the fight.
     const rechargeDecision = decideRecharge(view, this.profile);
     if (rechargeDecision) {
       const delay = process.env.E2E_FAST === '1' ? 20 : 300;
       this.pending = setTimeout(() => {
         this.pending = null;
         this.room.handleRecharge(this.aiId, { slot: rechargeDecision.slot });
+      }, delay);
+      return;
+    }
+
+    // No recharge — check whether we have any attack uses left. If the AI's spirit
+    // is exhausted AND both attack rings are spent, decideRecharge returned null
+    // because it cannot recharge, not because it chose to attack. Forfeit.
+    const canAttack = view.attackSlots.some(s => s.ring.currentUses > 0 && !s.ring.isExtinguished);
+    if (!canAttack) {
+      const delay = process.env.E2E_FAST === '1' ? 20 : 300;
+      this.pending = setTimeout(() => {
+        this.pending = null;
+        this.room.handleForfeit(this.aiId);
       }, delay);
       return;
     }
