@@ -1,13 +1,11 @@
 import { v4 as uuidv4 } from 'uuid';
 import { db } from './db';
-import { ElementEnum } from '../../../shared/types';
+import { ElementEnum, DIFFICULTY_MULTIPLIERS, type DifficultyTier } from '../../../shared/types';
 import { fusionOf, isFusion, componentsOf } from '../game/Fusions';
 import { tierForXp } from '../game/Tiers';
 import { getTalisman } from '../../../shared/talismans';
 import {
   SPIRIT_PER_RING_USE,
-  SPIRIT_BASE,
-  XP_SCALER,
   FORAGE_YIELD,
   FORAGE_RESPAWN_DAYS,
   FOOD_SELL_PRICE,
@@ -18,6 +16,8 @@ import {
   MERCHANT_RING_SELL_PRICE_NEUTRAL,
   RELIQUARY_BASE_CAP,
   RELIQUARY_SHARD_INCREMENT,
+  CORE_SLOTS,
+  SPARE_SLOTS,
 } from '../game/constants';
 
 /** A persisted player row (no password hash exposed to callers of read helpers). */
@@ -34,6 +34,8 @@ export interface PlayerRow {
   reliquary_cap: number;
   /** #182 — unspent Reliquary Shards held by the player. */
   reliquary_shards: number;
+  /** EPIC #279 — player-chosen difficulty tier; scales spirit_max. */
+  difficulty: DifficultyTier;
 }
 
 /** A persisted ring row. */
@@ -154,7 +156,7 @@ const updateAnchor = db.prepare(
 const selectByUsername = db.prepare(`SELECT * FROM players WHERE username = ?`);
 const selectById = db.prepare(
   `SELECT id, username, gold, game_day, carry_cap, spirit_max, spirit_current, food_units,
-          reliquary_cap, reliquary_shards
+          reliquary_cap, reliquary_shards, difficulty
    FROM players WHERE id = ?`,
 );
 const selectRingsByOwner = db.prepare(`SELECT * FROM rings WHERE owner_id = ?`);
@@ -326,17 +328,29 @@ const updateSpiritDeduct = db.prepare(
 const updateSpiritDeductGuarded = db.prepare(
   `UPDATE players SET spirit_current = spirit_current - ? WHERE id = ? AND spirit_current >= ?`,
 );
-// spirit_max is XP-derived (SPIRIT_BASE + floor(aggregate_xp / XP_SCALER)), so
-// restoring sets spirit_current to the freshly computed max, not the column.
-// Only Reliquary rings (in_carry = 0) count toward aggregate_xp — carried rings
-// are excluded. Must match the boot-time recompute filter in db.ts.
+// aggregate_xp is the raw sum of XP across the player's Reliquary rings
+// (in_carry = 0). It still drives ring-tier display in the HUD — it is NOT the
+// spirit_max input anymore (EPIC #279 moved that to the max_uses sum below).
 const selectAggregateRingXp = db.prepare(
   `SELECT COALESCE(SUM(xp), 0) AS xp_sum FROM rings WHERE owner_id = ? AND in_carry = 0`,
 );
+// EPIC #279 — spirit_max is now derived from the SUM of max_uses across the
+// player's Reliquary rings (in_carry = 0), scaled by their difficulty multiplier.
+// Must match the boot-time recompute filter in db.ts. Carried rings are excluded.
+const selectReliquaryMaxUsesSum = db.prepare(
+  `SELECT COALESCE(SUM(max_uses), 0) AS uses_sum FROM rings WHERE owner_id = ? AND in_carry = 0`,
+);
+// EPIC #279 — read the player's difficulty tier for the spirit_max multiplier.
+const selectPlayerDifficulty = db.prepare(`SELECT difficulty FROM players WHERE id = ?`);
 const updateSpiritCurrent = db.prepare(
   `UPDATE players SET spirit_current = ? WHERE id = ?`,
 );
 const updateSpiritMax = db.prepare(`UPDATE players SET spirit_max = ? WHERE id = ?`);
+// EPIC #279 — set the player's difficulty tier; clamp spirit_current to a new max.
+const updatePlayerDifficulty = db.prepare(`UPDATE players SET difficulty = ? WHERE id = ?`);
+const clampSpiritCurrentMax = db.prepare(
+  `UPDATE players SET spirit_current = MIN(spirit_current, ?) WHERE id = ?`,
+);
 const updateFoodAdd = db.prepare(`UPDATE players SET food_units = food_units + ? WHERE id = ?`);
 const updateFoodDeduct = db.prepare(`UPDATE players SET food_units = food_units - ? WHERE id = ?`);
 const updateRingUsesAdd = db.prepare(
@@ -832,32 +846,23 @@ export const fuseRings = db.transaction(
   },
 );
 
-/** Logarithm base for spare-slot scaling (GDD §4.1). */
-const SPARE_LOG_BASE = 2.0;
-
 /**
- * The player's spare carry capacity (#171, GDD §4.1).
- * spare_slots = ceil(log_2(aggregate_xp)), where aggregate_xp = SUM(xp) WHERE
- * in_carry = 0 (Reliquary rings only — same filter as spirit_max derivation).
- * Ceiling of log base 2 gives 0 at xp=1, 1 at xp=2, then grows quickly early
- * and flattens to a soft ceiling. Returns 0 for aggregate_xp <= 0 (including a
- * fresh player with no Reliquary XP), guarding against log(0) = -Infinity.
+ * The player's spare carry slots (EPIC #279, GDD §4.1). Fixed at SPARE_SLOTS (9)
+ * for every player — the former XP-driven ceil(log_2(aggregate_xp)) curve is
+ * retired. Takes no arguments: the value no longer depends on the player.
  */
-export function getSpareCapacity(playerId: string): number {
-  const { aggregateXp } = getSpiritStats(playerId);
-  if (aggregateXp <= 0) return 0;
-  return Math.ceil(Math.log(aggregateXp) / Math.log(SPARE_LOG_BASE));
+export function getSpareSlots(): number {
+  return SPARE_SLOTS;
 }
 
 /**
- * The player's carry cap (rings carryable on an expedition). XP-derived (#171):
- * carry_cap = 5 + ceil(log_2(aggregate_xp)). Base = 5 spare slots for a fresh
- * player; aggregate Reliquary XP grants additional spare slots on a logarithmic
- * curve. Single-sourced here so packLoadout, merchantBuyRing, and route
- * validation all agree on the same cap.
+ * The player's carry cap (rings carryable on an expedition). Flat constant for
+ * everyone (EPIC #279): carry_cap = CORE_SLOTS(5) + SPARE_SLOTS(9) = 14. The
+ * playerId parameter is retained so the four call sites (packLoadout,
+ * merchantBuyRing, the route check, /api/me) need no churn.
  */
-export function getCarryCap(playerId: string): number {
-  return 5 + getSpareCapacity(playerId);
+export function getCarryCap(_playerId: string): number {
+  return CORE_SLOTS + SPARE_SLOTS;
 }
 
 /**
@@ -1011,16 +1016,24 @@ export function spendSpiritAtomic(playerId: string, cost: number): boolean {
 }
 
 /**
- * Single query returning both the raw aggregate ring XP and the derived
- * spirit_max. Use this wherever both values are needed to avoid a second
- * DB round-trip.
- *   aggregate_xp = SUM(xp) WHERE in_carry = 0   -- Reliquary rings only
- *   spirit_max   = SPIRIT_BASE + floor(aggregate_xp / XP_SCALER)
+ * Both the raw aggregate ring XP (for HUD ring-tier display) and the derived
+ * spirit_max (EPIC #279). Use this wherever both values are needed.
+ *   aggregate_xp = SUM(xp) WHERE in_carry = 0        -- Reliquary rings only
+ *   spirit_max   = SUM(max_uses) WHERE in_carry = 0
+ *                  × DIFFICULTY_MULTIPLIERS[player.difficulty]
+ * An empty Reliquary yields spirit_max = 0 by design — a new player earns their
+ * first spirit by winning a ring and retiring it to the Reliquary. There is no
+ * floor or starting grant.
  */
 export function getSpiritStats(playerId: string): { aggregateXp: number; spiritMax: number } {
-  const row = selectAggregateRingXp.get(playerId) as { xp_sum: number } | undefined;
-  const aggregateXp = row?.xp_sum ?? 0;
-  return { aggregateXp, spiritMax: SPIRIT_BASE + Math.floor(aggregateXp / XP_SCALER) };
+  const xpRow = selectAggregateRingXp.get(playerId) as { xp_sum: number } | undefined;
+  const aggregateXp = xpRow?.xp_sum ?? 0;
+  const usesRow = selectReliquaryMaxUsesSum.get(playerId) as { uses_sum: number } | undefined;
+  const usesSum = usesRow?.uses_sum ?? 0;
+  const diffRow = selectPlayerDifficulty.get(playerId) as { difficulty: string } | undefined;
+  const tier = (diffRow?.difficulty ?? 'seeker') as DifficultyTier;
+  const multiplier = DIFFICULTY_MULTIPLIERS[tier] ?? DIFFICULTY_MULTIPLIERS.seeker;
+  return { aggregateXp, spiritMax: usesSum * multiplier };
 }
 
 /** Return the raw sum of XP across all rings owned by the player. */
@@ -1171,6 +1184,24 @@ export function refreshSpiritMax(playerId: string): number {
 /** Restore the spirit gauge to its (XP-derived) maximum (resting effect). */
 export function restoreSpirit(playerId: string): void {
   updateSpiritCurrent.run(computeSpiritMax(playerId), playerId);
+}
+
+/**
+ * Set the player's difficulty tier (EPIC #279). A bare persistence write — the
+ * caller validates the tier (via isDifficultyTier) and is responsible for
+ * recomputing spirit_max and clamping spirit_current afterwards.
+ */
+export function setPlayerDifficulty(playerId: string, tier: DifficultyTier): void {
+  updatePlayerDifficulty.run(tier, playerId);
+}
+
+/**
+ * Clamp spirit_current down to `max` if it currently exceeds it (EPIC #279). Used
+ * after a difficulty change lowers spirit_max so the gauge never reads above its
+ * cap. Never raises spirit_current — a single guarded UPDATE.
+ */
+export function clampSpiritCurrent(playerId: string, max: number): void {
+  clampSpiritCurrentMax.run(max, playerId);
 }
 
 /**

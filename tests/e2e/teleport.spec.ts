@@ -125,7 +125,7 @@ async function serverAnchor(page: Page): Promise<string> {
 // ── Scenario 1: Spirit-locked destination shows a gate, no Travel (#87 Part B) ─
 test('teleport: a spirit-locked waystone shows its gate and is not travelable', async ({ browser }) => {
   const ctx = await browser.newContext();
-  await seedAuthToken(ctx); // fresh user → SPIRIT_BASE spirit
+  await seedAuthToken(ctx); // fresh user — spirit_max = Σ(reliquary max_uses) × multiplier
   const page = await ctx.newPage();
   await loadSanctum(page);
   // §10.8 (#87 Part B): the teleport gate is current spirit, not aggregate XP.
@@ -157,7 +157,7 @@ test('teleport: traveling to an unlocked waystone re-anchors (server round-trip)
   await seedAuthToken(ctx);
   const page = await ctx.newPage();
   await loadSanctum(page);
-  // §10.8 (#87 Part B): a fresh player's SPIRIT_BASE spirit affords forest_glade.
+  // §10.8 (#87 Part B): a fresh player's starter Reliquary rings afford forest_glade.
   await attune(page, 'forest_glade');
   await openTeleportModal(page);
 

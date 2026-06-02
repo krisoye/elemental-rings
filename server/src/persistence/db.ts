@@ -1,7 +1,7 @@
 import Database from 'better-sqlite3';
 import fs from 'fs';
 import path from 'path';
-import { SPIRIT_BASE, XP_SCALER, RELIQUARY_BASE_CAP } from '../game/constants';
+import { RELIQUARY_BASE_CAP } from '../game/constants';
 import { tierForXp, naturalMaxUses } from '../game/Tiers';
 
 // DB path is env-driven so production can point at a persistent volume
@@ -54,12 +54,23 @@ if (!hasPlayerCol('carry_cap')) {
   db.exec('ALTER TABLE players ADD COLUMN carry_cap INTEGER NOT NULL DEFAULT 10');
 }
 
-// #41 — spirit system: spirit gauge + food economy.
+// EPIC #279 — difficulty tier. Scales the spirit_max multiplier (the boot
+// recompute below reads this column in its CASE). Defaults to 'seeker' so every
+// existing player migrates to the meaningful-choices baseline. Guarded like every
+// other column so the ALTER never re-runs.
+if (!hasPlayerCol('difficulty')) {
+  db.exec("ALTER TABLE players ADD COLUMN difficulty TEXT NOT NULL DEFAULT 'seeker'");
+}
+
+// #41 — spirit system: spirit gauge + food economy. The column DEFAULT is a
+// placeholder only — the boot recompute below overwrites spirit_max from the
+// EPIC #279 formula (SUM(Reliquary max_uses) × difficulty multiplier) on every
+// boot, and 0 is a valid value (empty Reliquary → 0, by design).
 if (!hasPlayerCol('spirit_max')) {
-  db.exec(`ALTER TABLE players ADD COLUMN spirit_max INTEGER NOT NULL DEFAULT ${SPIRIT_BASE}`);
+  db.exec('ALTER TABLE players ADD COLUMN spirit_max INTEGER NOT NULL DEFAULT 0');
 }
 if (!hasPlayerCol('spirit_current')) {
-  db.exec(`ALTER TABLE players ADD COLUMN spirit_current INTEGER NOT NULL DEFAULT ${SPIRIT_BASE}`);
+  db.exec('ALTER TABLE players ADD COLUMN spirit_current INTEGER NOT NULL DEFAULT 0');
 }
 if (!hasPlayerCol('food_units')) {
   db.exec('ALTER TABLE players ADD COLUMN food_units INTEGER NOT NULL DEFAULT 100');
@@ -96,21 +107,25 @@ db.exec(
   `UPDATE players SET reliquary_cap = ${RELIQUARY_BASE_CAP} WHERE reliquary_cap > ${RELIQUARY_BASE_CAP}`,
 );
 
-// Recompute spirit_max on every boot using the same formula as computeSpiritMax()
-// in PlayerRepo: SPIRIT_BASE + floor(aggregate_xp / XP_SCALER). Only Reliquary
-// rings (in_carry = 0) count toward aggregate_xp — must match the filter in
-// selectAggregateRingXp (PlayerRepo.ts). Template literals embed the constants
-// so the formula stays in sync when either value changes.
-// Then cap spirit_current to the new max (fixes overflow when XP was lost/zeroed),
-// and raise any player below SPIRIT_BASE up to the base floor.
+// EPIC #279 — recompute spirit_max on every boot from the new formula:
+// SUM(max_uses) across the player's Reliquary rings (in_carry = 0) × their
+// difficulty multiplier (wanderer ×5, ascendant ×3, else seeker ×4). This must
+// match getSpiritStats() in PlayerRepo. The difficulty column migration above
+// has already run, so the CASE is safe. An empty Reliquary yields 0 — intended;
+// there is no floor. Then cap spirit_current to the (possibly lower) new max.
 db.exec(
   `UPDATE players
-     SET spirit_max = ${SPIRIT_BASE} + CAST(
-       COALESCE((SELECT SUM(xp) FROM rings WHERE owner_id = players.id AND in_carry = 0), 0) / ${XP_SCALER}
-     AS INTEGER)`,
+     SET spirit_max = (
+       SELECT COALESCE(SUM(r.max_uses), 0)
+       FROM rings r
+       WHERE r.owner_id = players.id AND r.in_carry = 0
+     ) * CASE players.difficulty
+         WHEN 'wanderer'  THEN 5
+         WHEN 'ascendant' THEN 3
+         ELSE 4
+       END`,
 );
 db.exec('UPDATE players SET spirit_current = MIN(spirit_current, spirit_max)');
-db.exec(`UPDATE players SET spirit_current = spirit_max WHERE spirit_current < ${SPIRIT_BASE}`);
 
 // EPIC #173 C8 — recompute every existing ring's tier and max_uses from XP, so a
 // DB created under the old hard-cap model (tier stored independently, starter

@@ -9,11 +9,11 @@
 | Concept | Description | Cap | Grows via |
 |---|---|---|---|
 | Reliquary | All rings stored in the Sanctum; not in carry loadout; sum of their XP = `aggregate_xp` | 20 | Reliquary Shard (+10, see §4.1.1) |
-| Loadout (carry) | Rings taken on expedition; excluded from `aggregate_xp` | 5 + spare | `aggregate_xp` |
+| Loadout (carry) | Rings taken on expedition; excluded from `aggregate_xp` | 14 (5 core + 9 spare) | Fixed |
 | Battle hand | 5 named slots (Thumb/A1/A2/D1/D2) used in combat | 5 (fixed) | No |
-| Spare | Carried rings not assigned to battle slots; swappable between encounters | `ceil(log_2(aggregate_xp))` | Automatic |
+| Spare | Carried rings not assigned to battle slots; swappable between encounters | 9 (fixed) | No |
 
-- **Spare capacity formula:** `ceil(log_2(aggregate_xp))` — spare slots scale with the ceiling of the base-2 logarithm of XP banked in the Reliquary. The ceiling variant rewards the player sooner than a floor (first slot at 2 XP), while the logarithm ensures the curve flattens — 14 spare slots at 10,000 XP vs 100 under the old linear formula. At game start spare = 0 (formula returns 0 for aggregate_xp ≤ 0); the player carries exactly their 5 battle-hand rings.
+- **Spare slots:** fixed at **9** for every player (`SPARE_SLOTS` in `server/src/game/constants.ts`). Carry capacity is therefore a flat `CORE_SLOTS(5) + SPARE_SLOTS(9) = 14` rings regardless of Reliquary XP. The former `ceil(log_2(aggregate_xp))` curve is retired in favour of one predictable number. Combined with the 9-slot Reliquary cap (§4.1.1), the total rings held at any time is bounded at **23** (14 carried + 9 resting). See §12.2.
 - Rings in the Reliquary recharge uses on the game day timer
 - Rings on your person do **not** recharge in the field — only at camp (sleep or paid recharge)
 - Rings in the Reliquary do **not** earn XP — battle use is the only XP source (see §4.4)

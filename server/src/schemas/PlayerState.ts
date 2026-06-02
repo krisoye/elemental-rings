@@ -42,7 +42,7 @@ export class PlayerState extends Schema {
   @type('uint8') spareCapacity: number = 0;
 
   // #211 — Spirit gauge (DB-derived; only meaningful for human/token sessions). uint16 —
-  // spirit_max = SPIRIT_BASE(50) + floor(aggregate_xp / XP_SCALER) can exceed 255.
+  // spirit_max = SUM(Reliquary max_uses) × difficulty multiplier (EPIC #279) can exceed 255.
   // AI / no-token sessions leave these at 0, which the HUD treats as "hide".
   // Only the LOCAL player's spirit is meaningful info to surface; the opponent's
   // is private (the client HUD only ever renders state.players.get(myId)).

@@ -1,22 +1,20 @@
 import { test, expect } from '@playwright/test';
 
 /**
- * #171 — XP-driven spare carry capacity (server-side E2E).
+ * EPIC #279 (#282) — fixed spare carry capacity (server-side E2E).
  *
- * carry_cap = 5 + ceil(log_2(aggregate_xp))
- * aggregate_xp = SUM(xp) WHERE in_carry = 0  (Reliquary rings only)
+ * Replaces the former #171 XP-driven curve (carry_cap = 5 + ceil(log_2(aggregate_xp))).
+ * Carry cap is now a flat constant for every player:
+ *   carry_cap = CORE_SLOTS(5) + SPARE_SLOTS(9) = 14
+ * independent of Reliquary XP. /api/me exposes spareCapacity = 9 (fixed).
  *
  * Scenarios:
- *   1. GET /api/me: fresh player has spareCapacity 0 (aggregate_xp = 0 in_carry=0).
- *      The REST response exposes spare_capacity for client consumption.
- *   2. PUT /api/loadout with carried-ring count > cap (5) → 400.
- *   4. After retiring enough XP to the Reliquary (in_carry=0) to reach the spare=2
- *      band (aggregate_xp ∈ (2, 4] → ceil(log2) = 2), carry cap updates live to 7
- *      — no server restart required.
+ *   1. Fresh player → carry_cap 14, spareCapacity 9, regardless of XP.
+ *   2. A veteran with high Reliquary XP → still carry_cap 14, spareCapacity 9.
+ *   3. Carrying exactly 14 rings succeeds; 15 is rejected.
  *
- * Uses test-only routes (drain-spirit, set-ring-xp) following the pattern in
- * spirit.spec.ts and teleport.spec.ts. All assertions are server-state only
- * (REST API round-trips) — no Playwright browser needed.
+ * Uses test-only routes (mint-token, set-ring-xp, seed-resting-rings). All
+ * assertions are server-state only (REST API round-trips) — no browser needed.
  */
 
 const API_URL = 'http://localhost:2568';
@@ -46,6 +44,16 @@ async function setRingXP(token: string, ringId: string, xp: number): Promise<voi
   if (!res.ok) throw new Error(`set-ring-xp failed (${res.status}): ${await res.text()}`);
 }
 
+/** POST /api/test/seed-resting-rings → add `count` Reliquary rings. */
+async function seedRestingRings(token: string, count: number): Promise<void> {
+  const res = await fetch(`${API_URL}/api/test/seed-resting-rings`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+    body: JSON.stringify({ count }),
+  });
+  if (!res.ok) throw new Error(`seed-resting-rings failed (${res.status}): ${await res.text()}`);
+}
+
 /** PUT /api/carry — set the carried set to exactly these ring ids. */
 async function putCarry(token: string, ringIds: string[]): Promise<Response> {
   return fetch(`${API_URL}/api/carry`, {
@@ -55,89 +63,42 @@ async function putCarry(token: string, ringIds: string[]): Promise<Response> {
   });
 }
 
-/** PUT /api/loadout — update slot assignments. */
-async function putLoadout(token: string, partial: Record<string, string | null>): Promise<Response> {
-  return fetch(`${API_URL}/api/loadout`, {
-    method: 'PUT',
-    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-    body: JSON.stringify(partial),
-  });
-}
-
-// ── Scenario 1: GET /api/me exposes spareCapacity = 0 for a fresh player ───────
-test('spare-carry: fresh player has spareCapacity 0 and carry cap 5', async () => {
+// ── Scenario 1: fresh player has spareCapacity 9 and carry cap 14 ─────────────
+test('spare-carry: fresh player has spareCapacity 9 and carry cap 14', async () => {
   const token = await mintToken();
-  const { player, rings } = await getMe(token);
+  const { player } = await getMe(token);
+  expect(player.carry_cap).toBe(14);
+  expect(player.spareCapacity).toBe(9);
+});
 
-  // Fresh player: aggregate_xp = 0 (all rings are carried with xp=0, Reliquary
-  // is empty of XP-bearing rings). spareCapacity = ceil(log_2(0)) → 0 (guarded).
-  expect(player.aggregate_xp).toBe(0);
-  // PUT /api/carry: 5 rings = at cap → 200; 6 rings = over cap → 400.
-  const carried = rings.filter((r: any) => r.in_carry === 1).map((r: any) => r.id);
-  expect(carried.length).toBe(5); // default battle slots
+// ── Scenario 2: a veteran with high Reliquary XP still has carry cap 14 ───────
+test('spare-carry: high Reliquary XP does not change the flat carry cap of 14', async () => {
+  const token = await mintToken();
+  const { rings } = await getMe(token);
+  // Pile XP onto a Reliquary (in_carry=0) ring — under the old log curve this
+  // would have raised the cap well above 5; now it must stay 14.
+  const reliquary = rings.filter((r: any) => r.in_carry === 0);
+  expect(reliquary.length).toBeGreaterThanOrEqual(1);
+  await setRingXP(token, reliquary[0].id, 10000);
 
-  const atCap = await putCarry(token, carried.slice(0, 5));
+  const { player } = await getMe(token);
+  expect(player.aggregate_xp).toBe(10000);
+  expect(player.carry_cap).toBe(14); // unchanged — flat cap
+  expect(player.spareCapacity).toBe(9);
+});
+
+// ── Scenario 3: carry exactly 14 succeeds; 15 is rejected ────────────────────
+test('spare-carry: carrying 14 rings succeeds, 15 is rejected', async () => {
+  const token = await mintToken();
+  await seedRestingRings(token, 5); // 10 starters + 5 = 15 owned
+  const { rings } = await getMe(token);
+  expect(rings.length).toBe(15);
+
+  const fourteen = rings.slice(0, 14).map((r: any) => r.id);
+  const atCap = await putCarry(token, fourteen);
   expect(atCap.status).toBe(200);
 
-  const allRingIds = rings.map((r: any) => r.id).slice(0, 6);
-  const overCap = await putCarry(token, allRingIds);
+  const fifteen = rings.slice(0, 15).map((r: any) => r.id);
+  const overCap = await putCarry(token, fifteen);
   expect(overCap.status).toBe(400);
-});
-
-// ── Scenario 2: PUT /api/loadout rejects when carry count > 5 + spareCapacity ──
-test('spare-carry: PUT /api/loadout 400 when carried count exceeds cap', async () => {
-  const token = await mintToken();
-  const { rings } = await getMe(token);
-  // First attempt to carry 6 rings — this should fail (via packLoadout guard).
-  const sixIds = rings.slice(0, 6).map((r: any) => r.id);
-  const carryRes = await putCarry(token, sixIds);
-  expect(carryRes.status).toBe(400);
-
-  // Confirm carried count is unchanged (still 5 from createPlayer defaults).
-  const { rings: after } = await getMe(token);
-  const carriedCount = after.filter((r: any) => r.in_carry === 1).length;
-  expect(carriedCount).toBe(5);
-
-  // Now PUT /api/loadout when carry count == cap (5 == 5): should succeed.
-  const { rings: current, loadout } = await getMe(token);
-  const carried = current.filter((r: any) => r.in_carry === 1);
-  const loadoutRes = await putLoadout(token, { a1: carried[0]?.id ?? null });
-  expect(loadoutRes.status).toBe(200);
-});
-
-// ── Scenario 4: live increment after retiring XP into the spare=2 band ─────────
-// Set 2 uncarried rings to 2 XP each (in_carry = 0 → aggregate_xp = 4).
-// spareCapacity = ceil(log_2(4)) = ceil(2) = 2. carry cap: 5 + 2 = 7.
-test('spare-carry: retiring XP into the spare=2 band raises carry cap from 5 to 7', async () => {
-  const token = await mintToken();
-  const { rings } = await getMe(token);
-
-  // Set 2 uncarried rings to 2 XP each (XP on in_carry=0 rings = aggregate_xp).
-  // aggregate_xp = 4 lands in the spare=2 band: ceil(log_2(4)) = 2.
-  const reliquary = rings.filter((r: any) => r.in_carry === 0);
-  expect(reliquary.length).toBeGreaterThanOrEqual(2);
-  await setRingXP(token, reliquary[0].id, 2);
-  await setRingXP(token, reliquary[1].id, 2);
-
-  // GET /api/me reflects the updated aggregate_xp and spareCapacity.
-  const { player: after } = await getMe(token);
-  expect(after.aggregate_xp).toBe(4);
-
-  // Carry cap is now 7 (5 + 2 spare). We can carry 7 rings without error.
-  // NOTE: the 7-ring putCarry will include the 2 XP rings (making them in_carry=1).
-  // After the call, aggregate_xp WHERE in_carry=0 drops back toward 0, so the cap
-  // reverts to 5 for subsequent calls. The cap check inside packLoadout uses the
-  // PRE-carry aggregate_xp (before clearCarryForOwner runs), so 7 passes correctly.
-  const allRings = (await getMe(token)).rings;
-  const sevenIds = allRings.slice(0, 7).map((r: any) => r.id);
-  const carryRes = await putCarry(token, sevenIds);
-  // packLoadout allows 7 because getCarryCap computed 7 before the carry flags changed.
-  expect(carryRes.status).toBe(200);
-
-  // After the 7-ring carry, the 2 XP rings are now in_carry=1.
-  // aggregate_xp WHERE in_carry=0 is now ~0 → getCarryCap() ≈ 5.
-  // 8 rings still exceeds even the pre-carry cap of 7, so 400.
-  const eightIds = allRings.slice(0, 8).map((r: any) => r.id);
-  const overRes = await putCarry(token, eightIds);
-  expect(overRes.status).toBe(400);
 });

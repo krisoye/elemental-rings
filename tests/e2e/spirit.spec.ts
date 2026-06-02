@@ -38,12 +38,69 @@ function authJson(token: string): Record<string, string> {
 // ── GET /api/me returns spirit + food ─────────────────────────────────────────
 test('spirit: GET /api/me returns spirit_max, spirit_current, food_units', async () => {
   const { token } = await register();
-  const { player } = await me(token);
-  // SPIRIT_BASE is 50; a fresh player's starter rings carry 0 XP, so
-  // spirit_max = 50 + floor(0 / XP_SCALER) = 50, and spirit_current matches.
-  expect(player.spirit_max).toBe(50);
-  expect(player.spirit_current).toBe(50);
+  const { player, rings } = await me(token);
+  // EPIC #279 — spirit_max = SUM(Reliquary max_uses) × difficulty multiplier.
+  // A fresh player carries 5 starter rings and rests 5 in the Reliquary (each
+  // max_uses = 3). On the default 'seeker' tier (×4): (5 × 3) × 4 = 60.
+  const reliquaryUses = rings
+    .filter((r) => r.in_carry === 0)
+    .reduce((sum, r) => sum + r.max_uses, 0);
+  expect(player.spirit_max).toBe(reliquaryUses * 4);
+  expect(player.spirit_current).toBe(player.spirit_max);
   expect(player.food_units).toBe(100);
+});
+
+// ── EPIC #279 — spirit_max = Σ(Reliquary max_uses) × difficulty multiplier ────
+
+/** PUT /api/carry — set the carried set to exactly these ring ids. */
+async function putCarry(token: string, ringIds: string[]): Promise<Response> {
+  return fetch(`${API_URL}/api/carry`, {
+    method: 'PUT',
+    headers: authJson(token),
+    body: JSON.stringify({ ringIds }),
+  });
+}
+
+/** POST /api/test/seed-resting-rings — add `count` Reliquary rings (max_uses=3). */
+async function seedRestingRings(token: string, count: number): Promise<void> {
+  const res = await fetch(`${API_URL}/api/test/seed-resting-rings`, {
+    method: 'POST',
+    headers: authJson(token),
+    body: JSON.stringify({ count }),
+  });
+  if (!res.ok) throw new Error(`seed-resting-rings failed (${res.status})`);
+}
+
+// Empty Reliquary → spirit_max = 0 (intended; no floor). Carrying ALL owned rings
+// empties the Reliquary, so Σ(max_uses WHERE in_carry=0) = 0 → spirit_max = 0.
+// NOTE: a freshly-registered player rests 5 starter rings, so they start ABOVE 0;
+// this exercises the zero-floor property by draining the Reliquary explicitly.
+test('spirit: empty Reliquary yields spirit_max 0 (no floor)', async () => {
+  const { token } = await register();
+  const { rings } = await me(token);
+  expect(rings.length).toBe(10);
+  // Carry all 10 owned rings (cap=14) → Reliquary is empty.
+  const carryAll = await putCarry(token, rings.map((r) => r.id));
+  expect(carryAll.status).toBe(200);
+  const { player } = await me(token);
+  expect(player.spirit_max).toBe(0);
+  expect(player.spirit_current).toBe(0); // clamped to the new max
+});
+
+// Precise formula: with a known Reliquary composition the spirit_max is exact.
+// Start from an empty Reliquary (carry everything), then seed N rings of max_uses
+// 3 → spirit_max = (3 × N) × 4 on the default seeker tier.
+test('spirit: spirit_max equals Σ(Reliquary max_uses) × 4 on seeker', async () => {
+  const { token } = await register();
+  const { rings } = await me(token);
+  // Empty the Reliquary first so only the seeded rings count.
+  expect((await putCarry(token, rings.map((r) => r.id))).status).toBe(200);
+  expect((await me(token)).player.spirit_max).toBe(0);
+
+  // Seed 3 resting rings (each max_uses = 3) → Σ = 9 → spirit_max = 9 × 4 = 36.
+  await seedRestingRings(token, 3);
+  const { player } = await me(token);
+  expect(player.spirit_max).toBe(36);
 });
 
 // ── Sleep with <25 food → 400 ─────────────────────────────────────────────────
@@ -310,7 +367,7 @@ test('spirit: aggregate_xp counts only Reliquary rings, not carried rings', asyn
     .reduce((sum, r) => sum + r.xp, 0);
   test.skip(carriedXp === 0, 'No XP earned this duel — cannot assert Reliquary exclusion');
 
-  // All XP is on carried rings → aggregate_xp must be 0, spirit_max unchanged.
+  // All XP is on carried rings → aggregate_xp (Reliquary XP only) must be 0.
   expect(afterBattle.aggregate_xp).toBe(0);
   const spiritMaxBefore = afterBattle.spirit_max;
 
@@ -322,7 +379,9 @@ test('spirit: aggregate_xp counts only Reliquary rings, not carried rings', asyn
   });
   expect(carry.status).toBe(200);
 
-  // Reliquary now holds all XP — aggregate_xp must reflect it, spirit_max must rise.
+  // Reliquary now holds the formerly-carried rings: aggregate_xp reflects their
+  // XP, and spirit_max rises because those rings' max_uses now count toward the
+  // Σ(max_uses) × multiplier formula (EPIC #279).
   const { player: afterRetire } = await me(token);
   expect(afterRetire.aggregate_xp).toBe(carriedXp);
   expect(afterRetire.spirit_max).toBeGreaterThan(spiritMaxBefore);

@@ -4,35 +4,46 @@
 
 The spirit gauge represents the protagonist's spiritual energy — the force that allows them to attune to rings, channel power through them, and fold space for teleportation.
 
-The protagonist has **no independent XP pool**. Their spiritual power is entirely derived from their rings. The spirit gauge maximum is a direct function of **aggregate ring XP** — the sum of XP across all rings in the **Reliquary** (the Sanctum ring storage; see §4.1 and §10.6). Rings in the carry loadout are excluded. As the protagonist retires experienced rings to the Reliquary and develops new ones to carry, the aggregate rises and the spirit gauge maximum grows.
+The protagonist has **no independent XP pool**. Their spiritual power is entirely derived from their rings. The spirit gauge maximum is the **sum of `max_uses` across the rings resting in the Reliquary** (the Sanctum ring storage; see §4.1 and §10.6), scaled by the player's chosen **difficulty multiplier**. Rings in the carry loadout are excluded. As the protagonist retires deeper rings (higher `max_uses`) to the Reliquary, the spirit gauge maximum grows.
 
 ```
-spirit_max = SPIRIT_BASE + floor(aggregate_ring_xp / XP_SCALER)
+spirit_max = SUM(max_uses WHERE in_carry = 0) × DIFFICULTY_MULTIPLIERS[player.difficulty]
 ```
+
+| Difficulty | Multiplier | Spirit feel |
+|---|---|---|
+| Wanderer | ×5 | Resource is a backdrop |
+| **Seeker** (default) | **×4** | Meaningful choices |
+| Ascendant | ×3 | Spirit always scarce |
+
+The multipliers live in `DIFFICULTY_MULTIPLIERS` (`shared/types.ts`); difficulty is stored per-player and changeable anytime (see §15). A change recomputes `spirit_max` immediately and clamps `spirit_current` to the new max.
+
+**Zero-spirit design intent.** An **empty Reliquary yields `spirit_max = 0`** — and that is deliberate. A new player begins with only a battle hand; their first spirit is earned by winning a ring and **retiring it to the Reliquary**, teaching the win → retire → recharge loop organically. There is **no floor and no starting grant**.
+
+**Implications:**
+- Retire a deep ring (high `max_uses`) to the Reliquary → spirit max rises
+- A larger Reliquary of mature rings → a deeper spirit pool
+- Carry a ring out of the Reliquary → it stops contributing to spirit max until retired again
+- The protagonist IS their rings. There is no "self" apart from the collection.
+
+### 12.2 Carry Capacity
+
+Rings are not heavy — they are spiritually demanding. Attuning to too many simultaneously fragments the wielder's focus. Carry capacity is a **fixed constant** for every protagonist, new or seasoned:
+
+```
+carry_cap = CORE_SLOTS(5) + SPARE_SLOTS(9) = 14
+```
+
+- **5 core slots** — the named battle-hand: Thumb, A1, A2, D1, D2
+- **9 spare slots** — a fixed spare pouch, the same for every player
+- Combined with the 9-slot Reliquary cap (§10.6), the **total rings held at any time is bounded at 23** (14 carried + 9 in the Reliquary)
 
 | Constant | Location | Notes |
 |---|---|---|
-| `SPIRIT_BASE` | `server/src/game/constants.ts` | Base spirit max for a new player with no rings |
-| `XP_SCALER` | `server/src/game/constants.ts` | Tune here — do not hardcode the value in the GDD |
+| `CORE_SLOTS` | `server/src/game/constants.ts` | The five named battle-hand slots |
+| `SPARE_SLOTS` | `server/src/game/constants.ts` | Fixed spare pouch — tune here, never hardcode in the GDD |
 
-Both constants are in one file — changing them automatically updates the boot-time backfill, all runtime recharge logic, and the sleep restore, with no other code to touch.
-
-**Implications:**
-- Use rings in battle → rings earn XP → aggregate rises → spirit max increases
-- Win a high-XP ring → aggregate spikes → spirit may increase significantly
-- Lose a ring through staking → aggregate drops → spirit max may decrease
-- The protagonist IS their rings. There is no "self" apart from the collection.
-
-### 12.2 Spirit Capacity = Carry Capacity
-
-Rings are not heavy — they are spiritually demanding. Attuning to too many simultaneously fragments the wielder's focus. The number of rings a protagonist can carry on an expedition is determined by their **spirit gauge maximum**, not physical weight.
-
-- Base spirit capacity → `carry_cap = 10` rings (starting)
-- As spirit max grows, carry cap grows proportionally — the exact ratio is an **open question** (§13); currently `carry_cap` is fixed at 10
-- Garments from merchants can further expand carry cap beyond the spirit-derived baseline
-- Only Reliquary rings count toward `aggregate_xp` — rings in the carry loadout are excluded
-
-This is why the 11th ring feels impossible to carry at the start — not weight, but spiritual bandwidth.
+The spare count no longer scales with aggregate Reliquary XP: the former logarithmic curve is retired in favour of one predictable number that every player can plan around.
 
 ### 12.3 Recharging Rings
 

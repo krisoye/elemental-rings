@@ -3,7 +3,9 @@ import { InventoryGrid, type RingData } from '../objects/InventoryGrid';
 import { LoadoutPanel, type LoadoutSlot } from '../objects/LoadoutPanel';
 import { StakePanel } from '../objects/StakePanel';
 import { FusionPanel } from '../objects/FusionPanel';
+import { DifficultyModal } from '../objects/DifficultyModal';
 import { ELEMENT_NAMES, CANVAS_W, CANVAS_H, THUMB_PASSIVE_INFO } from '../Constants';
+import { type DifficultyTier } from '../../../shared/types';
 import { Player } from '../objects/world/Player';
 import { InteractionZone } from '../objects/world/InteractionZone';
 import { BlinkController } from '../objects/world/BlinkController';
@@ -127,6 +129,9 @@ export class CampScene extends Phaser.Scene {
   private loadoutPanel!: LoadoutPanel;
   private stakePanel!: StakePanel;
   private fusionPanel!: FusionPanel;
+  // EPIC #279 — Settings → difficulty selector. Self-contained modal (FusionPanel
+  // lifecycle shape); opened by the persistent Settings button on uiRoot.
+  private difficultyModal!: DifficultyModal;
   private ringMap: Map<string, RingData> = new Map();
   private loadoutHeaderText!: Phaser.GameObjects.Text;
   private statLineText!: Phaser.GameObjects.Text;
@@ -233,6 +238,19 @@ export class CampScene extends Phaser.Scene {
     this.uiRoot = this.add.container(0, 0).setDepth(4000);
     this.cameras.main.ignore(this.uiRoot);
     this.uiCam = this.cameras.add(0, 0, CANVAS_W, CANVAS_H);
+
+    // EPIC #279 — persistent Settings button (top-right HUD). The camp's other
+    // actions (Reliquary / Recharge / Sleep) are spatial interaction zones, but
+    // difficulty is a global preference, so it lives as an always-visible HUD
+    // button rather than a station you walk to. Opens the DifficultyModal.
+    const settingsBtn = this.add
+      .text(CANVAS_W - 16, 16, '[Settings]', { fontSize: '14px', color: '#ffdd66' })
+      .setOrigin(1, 0)
+      .setScrollFactor(0)
+      .setName('settings-btn')
+      .setInteractive({ useHandCursor: true })
+      .on('pointerdown', () => this.openDifficultyModal());
+    this.uiRoot.add(settingsBtn);
     // uiCam ignores world objects; collected after buildZones() below.
 
     // ── Reusable inventory panels (parked off-screen) ─────────────────────
@@ -292,6 +310,8 @@ export class CampScene extends Phaser.Scene {
     window.__campOpenFusion = (): void => this.openFusionPanel();
     window.__campFuse = (ringId1: string, ringId2: string): Promise<string | null> =>
       this.doFuse(ringId1, ringId2);
+    // EPIC #279 — open the difficulty selector (same path as the Settings button).
+    window.__campOpenSettings = (): void => this.openDifficultyModal();
     // #63 teleport hooks — open the modal / travel directly to a waystone.
     window.__campOpenTeleport = (): Promise<void> => this.openTeleportModal();
     window.__campTeleport = (waystoneId: string): Promise<void> =>
@@ -310,6 +330,8 @@ export class CampScene extends Phaser.Scene {
       window.__campLeaveAtSanctum = undefined;
       window.__campOpenFusion = undefined;
       window.__campFuse = undefined;
+      window.__campOpenSettings = undefined;
+      window.__difficultyState = undefined;
       window.__campFusedFills = undefined;
       window.__campOpenTeleport = undefined;
       window.__campTeleport = undefined;
@@ -844,7 +866,8 @@ export class CampScene extends Phaser.Scene {
         s.rings.filter((r: RingData) => r.in_carry === 0 && !(r as any).escrowed).length;
       const reliquaryCap: number = s.reliquaryCap ?? 20;
       this.reliquaryHeader.setText(
-        `XP: ${s.aggregate_xp.toLocaleString()}    spirit: ${s.spirit_current} / ${s.spirit_max}` +
+        `XP: ${s.aggregate_xp.toLocaleString()}    Spirit: ${s.spirit_current} / ${s.spirit_max} ` +
+        `${CampScene.difficultyLabel(s.difficulty)}` +
         `    Loadout: ${carried}/${s.carry_cap}  |  Reliquary: ${reliquaryCount}/${reliquaryCap}`,
       );
     }
@@ -1838,6 +1861,19 @@ export class CampScene extends Phaser.Scene {
         if (container) this.unignoreMain(container);
       },
     );
+    // EPIC #279 — difficulty selector. On a confirmed tier change the server
+    // returns the recomputed spirit_max; mirror it into __campState and re-render
+    // both stats displays (the main stat line + the open Reliquary header, if any).
+    this.difficultyModal = new DifficultyModal(
+      this,
+      API_BASE,
+      () => localStorage.getItem('er_token'),
+      (tier, spiritMax) => this.applyDifficultyChange(tier, spiritMax),
+      (container) => {
+        // #118: clear the main-camera ignore flag before the modal destroys it.
+        if (container) this.unignoreMain(container);
+      },
+    );
 
     // Off-screen header/stat/status texts the panels & overlays update. These
     // mirror the old flat layout's labels but are not visible until an overlay
@@ -1900,14 +1936,35 @@ export class CampScene extends Phaser.Scene {
     this.refreshPools(player);
   }
 
+  /**
+   * EPIC #279 — bracketed difficulty label (e.g. `[Seeker]`) appended after the
+   * spirit display. Defaults to Seeker before /api/me loads or if the field is
+   * absent (older server). Capitalises the stored lowercase tier.
+   */
+  private static difficultyLabel(tier: DifficultyTier | undefined): string {
+    const t: DifficultyTier = tier ?? 'seeker';
+    return `[${t.charAt(0).toUpperCase()}${t.slice(1)}]`;
+  }
+
+  /**
+   * EPIC #279 — the full-width main stat line. Extracted so both refreshPools and
+   * applyDifficultyChange render the same string (with the bracketed difficulty
+   * label after spirit). `aggregate_xp` is relabelled "XP" — still the raw
+   * Reliquary XP sum used for ring-tier display, no longer a spirit_max input.
+   */
+  private buildStatLine(player: any): string {
+    return (
+      `Day: ${player.game_day ?? 0} | Gold: ${player.gold ?? 0} | ` +
+      `Food: ${player.food_units ?? 0} | ` +
+      `Spirit: ${player.spirit_current ?? 0}/${player.spirit_max ?? 0} ` +
+      `${CampScene.difficultyLabel(player.difficulty)} | ` +
+      `XP: ${player.aggregate_xp ?? 0}`
+    );
+  }
+
   /** Split rings into the three pools and repopulate the UI from current state. */
   private refreshPools(player: any): void {
-    this.statLineText.setText(
-      `Day: ${player.game_day ?? 0} | Gold: ${player.gold ?? 0} | ` +
-        `Food: ${player.food_units ?? 0} | ` +
-        `Spirit: ${player.spirit_current ?? 0}/${player.spirit_max ?? 0} | ` +
-        `XP: ${player.aggregate_xp ?? 0}`,
-    );
+    this.statLineText.setText(this.buildStatLine(player));
 
     const battleHandIds = new Set(
       BATTLE_SLOTS.map((s) => this.loadout[s]).filter(Boolean) as string[],
@@ -1958,6 +2015,8 @@ export class CampScene extends Phaser.Scene {
       spirit_max: player.spirit_max ?? 0,
       food_units: player.food_units ?? 0,
       aggregate_xp: player.aggregate_xp ?? 0,
+      // EPIC #279 — difficulty tier from /api/me (default seeker on older servers).
+      difficulty: (player.difficulty ?? 'seeker') as DifficultyTier,
       staked_passive: this.stakedPassive,
       // #182 — reliquary cap fields from /api/me
       reliquaryCap: player.reliquaryCap,
@@ -2196,6 +2255,39 @@ export class CampScene extends Phaser.Scene {
     // cascades to all its children.
     const fc = this.fusionPanel.getContainer();
     if (fc) this.cameras.main.ignore(fc);
+  }
+
+  /**
+   * EPIC #279 — open the difficulty selector, highlighting the player's current
+   * tier (read from __campState; defaults to 'seeker' before /api/me loads). The
+   * container stays at the scene root and is main-camera-ignored so it renders
+   * at 1:1 via uiCam (mirrors openFusionPanel).
+   */
+  private openDifficultyModal(): void {
+    const current: DifficultyTier = window.__campState?.difficulty ?? 'seeker';
+    this.difficultyModal.open(current);
+    const dc = this.difficultyModal.getContainer();
+    if (dc) this.cameras.main.ignore(dc);
+  }
+
+  /**
+   * EPIC #279 — apply a confirmed difficulty change from the modal. The server
+   * has already recomputed and persisted spirit_max under the new multiplier;
+   * mirror both the tier and the authoritative spirit_max into __campState and
+   * re-render the stats displays (main stat line + the Reliquary header, when
+   * the Reliquary overlay is open). spirit_current is unchanged client-side —
+   * the server clamps it server-side and the next /api/me load reconciles it.
+   */
+  private applyDifficultyChange(tier: DifficultyTier, spiritMax: number): void {
+    const s = window.__campState;
+    if (s) {
+      s.difficulty = tier;
+      s.spirit_max = spiritMax;
+      s.player.difficulty = tier;
+      s.player.spirit_max = spiritMax;
+    }
+    this.statLineText.setText(this.buildStatLine(s?.player ?? {}));
+    this.renderReliquaryHeader();
   }
 
   /**

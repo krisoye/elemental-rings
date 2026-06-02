@@ -7,7 +7,8 @@ CREATE TABLE IF NOT EXISTS players (
   carry_cap      INTEGER NOT NULL DEFAULT 10,
   spirit_max     INTEGER NOT NULL DEFAULT 50,
   spirit_current INTEGER NOT NULL DEFAULT 50,
-  food_units     INTEGER NOT NULL DEFAULT 100
+  food_units     INTEGER NOT NULL DEFAULT 100,
+  difficulty     TEXT NOT NULL DEFAULT 'seeker'
 );
 CREATE TABLE IF NOT EXISTS rings (
   id           TEXT PRIMARY KEY,
