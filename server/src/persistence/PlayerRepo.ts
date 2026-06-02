@@ -156,7 +156,7 @@ const updateAnchor = db.prepare(
 const selectByUsername = db.prepare(`SELECT * FROM players WHERE username = ?`);
 const selectById = db.prepare(
   `SELECT id, username, gold, game_day, carry_cap, spirit_max, spirit_current, food_units,
-          reliquary_cap, reliquary_shards
+          reliquary_cap, reliquary_shards, difficulty
    FROM players WHERE id = ?`,
 );
 const selectRingsByOwner = db.prepare(`SELECT * FROM rings WHERE owner_id = ?`);
@@ -346,6 +346,11 @@ const updateSpiritCurrent = db.prepare(
   `UPDATE players SET spirit_current = ? WHERE id = ?`,
 );
 const updateSpiritMax = db.prepare(`UPDATE players SET spirit_max = ? WHERE id = ?`);
+// EPIC #279 — set the player's difficulty tier; clamp spirit_current to a new max.
+const updatePlayerDifficulty = db.prepare(`UPDATE players SET difficulty = ? WHERE id = ?`);
+const clampSpiritCurrentMax = db.prepare(
+  `UPDATE players SET spirit_current = MIN(spirit_current, ?) WHERE id = ?`,
+);
 const updateFoodAdd = db.prepare(`UPDATE players SET food_units = food_units + ? WHERE id = ?`);
 const updateFoodDeduct = db.prepare(`UPDATE players SET food_units = food_units - ? WHERE id = ?`);
 const updateRingUsesAdd = db.prepare(
@@ -1179,6 +1184,24 @@ export function refreshSpiritMax(playerId: string): number {
 /** Restore the spirit gauge to its (XP-derived) maximum (resting effect). */
 export function restoreSpirit(playerId: string): void {
   updateSpiritCurrent.run(computeSpiritMax(playerId), playerId);
+}
+
+/**
+ * Set the player's difficulty tier (EPIC #279). A bare persistence write — the
+ * caller validates the tier (via isDifficultyTier) and is responsible for
+ * recomputing spirit_max and clamping spirit_current afterwards.
+ */
+export function setPlayerDifficulty(playerId: string, tier: DifficultyTier): void {
+  updatePlayerDifficulty.run(tier, playerId);
+}
+
+/**
+ * Clamp spirit_current down to `max` if it currently exceeds it (EPIC #279). Used
+ * after a difficulty change lowers spirit_max so the gauge never reads above its
+ * cap. Never raises spirit_current — a single guarded UPDATE.
+ */
+export function clampSpiritCurrent(playerId: string, max: number): void {
+  clampSpiritCurrentMax.run(max, playerId);
 }
 
 /**

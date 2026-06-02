@@ -4,6 +4,7 @@ import { signToken, requireAuth, verifyToken } from '../auth/auth';
 import { makeRng } from '../game/ai/AIProfiles';
 import { previewOpponent, AI_PERSONALITIES } from '../game/ai/AILoadout';
 import type { AIPersonality } from '../../../shared/types';
+import { isDifficultyTier } from '../../../shared/types';
 import {
   createPlayer,
   getPlayerByUsername,
@@ -23,6 +24,9 @@ import {
   spendSpirit,
   spendSpiritAtomic,
   getSpiritStats,
+  refreshSpiritMax,
+  setPlayerDifficulty,
+  clampSpiritCurrent,
   getBattleHandAvgXp,
   lockStake,
   unlockStake,
@@ -192,6 +196,9 @@ apiRouter.get('/api/me', requireAuth, (req: Request, res: Response): void => {
   res.status(200).json({
     player: {
       ...player,
+      // EPIC #279 — surface the difficulty tier for the client's Settings display.
+      // (Already present via ...player, but stated explicitly per the contract.)
+      difficulty: player.difficulty,
       spirit_max: spiritMax,
       aggregate_xp: aggregateXp,
       carry_cap: getCarryCap(playerId),
@@ -258,6 +265,26 @@ apiRouter.put('/api/carry', requireAuth, (req: Request, res: Response): void => 
     const msg = err instanceof Error ? err.message : 'Unknown error';
     res.status(400).json({ error: msg });
   }
+});
+
+/**
+ * PUT /api/difficulty — change the player's difficulty tier (EPIC #279). Body:
+ * { tier: DifficultyTier }. Sets the tier, recomputes spirit_max under the new
+ * multiplier (Σ Reliquary max_uses × multiplier), and clamps spirit_current to
+ * the new max so the gauge never reads above its cap. 400 on an invalid tier.
+ * Requires auth.
+ */
+apiRouter.put('/api/difficulty', requireAuth, (req: Request, res: Response): void => {
+  const playerId = req.playerId as string;
+  const tier = (req.body ?? {}).tier;
+  if (!isDifficultyTier(tier)) {
+    res.status(400).json({ error: 'invalid tier' });
+    return;
+  }
+  setPlayerDifficulty(playerId, tier);
+  const spiritMax = refreshSpiritMax(playerId);
+  clampSpiritCurrent(playerId, spiritMax);
+  res.status(200).json({ difficulty: tier, spirit_max: spiritMax });
 });
 
 /**

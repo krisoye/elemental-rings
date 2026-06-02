@@ -10,9 +10,9 @@ import { defineConfig } from '@playwright/test';
 //   client-battle-flow, client-connect, client-touch, encounter-vs-ai, staking,
 //   status-effects
 // Solo — single context (incl. driveAiDuel vs AI):
-//   auth, camp, carry, compass, fusion, overworld-transition, reliquary-cap,
-//   sanctum-movement, sanctum-summon, sanctum-zones, spare-carry, spirit, swamp,
-//   talisman, teleport, waystones
+//   auth, camp, carry, compass, difficulty, fusion, overworld-transition,
+//   reliquary-cap, sanctum-movement, sanctum-summon, sanctum-zones, spare-carry,
+//   spirit, swamp, talisman, teleport, waystones
 const PVP_SPECS = [
   'client-battle-flow.spec.ts',
   'client-connect.spec.ts',
@@ -37,6 +37,7 @@ const SOLO_SPECS = [
   'camp.spec.ts',
   'carry.spec.ts',
   'compass.spec.ts',
+  'difficulty.spec.ts', // EPIC #279 (#280 + #283) — difficulty tier + PUT /api/difficulty
   'forage.spec.ts',
   'forage-client.spec.ts',
   'frost-sentinel.spec.ts', // #269
