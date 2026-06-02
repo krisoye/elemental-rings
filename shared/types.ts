@@ -87,6 +87,11 @@ export interface BattleRoomOptions {
   // it defaults to 0 (a fresh opponent, preserving backwards-compat for
   // unauthenticated E2E). Only meaningful on vsAI rooms; PvP rooms ignore it.
   playerBattleHandAvgXp?: number;
+  // #262 — set by EncounterScene when launching a boss practice rematch so the
+  // server skips all economy (gold, XP, ring-uses drain, stake transfer). The
+  // client also skips the stake/lock call on this path. Production NPC duels and
+  // hub-marker duels never set this flag.
+  isPracticeRematch?: boolean;
 }
 
 export interface SelectAttackPayload {

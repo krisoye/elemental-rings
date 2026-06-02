@@ -135,6 +135,8 @@ export class BattleRoom extends Room<{ state: BattleState }> {
    * persistBattleResult records the defeat so the NPC respawns per its cadence.
    */
   private npcId: string | undefined;
+  // #262 — true when launched as a boss practice rematch (no economy impact).
+  private isPracticeRematch = false;
 
   /**
    * EPIC #256 — the boss descriptor for this duel's NPC (tier / name / fused
@@ -239,6 +241,7 @@ export class BattleRoom extends Room<{ state: BattleState }> {
       // #83 — remember which overworld NPC this duel represents (if any) so a
       // human win can be persisted as that NPC's defeat in persistBattleResult.
       this.npcId = options.npcId;
+      this.isPracticeRematch = options.isPracticeRematch === true;
       // EPIC #256 — resolve the boss descriptor (if this NPC is a boss) from the
       // spawn table. Server-authoritative: the tier / fused thumb come from
       // NPC_SPAWNS, never the client. Cached for the difficulty/passive paths.
@@ -686,6 +689,9 @@ export class BattleRoom extends Room<{ state: BattleState }> {
 
   /** Persist XP, uses, gold awards, and stake transfer to the DB (synchronous). */
   private persistBattleResult(): void {
+    // #262 — practice rematches are fully consequence-free: no uses drain, no gold,
+    // no XP, no stake transfer. The duel still resolves normally for fun/training.
+    if (this.isPracticeRematch) return;
     try {
       const state = this.state;
       const winnerId = state.winnerId;

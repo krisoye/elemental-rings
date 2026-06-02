@@ -544,13 +544,14 @@ export class EncounterScene extends Phaser.Scene {
     const battleKey = MONSTER_OW_REGISTRY[boss.spriteElement]?.battleKey;
     void this.startAIDuel(
       boss.personality,
-      undefined, // no aiOverrides
-      undefined, // NO npcId → practice (no reward / penalty / defeat-state change)
-      false, // no ambush
+      undefined,  // no aiOverrides
+      undefined,  // NO npcId
+      false,      // no ambush
       boss.aiSeed,
       boss.spriteFrame,
       battleKey,
       boss.element, // fused thumb
+      true,         // isPracticeRematch → server skips all economy
     );
   }
 
@@ -596,14 +597,17 @@ export class EncounterScene extends Phaser.Scene {
     opponentSpriteFrame?: number,
     battleKey?: string,
     thumbElement?: number,
+    isPracticeRematch?: boolean,
   ): Promise<void> {
     const token = localStorage.getItem('er_token') ?? '';
-    try {
-      await fetch(`${API_BASE}/api/stake/lock`, {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${token}` },
-      });
-    } catch { /* non-fatal */ }
+    if (!isPracticeRematch) {
+      try {
+        await fetch(`${API_BASE}/api/stake/lock`, {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${token}` },
+        });
+      } catch { /* non-fatal */ }
+    }
     const room = await connectToRoom('battle-ai', {
       vsAI: true,
       personality,
@@ -627,6 +631,7 @@ export class EncounterScene extends Phaser.Scene {
         ? { playerBattleHandAvgXp: this.playerBattleHandAvgXp }
         : {}),
       ...aiOverrides,
+      ...(isPracticeRematch ? { isPracticeRematch: true } : {}),
     });
 
     let transitioned = false;
