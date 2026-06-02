@@ -98,6 +98,20 @@ declare global {
     __encounterRematchBoss?: (bossId: string) => void;
     __slotPositions: { x: number; y: number }[];
     __orbLaunchCount: number;
+    // EPIC #264 / #267 — dual-orb telegraph E2E hooks. __lastOrbOutcome records the
+    // most recent per-orb combo result (which orb a press answered + its label),
+    // null outside a combo. __orbDispersed counts parry-disperse VFX plays (orb 2
+    // scattered instead of impacting). Read by E2E to assert per-orb attribution
+    // and the parry-disperse without reading pixels.
+    __lastOrbOutcome?: { orb: number; label: string } | null;
+    // Durable log of every per-orb combo outcome (orb + label), so a test can read
+    // both orbs' results even when two arrive in rapid succession. Reset per battle.
+    __orbOutcomeLog?: { orb: number; label: string }[];
+    __orbDispersed?: number;
+    // EPIC #264 / #266 — true while A1/A2 show the double-attack eligibility cue
+    // (canDoubleAttack on the local hand during the player's attack phase). Read by
+    // E2E to assert the cue toggles with eligibility.
+    __comboEligible?: boolean;
     // #125 — true while the BattleScene forfeit confirm prompt is open. E2E reads
     // this to assert the Z+C (a1+a2) / 3+4 (d1+d2) chord raised the prompt.
     __forfeitPromptOpen?: boolean;
@@ -354,6 +368,9 @@ window.__lastRechargeResult = null;
 window.__lastBattleSummary = null;
 window.__slotPositions = [];
 window.__orbLaunchCount = 0;
+window.__lastOrbOutcome = null;
+window.__orbOutcomeLog = [];
+window.__orbDispersed = 0;
 window.connectToRoom = async (roomName: string, opts?: BattleRoomOptions): Promise<void> => {
   const { connectToRoom } = await import('./net/Connection');
   await connectToRoom(roomName, opts);
@@ -372,6 +389,10 @@ const game = new Phaser.Game({
   physics: { default: 'arcade', arcade: { gravity: { x: 0, y: 0 }, debug: false } },
   // Disable bilinear interpolation so pixel-art sprites stay crisp at any integer scale.
   render: { pixelArt: true },
+  // EPIC #264 / #266 — the hold-cross-tap double-attack gesture needs two
+  // SIMULTANEOUS touch points (hold one A-card, tap the other), so reserve enough
+  // active pointers for genuine two-finger multitouch (default is 1 touch pointer).
+  input: { activePointers: 3 },
   // BootScene must stay first (it routes by auth state). LoginScene/CampScene
   // are the new auth flow; Encounter/Lobby/Battle are unchanged.
   // ForestScene (8E.1, the BaseBiomeScene-driven multi-screen Forest region,

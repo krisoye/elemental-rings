@@ -120,20 +120,22 @@ test('Single Z in attack phase throws the normal a1 attack (no recharge)', async
   await closeBattle(h);
 });
 
-// ── Scenario 3: Z+C forfeit confirm → Y forfeits ─────────────────────────────
-test('Z+C simultaneous in attack phase shows the forfeit confirm; Y sends forfeit', async ({
+// ── Scenario 3: D1+D2 (3+4) forfeit confirm → Y forfeits ──────────────────────
+// EPIC #266 relocated the forfeit chord from A1+A2 (Z+C) to D1+D2 (3+4). Y still
+// confirms the forfeit; the duel ends with the opponent as winner.
+test('3+4 simultaneous in attack phase shows the forfeit confirm; Y sends forfeit', async ({
   browser,
 }) => {
   const h = await setupBattle(browser);
   const { attacker } = await attackerDefender(h.p1, h.p2);
   const myId = await attacker.evaluate(() => (window as any).__room.sessionId);
 
-  // Press Z then C back-to-back (well within the 50ms chord window over a local
-  // socket) → the a1+a2 chord raises the forfeit prompt.
-  await attacker.keyboard.down('z');
-  await attacker.keyboard.down('c');
-  await attacker.keyboard.up('z');
-  await attacker.keyboard.up('c');
+  // Press 3 then 4 back-to-back (well within FORFEIT_CHORD_MS over a local socket)
+  // → the d1+d2 chord raises the forfeit prompt.
+  await attacker.keyboard.down('3');
+  await attacker.keyboard.down('4');
+  await attacker.keyboard.up('3');
+  await attacker.keyboard.up('4');
 
   await attacker.waitForFunction(() => (window as any).__forfeitPromptOpen === true, {
     timeout: 3000,
@@ -153,29 +155,41 @@ test('Z+C simultaneous in attack phase shows the forfeit confirm; Y sends forfei
   await closeBattle(h);
 });
 
-// ── Scenario 4: N cancels the forfeit ────────────────────────────────────────
-test('Z+C forfeit confirm: N cancels and the duel stays live', async ({ browser }) => {
+// ── Scenario 4: Z+C (A1+A2) no longer forfeits ───────────────────────────────
+// EPIC #266 — the A1+A2 attack-sibling chord no longer forfeits (that space is
+// freed for the double-attack gesture). On the DEFAULT hand (FIRE base thumb) the
+// combo is ineligible, so Z+C sends NO selectDoubleAttack and NO forfeit — the
+// keys behave as ordinary single attacks (the last one arms an attack).
+test('Z+C in attack phase no longer forfeits and sends no double attack on an ineligible hand', async ({
+  browser,
+}) => {
   const h = await setupBattle(browser);
   const { attacker } = await attackerDefender(h.p1, h.p2);
+
+  await attacker.evaluate(() => {
+    const w = window as any;
+    w.__msgs = { selectDoubleAttack: [] };
+    // selectDoubleAttack is a CLIENT→server message; assert the client never sent
+    // it by spying on room.send.
+    const orig = w.__room.send.bind(w.__room);
+    w.__room.send = (type: string, payload: any) => {
+      if (type === 'selectDoubleAttack') w.__msgs.selectDoubleAttack.push(payload);
+      return orig(type, payload);
+    };
+  });
 
   await attacker.keyboard.down('z');
   await attacker.keyboard.down('c');
   await attacker.keyboard.up('z');
   await attacker.keyboard.up('c');
 
-  await attacker.waitForFunction(() => (window as any).__forfeitPromptOpen === true, {
-    timeout: 3000,
-  });
-
-  await attacker.keyboard.press('n'); // cancel
-  await attacker.waitForFunction(() => (window as any).__forfeitPromptOpen !== true, {
-    timeout: 3000,
-  });
-
-  // Still the attacker's live turn — not ended.
-  expect(await isMyTurn(attacker)).toBe(true);
-  const phase = await attacker.evaluate(() => (window as any).__room.state.phase);
-  expect(phase).toBe('ATTACK_SELECT');
+  // No forfeit prompt is raised (the A1+A2 chord no longer forfeits, #266).
+  await attacker.waitForTimeout(300);
+  expect(await attacker.evaluate(() => (window as any).__forfeitPromptOpen === true)).toBe(false);
+  // No double attack sent either (the default FIRE-base-thumb hand is ineligible).
+  // The keys instead behave as ordinary single attacks (covered by scenario 2).
+  const sent = await attacker.evaluate(() => (window as any).__msgs.selectDoubleAttack);
+  expect(sent.length).toBe(0);
 
   await closeBattle(h);
 });
