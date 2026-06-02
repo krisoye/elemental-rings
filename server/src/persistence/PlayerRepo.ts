@@ -1042,7 +1042,7 @@ export function getAggregateXp(playerId: string): number {
 }
 
 /** Weighted-average XP of the player's carried battle hand (#244). Thumb is
- *  weighted 1/3; the two attack slots share 1/3; the two defense slots share 1/3.
+ *  weighted 50%; the two attack slots share 25%; the two defense slots share 25%.
  *  Null slots contribute 0. A fully empty hand returns 0. */
 export function getBattleHandAvgXp(playerId: string): number {
   const loadout = getLoadout(playerId);
