@@ -1,9 +1,6 @@
 import Phaser from 'phaser';
-import { InteractionZone } from './InteractionZone';
-
-declare const __SERVER_URL__: string;
-const _WS_FN = __SERVER_URL__ || `ws://${window.location.hostname}:2567`;
-const API_BASE_FN = _WS_FN.replace(/^ws/, 'http');
+import { WorldInteractable } from './WorldInteractable';
+import { apiFetch, getToken } from '../../net/api';
 
 /** The Tiled tileset name carrying the berry/fruit-tree plant frames. */
 const BERRY_TILESET = 'berry_and_trees';
@@ -57,13 +54,12 @@ interface FoodTile {
  *
  * Purely presentational — all economy logic lives on the authoritative server.
  */
-export class ForageNode {
+export class ForageNode extends WorldInteractable {
   /** Stable node id (matches the server forage_nodes key). */
   readonly nodeId: string;
   /** Center of the node in world coordinates. */
   readonly center: { x: number; y: number };
 
-  private readonly zone: InteractionZone;
   private readonly map: Phaser.Tilemaps.Tilemap;
   /** The with-food plant tiles this node toggles (recorded from the map). */
   private readonly foodTiles: FoodTile[] = [];
@@ -85,6 +81,13 @@ export class ForageNode {
     onForage: (food_units: number) => void,
     onToast: (msg: string, color?: string) => void,
   ) {
+    // InteractionZone (via the WorldInteractable base): covers the Tiled object
+    // rectangle; "Press E" prompt. The callback routes through `interact()`,
+    // which guards the depleted state and POSTs the forage. (The arrow only runs
+    // post-construction, so referencing `this` here is safe.)
+    super(scene, { ...obj, name: nodeId }, () => {
+      void this.interact(onForage, onToast);
+    });
     this.nodeId = nodeId;
     this.map = map;
     const x = obj.x ?? 0;
@@ -139,17 +142,6 @@ export class ForageNode {
       // eslint-disable-next-line no-console
       console.warn(`ForageNode ${nodeId}: no with-food plant tiles found — visual toggle disabled`);
     }
-
-    // InteractionZone: covers the Tiled object rectangle; "Press E" prompt.
-    const zoneObj: Phaser.Types.Tilemaps.TiledObject = { ...obj, name: nodeId };
-    this.zone = new InteractionZone(scene, zoneObj, () => {
-      void this.interact(onForage, onToast);
-    });
-  }
-
-  /** The InteractionZone wrapping this node (for overlap + nearest selection). */
-  get interactionZone(): InteractionZone {
-    return this.zone;
   }
 
   /**
@@ -158,7 +150,7 @@ export class ForageNode {
    * InteractionZone's objects are returned for the #137 UI-camera ignore.
    */
   get displayObjects(): Phaser.GameObjects.GameObject[] {
-    return [...this.zone.displayObjects];
+    return [...this._zone.displayObjects];
   }
 
   /**
@@ -182,7 +174,7 @@ export class ForageNode {
 
   /** Destroy the wrapped zone (on scene shutdown). The plant tiles belong to the map. */
   destroy(): void {
-    this.zone.destroy();
+    this._zone.destroy();
   }
 
   private async interact(
@@ -193,16 +185,11 @@ export class ForageNode {
       onToast('Already foraged', '#ff8888');
       return;
     }
-    const token = localStorage.getItem('er_token');
-    if (!token) return;
+    if (!getToken()) return;
     try {
-      const res = await fetch(`${API_BASE_FN}/api/overworld/forage`, {
+      const res = await apiFetch('/api/overworld/forage', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify({ node_id: this.nodeId }),
+        json: { node_id: this.nodeId },
       });
       if (res.status === 409) {
         // Server confirms depleted (could have been foraged via another path).

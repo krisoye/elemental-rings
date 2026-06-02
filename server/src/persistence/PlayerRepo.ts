@@ -1,5 +1,16 @@
 import { v4 as uuidv4 } from 'uuid';
 import { db } from './db';
+import {
+  makeRing,
+  insertRing as insertRingRow,
+  getRingById,
+  getRingsForPlayer,
+  setRingUses as setRingUsesRow,
+  addRingUses as addRingUsesRow,
+  setRingEscrow,
+  setRingCarry,
+  deleteRingOwned,
+} from './ringRows';
 import { ElementEnum, DIFFICULTY_MULTIPLIERS, type DifficultyTier } from '../../../shared/types';
 import { fusionOf, isFusion, componentsOf } from '../game/Fusions';
 import { tierForXp } from '../game/Tiers';
@@ -92,10 +103,8 @@ const STARTER_MAX_USES = 3;
 const insertPlayer = db.prepare(
   `INSERT INTO players (id, username, password_hash) VALUES (?, ?, ?)`,
 );
-const insertRing = db.prepare(
-  `INSERT INTO rings (id, owner_id, element, tier, max_uses, current_uses, xp)
-   VALUES (@id, @owner_id, @element, @tier, @max_uses, @current_uses, @xp)`,
-);
+// #299 — base ring INSERT now lives in ringRows.ts (insertRingRow). Fusion
+// inserts persist the extra parent_dominant column via their own statement below.
 // #263 — fusion inserts also persist parent_dominant (the higher-XP parent's
 // element at fusion time). Base/granted rings keep the schema DEFAULT (-1) via
 // insertRing, signalling "render in static order".
@@ -159,7 +168,9 @@ const selectById = db.prepare(
           reliquary_cap, reliquary_shards, difficulty
    FROM players WHERE id = ?`,
 );
-const selectRingsByOwner = db.prepare(`SELECT * FROM rings WHERE owner_id = ?`);
+// #299 — selectRingsByOwner / selectRingById / single-ring mutators now live in
+// ringRows.ts (getRingsForPlayer, getRingById, setRingUses, addRingUses,
+// setRingEscrow, setRingCarry, deleteRingOwned).
 const selectLoadout = db.prepare(`SELECT * FROM loadout WHERE player_id = ?`);
 
 /**
@@ -180,16 +191,17 @@ export const createPlayer = db.transaction(
     // default loadout can reference specific rings deterministically.
     const ringsByElement: Record<number, string[]> = {};
     for (const element of STARTER_ELEMENTS) {
-      const ringId = uuidv4();
-      insertRing.run({
-        id: ringId,
-        owner_id: playerId,
-        element,
-        tier: STARTER_TIER,
-        max_uses: STARTER_MAX_USES,
-        current_uses: STARTER_MAX_USES,
-        xp: 0,
-      });
+      const ringId = insertRingRow(
+        playerId,
+        makeRing({
+          element,
+          tier: STARTER_TIER,
+          xp: 0,
+          maxUses: STARTER_MAX_USES,
+          currentUses: STARTER_MAX_USES,
+          escrowed: 0,
+        }),
+      );
       (ringsByElement[element] ??= []).push(ringId);
     }
 
@@ -206,8 +218,7 @@ export const createPlayer = db.transaction(
 
     // #40 — the five battle-slot rings start carried (in_carry = 1); the other
     // five starter rings remain at the Sanctum, well within the carry_cap of 10.
-    const setCarry = db.prepare('UPDATE rings SET in_carry = 1 WHERE id = ?');
-    for (const ringId of Object.values(defaultSlots)) setCarry.run(ringId);
+    for (const ringId of Object.values(defaultSlots)) setRingCarry(ringId, 1);
 
     // #61 — every new player starts attuned to the Forest entry waystone so the
     // overworld's first teleport destination is available immediately (GDD §10.7).
@@ -272,7 +283,7 @@ export function orderedParents(ring: Pick<RingRow, 'element' | 'parent_dominant'
  * recomputing fusion logic. Base rings carry `fusionParents: []`.
  */
 export function getRingsByOwner(ownerId: string): SerializedRing[] {
-  const rows = selectRingsByOwner.all(ownerId) as RingRow[];
+  const rows = getRingsForPlayer(ownerId);
   return rows.map((r) => ({
     ...r,
     fusionParents: isFusion(r.element) ? orderedParents(r) : [],
@@ -288,12 +299,8 @@ export function getLoadout(playerId: string): LoadoutRow | undefined {
 // Prepared statements for new functions (Camp / Loadout / Staking)
 // ---------------------------------------------------------------------------
 
-const selectRingById = db.prepare(`SELECT * FROM rings WHERE id = ?`);
 const updateLoadoutSlot = db.prepare(
   `UPDATE loadout SET thumb = @thumb, a1 = @a1, a2 = @a2, d1 = @d1, d2 = @d2 WHERE player_id = @player_id`,
-);
-const updateRingUses = db.prepare(
-  `UPDATE rings SET current_uses = MIN(?, max_uses) WHERE id = ?`,
 );
 const updateRingXP = db.prepare(`UPDATE rings SET xp = xp + ? WHERE id = ?`);
 // EPIC #173 C2 — awardXP applies XP, the recomputed cached tier, and any
@@ -303,16 +310,16 @@ const applyXpAndTierGrant = db.prepare(
 );
 const setRingXPAbsolute = db.prepare(`UPDATE rings SET xp = ? WHERE id = ? AND owner_id = ?`);
 const updatePlayerGold = db.prepare(`UPDATE players SET gold = gold + ? WHERE id = ?`);
-const updateRingEscrowed = db.prepare(`UPDATE rings SET escrowed = ? WHERE id = ?`);
+// #299 — updateRingEscrowed / deleteRing now live in ringRows.ts (setRingEscrow,
+// deleteRingOwned).
 const updateRingOwner = db.prepare(
   `UPDATE rings SET owner_id = ?, escrowed = 0, in_carry = 0 WHERE id = ? AND owner_id = ?`,
 );
-const deleteRing = db.prepare(`DELETE FROM rings WHERE id = ? AND owner_id = ?`);
 const updateGameDay = db.prepare(`UPDATE players SET game_day = game_day + 1 WHERE id = ?`);
 
-// #40 — carry flag management.
+// #40 — carry flag management. #299 — single-ring in_carry set now lives in
+// ringRows.ts (setRingCarry).
 const selectCarryByOwner = db.prepare(`SELECT * FROM rings WHERE owner_id = ? AND in_carry = 1`);
-const updateRingCarry = db.prepare(`UPDATE rings SET in_carry = ? WHERE id = ?`);
 const clearCarryForOwner = db.prepare(`UPDATE rings SET in_carry = 0 WHERE owner_id = ?`);
 // selectCarryCap removed (#171): getCarryCap is now XP-derived, not read from the DB column.
 
@@ -353,9 +360,7 @@ const clampSpiritCurrentMax = db.prepare(
 );
 const updateFoodAdd = db.prepare(`UPDATE players SET food_units = food_units + ? WHERE id = ?`);
 const updateFoodDeduct = db.prepare(`UPDATE players SET food_units = food_units - ? WHERE id = ?`);
-const updateRingUsesAdd = db.prepare(
-  `UPDATE rings SET current_uses = MIN(current_uses + ?, max_uses) WHERE id = ?`,
-);
+// #299 — add-uses (clamped to max) now lives in ringRows.ts (addRingUsesRow).
 
 const SLOT_KEYS: ReadonlyArray<keyof LoadoutRow> = ['thumb', 'a1', 'a2', 'd1', 'd2'];
 
@@ -379,7 +384,7 @@ export const saveLoadout = db.transaction(
       throw new Error(`carry cap exceeded (${carriedCount} > ${cap})`);
     }
 
-    const ownerRings = new Set((selectRingsByOwner.all(playerId) as RingRow[]).map((r) => r.id));
+    const ownerRings = new Set(getRingsForPlayer(playerId).map((r) => r.id));
 
     // Build the updated slot map starting from the current state.
     const slots: Record<string, string | null> = {
@@ -422,7 +427,7 @@ export const saveLoadout = db.transaction(
  * max_uses to prevent transient in-battle passives from persisting above capacity.
  */
 export function saveRingUses(ringId: string, currentUses: number): void {
-  updateRingUses.run(currentUses, ringId);
+  setRingUsesRow(ringId, currentUses);
 }
 
 /**
@@ -438,7 +443,7 @@ export function saveRingUses(ringId: string, currentUses: number): void {
  */
 export const awardXP = db.transaction((ringId: string, xpAmount: number): void => {
   if (xpAmount <= 0) return;
-  const ring = selectRingById.get(ringId) as RingRow | undefined;
+  const ring = getRingById(ringId);
   if (!ring) return;
   const newXp = ring.xp + xpAmount;
   const oldTier = tierForXp(ring.xp);
@@ -480,7 +485,7 @@ export function deductGoldFloored(playerId: string, amount: number): void {
  */
 export function addRingUses(ringId: string, n: number): void {
   if (n <= 0) return;
-  updateRingUsesAdd.run(n, ringId);
+  addRingUsesRow(ringId, n);
 }
 
 /**
@@ -495,13 +500,13 @@ export const rechargeRingInBattle = db.transaction(
   (playerId: string, ringId: string, affordableUses: number): void => {
     if (affordableUses <= 0) return;
     updateSpiritDeduct.run(affordableUses * SPIRIT_PER_RING_USE, playerId);
-    updateRingUsesAdd.run(affordableUses, ringId);
+    addRingUsesRow(ringId, affordableUses);
   },
 );
 
 /** Set or clear the escrowed flag on a ring (true → 1, false → 0). */
 export function setEscrowed(ringId: string, escrowed: boolean): void {
-  updateRingEscrowed.run(escrowed ? 1 : 0, ringId);
+  setRingEscrow(ringId, escrowed ? 1 : 0);
 }
 
 /**
@@ -516,17 +521,17 @@ export function grantRing(
   maxUses = STARTER_MAX_USES,
   xp = 0,
 ): string {
-  const ringId = uuidv4();
-  insertRing.run({
-    id: ringId,
-    owner_id: ownerId,
-    element,
-    tier,
-    max_uses: maxUses,
-    current_uses: maxUses,
-    xp,
-  });
-  return ringId;
+  return insertRingRow(
+    ownerId,
+    makeRing({
+      element,
+      tier,
+      xp,
+      maxUses,
+      currentUses: maxUses,
+      escrowed: 0,
+    }),
+  );
 }
 
 /**
@@ -548,7 +553,7 @@ export const grantRingToCarry = db.transaction(
     xp = 0,
   ): string => {
     const ringId = grantRing(ownerId, element, tier, maxUses, xp);
-    updateRingCarry.run(1, ringId);
+    setRingCarry(ringId, 1);
     return ringId;
   },
 );
@@ -625,7 +630,7 @@ export const forfeitRing = db.transaction(
         });
       }
     }
-    deleteRing.run(ringId, fromPlayerId);
+    deleteRingOwned(ringId, fromPlayerId);
   },
 );
 
@@ -688,7 +693,7 @@ export function getCarry(playerId: string): RingRow[] {
 
 /** Set or clear the in_carry flag on a single ring (true → 1, false → 0). */
 export function setInCarry(ringId: string, inCarry: boolean): void {
-  updateRingCarry.run(inCarry ? 1 : 0, ringId);
+  setRingCarry(ringId, inCarry ? 1 : 0);
 }
 
 /**
@@ -727,7 +732,7 @@ export const discardRing = db.transaction(
         });
       }
     }
-    const info = deleteRing.run(ringId, playerId);
+    const info = deleteRingOwned(ringId, playerId);
     return { ok: info.changes > 0 };
   },
 );
@@ -789,8 +794,8 @@ export const fuseRings = db.transaction(
     if (ringId1 === ringId2) {
       throw new Error('Cannot fuse a ring with itself');
     }
-    const r1 = selectRingById.get(ringId1) as RingRow | undefined;
-    const r2 = selectRingById.get(ringId2) as RingRow | undefined;
+    const r1 = getRingById(ringId1);
+    const r2 = getRingById(ringId2);
     if (!r1 || r1.owner_id !== playerId || !r2 || r2.owner_id !== playerId) {
       throw new Error('Ring not found or not owned');
     }
@@ -839,7 +844,7 @@ export const fuseRings = db.transaction(
     // Consume both parents: null them out of any loadout slot, then delete.
     for (const ring of [r1, r2]) {
       clearRingFromLoadout(playerId, ring.id);
-      deleteRing.run(ring.id, playerId);
+      deleteRingOwned(ring.id, playerId);
     }
 
     return newRingId;
@@ -882,7 +887,7 @@ export const packLoadout = db.transaction(
     if (unique.length > cap) {
       throw new Error(`carry cap exceeded (${unique.length} > ${cap})`);
     }
-    const ownerRings = (selectRingsByOwner.all(playerId) as RingRow[]);
+    const ownerRings = getRingsForPlayer(playerId);
     const ownerRingSet = new Set(ownerRings.map((r) => r.id));
     for (const id of unique) {
       if (!ownerRingSet.has(id)) throw new Error(`ring ${id} not owned by player`);
@@ -904,7 +909,7 @@ export const packLoadout = db.transaction(
     }
 
     clearCarryForOwner.run(playerId);
-    for (const id of unique) updateRingCarry.run(1, id);
+    for (const id of unique) setRingCarry(id, 1);
   },
 );
 
@@ -1234,7 +1239,7 @@ export function spendFood(playerId: string, amount: number): void {
  */
 export const rechargeRingWithSpirit = db.transaction(
   (playerId: string, ringId: string, uses?: number): { ok: boolean; reason?: string; restored: number } => {
-    const ring = selectRingById.get(ringId) as RingRow | undefined;
+    const ring = getRingById(ringId);
     if (!ring || ring.owner_id !== playerId) {
       return { ok: false, reason: 'ring not found', restored: 0 };
     }
@@ -1250,7 +1255,7 @@ export const rechargeRingWithSpirit = db.transaction(
     const restored = Math.min(wanted, affordable);
     if (restored === 0) return { ok: false, reason: 'insufficient spirit', restored: 0 };
 
-    updateRingUsesAdd.run(restored, ringId);
+    addRingUsesRow(ringId, restored);
     updateSpiritDeduct.run(restored * SPIRIT_PER_RING_USE, playerId);
     return { ok: true, restored };
   },
@@ -1297,7 +1302,7 @@ export const rechargeAllWithSpirit = db.transaction(
       const affordable = Math.floor(spirit / SPIRIT_PER_RING_USE);
       const restored = Math.min(deficit, affordable);
       if (restored === 0) break;
-      updateRingUsesAdd.run(restored, ring.id);
+      addRingUsesRow(ring.id, restored);
       spirit -= restored * SPIRIT_PER_RING_USE;
     }
     updateSpiritDeduct.run(getSpiritAndFood(playerId).spirit_current - spirit, playerId);
@@ -1389,7 +1394,7 @@ export const consumeAndUnlockShrine = db.transaction(
 export const consumeRing = db.transaction(
   (playerId: string, ringId: string): boolean => {
     clearRingFromLoadout(playerId, ringId);
-    return deleteRing.run(ringId, playerId).changes > 0;
+    return deleteRingOwned(ringId, playerId).changes > 0;
   },
 );
 
@@ -1569,20 +1574,21 @@ export const merchantBuyRing = db.transaction(
 
     // Deduct gold, create ring, mark it as carried.
     updateGold.run(-price, playerId);
-    const ringId = uuidv4();
-    insertRing.run({
-      id: ringId,
-      owner_id: playerId,
-      element,
-      tier: 1,
-      max_uses: 3,
-      current_uses: 3,
-      xp: 0,
-    });
-    updateRingCarry.run(1, ringId);
+    const ringId = insertRingRow(
+      playerId,
+      makeRing({
+        element,
+        tier: 1,
+        xp: 0,
+        maxUses: 3,
+        currentUses: 3,
+        escrowed: 0,
+      }),
+    );
+    setRingCarry(ringId, 1);
 
     const updated = getPlayerById(playerId)!;
-    const ring = (selectRingById.get(ringId) as RingRow)!;
+    const ring = getRingById(ringId)!;
     return { ok: true, gold: updated.gold, ring };
   },
 );
@@ -1622,7 +1628,7 @@ export const merchantSellRing = db.transaction(
     playerId: string,
     ringId: string,
   ): { ok: true; gold: number } | { ok: false; reason: string } => {
-    const ring = selectRingById.get(ringId) as RingRow | undefined;
+    const ring = getRingById(ringId);
     if (!ring || ring.owner_id !== playerId) {
       return { ok: false, reason: 'Ring not found or not owned' };
     }
@@ -1643,7 +1649,7 @@ export const merchantSellRing = db.transaction(
       }
     }
     const price = ringSellPrice(ring.element, ring.xp);
-    deleteRing.run(ringId, playerId);
+    deleteRingOwned(ringId, playerId);
     updateGold.run(price, playerId);
     const updated = getPlayerById(playerId)!;
     return { ok: true, gold: updated.gold };

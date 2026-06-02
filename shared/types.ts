@@ -22,8 +22,13 @@ export enum ElementEnum {
   SHADOW = 15,
 }
 
+// Canonical ordering of the named loadout slots (GDD §6.1). thumb is passive
+// (never pressed); a1/a2 fire during ATTACK_SELECT, d1/d2 during DEFEND_WINDOW.
+// Rendered left→right: Thumb, A1, A2, D1, D2. Single source of truth — the
+// client Hand/BattleHandOverlay/CampScene and server PlayerRepo all iterate this.
+export const SLOT_KEYS = ['thumb', 'a1', 'a2', 'd1', 'd2'] as const;
 /** Every named loadout slot on the dominant hand (GDD §6.1). */
-export type SlotKey = 'thumb' | 'a1' | 'a2' | 'd1' | 'd2';
+export type SlotKey = (typeof SLOT_KEYS)[number];
 /** The two attack slots (A1/A2 buttons). */
 export type AttackSlot = 'a1' | 'a2';
 /** The two defense slots (D1/D2 buttons). */
@@ -204,6 +209,36 @@ export interface BattleSummaryPayload {
   goldGained: number; // GOLD_PER_WIN if this client won, else 0
   xpGained: number; // sum of this session's xpAccumulator deltas across all slots
   aggregateXp: number; // post-award total from PlayerRepo.getSpiritStats(playerId).aggregateXp
+}
+
+/**
+ * Sent to the winning client when they gain the loser's staked thumb ring (or, in
+ * a vsAI win, a freshly granted ring matching the AI's thumb). The client stores
+ * the id and renders the carry/leave/discard prompt in CampScene (#40). The grant
+ * itself is server-authoritative; this payload only carries display fields.
+ */
+export interface WonRingPayload {
+  ringId: string;
+  element: number;
+  xp: number;
+}
+
+/**
+ * The shape of GET /api/me — the canonical player snapshot the client reads to
+ * repopulate carry/loadout pools, HUDs, and overlays. The server is the single
+ * source of truth; the client only renders what it receives here.
+ *
+ * `player` is intentionally a broad index map: the underlying row carries many
+ * optional fields (gold, food_units, spirit_current/max, carry_cap, difficulty,
+ * reliquary caps, …) that individual call sites narrow as needed, so the type is
+ * kept permissive rather than enumerating every column. `rings` and `loadout`
+ * use `unknown`/loose shapes for the same reason — callers cast to their local
+ * RingData view.
+ */
+export interface MeState {
+  player: Record<string, unknown>;
+  rings: unknown[];
+  loadout: Record<string, string | null> | null;
 }
 
 export interface BlockResult {

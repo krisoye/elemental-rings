@@ -1,6 +1,7 @@
 import Phaser from 'phaser';
 import { ELEMENT_NAMES } from '../Constants';
 import { FusedCardFill } from './fusedFill';
+import { usePips } from './ui/RingCard';
 
 export interface RingData {
   id: string;
@@ -166,8 +167,7 @@ export class InventoryGrid extends Phaser.GameObjects.Container {
         .text(0, -32, ELEMENT_NAMES[ring.element] ?? '?', { fontSize: '9px', color: '#000000' })
         .setOrigin(0.5);
 
-      const usedCount = ring.max_uses - ring.current_uses;
-      const pips = '●'.repeat(ring.current_uses) + '○'.repeat(Math.max(0, usedCount));
+      const pips = usePips(ring.current_uses, ring.max_uses);
       const pipsText = this.scene.add
         .text(0, -10, pips, { fontSize: '10px', color: '#000000' })
         .setOrigin(0.5);

@@ -1,5 +1,6 @@
 import jwt from 'jsonwebtoken';
 import type { Request, Response, NextFunction } from 'express';
+import type { PlayerRow } from '../persistence/PlayerRepo';
 
 if (process.env.NODE_ENV === 'production' && !process.env.JWT_SECRET) {
   throw new Error('JWT_SECRET must be set in production');
@@ -21,6 +22,10 @@ declare global {
     interface Request {
       playerId?: string;
       username?: string;
+      // Set by the requirePlayer middleware (../api/middleware) after a
+      // successful getPlayerById lookup, so guarded handlers read the player
+      // directly instead of re-fetching.
+      player?: PlayerRow;
     }
   }
 }

@@ -6,6 +6,7 @@ import {
   type Facing,
 } from './charset';
 import { MONSTER_OW_REGISTRY, NPC_OW_DISPLAY_SIZE } from './NpcSpriteRegistry';
+import { registerWalkAnims } from './animHelpers';
 
 /**
  * The minimal slice of the overworld roster ({@link NpcInfo}) a wandering marker
@@ -26,8 +27,6 @@ export interface WanderTarget {
   y: number;
 }
 
-/** Walk-cycle playback rate (frames/sec) — matches Player.ts. */
-const WALK_FPS = 8;
 /** Max distance (world px) a marker may drift from its authored spawn (~1.5 tiles
  *  at 16px). Keeps wandering NPCs near their intended spot and out of walls. */
 const WANDER_RADIUS = 24;
@@ -47,23 +46,6 @@ const NPC_DEPTH = 6;
  *  and adjacent duelists differ. */
 function duelistChar(spriteFrame: number): number {
   return ((spriteFrame - 5) % 7) + 1;
-}
-
-/** Register the four directional walk animations for one charset character once on
- *  the game-level anim manager (shared across scenes). Mirrors Player.ensureAnims:
- *  the cycle steps left-foot → idle → right-foot → idle. */
-function ensureDuelistAnims(scene: Phaser.Scene, char: number): void {
-  for (const dir of ['down', 'left', 'right', 'up'] as Facing[]) {
-    const key = `duelist${char}-walk-${dir}`;
-    if (scene.anims.exists(key)) continue;
-    const cols = [0, 1, 2, 1];
-    scene.anims.create({
-      key,
-      frames: cols.map((col) => ({ key: CHARSET_KEY, frame: charsetFrame(char, dir, col) })),
-      frameRate: WALK_FPS,
-      repeat: -1,
-    });
-  }
 }
 
 /**
@@ -144,7 +126,7 @@ export class WanderingNpc {
     } else {
       // Duelist: shared charset walker, idle/facing-down to start.
       this.char = duelistChar(npc.spriteFrame);
-      ensureDuelistAnims(scene, this.char);
+      registerWalkAnims(scene, `duelist${this.char}`, this.char);
       this.sprite = scene.add.sprite(
         npc.x,
         npc.y,

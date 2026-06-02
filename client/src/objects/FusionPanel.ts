@@ -1,12 +1,30 @@
 import Phaser from 'phaser';
-import {
-  CANVAS_W,
-  CANVAS_H,
-  ELEMENT_NAMES,
-  FUSION_RECIPES,
-  type FusionRecipe,
-} from '../Constants';
+import { CANVAS_W, CANVAS_H, ELEMENT_NAMES } from '../Constants';
+import { ElementEnum } from '../../../shared/types';
+import { isFusion, componentsOf } from '../../../shared/fusions';
 import type { RingData } from './InventoryGrid';
+import { createOverlay } from './ui/ModalShell';
+
+/** A single previewable fusion: its two base-element parents and its result. */
+interface FusionRecipe {
+  parents: [number, number]; // two base element indices
+  result: number; // fusion element index
+}
+
+// The 10 Tier 2 fusion recipes (GDD §5.2), derived from the shared fusion model
+// (isFusion / componentsOf) rather than a duplicated table. Every element index
+// 0..SHADOW that isFusion() reports is one of the 10 cross-element fusions; its
+// componentsOf() pair is the [first, second] parent ordering. Display-only — the
+// server (POST /api/fusion/combine) is the sole authority on what fuses.
+const FUSION_RECIPES: ReadonlyArray<FusionRecipe> = Array.from(
+  { length: ElementEnum.SHADOW + 1 },
+  (_, el) => el,
+)
+  .filter((el) => isFusion(el))
+  .map((el) => {
+    const [a, b] = componentsOf(el);
+    return { parents: [a, b] as [number, number], result: el };
+  });
 
 /**
  * A pair of fusion-eligible parent rings chosen for a recipe slot, paired with
@@ -81,29 +99,26 @@ export class FusionPanel {
   open(rings: RingData[], filterElement?: number): void {
     this.close();
 
-    const container = this.scene.add.container(0, 0).setDepth(3000);
-    const overlay = this.scene.add
-      .rectangle(CANVAS_W / 2, CANVAS_H / 2, CANVAS_W, CANVAS_H, 0x000000, 0.78)
-      .setInteractive();
-    const panel = this.scene.add
-      .rectangle(CANVAS_W / 2, CANVAS_H / 2, 720, 520, 0x1d1d2e)
-      .setStrokeStyle(2, 0xcc88ff);
-    const title = this.scene.add
-      .text(CANVAS_W / 2, 50, 'FUSE RINGS', { fontSize: '20px', color: '#ffffff' })
-      .setOrigin(0.5);
+    // Shared modal scaffold (backdrop + panel + title + canonical ✕). The fusion
+    // panel is re-parented to uiCam by CampScene (routeToUi), so it keeps its
+    // depth-3000 ordering rather than the shell default.
+    const { container } = createOverlay(this.scene, {
+      width: 720,
+      height: 520,
+      title: 'FUSE RINGS',
+      onClose: () => this.close(),
+      depth: 3000,
+      panelColor: 0x1d1d2e,
+      strokeColor: 0xcc88ff,
+    });
     const subtitle = this.scene.add
       .text(CANVAS_W / 2, 76, 'Both rings must be the same tier and reach Tier 2', {
         fontSize: '12px',
         color: '#aaaaaa',
       })
       .setOrigin(0.5);
-    const closeBtn = this.scene.add
-      .text(CANVAS_W / 2 + 340, 44, '[×]', { fontSize: '16px', color: '#ff8888' })
-      .setOrigin(0.5)
-      .setInteractive({ useHandCursor: true })
-      .on('pointerdown', () => this.close());
 
-    container.add([overlay, panel, title, subtitle, closeBtn]);
+    container.add([subtitle]);
 
     // #231 — when a filterElement is supplied, restrict the grid to the single
     // recipe whose RESULT element matches (the Fusion Shrine pre-filter). The

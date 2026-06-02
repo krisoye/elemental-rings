@@ -2,9 +2,10 @@ import Phaser from 'phaser';
 import { InventoryGrid, type RingData } from '../objects/InventoryGrid';
 import { LoadoutPanel, type LoadoutSlot } from '../objects/LoadoutPanel';
 import { StakePanel } from '../objects/StakePanel';
+import { usePips } from '../objects/ui/RingCard';
 import { FusionPanel } from '../objects/FusionPanel';
 import { DifficultyModal } from '../objects/DifficultyModal';
-import { ELEMENT_NAMES, CANVAS_W, CANVAS_H, THUMB_PASSIVE_INFO } from '../Constants';
+import { ELEMENT_NAMES, CANVAS_W, CANVAS_H, THUMB_PASSIVE_INFO, SLOT_KEYS } from '../Constants';
 import { type DifficultyTier } from '../../../shared/types';
 import { Player } from '../objects/world/Player';
 import { InteractionZone } from '../objects/world/InteractionZone';
@@ -12,13 +13,8 @@ import { BlinkController } from '../objects/world/BlinkController';
 import { getTalisman } from '../../../shared/talismans';
 import { FOREST_SCREENS } from '../../../shared/world/forest';
 import { restAtCamp, summonSanctum as summonSanctumHelper } from '../net/campActions';
-
-declare const __SERVER_URL__: string;
-
-const WS = __SERVER_URL__ || `ws://${window.location.hostname}:2567`;
-const API_BASE = WS.replace(/^ws/, 'http');
-
-const BATTLE_SLOTS = ['thumb', 'a1', 'a2', 'd1', 'd2'] as const;
+import { API_BASE, apiFetch, fetchMe, getToken } from '../net/api';
+import { DualCameraScene } from './DualCameraScene';
 
 // #85 Fix 2A — the inventory grids in the Ring Storage overlay clip to this many
 // rows; beyond that the ▲/▼ arrows + mouse wheel scroll the grid. 3 rows fit
@@ -77,7 +73,7 @@ const OFFSCREEN_Y = -5000;
  *   - Loadout     = in_carry === 1 and NOT in a battle slot
  *   - Battle Hand = the 5 named slots (thumb/a1/a2/d1/d2), a subset of carry
  */
-export class CampScene extends Phaser.Scene {
+export class CampScene extends DualCameraScene {
   // ── Spatial engine state ──────────────────────────────────────────────────
   private player!: Player;
   private groundLayer!: Phaser.Tilemaps.TilemapLayer | Phaser.Tilemaps.TilemapGPULayer;
@@ -85,21 +81,12 @@ export class CampScene extends Phaser.Scene {
   private wasd!: { W: Phaser.Input.Keyboard.Key; A: Phaser.Input.Keyboard.Key; S: Phaser.Input.Keyboard.Key; D: Phaser.Input.Keyboard.Key };
 
   // ── Dual-camera split (#118) ──────────────────────────────────────────────
-  /**
-   * UI camera: zoom 1, no follow. Renders the persistent HUD/toast objects in
-   * uiRoot plus the modal overlay containers (which cameras.main ignores). It
-   * does not scroll, so UI renders at a fixed 1:1 while the world zooms 2×.
-   */
-  private uiCam!: Phaser.Cameras.Scene2D.Camera;
-  /**
-   * Persistent container for HUD objects that have no E2E flatMap traversal —
-   * the "Set Out →" button and the transient teleport confirm toast. cameras.main
-   * ignores this whole subtree once at creation, so anything added later is
-   * automatically excluded from the world camera. Modal overlays do NOT live
-   * here: they stay at the scene root (preserving E2E traversal depth) and are
-   * excluded from cameras.main via per-container ignore() in beginOverlay().
-   */
-  private uiRoot!: Phaser.GameObjects.Container;
+  // uiCam (zoom 1, no follow) + uiRoot (depth-4000 HUD container ignored by
+  // cameras.main once) are provided by DualCameraScene. The "Settings" button and
+  // the transient teleport confirm toast live in uiRoot so they render at a fixed
+  // 1:1 while the world zooms 2×. Modal overlays do NOT live in uiRoot: they stay
+  // at the scene root (preserving E2E traversal depth) and are routed to uiCam via
+  // routeToUi() per-container in beginModalOverlay().
 
   // ── Interaction zones + modal overlays (8A.2) ─────────────────────────────
   private zones: InteractionZone[] = [];
@@ -231,13 +218,12 @@ export class CampScene extends Phaser.Scene {
     this.cameras.main.startFollow(this.player, true, 0.1, 0.1);
 
     // ── Dual-camera split (#118) ──────────────────────────────────────────
-    // uiCam: full-viewport, zoom 1, no follow. cameras.main ignores uiRoot (HUD
-    // + toasts) once. Modal overlays are ignored per-container in beginOverlay()
-    // so they can stay at the scene root for E2E traversal. uiCam is added after
-    // main, so it draws on top — correct for UI occluding the world.
-    this.uiRoot = this.add.container(0, 0).setDepth(4000);
-    this.cameras.main.ignore(this.uiRoot);
-    this.uiCam = this.cameras.add(0, 0, CANVAS_W, CANVAS_H);
+    // initDualCamera() (DualCameraScene) builds uiRoot (HUD + toasts) ignored by
+    // cameras.main once, then adds uiCam (full-viewport, zoom 1, no follow) AFTER
+    // main so it draws on top — correct for UI occluding the world. Modal overlays
+    // are routed to uiCam per-container in beginModalOverlay() so they can stay at
+    // the scene root for E2E traversal.
+    this.initDualCamera();
 
     // EPIC #279 — persistent Settings button (top-right HUD). The camp's other
     // actions (Reliquary / Recharge / Sleep) are spatial interaction zones, but
@@ -276,7 +262,7 @@ export class CampScene extends Phaser.Scene {
       });
       worldObjects.push(this.player);
       this.zones.forEach((z) => worldObjects.push(...z.displayObjects));
-      this.uiCam.ignore(worldObjects);
+      this.ignoreWorldObjects(worldObjects);
     }
 
     // #87 Part A — double-click a Sanctum interaction zone within range to blink
@@ -291,7 +277,7 @@ export class CampScene extends Phaser.Scene {
     // E fires the active zone; Esc closes the open overlay.
     this.input.keyboard!.on('keydown-E', () => this.fireActiveZone());
     this.input.keyboard!.on('keydown-ESC', () => {
-      if (this.overlay) this.closeOverlay();
+      if (this.overlay) this.closeModalOverlay();
     });
 
     // Spatial hooks (deterministic E2E parity with E / Esc).
@@ -483,12 +469,9 @@ export class CampScene extends Phaser.Scene {
    */
   private async routeToBiome(): Promise<void> {
     let anchor = 'forest_entry';
-    const token = localStorage.getItem('er_token');
-    if (token) {
+    if (getToken()) {
       try {
-        const res = await fetch(`${API_BASE}/api/waystones`, {
-          headers: { Authorization: `Bearer ${token}` },
-        });
+        const res = await apiFetch('/api/waystones');
         if (res.ok) {
           anchor = ((await res.json()) as { anchor: string }).anchor ?? anchor;
         }
@@ -542,18 +525,8 @@ export class CampScene extends Phaser.Scene {
 
   // ── Modal overlays (8A.2) ─────────────────────────────────────────────────
 
-  /**
-   * Inverse of `cameras.main.ignore(obj)` (#118). Phaser 4.1's `ignore()` only
-   * sets `obj.cameraFilter |= camera.id` (a bit flag stored on the object — the
-   * camera keeps no collection), so the clean undo is to clear that bit. Called
-   * on transient UI objects just before they're destroyed so no stale main-camera
-   * filter survives if the object is ever revived or its id reused. Ignoring a
-   * container cascades to its children; clearing the parent's flag is enough for
-   * the destroy path because the whole subtree is torn down with it.
-   */
-  private unignoreMain(obj: Phaser.GameObjects.GameObject): void {
-    obj.cameraFilter &= ~this.cameras.main.id;
-  }
+  // #118 — unignoreMain() (clear a stale main-camera ignore bit before destroy) is
+  // provided by DualCameraScene.
 
   /**
    * Create a fresh modal overlay container: a dimmed full-screen backdrop fixed
@@ -561,13 +534,13 @@ export class CampScene extends Phaser.Scene {
    * content into it. Closing destroys the container (and any non-adopted
    * children); adopted reusable panels are released via `overlayOnClose`.
    */
-  private beginOverlay(
+  private beginModalOverlay(
     name: string,
     title: string,
     onClose?: () => void,
     size?: { width: number; height: number },
   ): Phaser.GameObjects.Container {
-    this.closeOverlay(); // never stack overlays
+    this.closeModalOverlay(); // never stack overlays
     // #118: the overlay container stays at the SCENE ROOT (not inside uiRoot) so
     // the existing E2E single-level flatMap traversals still reach its children.
     // To render it at 1:1 instead of the 2× world camera we tell cameras.main to
@@ -592,9 +565,9 @@ export class CampScene extends Phaser.Scene {
       .text(CANVAS_W / 2 + 360, 56, '[×]', { fontSize: '16px', color: '#ff8888' })
       .setOrigin(0.5)
       .setInteractive({ useHandCursor: true })
-      .on('pointerdown', () => this.closeOverlay());
+      .on('pointerdown', () => this.closeModalOverlay());
     c.add([backdrop, panel, titleText, closeBtn]);
-    this.cameras.main.ignore(c);
+    this.routeToUi(c);
 
     this.overlay = c;
     this.overlayName = name;
@@ -604,7 +577,7 @@ export class CampScene extends Phaser.Scene {
   }
 
   /** Close the open overlay, releasing any adopted panels first. */
-  private closeOverlay(): void {
+  private closeModalOverlay(): void {
     if (!this.overlay) return;
     // Release adopted reusable panels back to the scene root (off-screen) so the
     // container destroy doesn't take them with it.
@@ -659,7 +632,7 @@ export class CampScene extends Phaser.Scene {
    * target section/slot. Reuses the exact reusable panel instances.
    */
   private openRingwallOverlay(): void {
-    const c = this.beginOverlay('ringwall', 'RELIQUARY', () => {
+    const c = this.beginModalOverlay('ringwall', 'RELIQUARY', () => {
       // #85 Fix 2A — tear down the wheel handler + scroll hooks/masks before the
       // grids are released back off-screen (a stale mask on a parked grid would
       // clip nothing but leak a Graphics object).
@@ -1113,7 +1086,7 @@ export class CampScene extends Phaser.Scene {
     source: 'reliquary' | 'spare' | 'battle',
   ): void {
     if (source === 'battle') {
-      const slot = (BATTLE_SLOTS as readonly string[]).find((s) => this.loadout[s] === ringId) as
+      const slot = (SLOT_KEYS as readonly string[]).find((s) => this.loadout[s] === ringId) as
         | 'thumb'
         | LoadoutSlot
         | undefined;
@@ -1195,7 +1168,7 @@ export class CampScene extends Phaser.Scene {
       return;
     }
     const wasCarried = ring.in_carry === 1;
-    const inBattleSlot = (BATTLE_SLOTS as readonly string[]).find((s) => this.loadout[s] === ringId);
+    const inBattleSlot = (SLOT_KEYS as readonly string[]).find((s) => this.loadout[s] === ringId);
 
     if (target === 'reliquary') {
       // Leave at the Reliquary: drop from carry. If it was in a battle slot, null
@@ -1355,13 +1328,10 @@ export class CampScene extends Phaser.Scene {
    * or auth failure leaves the placeholder label as-is.
    */
   private async loadTalismanLoadout(label: Phaser.GameObjects.Text): Promise<void> {
-    const token = localStorage.getItem('er_token');
-    if (!token) return;
+    if (!getToken()) return;
     let payload: { necklaceId: string | null; necklaceCharges: number };
     try {
-      const res = await fetch(`${API_BASE}/api/talisman-loadout`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
+      const res = await apiFetch('/api/talisman-loadout');
       if (!res.ok) return;
       payload = await res.json();
     } catch {
@@ -1377,9 +1347,7 @@ export class CampScene extends Phaser.Scene {
     const def = getTalisman(payload.necklaceId);
     const name = def?.name ?? payload.necklaceId;
     const max = def?.maxCharges ?? payload.necklaceCharges;
-    const filled = '●'.repeat(payload.necklaceCharges);
-    const empty = '○'.repeat(Math.max(0, max - payload.necklaceCharges));
-    label.setText(`${name} ${filled}${empty}`);
+    label.setText(`${name} ${usePips(payload.necklaceCharges, max)}`);
   }
 
   /**
@@ -1389,7 +1357,7 @@ export class CampScene extends Phaser.Scene {
    * currently selected ring if any, and [Recharge All] tops off all carried.
    */
   private openMeditationOverlay(): void {
-    const c = this.beginOverlay('meditation', 'MEDITATION CIRCLE');
+    const c = this.beginModalOverlay('meditation', 'MEDITATION CIRCLE');
     c.add(
       this.add
         .text(CANVAS_W / 2, 150, 'Channel spirit to recharge your rings.', {
@@ -1437,8 +1405,7 @@ export class CampScene extends Phaser.Scene {
    * full payload is published to window.__teleportState for E2E before render.
    */
   private async openTeleportModal(): Promise<void> {
-    const token = localStorage.getItem('er_token');
-    if (!token) return;
+    if (!getToken()) return;
     let payload: {
       aggregateXp: number;
       spiritCurrent?: number;
@@ -1453,9 +1420,7 @@ export class CampScene extends Phaser.Scene {
       }>;
     };
     try {
-      const res = await fetch(`${API_BASE}/api/waystones`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
+      const res = await apiFetch('/api/waystones');
       if (!res.ok) return;
       payload = await res.json();
     } catch {
@@ -1498,7 +1463,7 @@ export class CampScene extends Phaser.Scene {
     };
     const rows: RowEntry[] = [];
 
-    const c = this.beginOverlay('teleport', 'TELEPORT');
+    const c = this.beginModalOverlay('teleport', 'TELEPORT');
 
     // Spirit balance display
     c.add(
@@ -1621,21 +1586,16 @@ export class CampScene extends Phaser.Scene {
    * can read the new state without a re-fetch.
    */
   private async doTeleport(waystoneId: string, waystoneName: string): Promise<void> {
-    const token = localStorage.getItem('er_token');
-    if (!token) return;
+    if (!getToken()) return;
     let res: Response;
     try {
-      res = await fetch(`${API_BASE}/api/teleport`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ waystoneId }),
-      });
+      res = await apiFetch('/api/teleport', { method: 'POST', json: { waystoneId } });
     } catch {
       this.showTeleportError('Network error during teleport');
       return;
     }
     if (res.ok) {
-      this.closeOverlay();
+      this.closeModalOverlay();
       // #118: toast lives in uiRoot → renders at 1:1 through uiCam.
       const msg = this.add
         .text(CANVAS_W / 2, CANVAS_H / 2 - 50, `Sanctum re-anchored near ${waystoneName}`, {
@@ -1677,7 +1637,7 @@ export class CampScene extends Phaser.Scene {
       .setDepth(4001) // above the overlay container (depth 4000)
       .setName('teleport-error');
     // Exclude from the 2× world camera so the text renders at 1:1 via uiCam.
-    this.cameras.main.ignore(errText);
+    this.routeToUi(errText);
     this.time.delayedCall(8000, () => {
       if (errText.active) {
         // #118: clear the ignore flag before destroying (mirrors the ignore above).
@@ -1689,7 +1649,7 @@ export class CampScene extends Phaser.Scene {
 
   /** Bed: sleep confirmation overlay ([Sleep — 25 food] → doSleep). */
   private openBedOverlay(): void {
-    const c = this.beginOverlay('bed', 'REST');
+    const c = this.beginModalOverlay('bed', 'REST');
     const food = window.__campState?.food_units ?? 0;
     c.add(
       this.add
@@ -1714,7 +1674,7 @@ export class CampScene extends Phaser.Scene {
   /** Sleep, then close the bed overlay (state is reloaded by doSleep). */
   private async confirmSleep(): Promise<void> {
     await this.doSleep();
-    if (this.overlayName === 'bed') this.closeOverlay();
+    if (this.overlayName === 'bed') this.closeModalOverlay();
   }
 
   /**
@@ -1723,7 +1683,7 @@ export class CampScene extends Phaser.Scene {
    * anchorage from window.__teleportState).
    */
   private openCampfireOverlay(): void {
-    const c = this.beginOverlay('eat', 'CAMPFIRE');
+    const c = this.beginModalOverlay('eat', 'CAMPFIRE');
     const food = window.__campState?.food_units ?? 0;
 
     c.add(
@@ -1793,12 +1753,12 @@ export class CampScene extends Phaser.Scene {
     anchorageId: string,
     setStatus: (msg: string, color?: string) => void,
   ): Promise<void> {
-    const token = localStorage.getItem('er_token');
+    const token = getToken();
     if (!token) {
       this.scene.start('LoginScene');
       return;
     }
-    const result = await summonSanctumHelper(API_BASE, token, anchorageId);
+    const result = await summonSanctumHelper(token, anchorageId);
     if ('error' in result) {
       setStatus(result.error);
       return;
@@ -1867,7 +1827,7 @@ export class CampScene extends Phaser.Scene {
     this.difficultyModal = new DifficultyModal(
       this,
       API_BASE,
-      () => localStorage.getItem('er_token'),
+      () => getToken(),
       (tier, spiritMax) => this.applyDifficultyChange(tier, spiritMax),
       (container) => {
         // #118: clear the main-camera ignore flag before the modal destroys it.
@@ -1899,17 +1859,14 @@ export class CampScene extends Phaser.Scene {
 
   /** Fetch /api/me and repopulate all three pools. */
   private async loadData(): Promise<void> {
-    const token = localStorage.getItem('er_token');
-    if (!token) {
+    if (!getToken()) {
       this.scene.start('LoginScene');
       return;
     }
 
     let data: { player: any; rings: RingData[]; loadout: Record<string, string | null> };
     try {
-      const res = await fetch(`${API_BASE}/api/me`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
+      const res = await apiFetch('/api/me');
       if (res.status === 401) {
         localStorage.removeItem('er_token');
         this.scene.start('LoginScene');
@@ -1967,7 +1924,7 @@ export class CampScene extends Phaser.Scene {
     this.statLineText.setText(this.buildStatLine(player));
 
     const battleHandIds = new Set(
-      BATTLE_SLOTS.map((s) => this.loadout[s]).filter(Boolean) as string[],
+      SLOT_KEYS.map((s) => this.loadout[s]).filter(Boolean) as string[],
     );
     const atSanctum = this.rings.filter((r) => r.in_carry === 0);
     const loadoutPool = this.rings.filter((r) => r.in_carry === 1 && !battleHandIds.has(r.id));
@@ -2006,7 +1963,7 @@ export class CampScene extends Phaser.Scene {
       loadout: this.loadout,
       atSanctum,
       loadout_pool: loadoutPool,
-      battleHand: BATTLE_SLOTS.map((s) => this.loadout[s])
+      battleHand: SLOT_KEYS.map((s) => this.loadout[s])
         .filter(Boolean)
         .map((id) => this.ringMap.get(id as string))
         .filter(Boolean) as RingData[],
@@ -2103,17 +2060,12 @@ export class CampScene extends Phaser.Scene {
    * can batch a carry + loadout change into a single reload. Returns success.
    */
   private async putCarry(ringIds: string[], reload = true): Promise<boolean> {
-    const token = localStorage.getItem('er_token');
-    if (!token) {
+    if (!getToken()) {
       this.scene.start('LoginScene');
       return false;
     }
     try {
-      const res = await fetch(`${API_BASE}/api/carry`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ ringIds }),
-      });
+      const res = await apiFetch('/api/carry', { method: 'PUT', json: { ringIds } });
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));
         this.setStatus(body?.error ?? `Carry update failed (${res.status})`);
@@ -2140,17 +2092,12 @@ export class CampScene extends Phaser.Scene {
    * whether the request succeeded.
    */
   private async putLoadout(partial: Record<string, string | null>): Promise<boolean> {
-    const token = localStorage.getItem('er_token');
-    if (!token) {
+    if (!getToken()) {
       this.scene.start('LoginScene');
       return false;
     }
     try {
-      const res = await fetch(`${API_BASE}/api/loadout`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify(partial),
-      });
+      const res = await apiFetch('/api/loadout', { method: 'PUT', json: partial });
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));
         this.setStatus(body?.error ?? `Assignment failed (${res.status})`);
@@ -2167,12 +2114,12 @@ export class CampScene extends Phaser.Scene {
 
   /** POST /api/camp/sleep — spend food, restore spirit, advance the day. */
   private async doSleep(): Promise<void> {
-    const token = localStorage.getItem('er_token');
+    const token = getToken();
     if (!token) {
       this.scene.start('LoginScene');
       return;
     }
-    const result = await restAtCamp(API_BASE, token);
+    const result = await restAtCamp(token);
     if ('error' in result) {
       this.setStatus(result.error);
       return;
@@ -2194,17 +2141,12 @@ export class CampScene extends Phaser.Scene {
 
   /** POST /api/spirit/recharge for a specific ring id (full top-off). */
   async doRechargeById(ringId: string): Promise<void> {
-    const token = localStorage.getItem('er_token');
-    if (!token) {
+    if (!getToken()) {
       this.scene.start('LoginScene');
       return;
     }
     try {
-      const res = await fetch(`${API_BASE}/api/spirit/recharge`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ ringId }),
-      });
+      const res = await apiFetch('/api/spirit/recharge', { method: 'POST', json: { ringId } });
       if (res.status === 400) {
         const body = await res.json().catch(() => ({}));
         this.setStatus(body?.error ?? 'Recharge not available');
@@ -2223,16 +2165,12 @@ export class CampScene extends Phaser.Scene {
 
   /** POST /api/spirit/recharge-all — fill carried rings in priority order. */
   async doRechargeAll(): Promise<void> {
-    const token = localStorage.getItem('er_token');
-    if (!token) {
+    if (!getToken()) {
       this.scene.start('LoginScene');
       return;
     }
     try {
-      const res = await fetch(`${API_BASE}/api/spirit/recharge-all`, {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${token}` },
-      });
+      const res = await apiFetch('/api/spirit/recharge-all', { method: 'POST' });
       if (!res.ok) {
         this.setStatus(`Recharge-all failed (${res.status})`);
         return;
@@ -2254,7 +2192,7 @@ export class CampScene extends Phaser.Scene {
     // at 1:1 via uiCam instead of the 2× world camera. Ignoring the container
     // cascades to all its children.
     const fc = this.fusionPanel.getContainer();
-    if (fc) this.cameras.main.ignore(fc);
+    if (fc) this.routeToUi(fc);
   }
 
   /**
@@ -2267,7 +2205,7 @@ export class CampScene extends Phaser.Scene {
     const current: DifficultyTier = window.__campState?.difficulty ?? 'seeker';
     this.difficultyModal.open(current);
     const dc = this.difficultyModal.getContainer();
-    if (dc) this.cameras.main.ignore(dc);
+    if (dc) this.routeToUi(dc);
   }
 
   /**
@@ -2297,16 +2235,14 @@ export class CampScene extends Phaser.Scene {
    * error message on a 400 (surfaced inline by the panel).
    */
   private async doFuse(ringId1: string, ringId2: string): Promise<string | null> {
-    const token = localStorage.getItem('er_token');
-    if (!token) {
+    if (!getToken()) {
       this.scene.start('LoginScene');
       return 'Not authenticated';
     }
     try {
-      const res = await fetch(`${API_BASE}/api/fusion/combine`, {
+      const res = await apiFetch('/api/fusion/combine', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ ringId1, ringId2 }),
+        json: { ringId1, ringId2 },
       });
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));
@@ -2333,16 +2269,12 @@ export class CampScene extends Phaser.Scene {
    * surfaces the message via setStatus.
    */
   private async doExpandReliquary(): Promise<void> {
-    const token = localStorage.getItem('er_token');
-    if (!token) {
+    if (!getToken()) {
       this.scene.start('LoginScene');
       return;
     }
     try {
-      const res = await fetch(`${API_BASE}/api/sanctum/expand-reliquary`, {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${token}` },
-      });
+      const res = await apiFetch('/api/sanctum/expand-reliquary', { method: 'POST' });
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));
         this.setStatus(body?.error ?? `Expand failed (${res.status})`);

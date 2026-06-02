@@ -72,6 +72,7 @@ import {
 import { WAYSTONES, getWaystone } from '../../../shared/waystones';
 import { getTalisman } from '../../../shared/talismans';
 import { blinkCost } from '../../../shared/blink';
+import { requirePlayer, fail } from './middleware';
 
 /**
  * Build the /api/waystones payload for a player: the anchorage catalog joined
@@ -125,13 +126,13 @@ export const apiRouter: Router = Router();
 apiRouter.post('/auth/register', async (req: Request, res: Response): Promise<void> => {
   const { username, password } = req.body ?? {};
   if (typeof username !== 'string' || typeof password !== 'string' || !username || !password) {
-    res.status(400).json({ error: 'username and password are required' });
+    fail(res, 400, 'username and password are required');
     return;
   }
   // Fast-path check before the async bcrypt call; the DB UNIQUE constraint is
   // the authoritative guard (try/catch below handles the concurrent-insert race).
   if (getPlayerByUsername(username)) {
-    res.status(409).json({ error: 'Username already taken' });
+    fail(res, 409, 'Username already taken');
     return;
   }
 
@@ -143,9 +144,9 @@ apiRouter.post('/auth/register', async (req: Request, res: Response): Promise<vo
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : '';
     if (msg.includes('UNIQUE constraint failed')) {
-      res.status(409).json({ error: 'Username already taken' });
+      fail(res, 409, 'Username already taken');
     } else {
-      res.status(500).json({ error: 'Registration failed' });
+      fail(res, 500, 'Registration failed');
     }
   }
 });
@@ -157,18 +158,18 @@ apiRouter.post('/auth/register', async (req: Request, res: Response): Promise<vo
 apiRouter.post('/auth/login', async (req: Request, res: Response): Promise<void> => {
   const { username, password } = req.body ?? {};
   if (typeof username !== 'string' || typeof password !== 'string' || !username || !password) {
-    res.status(400).json({ error: 'username and password are required' });
+    fail(res, 400, 'username and password are required');
     return;
   }
 
   const player = getPlayerByUsername(username);
   if (!player) {
-    res.status(401).json({ error: 'Invalid credentials' });
+    fail(res, 401, 'Invalid credentials');
     return;
   }
   const ok = await bcrypt.compare(password, player.password_hash);
   if (!ok) {
-    res.status(401).json({ error: 'Invalid credentials' });
+    fail(res, 401, 'Invalid credentials');
     return;
   }
 
@@ -180,13 +181,9 @@ apiRouter.post('/auth/login', async (req: Request, res: Response): Promise<void>
  * GET /api/me — return the authenticated player, their rings, and loadout.
  * Requires a valid Bearer token (enforced by requireAuth → 401 otherwise).
  */
-apiRouter.get('/api/me', requireAuth, (req: Request, res: Response): void => {
+apiRouter.get('/api/me', requireAuth, requirePlayer, (req: Request, res: Response): void => {
   const playerId = req.playerId as string;
-  const player = getPlayerById(playerId);
-  if (!player) {
-    res.status(404).json({ error: 'Player not found' });
-    return;
-  }
+  const player = req.player!;
   // One query, both values — aggregate_xp is the raw ring XP sum; spirit_max is
   // derived from it. Both served live so the HUD always reflects current state.
   // #171 — carry_cap is now XP-derived (5 + ceil(log_2(aggregate_xp))); override the
@@ -223,15 +220,11 @@ apiRouter.get('/api/me', requireAuth, (req: Request, res: Response): void => {
  * reliquary/teleport restriction visible in the Sanctum UI is client-only;
  * the server does not distinguish the rest location.
  */
-apiRouter.post('/api/camp/sleep', requireAuth, (req: Request, res: Response): void => {
+apiRouter.post('/api/camp/sleep', requireAuth, requirePlayer, (req: Request, res: Response): void => {
   const playerId = req.playerId as string;
-  const player = getPlayerById(playerId);
-  if (!player) {
-    res.status(404).json({ error: 'Player not found' });
-    return;
-  }
+  const player = req.player!;
   if (player.food_units < FOOD_PER_SLEEP) {
-    res.status(400).json({ error: `Not enough food (need ${FOOD_PER_SLEEP})` });
+    fail(res, 400, `Not enough food (need ${FOOD_PER_SLEEP})`);
     return;
   }
   spendFood(playerId, FOOD_PER_SLEEP);
@@ -255,7 +248,7 @@ apiRouter.put('/api/carry', requireAuth, (req: Request, res: Response): void => 
   const playerId = req.playerId as string;
   const { ringIds } = req.body ?? {};
   if (!Array.isArray(ringIds) || ringIds.some((id) => typeof id !== 'string')) {
-    res.status(400).json({ error: 'ringIds must be an array of strings' });
+    fail(res, 400, 'ringIds must be an array of strings');
     return;
   }
   try {
@@ -263,7 +256,7 @@ apiRouter.put('/api/carry', requireAuth, (req: Request, res: Response): void => 
     res.status(200).json({ rings: getRingsByOwner(playerId) });
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : 'Unknown error';
-    res.status(400).json({ error: msg });
+    fail(res, 400, msg);
   }
 });
 
@@ -278,7 +271,7 @@ apiRouter.put('/api/difficulty', requireAuth, (req: Request, res: Response): voi
   const playerId = req.playerId as string;
   const tier = (req.body ?? {}).tier;
   if (!isDifficultyTier(tier)) {
-    res.status(400).json({ error: 'invalid tier' });
+    fail(res, 400, 'invalid tier');
     return;
   }
   setPlayerDifficulty(playerId, tier);
@@ -296,7 +289,7 @@ apiRouter.delete('/api/rings/:ringId', requireAuth, (req: Request, res: Response
   const ringId = req.params.ringId;
   const result = discardRing(playerId, ringId);
   if (!result.ok) {
-    res.status(404).json({ error: 'ring not found' });
+    fail(res, 404, 'ring not found');
     return;
   }
   res.status(200).json({ rings: getRingsByOwner(playerId) });
@@ -312,16 +305,17 @@ apiRouter.post('/api/spirit/recharge', requireAuth, (req: Request, res: Response
   const playerId = req.playerId as string;
   const { ringId, uses } = req.body ?? {};
   if (typeof ringId !== 'string' || !ringId) {
-    res.status(400).json({ error: 'ringId is required' });
+    fail(res, 400, 'ringId is required');
     return;
   }
   if (uses !== undefined && (typeof uses !== 'number' || uses < 0)) {
-    res.status(400).json({ error: 'uses must be a non-negative number' });
+    fail(res, 400, 'uses must be a non-negative number');
     return;
   }
   const result = rechargeRingWithSpirit(playerId, ringId, uses);
   if (!result.ok) {
-    res.status(400).json({ error: result.reason });
+    // reason is always set on the ok:false branches; ?? keeps fail's string contract.
+    fail(res, 400, result.reason ?? 'recharge failed');
     return;
   }
   const rings = getRingsByOwner(playerId);
@@ -365,7 +359,7 @@ apiRouter.post('/api/spirit/blink', requireAuth, (req: Request, res: Response): 
   // race two concurrent blinks would otherwise share, which could push spirit
   // negative. false → the balance was insufficient at deduct time.
   if (!spendSpiritAtomic(playerId, cost)) {
-    res.status(400).json({ error: 'insufficient spirit' });
+    fail(res, 400, 'insufficient spirit');
     return;
   }
   res.status(200).json({ spirit_current: getSpiritAndFood(playerId).spirit_current, cost });
@@ -389,9 +383,7 @@ apiRouter.put('/api/loadout', requireAuth, (req: Request, res: Response): void =
   const cap = getCarryCap(playerId);
   if (carriedCount > cap) {
     const spare = getSpareSlots();
-    res
-      .status(400)
-      .json({ error: `carry cap exceeded: ${carriedCount} carried > ${cap} (5 + ${spare} spare)` });
+    fail(res, 400, `carry cap exceeded: ${carriedCount} carried > ${cap} (5 + ${spare} spare)`);
     return;
   }
   const body = req.body ?? {};
@@ -401,7 +393,7 @@ apiRouter.put('/api/loadout', requireAuth, (req: Request, res: Response): void =
     if (!VALID_SLOTS.has(key)) continue;
     const val = body[key];
     if (val !== null && typeof val !== 'string') {
-      res.status(400).json({ error: `Invalid value for slot ${key}` });
+      fail(res, 400, `Invalid value for slot ${key}`);
       return;
     }
     partial[key] = val;
@@ -411,7 +403,7 @@ apiRouter.put('/api/loadout', requireAuth, (req: Request, res: Response): void =
     res.status(200).json({ loadout });
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : 'Unknown error';
-    res.status(400).json({ error: msg });
+    fail(res, 400, msg);
   }
 });
 
@@ -539,7 +531,7 @@ apiRouter.post('/api/fusion/combine', requireAuth, (req: Request, res: Response)
   const playerId = req.playerId as string;
   const { ringId1, ringId2 } = req.body ?? {};
   if (typeof ringId1 !== 'string' || !ringId1 || typeof ringId2 !== 'string' || !ringId2) {
-    res.status(400).json({ error: 'ringId1 and ringId2 are required' });
+    fail(res, 400, 'ringId1 and ringId2 are required');
     return;
   }
   try {
@@ -548,7 +540,7 @@ apiRouter.post('/api/fusion/combine', requireAuth, (req: Request, res: Response)
     res.status(200).json({ ring });
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : 'Fusion failed';
-    res.status(400).json({ error: msg });
+    fail(res, 400, msg);
   }
 });
 
@@ -576,7 +568,7 @@ apiRouter.post('/api/shrines/:id/unlock', requireAuth, (req: Request, res: Respo
   const shrineId = req.params.id;
   const { ringId } = req.body ?? {};
   if (typeof ringId !== 'string' || !ringId) {
-    res.status(400).json({ error: 'ringId is required' });
+    fail(res, 400, 'ringId is required');
     return;
   }
   // Validate the ring-key: owned, carried, and the correct fusion element. The
@@ -584,20 +576,20 @@ apiRouter.post('/api/shrines/:id/unlock', requireAuth, (req: Request, res: Respo
   // Thornado Fusion Shrine). Idempotent unlock is allowed but still consumes a key.
   const ring = getRingsByOwner(playerId).find((r) => r.id === ringId);
   if (!ring) {
-    res.status(400).json({ error: 'ring not found or not owned' });
+    fail(res, 400, 'ring not found or not owned');
     return;
   }
   if (ring.in_carry !== 1) {
-    res.status(400).json({ error: 'ring must be in carry' });
+    fail(res, 400, 'ring must be in carry');
     return;
   }
   if (ring.element !== ElementEnum.THORNADO) {
-    res.status(400).json({ error: 'a Thornado ring is required' });
+    fail(res, 400, 'a Thornado ring is required');
     return;
   }
   const player = getPlayerById(playerId);
   if (!consumeAndUnlockShrine(playerId, ringId, shrineId, player?.game_day ?? 0)) {
-    res.status(400).json({ error: 'ring could not be consumed' });
+    fail(res, 400, 'ring could not be consumed');
     return;
   }
   res.status(200).json({ ok: true });
@@ -625,7 +617,7 @@ apiRouter.post('/api/waystones/attune', requireAuth, (req: Request, res: Respons
   const { waystoneId } = req.body ?? {};
   const def = typeof waystoneId === 'string' ? getWaystone(waystoneId) : undefined;
   if (!def) {
-    res.status(400).json({ error: 'Unknown waystone' });
+    fail(res, 400, 'Unknown waystone');
     return;
   }
   attuneWaystone(playerId, waystoneId);
@@ -644,11 +636,11 @@ apiRouter.post('/api/teleport', requireAuth, (req: Request, res: Response): void
   const playerId = req.playerId as string;
   const { waystoneId } = req.body ?? {};
   if (typeof waystoneId !== 'string' || !getWaystone(waystoneId)) {
-    res.status(400).json({ error: 'unknown waystone' });
+    fail(res, 400, 'unknown waystone');
     return;
   }
   if (!getAttunements(playerId).includes(waystoneId)) {
-    res.status(400).json({ error: 'not attuned' });
+    fail(res, 400, 'not attuned');
     return;
   }
   const def = getWaystone(waystoneId)!;
@@ -661,7 +653,7 @@ apiRouter.post('/api/teleport', requireAuth, (req: Request, res: Response): void
   // deducts in one statement, so two concurrent teleports can't both spend past
   // zero. A zero-cost destination is a no-op that still succeeds.
   if (!spendSpiritAtomic(playerId, cost)) {
-    res.status(400).json({ error: `requires ${cost} spirit` });
+    fail(res, 400, `requires ${cost} spirit`);
     return;
   }
   setAnchor(playerId, waystoneId);
@@ -694,12 +686,12 @@ apiRouter.post('/api/sanctum/summon', requireAuth, (req: Request, res: Response)
   const { anchorageId } = req.body ?? {};
   // Validate anchorageId is a known waystone.
   if (typeof anchorageId !== 'string' || !getWaystone(anchorageId)) {
-    res.status(400).json({ error: 'unknown anchorage' });
+    fail(res, 400, 'unknown anchorage');
     return;
   }
   // Validate the player is attuned to the destination.
   if (!getAttunements(playerId).includes(anchorageId)) {
-    res.status(400).json({ error: 'not attuned' });
+    fail(res, 400, 'not attuned');
     return;
   }
   // Cost: the current anchor's spiritCost — the Sanctum travels from there.
@@ -708,7 +700,7 @@ apiRouter.post('/api/sanctum/summon', requireAuth, (req: Request, res: Response)
   const cost = currentAnchor === anchorageId ? 0 : (getWaystone(currentAnchor)?.spiritCost ?? 0);
   // Atomic check-and-spend — false means insufficient spirit; anchor stays put.
   if (!spendSpiritAtomic(playerId, cost)) {
-    res.status(400).json({ error: `requires ${cost} spirit` });
+    fail(res, 400, `requires ${cost} spirit`);
     return;
   }
   setAnchor(playerId, anchorageId);
@@ -732,7 +724,7 @@ apiRouter.post('/api/sanctum/expand-reliquary', requireAuth, (req: Request, res:
   const playerId = req.playerId as string;
   const expanded = addReliquaryShardToReliquary(playerId);
   if (!expanded) {
-    res.status(400).json({ error: 'no Reliquary Shards' });
+    fail(res, 400, 'no Reliquary Shards');
     return;
   }
   res.status(200).json({
@@ -761,12 +753,12 @@ apiRouter.post('/api/talisman/equip', requireAuth, (req: Request, res: Response)
   const playerId = req.playerId as string;
   const { talismanlId, slot } = req.body ?? {};
   if (typeof talismanlId !== 'string' || slot !== 'necklace') {
-    res.status(400).json({ error: 'talismanlId (string) and slot="necklace" are required' });
+    fail(res, 400, 'talismanlId (string) and slot="necklace" are required');
     return;
   }
   const def = getTalisman(talismanlId);
   if (!def || def.slot !== 'necklace') {
-    res.status(400).json({ error: 'Unknown necklace talisman' });
+    fail(res, 400, 'Unknown necklace talisman');
     return;
   }
   res.status(200).json(equipTalisman(playerId, talismanlId, 'necklace'));
@@ -795,13 +787,13 @@ apiRouter.get('/api/overworld/npcs', requireAuth, (req: Request, res: Response):
   const screen = typeof req.query.screen === 'string' ? req.query.screen : undefined;
 
   if (biome && !screen) {
-    res.status(400).json({ error: 'screen required' });
+    fail(res, 400, 'screen required');
     return;
   }
 
   const player = getPlayerById(playerId);
   if (!player) {
-    res.status(404).json({ error: 'Player not found' });
+    fail(res, 404, 'Player not found');
     return;
   }
   const defeated = getDefeatedNpcs(playerId);
@@ -860,16 +852,16 @@ apiRouter.post('/api/overworld/forage', requireAuth, (req: Request, res: Respons
   const playerId = req.playerId as string;
   const { node_id } = req.body ?? {};
   if (typeof node_id !== 'string' || !node_id) {
-    res.status(400).json({ error: 'node_id is required' });
+    fail(res, 400, 'node_id is required');
     return;
   }
   const result = forage(playerId, node_id);
   if (!result.ok) {
     // Distinguish "depleted" (409) from other errors (400).
     if (result.reason === 'Node depleted') {
-      res.status(409).json({ error: result.reason });
+      fail(res, 409, result.reason);
     } else {
-      res.status(400).json({ error: result.reason });
+      fail(res, 400, result.reason);
     }
     return;
   }
@@ -886,7 +878,7 @@ apiRouter.get('/api/overworld/forage-status', requireAuth, (req: Request, res: R
   const playerId = req.playerId as string;
   const screen = typeof req.query.screen === 'string' ? req.query.screen : undefined;
   if (!screen) {
-    res.status(400).json({ error: 'screen query parameter is required' });
+    fail(res, 400, 'screen query parameter is required');
     return;
   }
   const nodes = getForageStatus(playerId, screen);
@@ -937,31 +929,31 @@ apiRouter.post('/api/merchant/buy', requireAuth, (req: Request, res: Response): 
   if (body.item === 'food') {
     const quantity = typeof body.quantity === 'number' ? Math.floor(body.quantity) : 0;
     if (quantity <= 0) {
-      res.status(400).json({ error: 'quantity must be a positive integer' });
+      fail(res, 400, 'quantity must be a positive integer');
       return;
     }
     const result = merchantBuyFood(playerId, quantity);
     if (!result.ok) {
-      res.status(400).json({ error: result.reason });
+      fail(res, 400, result.reason);
       return;
     }
     res.status(200).json({ gold: result.gold, food_units: result.food_units });
 
   } else if (body.item === 'ring') {
     if (typeof body.element !== 'string' || !(body.element in ELEMENT_NAME_MAP)) {
-      res.status(400).json({ error: 'element must be one of: fire, water, earth, wind, wood' });
+      fail(res, 400, 'element must be one of: fire, water, earth, wind, wood');
       return;
     }
     const element = ELEMENT_NAME_MAP[body.element];
     const result = merchantBuyRing(playerId, element);
     if (!result.ok) {
-      res.status(400).json({ error: result.reason });
+      fail(res, 400, result.reason);
       return;
     }
     res.status(200).json({ gold: result.gold, ring: result.ring });
 
   } else {
-    res.status(400).json({ error: 'item must be "food" or "ring"' });
+    fail(res, 400, 'item must be "food" or "ring"');
   }
 });
 
@@ -977,31 +969,31 @@ apiRouter.post('/api/merchant/sell', requireAuth, (req: Request, res: Response):
   if (body.item === 'food') {
     const quantity = typeof body.quantity === 'number' ? Math.floor(body.quantity) : 0;
     if (quantity <= 0) {
-      res.status(400).json({ error: 'quantity must be a positive integer' });
+      fail(res, 400, 'quantity must be a positive integer');
       return;
     }
     const result = merchantSellFood(playerId, quantity);
     if (!result.ok) {
-      res.status(400).json({ error: result.reason });
+      fail(res, 400, result.reason);
       return;
     }
     res.status(200).json({ gold: result.gold, food_units: result.food_units });
 
   } else if (body.item === 'ring') {
     if (typeof body.ring_id !== 'string' || !body.ring_id) {
-      res.status(400).json({ error: 'ring_id is required' });
+      fail(res, 400, 'ring_id is required');
       return;
     }
     const result = merchantSellRing(playerId, body.ring_id);
     if (!result.ok) {
       // "equipped" → 400; "not found" → 400 (same status; caller can inspect message)
-      res.status(400).json({ error: result.reason });
+      fail(res, 400, result.reason);
       return;
     }
     res.status(200).json({ gold: result.gold });
 
   } else {
-    res.status(400).json({ error: 'item must be "food" or "ring"' });
+    fail(res, 400, 'item must be "food" or "ring"');
   }
 });
 
@@ -1068,12 +1060,12 @@ if (process.env.E2E_TEST_ROUTES === '1') {
     const playerId = req.playerId as string;
     const { ringId, xp } = req.body ?? {};
     if (typeof ringId !== 'string' || !ringId || typeof xp !== 'number' || xp < 0) {
-      res.status(400).json({ error: 'ringId (string) and xp (non-negative number) are required' });
+      fail(res, 400, 'ringId (string) and xp (non-negative number) are required');
       return;
     }
     const ok = setRingXP(playerId, ringId, xp);
     if (!ok) {
-      res.status(404).json({ error: 'ring not found' });
+      fail(res, 404, 'ring not found');
       return;
     }
     res.status(200).json({ rings: getRingsByOwner(playerId) });
@@ -1089,12 +1081,12 @@ if (process.env.E2E_TEST_ROUTES === '1') {
     const playerId = req.playerId as string;
     const { gold } = req.body ?? {};
     if (typeof gold !== 'number' || gold < 0 || !Number.isInteger(gold)) {
-      res.status(400).json({ error: 'gold (non-negative integer) is required' });
+      fail(res, 400, 'gold (non-negative integer) is required');
       return;
     }
     const player = getPlayerById(playerId);
     if (!player) {
-      res.status(404).json({ error: 'player not found' });
+      fail(res, 404, 'player not found');
       return;
     }
     // addGold takes a delta; compute the delta to reach the target exactly.
@@ -1111,7 +1103,7 @@ if (process.env.E2E_TEST_ROUTES === '1') {
     const playerId = req.playerId as string;
     const { spirit } = req.body ?? {};
     if (typeof spirit !== 'number' || spirit < 0 || !Number.isInteger(spirit)) {
-      res.status(400).json({ error: 'spirit (non-negative integer) is required' });
+      fail(res, 400, 'spirit (non-negative integer) is required');
       return;
     }
     setSpiritCurrent(playerId, spirit);
@@ -1139,7 +1131,7 @@ if (process.env.E2E_TEST_ROUTES === '1') {
     const playerId = req.playerId as string;
     const { npcId } = req.body ?? {};
     if (typeof npcId !== 'string' || !npcId) {
-      res.status(400).json({ error: 'npcId (string) is required' });
+      fail(res, 400, 'npcId (string) is required');
       return;
     }
     recordNpcDefeat(playerId, npcId);
@@ -1158,11 +1150,11 @@ if (process.env.E2E_TEST_ROUTES === '1') {
     const playerId = req.playerId as string;
     const { count, element = 0 } = req.body ?? {};
     if (typeof count !== 'number' || count < 1 || !Number.isInteger(count)) {
-      res.status(400).json({ error: 'count (positive integer) is required' });
+      fail(res, 400, 'count (positive integer) is required');
       return;
     }
     if (typeof element !== 'number' || !Number.isInteger(element) || element < 0) {
-      res.status(400).json({ error: 'element must be a non-negative integer' });
+      fail(res, 400, 'element must be a non-negative integer');
       return;
     }
     // grantRing inserts with in_carry = 0 (DB default), so rings land in the Reliquary.
@@ -1184,7 +1176,7 @@ if (process.env.E2E_TEST_ROUTES === '1') {
     const playerId = req.playerId as string;
     const { xp } = req.body ?? {};
     if (typeof xp !== 'number' || xp < 0 || !Number.isInteger(xp)) {
-      res.status(400).json({ error: 'xp (non-negative integer) is required' });
+      fail(res, 400, 'xp (non-negative integer) is required');
       return;
     }
     // A Reliquary ring (in_carry = 0) counts toward aggregate_xp; element/tier are

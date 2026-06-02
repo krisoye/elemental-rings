@@ -1,10 +1,8 @@
 import Phaser from 'phaser';
 import { CANVAS_W, CANVAS_H } from '../Constants';
 import { restAtCamp, summonSanctum } from '../net/campActions';
-
-declare const __SERVER_URL__: string;
-const _WS_CFM = __SERVER_URL__ || `ws://${window.location.hostname}:2567`;
-const API_BASE_CFM = _WS_CFM.replace(/^ws/, 'http');
+import { getToken } from '../net/api';
+import { createOverlay } from './ui/ModalShell';
 
 /**
  * Overworld Anchorage campfire overlay (#191).
@@ -25,7 +23,7 @@ export class CampfireModal {
   private readonly onRender?: (container: Phaser.GameObjects.Container) => void;
 
   private container: Phaser.GameObjects.Container | null = null;
-  private statusText: Phaser.GameObjects.Text | null = null;
+  private setStatusLine: ((msg: string, color?: string) => void) | null = null;
 
   constructor(
     scene: Phaser.Scene,
@@ -61,7 +59,7 @@ export class CampfireModal {
     if (!this.container) return;
     this.container.destroy(true);
     this.container = null;
-    this.statusText = null;
+    this.setStatusLine = null;
     window.__campfireModal = null;
     window.__campfireRest = undefined;
     window.__campfireSummon = undefined;
@@ -74,24 +72,21 @@ export class CampfireModal {
     spirit: number,
     summonCost: number,
   ): void {
-    const c = this.scene.add.container(0, 0).setDepth(4000).setScrollFactor(0);
-
-    const backdrop = this.scene.add
-      .rectangle(CANVAS_W / 2, CANVAS_H / 2, CANVAS_W, CANVAS_H, 0x000000, 0.72)
-      .setScrollFactor(0)
-      .setInteractive();
-
-    const panel = this.scene.add
-      .rectangle(CANVAS_W / 2, CANVAS_H / 2, 420, 280, 0x121218)
-      .setStrokeStyle(2, 0x886633)
-      .setScrollFactor(0);
-
-    const title = this.scene.add
-      .text(CANVAS_W / 2, CANVAS_H / 2 - 110, `🔥 ${anchorageName}`, {
-        fontSize: '18px', color: '#ffcc88',
-      })
-      .setOrigin(0.5, 0)
-      .setScrollFactor(0);
+    // Shared modal scaffold (backdrop + panel + title + canonical ✕ + status line).
+    const shell = createOverlay(this.scene, {
+      width: 420,
+      height: 280,
+      title: `🔥 ${anchorageName}`,
+      onClose: () => this.close(),
+      backdropAlpha: 0.72,
+      panelColor: 0x121218,
+      strokeColor: 0x886633,
+      titleColor: '#ffcc88',
+      titleSize: '18px',
+      withStatus: true,
+    });
+    const c = shell.container;
+    this.setStatusLine = shell.setStatus;
 
     const stats = this.scene.add
       .text(CANVAS_W / 2, CANVAS_H / 2 - 80, `Food: ${food}  |  Spirit: ${spirit}`, {
@@ -99,15 +94,6 @@ export class CampfireModal {
       })
       .setOrigin(0.5, 0)
       .setScrollFactor(0);
-
-    const closeBtn = this.scene.add
-      .text(CANVAS_W / 2 + 185, CANVAS_H / 2 - 120, '[×]', {
-        fontSize: '16px', color: '#ff8888',
-      })
-      .setOrigin(0.5)
-      .setScrollFactor(0)
-      .setInteractive({ useHandCursor: true })
-      .on('pointerdown', () => this.close());
 
     const restBtn = this.scene.add
       .text(CANVAS_W / 2, CANVAS_H / 2 - 20, '[Rest — 25 food]', {
@@ -130,22 +116,15 @@ export class CampfireModal {
       .setInteractive({ useHandCursor: true })
       .on('pointerdown', () => void this.doSummon(summonCost));
 
-    this.statusText = this.scene.add
-      .text(CANVAS_W / 2, CANVAS_H / 2 + 60, '', {
-        fontSize: '13px', color: '#ff8888',
-      })
-      .setOrigin(0.5, 0)
-      .setScrollFactor(0);
-
-    c.add([backdrop, panel, title, stats, closeBtn, restBtn, summonBtn, this.statusText]);
+    c.add([stats, restBtn, summonBtn]);
     this.container = c;
     this.onRender?.(c);
   }
 
   private async doRest(): Promise<void> {
-    const token = localStorage.getItem('er_token');
+    const token = getToken();
     if (!token) return;
-    const result = await restAtCamp(API_BASE_CFM, token);
+    const result = await restAtCamp(token);
     if ('error' in result) {
       this.setStatus(result.error, '#ff8888');
       return;
@@ -155,10 +134,10 @@ export class CampfireModal {
   }
 
   private async doSummon(summonCost: number): Promise<void> {
-    const token = localStorage.getItem('er_token');
+    const token = getToken();
     if (!token) return;
     void summonCost; // cost shown in label; server validates
-    const result = await summonSanctum(API_BASE_CFM, token, this.anchorageId);
+    const result = await summonSanctum(token, this.anchorageId);
     if ('error' in result) {
       this.setStatus(result.error, '#ff8888');
       return;
@@ -172,14 +151,6 @@ export class CampfireModal {
   }
 
   private setStatus(msg: string, color = '#ff8888'): void {
-    if (!this.statusText) return;
-    this.statusText.setColor(color).setText(msg);
-    this.scene.tweens.add({
-      targets: this.statusText,
-      alpha: { from: 1, to: 0 },
-      delay: 2000,
-      duration: 600,
-      onComplete: () => this.statusText?.setAlpha(1).setText(''),
-    });
+    this.setStatusLine?.(msg, color);
   }
 }

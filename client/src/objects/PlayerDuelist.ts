@@ -8,6 +8,7 @@ import {
   PLAYER_X,
   PLAYER_Y,
 } from '../Constants';
+import { STATUS_BADGES, heartsString, cssColor } from './ui/format';
 
 /**
  * Full-information panel for the local player: body, hearts, and the three
@@ -15,13 +16,8 @@ import {
  * suffix marks a gauge that has reached the GDD §6.1 status threshold. Wind and
  * Earth have no gauge (GDD §7.1).
  */
-// GDD §7.2 status badges — one per triangle gauge. Derived from broadcast gauges
-// (gauge ≥ GAUGE_THRESHOLD ⇒ status active). Order matches GAUGE_KEYS / GAUGE_ELEMENTS.
-const STATUS_BADGES: { label: string; color: string }[] = [
-  { label: '🔥 BURN', color: '#ff6644' }, // fireGauge → Burning
-  { label: '💧 DROWN', color: '#44aaff' }, // waterGauge → Drowning
-  { label: '🌿 TANGLE', color: '#55cc44' }, // woodGauge → Entangled
-];
+// GDD §7.2 status badges (STATUS_BADGES) now live in ui/format.ts so the player
+// and opponent panels share one canonical {label,color}[] table.
 
 // SHADOW element index + its dark-purple swatch (mirrors server ElementEnum.SHADOW).
 const SHADOW_ELEMENT = 15;
@@ -54,7 +50,7 @@ export class PlayerDuelist extends Phaser.GameObjects.Container {
     GAUGE_ELEMENTS.forEach((el, i) => {
       const gt = scene.add.text(PLAYER_X + 50, PLAYER_Y - 35 + i * 18, `${ELEMENT_NAMES[el]}: 0`, {
         fontSize: '11px',
-        color: `#${ELEMENT_COLORS[el].toString(16).padStart(6, '0')}`,
+        color: cssColor(ELEMENT_COLORS[el]),
       });
       this.gaugeTexts.push(gt);
     });
@@ -64,7 +60,7 @@ export class PlayerDuelist extends Phaser.GameObjects.Container {
     this.shadowGaugeText = scene.add
       .text(PLAYER_X + 50, PLAYER_Y - 35 + GAUGE_ELEMENTS.length * 18, '', {
         fontSize: '11px',
-        color: `#${ELEMENT_COLORS[SHADOW_ELEMENT].toString(16).padStart(6, '0')}`,
+        color: cssColor(ELEMENT_COLORS[SHADOW_ELEMENT]),
         fontStyle: 'bold',
       })
       .setVisible(false);
@@ -92,7 +88,7 @@ export class PlayerDuelist extends Phaser.GameObjects.Container {
     if (shadowGauge >= BLINDED_HEARTS_AT) {
       this.hearts.setText('?');
     } else {
-      this.hearts.setText('♥'.repeat(hearts) + '♡'.repeat(Math.max(0, 3 - hearts)));
+      this.hearts.setText(heartsString(hearts));
     }
 
     const active: string[] = [];

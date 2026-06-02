@@ -1,5 +1,5 @@
 import Phaser from 'phaser';
-import { InteractionZone } from './InteractionZone';
+import { WorldInteractable } from './WorldInteractable';
 import { CHARSET_KEY, CHARSET_IDLE_COL, charsetFrame } from './charset';
 
 /** Charset character indices used for merchant NPCs (cycled per merchant on a screen). */
@@ -14,11 +14,10 @@ const MERCHANT_CHARS = [4, 6];
  * Follows the Waystone.ts sprite+InteractionZone pattern. The charset sheet is
  * loaded by the owning scene (via Player.preload in loadCommonAssets).
  */
-export class MerchantNpc {
+export class MerchantNpc extends WorldInteractable {
   /** Center of the merchant in world coordinates. */
   readonly center: { x: number; y: number };
 
-  private readonly zone: InteractionZone;
   private readonly body: Phaser.GameObjects.Sprite;
   private readonly label: Phaser.GameObjects.Text;
 
@@ -39,6 +38,11 @@ export class MerchantNpc {
     const y = obj.y ?? 0;
     const w = obj.width ?? 32;
     const h = obj.height ?? 32;
+    // InteractionZone (via the WorldInteractable base): covers the Tiled object
+    // rectangle; "Press E" prompt. The zone is named `merchant-${x}-${y}` so it
+    // matches the body sprite's name and can show "Trade [E]" via a future
+    // prompt override.
+    super(scene, { ...obj, name: `merchant-${x}-${y}` }, onInteract);
     this.center = { x: x + w / 2, y: y + h / 2 };
 
     // Character sprite (idle, facing down) from the shared charset sheet. Origin at
@@ -60,17 +64,6 @@ export class MerchantNpc {
       })
       .setOrigin(0.5, 1)
       .setDepth(6);
-
-    // InteractionZone: the prompt text always says "Press E" but we name the zone
-    // "merchant" so it shows "Trade [E]" via an override in the InteractionZone
-    // prompt if the player is nearby. (The prompt is the InteractionZone's default
-    // "Press E" — a future art pass can override the label text there.)
-    this.zone = new InteractionZone(scene, { ...obj, name: `merchant-${x}-${y}` }, onInteract);
-  }
-
-  /** The InteractionZone wrapping this merchant (for overlap + nearest selection). */
-  get interactionZone(): InteractionZone {
-    return this.zone;
   }
 
   /**
@@ -81,12 +74,12 @@ export class MerchantNpc {
    * shop UI it opens is handled separately via cameras.main.ignore(container).
    */
   get displayObjects(): Phaser.GameObjects.GameObject[] {
-    return [this.body, this.label, ...this.zone.displayObjects];
+    return [this.body, this.label, ...this._zone.displayObjects];
   }
 
   /** Destroy owned game objects + the wrapped zone (on scene shutdown). */
   destroy(): void {
-    this.zone.destroy();
+    this._zone.destroy();
     this.body.destroy();
     this.label.destroy();
   }

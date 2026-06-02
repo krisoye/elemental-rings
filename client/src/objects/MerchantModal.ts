@@ -1,9 +1,7 @@
 import Phaser from 'phaser';
 import { CANVAS_W, CANVAS_H, ELEMENT_NAMES } from '../Constants';
-
-declare const __SERVER_URL__: string;
-const _WS_MM = __SERVER_URL__ || `ws://${window.location.hostname}:2567`;
-const API_BASE_MM = _WS_MM.replace(/^ws/, 'http');
+import { API_BASE, apiFetch, fetchMe, getToken } from '../net/api';
+import { createOverlay } from './ui/ModalShell';
 
 type Tab = 'buy' | 'sell';
 
@@ -114,25 +112,22 @@ export class MerchantModal {
   }
 
   private async fetchData(): Promise<void> {
-    const token = localStorage.getItem('er_token');
-    if (!token) return;
+    if (!getToken()) return;
     try {
-      const [catRes, meRes] = await Promise.all([
-        fetch(`${API_BASE_MM}/api/merchant/catalog`),
-        fetch(`${API_BASE_MM}/api/me`, { headers: { Authorization: `Bearer ${token}` } }),
-      ]);
-      if (catRes.ok) this.catalog = (await catRes.json()) as Catalog;
-      if (meRes.ok) {
-        const meData = (await meRes.json()) as {
+      // The catalog endpoint is public (no auth); /api/me is authenticated.
+      const [catRes, meData] = await Promise.all([
+        fetch(`${API_BASE}/api/merchant/catalog`),
+        fetchMe<{
           player: { gold: number; food_units: number };
           rings: RingRecord[];
           loadout: Record<string, string | null> | null;
-        };
-        this.gold = meData.player.gold;
-        this.food = meData.player.food_units;
-        this.allRings = meData.rings;
-        this.loadout = meData.loadout ?? {};
-      }
+        }>(),
+      ]);
+      if (catRes.ok) this.catalog = (await catRes.json()) as Catalog;
+      this.gold = meData.player.gold;
+      this.food = meData.player.food_units;
+      this.allRings = meData.rings;
+      this.loadout = meData.loadout ?? {};
     } catch {
       // Keep defaults.
     }
@@ -141,32 +136,25 @@ export class MerchantModal {
   private render(): void {
     if (this.container) this.container.destroy(true);
 
-    const c = this.scene.add.container(0, 0).setDepth(4000).setScrollFactor(0);
+    // Shared modal scaffold (backdrop + panel + canonical ✕). The merchant header
+    // is custom (left-aligned "MERCHANT" + a centered gold readout), so the shell
+    // title is suppressed and the header drawn here.
+    const { container: c } = createOverlay(this.scene, {
+      width: 700,
+      height: 430,
+      title: '',
+      onClose: () => this.close(),
+      panelColor: 0x161622,
+      strokeColor: 0x6082aa,
+    });
 
-    // Dark backdrop (swallows clicks behind the panel).
-    const backdrop = this.scene.add
-      .rectangle(CANVAS_W / 2, CANVAS_H / 2, CANVAS_W, CANVAS_H, 0x000000, 0.78)
-      .setScrollFactor(0)
-      .setInteractive();
-    // Panel background.
-    const panel = this.scene.add
-      .rectangle(CANVAS_W / 2, CANVAS_H / 2, 700, 430, 0x161622)
-      .setStrokeStyle(2, 0x6082aa)
-      .setScrollFactor(0);
-
-    // Header: "MERCHANT" + current gold + close button.
+    // Header: "MERCHANT" + current gold (the shell provides the close-X).
     const title = this.scene.add
       .text(CANVAS_W / 2 - 200, 60, 'MERCHANT', { fontSize: '20px', color: '#ffffff' })
       .setScrollFactor(0);
     this.goldText = this.scene.add
       .text(CANVAS_W / 2 + 60, 60, `Gold: ${this.gold}`, { fontSize: '16px', color: '#f5e070' })
       .setScrollFactor(0);
-    const closeBtn = this.scene.add
-      .text(CANVAS_W / 2 + 320, 60, '[×]', { fontSize: '16px', color: '#ff8888' })
-      .setOrigin(0.5)
-      .setScrollFactor(0)
-      .setInteractive({ useHandCursor: true })
-      .on('pointerdown', () => this.close());
 
     // Tab buttons.
     const buyTabBtn = this.makeTabBtn('Buy', CANVAS_W / 2 - 80, 96, () => this.switchTab('buy'));
@@ -178,7 +166,10 @@ export class MerchantModal {
       .setOrigin(0.5, 0)
       .setScrollFactor(0);
 
-    c.add([backdrop, panel, title, this.goldText, closeBtn, buyTabBtn, sellTabBtn, this.statusText]);
+    // The shell already added backdrop + panel + (empty) title + close-X (4 fixed
+    // children); these five header objects bring the fixed header to 9 — the count
+    // renderTabContent() preserves when it strips tab content.
+    c.add([title, this.goldText, buyTabBtn, sellTabBtn, this.statusText]);
     this.container = c;
     // #137 — let a zoomed dual-camera host route this container to its UI camera
     // (cameras.main.ignore) so the shop renders at 1:1. Ignoring a container
@@ -201,8 +192,9 @@ export class MerchantModal {
       this.scene.input.off('wheel', this.wheelHandler);
       this.wheelHandler = null;
     }
-    // Remove any tab-content objects (above index 7, which is our fixed header group).
-    while (this.container.length > 8) {
+    // Remove any tab-content objects above the 9 fixed header children (shell's
+    // backdrop/panel/title/close-X + MERCHANT title/gold/two tabs/status).
+    while (this.container.length > 9) {
       const last = this.container.getAt(this.container.length - 1) as Phaser.GameObjects.GameObject;
       this.container.remove(last, true);
     }
@@ -364,13 +356,11 @@ export class MerchantModal {
   // ── Transaction helpers ────────────────────────────────────────────────────
 
   private async executeBuyFood(qty: number): Promise<void> {
-    const token = localStorage.getItem('er_token');
-    if (!token) return;
+    if (!getToken()) return;
     try {
-      const res = await fetch(`${API_BASE_MM}/api/merchant/buy`, {
+      const res = await apiFetch('/api/merchant/buy', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ item: 'food', quantity: qty }),
+        json: { item: 'food', quantity: qty },
       });
       const body = (await res.json()) as { gold?: number; food_units?: number; error?: string };
       if (!res.ok) { this.status(body.error ?? 'Purchase failed', '#ff8888'); return; }
@@ -384,16 +374,14 @@ export class MerchantModal {
   }
 
   private async executeBuyRing(elementIndex: number): Promise<void> {
-    const token = localStorage.getItem('er_token');
-    if (!token) return;
+    if (!getToken()) return;
     // Map element integer index back to the server's element name string.
     const ELEMENT_MAP: Record<number, string> = { 0: 'fire', 1: 'water', 2: 'earth', 3: 'wind', 4: 'wood' };
     const element = ELEMENT_MAP[elementIndex] ?? 'fire';
     try {
-      const res = await fetch(`${API_BASE_MM}/api/merchant/buy`, {
+      const res = await apiFetch('/api/merchant/buy', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ item: 'ring', element, tier: 1 }),
+        json: { item: 'ring', element, tier: 1 },
       });
       const body = (await res.json()) as { gold?: number; ring?: RingRecord; error?: string };
       if (!res.ok) { this.status(body.error ?? 'Purchase failed', '#ff8888'); return; }
@@ -407,13 +395,11 @@ export class MerchantModal {
   }
 
   private async executeSellFood(qty: number): Promise<void> {
-    const token = localStorage.getItem('er_token');
-    if (!token) return;
+    if (!getToken()) return;
     try {
-      const res = await fetch(`${API_BASE_MM}/api/merchant/sell`, {
+      const res = await apiFetch('/api/merchant/sell', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ item: 'food', quantity: qty }),
+        json: { item: 'food', quantity: qty },
       });
       const body = (await res.json()) as { gold?: number; food_units?: number; error?: string };
       if (!res.ok) { this.status(body.error ?? 'Sale failed', '#ff8888'); return; }
@@ -427,13 +413,11 @@ export class MerchantModal {
   }
 
   private async executeSellRing(ringId: string): Promise<void> {
-    const token = localStorage.getItem('er_token');
-    if (!token) return;
+    if (!getToken()) return;
     try {
-      const res = await fetch(`${API_BASE_MM}/api/merchant/sell`, {
+      const res = await apiFetch('/api/merchant/sell', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ item: 'ring', ring_id: ringId }),
+        json: { item: 'ring', ring_id: ringId },
       });
       const body = (await res.json()) as { gold?: number; error?: string };
       if (!res.ok) { this.status(body.error ?? 'Sale failed', '#ff8888'); return; }

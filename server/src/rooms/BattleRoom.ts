@@ -1,7 +1,6 @@
 import { Room, Client } from 'colyseus';
 import { BattleState } from '../schemas/BattleState';
 import { PlayerState } from '../schemas/PlayerState';
-import { Ring } from '../schemas/Ring';
 import { classifyTiming, resolveBlock } from '../game/BlockResolver';
 import { componentsOf, fusionParents, isFusion } from '../game/ElementSystem';
 import { canDoubleAttack } from '../game/DoubleAttack';
@@ -10,6 +9,13 @@ import { AIController, type EnrageConfig } from '../game/ai/AIController';
 import { makeRng, AI_PROFILES, type AIProfile } from '../game/ai/AIProfiles';
 import { generateAILoadout, PERSONALITY_SPIRIT_MULT, type SlotSpec } from '../game/ai/AILoadout';
 import * as StakeResolver from '../game/StakeResolver';
+import {
+  consumeUse,
+  setUses,
+  wonRingPayload,
+  battleSummaryPayload,
+  rechargeResultPayload,
+} from '../game/ringHelpers';
 import * as PlayerRepo from '../persistence/PlayerRepo';
 import { NPC_SPAWNS, type BossDescriptor } from '../persistence/NpcSpawns';
 import { verifyToken } from '../auth/auth';
@@ -47,13 +53,11 @@ import {
   DoubleAttackCancelledPayload,
   SubmitDefensePayload,
   RechargePayload,
-  RechargeResultPayload,
   ExchangeResultPayload,
   BattleRoomOptions,
   SlotKey,
   AttackSlot,
   DefenseSlot,
-  BattleSummaryPayload,
   AIPersonality,
 } from '../../../shared/types';
 
@@ -406,8 +410,7 @@ export class BattleRoom extends Room<{ state: BattleState }> {
     this.heartwoodCharges -= 1;
     const ai = this.state.players.get(AI_ID);
     if (ai && ai.thumb.currentUses > 0) {
-      ai.thumb.currentUses -= 1;
-      ai.thumb.isExtinguished = ai.thumb.currentUses === 0;
+      consumeUse(ai.thumb);
     }
     return true;
   }
@@ -481,10 +484,9 @@ export class BattleRoom extends Room<{ state: BattleState }> {
         overrides?.uses !== undefined ? Math.max(baseMax, overrides.uses) : baseMax + slotBonus;
       ring.element = element;
       ring.tier = slotSpec ? slotSpec.tier : 1;
-      ring.currentUses = currentUses;
       ring.maxUses = maxUses;
       ring.xp = slotSpec ? slotSpec.xp : 0;
-      ring.isExtinguished = currentUses === 0;
+      setUses(ring, currentUses);
       ring.isFusion = isFusion(element);
       // #263 — prefer the human ring's dominant-first order ([dominant, other])
       // when the DB recorded a parent (slotSpec.fusionParents), so the in-duel
@@ -695,11 +697,27 @@ export class BattleRoom extends Room<{ state: BattleState }> {
    * return after notifyAI(). Does NOT notify the AI itself (the caller owns the
    * single notifyAI() per transition).
    */
+  /**
+   * The other seated player's PlayerState (a duel always has exactly two seats).
+   * Centralises the former hand-rolled `ids.find(id => id !== X)` + `players.get`
+   * + null-guard pattern. Its `.playerId` is the opponent's session id (seatPlayer
+   * sets playerId = the session key), so callers needing the id use that field.
+   * Throws if no opponent / no PlayerState is seated — an invariant violation that
+   * should never occur mid-duel and must surface loudly rather than silently.
+   */
+  private opponentOf(sessionId: string): PlayerState {
+    const ids = Array.from(this.state.players.keys());
+    const opponentId = ids.find((id) => id !== sessionId);
+    if (!opponentId) throw new Error(`No opponent for ${sessionId}`);
+    const player = this.state.players.get(opponentId);
+    if (!player) throw new Error(`Opponent player state missing: ${opponentId}`);
+    return player;
+  }
+
   private applyAttackerTurnStart(): boolean {
     const state = this.state;
     const attackerId = state.currentAttackerId;
-    const ids = Array.from(state.players.keys());
-    const defenderId = ids.find((id) => id !== attackerId)!;
+    const defenderId = this.opponentOf(attackerId).playerId;
     const attacker = state.players.get(attackerId)!;
 
     const { heartLost } = StatusEffects.applyTurnStart(attacker);
@@ -873,7 +891,7 @@ export class BattleRoom extends Room<{ state: BattleState }> {
       // client only stores the id and renders the modal.
       if (wonRingId && winnerId) {
         const winnerClient = this.clients.find((c) => c.sessionId === winnerId);
-        winnerClient?.send('wonRing', { ringId: wonRingId, element: wonRingElement ?? 0, xp: wonRingXp ?? 0 });
+        winnerClient?.send('wonRing', wonRingPayload(wonRingId, wonRingElement, wonRingXp));
       }
 
       // Post-battle reward summary (#78 ②). Sent AFTER awardXP/refreshSpiritMax
@@ -896,12 +914,7 @@ export class BattleRoom extends Room<{ state: BattleState }> {
 
         const { aggregateXp } = PlayerRepo.getSpiritStats(playerId);
 
-        client.send('battleSummary', {
-          won,
-          goldGained,
-          xpGained,
-          aggregateXp,
-        } satisfies BattleSummaryPayload);
+        client.send('battleSummary', battleSummaryPayload(won, goldGained, xpGained, aggregateXp));
       }
     } catch (err: unknown) {
       console.error('[BattleRoom] persistBattleResult failed:', err);
@@ -925,8 +938,7 @@ export class BattleRoom extends Room<{ state: BattleState }> {
     // ring at turn start; see StatusEffects.applyTurnStart.)
     const usePaidByStake = StakeResolver.applyTailwind(attacker, ring);
     if (!usePaidByStake) {
-      ring.currentUses = Math.max(0, ring.currentUses - 1);
-      ring.isExtinguished = ring.currentUses === 0;
+      consumeUse(ring);
     } else {
       // Tailwind fired: thumb pays the throw. Award the attacker's thumb mid-tier XP.
       this.addXp(id, 'thumb', XP_THUMB_MID);
@@ -1046,8 +1058,7 @@ export class BattleRoom extends Room<{ state: BattleState }> {
         this._npcSpirit -= affordable;
       }
       if (affordable > 0) {
-        ring.currentUses = Math.min(ring.maxUses, ring.currentUses + affordable);
-        ring.isExtinguished = ring.currentUses === 0;
+        setUses(ring, Math.min(ring.maxUses, ring.currentUses + affordable));
       }
     }
 
@@ -1059,12 +1070,10 @@ export class BattleRoom extends Room<{ state: BattleState }> {
       const { spirit_current } = PlayerRepo.getSpiritAndFood(playerId);
       attacker.spiritCurrent = spirit_current;
       const client = this.clients.find((c) => c.sessionId === id);
-      client?.send('rechargeResult', {
-        slot: payload.slot,
-        restored: affordable, // uses actually restored
-        requested: cost, // uses the ring was missing
-        spiritCurrent: spirit_current, // post-spend balance
-      } satisfies RechargeResultPayload);
+      client?.send(
+        'rechargeResult',
+        rechargeResultPayload(payload.slot, affordable, cost, spirit_current),
+      );
     }
 
     // Recharge consumes the turn → swap to the opponent and run the turn-start tick.
@@ -1081,8 +1090,7 @@ export class BattleRoom extends Room<{ state: BattleState }> {
     if (state.phase !== 'ATTACK_SELECT') return;
     if (id !== state.currentAttackerId) return;
 
-    const ids = Array.from(state.players.keys());
-    const opponentId = ids.find((pid) => pid !== id)!;
+    const opponentId = this.opponentOf(id).playerId;
     this.forfeiterId = id;
     state.winnerId = opponentId;
     state.phase = 'ENDED';
@@ -1098,8 +1106,7 @@ export class BattleRoom extends Room<{ state: BattleState }> {
    */
   private advanceTurn(): void {
     const state = this.state;
-    const ids = Array.from(state.players.keys());
-    const opponentId = ids.find((pid) => pid !== state.currentAttackerId)!;
+    const opponentId = this.opponentOf(state.currentAttackerId).playerId;
     state.currentAttackerId = opponentId;
     this.initiativeHolderId = opponentId;
     state.attackerSlot = '';
@@ -1122,8 +1129,9 @@ export class BattleRoom extends Room<{ state: BattleState }> {
    * still own all effect logic; this only seeds the inputs.
    */
   private handleTestSetState(senderId: string, payload: TestSetStatePayload): void {
-    const ids = Array.from(this.state.players.keys());
-    const opponentId = ids.find((id) => id !== senderId);
+    // Non-throwing opponent lookup: this test-only seeder must degrade to a silent
+    // return (below) when no opponent is seated, not throw like opponentOf().
+    const opponentId = Array.from(this.state.players.keys()).filter((id) => id !== senderId)[0];
     const targetId =
       payload.target === 'opponent'
         ? opponentId
@@ -1145,8 +1153,7 @@ export class BattleRoom extends Room<{ state: BattleState }> {
         const v = payload.uses[key];
         if (v === undefined) continue;
         const ring = ps.getSlot(key);
-        ring.currentUses = Math.max(0, v);
-        ring.isExtinguished = ring.currentUses === 0;
+        setUses(ring, v);
       }
     }
 
@@ -1378,8 +1385,7 @@ export class BattleRoom extends Room<{ state: BattleState }> {
       // Using initiativeHolderId (not defenderId) ensures a rally that ends
       // with the original attacker absorbing the counter-volley still gives
       // the turn to the reactor, not back to the original attacker.
-      const ids = Array.from(state.players.keys());
-      const nextId = ids.find((pid) => pid !== this.initiativeHolderId)!;
+      const nextId = this.opponentOf(this.initiativeHolderId).playerId;
       state.currentAttackerId = nextId;
       this.initiativeHolderId = nextId;
       state.attackerSlot = '';
@@ -1407,8 +1413,7 @@ export class BattleRoom extends Room<{ state: BattleState }> {
     state.phase = 'RESOLVE';
 
     const attackerId = state.currentAttackerId;
-    const ids = Array.from(state.players.keys());
-    const defenderId = ids.find((pid) => pid !== attackerId)!;
+    const defenderId = this.opponentOf(attackerId).playerId;
 
     const { result, ended } = this.resolveOrb(
       attackerId,
@@ -1452,9 +1457,9 @@ export class BattleRoom extends Room<{ state: BattleState }> {
 
     // Charge at commit: A1 −1, A2 −1, thumb −1. NO base-thumb passive (Tailwind /
     // setup / Earth) applies — fusion thumbs spend their own use for the combo.
-    this.chargeRing(firstRing);
-    this.chargeRing(secondRing);
-    this.chargeRing(attacker.thumb);
+    consumeUse(firstRing);
+    consumeUse(secondRing);
+    consumeUse(attacker.thumb);
 
     // Server-authoritative gap clamp regardless of the client value.
     const gapMs = Math.min(MAX_COMBO_GAP_MS, Math.max(MIN_COMBO_GAP_MS, payload.gapMs));
@@ -1500,12 +1505,6 @@ export class BattleRoom extends Room<{ state: BattleState }> {
     this.notifyAI();
   }
 
-  /** Spend one use on a ring and update its extinguished flag (floored at 0). */
-  private chargeRing(ring: Ring): void {
-    ring.currentUses = Math.max(0, ring.currentUses - 1);
-    ring.isExtinguished = ring.currentUses === 0;
-  }
-
   /** Clear all combo state + timers (after orb 2, or a cancel/KO). */
   private clearComboState(): void {
     if (this.orb2LaunchTimer) {
@@ -1544,8 +1543,7 @@ export class BattleRoom extends Room<{ state: BattleState }> {
     state.phase = 'RESOLVE';
 
     const attackerId = state.currentAttackerId;
-    const ids = Array.from(state.players.keys());
-    const defenderId = ids.find((pid) => pid !== attackerId)!;
+    const defenderId = this.opponentOf(attackerId).playerId;
 
     const orb1Slot = state.attackerSlot as SlotKey;
     const orb1ParrySlot = this.defenseSlotKey;
@@ -1601,8 +1599,7 @@ export class BattleRoom extends Room<{ state: BattleState }> {
     state.phase = 'RESOLVE';
 
     const attackerId = state.currentAttackerId;
-    const ids = Array.from(state.players.keys());
-    const defenderId = ids.find((pid) => pid !== attackerId)!;
+    const defenderId = this.opponentOf(attackerId).playerId;
 
     const orb2Slot = this.comboSecondSlot as SlotKey;
     const orb2ParrySlot = this.defense2SlotKey;

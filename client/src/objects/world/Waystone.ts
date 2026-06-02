@@ -1,5 +1,5 @@
 import Phaser from 'phaser';
-import { InteractionZone } from './InteractionZone';
+import { WorldInteractable } from './WorldInteractable';
 
 // Standing-stone silhouette dimensions (px, measured from the stone center).
 const STONE_H = 34;
@@ -26,13 +26,12 @@ const COLOR_ATTUNED_RUNE = 0xb0ffff;
  * `waystone` object; the scene matches them against GET /api/waystones for
  * the initial attuned state.
  */
-export class Waystone {
+export class Waystone extends WorldInteractable {
   /** Stable waystone id (matches shared/waystones.ts + the server payload). */
   readonly waystoneId: string;
   /** Center of the marker in world coordinates. */
   readonly center: { x: number; y: number };
 
-  private readonly zone: InteractionZone;
   private readonly gfx: Phaser.GameObjects.Graphics;
   private readonly glow: Phaser.GameObjects.Ellipse;
   private readonly label: Phaser.GameObjects.Text;
@@ -54,6 +53,9 @@ export class Waystone {
     attuned: boolean,
     onInteract: () => void,
   ) {
+    // Reuse the InteractionZone overlap + "Press E" prompt machinery (via the
+    // WorldInteractable base), naming the zone with the stable waystone id.
+    super(scene, { ...obj, name: waystoneId }, onInteract);
     this.waystoneId = waystoneId;
     const x = obj.x ?? 0;
     const y = obj.y ?? 0;
@@ -89,15 +91,7 @@ export class Waystone {
       .setOrigin(0.5, 1)
       .setDepth(6);
 
-    // Reuse the InteractionZone overlap + "Press E" prompt machinery.
-    this.zone = new InteractionZone(scene, { ...obj, name: waystoneId }, onInteract);
-
     this.setAttuned(attuned);
-  }
-
-  /** The InteractionZone wrapping this marker (for overlap + nearest selection). */
-  get interactionZone(): InteractionZone {
-    return this.zone;
   }
 
   /**
@@ -106,7 +100,7 @@ export class Waystone {
    * marker visible only through the world (main) camera.
    */
   get displayObjects(): Phaser.GameObjects.GameObject[] {
-    return [this.gfx, this.glow, this.label, ...this.zone.displayObjects];
+    return [this.gfx, this.glow, this.label, ...this._zone.displayObjects];
   }
 
   /** Redraw the stone for the given attuned state (true → glowing cyan). */
@@ -123,7 +117,7 @@ export class Waystone {
 
   /** Destroy owned game objects + the wrapped zone (on scene shutdown). */
   destroy(): void {
-    this.zone.destroy();
+    this._zone.destroy();
     this.gfx.destroy();
     this.glow.destroy();
     this.label.destroy();

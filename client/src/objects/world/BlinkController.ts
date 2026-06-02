@@ -2,10 +2,8 @@ import Phaser from 'phaser';
 import type { Player } from './Player';
 import type { InteractionZone } from './InteractionZone';
 import { DOUBLE_CLICK_MS, BLINK_MAX_RANGE } from '../../Constants';
-
-declare const __SERVER_URL__: string;
-const _WS_BLINK = __SERVER_URL__ || `ws://${window.location.hostname}:2567`;
-const API_BASE = _WS_BLINK.replace(/^ws/, 'http');
+import { apiFetch, getToken } from '../../net/api';
+import { withinRadius } from '../../util/geometry';
 
 /**
  * Short-range blink (#87 Part A, GDD §12). Double-clicking an interaction zone
@@ -96,22 +94,19 @@ export class BlinkController {
    * player.
    */
   private async attemptBlink(zone: InteractionZone): Promise<boolean> {
-    const distance = Phaser.Math.Distance.Between(
-      this.player.x,
-      this.player.y,
-      zone.centerX,
-      zone.centerY,
-    );
-    if (distance > BLINK_MAX_RANGE) return false; // out of range — no POST, no move
+    const target = { x: zone.centerX, y: zone.centerY };
+    // Out of range — no POST, no move.
+    if (!withinRadius(this.player, target, BLINK_MAX_RANGE)) return false;
+    // The server (POST /api/spirit/blink) computes the spirit cost from the
+    // travelled distance, so still send the precise px distance to it.
+    const distance = Math.hypot(target.x - this.player.x, target.y - this.player.y);
 
-    const token = localStorage.getItem('er_token');
-    if (!token) return false;
+    if (!getToken()) return false;
     let res: Response;
     try {
-      res = await fetch(`${API_BASE}/api/spirit/blink`, {
+      res = await apiFetch('/api/spirit/blink', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ distance }),
+        json: { distance },
       });
     } catch {
       this.showFeedback('Network error during blink');

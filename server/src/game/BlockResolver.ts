@@ -4,6 +4,7 @@ import { Ring } from '../schemas/Ring';
 import { resolve, Relationship } from './ElementSystem';
 import { componentsOf, triangleComponentsOf } from './Fusions';
 import { tierForXp } from './Tiers';
+import { consumeUse, setUses } from './ringHelpers';
 
 const { FIRE, WATER, WOOD, SHADOW } = ElementEnum;
 
@@ -97,13 +98,13 @@ export function resolveBlock(
     r.defenderHeartLost = true;
     r.hitGaugeElements = trackedComponentsOf(attackerRing.element);
     // MISTIME burns 1 defender use; NO_BLOCK never committed a ring.
-    if (timing === 'MISTIME' && defenderRing) spendUse(defenderRing);
-    attackerRing.isExtinguished = attackerRing.currentUses === 0;
+    if (timing === 'MISTIME' && defenderRing) consumeUse(defenderRing);
+    setUses(attackerRing, attackerRing.currentUses);
     return r;
   }
 
   // BLOCK / PARRY with a committed defense ring — exactly 1 use for the catch.
-  spendUse(defenderRing);
+  consumeUse(defenderRing);
   const rel = summaryRel;
   const defenderTracked = trackedComponentsOf(defenderRing.element);
 
@@ -133,11 +134,6 @@ export function resolveBlock(
     }
   }
 
-  attackerRing.isExtinguished = attackerRing.currentUses === 0;
+  setUses(attackerRing, attackerRing.currentUses);
   return r;
-}
-
-function spendUse(ring: Ring): void {
-  ring.currentUses = Math.max(0, ring.currentUses - 1);
-  ring.isExtinguished = ring.currentUses === 0;
 }

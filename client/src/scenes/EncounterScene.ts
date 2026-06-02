@@ -7,6 +7,7 @@ import { BattleHandOverlay } from '../objects/BattleHandOverlay';
 import { CHARSET_KEY, charsetFrame, preloadCharset } from '../objects/world/charset';
 import { FusedCardFill } from '../objects/fusedFill';
 import { MONSTER_OW_REGISTRY } from '../objects/world/NpcSpriteRegistry';
+import { apiFetch, fetchMe, getToken } from '../net/api';
 
 /**
  * #262 — a defeated boss eligible for a TRAINING-screen rematch (practice). Served
@@ -34,10 +35,6 @@ const TRAINING_MONSTERS = [
   'assets/monsters/monster_water_fly_11_alt01_overworld.png',   // WIND (3)
   'assets/monsters/monster_water_grass_20_alt01_overworld.png', // WOOD (4)
 ] as const;
-
-declare const __SERVER_URL__: string;
-const _WS_ENC = __SERVER_URL__ || `ws://${window.location.hostname}:2567`;
-const API_BASE = _WS_ENC.replace(/^ws/, 'http');
 
 type Choice = AIPersonality | 'PVP';
 
@@ -381,12 +378,9 @@ export class EncounterScene extends Phaser.Scene {
     diffLabels: Map<Choice, Phaser.GameObjects.Text>,
   ): Promise<void> {
     try {
-      // #196 — send the auth token so the server scales each opponent to this
-      // player's aggregate XP. Anonymous fetches (no token) fall back to 0.
-      const token = localStorage.getItem('er_token') ?? '';
-      const res = await fetch(`${API_BASE}/api/encounter/preview`, {
-        headers: token ? { Authorization: `Bearer ${token}` } : {},
-      });
+      // #196 — apiFetch sends the auth token so the server scales each opponent to
+      // this player's aggregate XP. Anonymous (no token) requests fall back to 0.
+      const res = await apiFetch('/api/encounter/preview');
       if (!res.ok) return;
       // The response carries a top-level numeric `playerBattleHandAvgXp` alongside
       // the per-personality preview objects (#244), so the value type is a union.
@@ -459,12 +453,9 @@ export class EncounterScene extends Phaser.Scene {
    * Publishes window.__encounterBosses for the E2E harness.
    */
   private async loadRematchBosses(): Promise<void> {
-    const token = localStorage.getItem('er_token') ?? '';
-    if (!token) return;
+    if (!getToken()) return;
     try {
-      const res = await fetch(`${API_BASE}/api/encounter/bosses`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
+      const res = await apiFetch('/api/encounter/bosses');
       if (!res.ok) return;
       const { bosses } = (await res.json()) as { bosses: RematchBoss[] };
       this.rematchBosses = bosses ?? [];
@@ -599,13 +590,10 @@ export class EncounterScene extends Phaser.Scene {
     thumbElement?: number,
     isPracticeRematch?: boolean,
   ): Promise<void> {
-    const token = localStorage.getItem('er_token') ?? '';
+    const token = getToken() ?? '';
     if (!isPracticeRematch) {
       try {
-        await fetch(`${API_BASE}/api/stake/lock`, {
-          method: 'POST',
-          headers: { Authorization: `Bearer ${token}` },
-        });
+        await apiFetch('/api/stake/lock', { method: 'POST' });
       } catch { /* non-fatal */ }
     }
     const room = await connectToRoom('battle-ai', {
@@ -658,17 +646,12 @@ export class EncounterScene extends Phaser.Scene {
   private async checkPendingWonRing(): Promise<void> {
     const ringId = localStorage.getItem('er_pending_ring');
     if (!ringId || this.wonRingModal || this.battleHand.isOpen()) return;
-    const token = localStorage.getItem('er_token');
-    if (!token) return;
+    if (!getToken()) return;
 
     let rings: RingData[];
     let carryCap: number;
     try {
-      const res = await fetch(`${API_BASE}/api/me`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      if (!res.ok) return;
-      const data: { player: { carry_cap?: number }; rings: RingData[] } = await res.json();
+      const data = await fetchMe<{ player: { carry_cap?: number }; rings: RingData[] }>();
       rings = data.rings;
       carryCap = data.player.carry_cap ?? 10;
     } catch {
@@ -811,14 +794,9 @@ export class EncounterScene extends Phaser.Scene {
 
   /** PUT /api/carry with the full carried set. */
   private async putCarry(ringIds: string[]): Promise<void> {
-    const token = localStorage.getItem('er_token');
-    if (!token) return;
+    if (!getToken()) return;
     try {
-      await fetch(`${API_BASE}/api/carry`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ ringIds }),
-      });
+      await apiFetch('/api/carry', { method: 'PUT', json: { ringIds } });
     } catch {
       this.statusText.setText('Network error during carry update');
     }
@@ -826,13 +804,9 @@ export class EncounterScene extends Phaser.Scene {
 
   /** DELETE /api/rings/:id — permanently discard a won ring. */
   private async discardWonRing(ringId: string): Promise<void> {
-    const token = localStorage.getItem('er_token');
-    if (!token) return;
+    if (!getToken()) return;
     try {
-      await fetch(`${API_BASE}/api/rings/${ringId}`, {
-        method: 'DELETE',
-        headers: { Authorization: `Bearer ${token}` },
-      });
+      await apiFetch(`/api/rings/${ringId}`, { method: 'DELETE' });
     } catch {
       this.statusText.setText('Network error during discard');
     }

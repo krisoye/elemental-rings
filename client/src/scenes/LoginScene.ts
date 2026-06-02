@@ -1,13 +1,6 @@
 import Phaser from 'phaser';
 import { CANVAS_W, CANVAS_H } from '../Constants';
-
-// The build-time server URL override (Playwright passes ws://localhost:2568;
-// '' default → derive from page hostname). Declared the same way Connection.ts
-// declares it so the HTTP API base is derived identically.
-declare const __SERVER_URL__: string;
-
-const WS = __SERVER_URL__ || `ws://${window.location.hostname}:2567`;
-const API = WS.replace(/^ws/, 'http');
+import { API_BASE } from '../net/api';
 
 // Stable ids let Playwright target the real <input>/<button> DOM nodes.
 const FORM_HTML = `
@@ -71,7 +64,7 @@ export class LoginScene extends Phaser.Scene {
     }
 
     try {
-      const res = await fetch(`${API}/auth/${mode}`, {
+      const res = await fetch(`${API_BASE}/auth/${mode}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ username, password }),
