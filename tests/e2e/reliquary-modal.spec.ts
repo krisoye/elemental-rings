@@ -104,7 +104,7 @@ test('reliquary: opens at the wall and renders the live stats header', async ({ 
   const header = await campTextByName(page, 'reliquary-header');
   expect(header).toBeTruthy();
   expect(header).toContain(`XP: ${me.player.aggregate_xp}`);
-  expect(header).toContain(`spirit: ${me.player.spirit_current} / ${me.player.spirit_max}`);
+  expect(header).toContain(`Spirit: ${me.player.spirit_current} / ${me.player.spirit_max}`);
 
   // The LOADOUT badge shows carried / cap.
   const badge = await campTextByName(page, 'loadout-badge');

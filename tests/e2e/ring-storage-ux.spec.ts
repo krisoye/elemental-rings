@@ -173,7 +173,7 @@ test('reliquary-redesign: two-panel labels + live stats header are present', asy
   expect(labels.spare).toContain('SPARE'); // label is 'SPARE  ↓'
   expect(labels.hasFuse).toBe(false); // Fuse Rings moved out of this overlay
   expect(labels.header).toContain('XP:'); // renamed from aggregate_xp
-  expect(labels.header).toContain('spirit:');
+  expect(labels.header).toContain('Spirit:');
   await ctx.close();
 });
 
