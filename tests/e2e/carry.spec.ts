@@ -315,10 +315,6 @@ test('carry: full-carry win → discard in Manage Battle Hand auto-carries the w
   // the carried ring → click the DISCARD slot (group-1 row-1, x=262 y=240) → confirm
   // [Discard]. Freeing a slot triggers tryAutoCarryPending, which carries the won
   // ring and clears er_pending_ring.
-  await page.evaluate(() => {
-    const bh = (window as any).__game?.scene?.getScene('EncounterScene')?.battleHand;
-    return bh?.isOpen?.() === true;
-  });
   await page.waitForFunction(
     () => (window as any).__game?.scene?.getScene('EncounterScene')?.battleHand?.isOpen?.() === true,
     { timeout: 8000 },
