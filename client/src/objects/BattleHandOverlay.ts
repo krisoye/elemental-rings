@@ -272,18 +272,21 @@ export class BattleHandOverlay {
       .setOrigin(1, 0.5);
     container.add([headerLeft, headerCenter, headerRight]);
 
-    // ── #348 — three gap-separated 2-row clusters ────────────────────────────
+    // ── #348/#350 — three gap-separated 2-row clusters ────────────────────────
     // Absolute card-centre coordinates (canvas 1024×576; modal centred 512,288).
     // Cards are 92×80 (span ±46 / ±40). Clusters:
-    //   Group 1 (Won / Discard), col x=262:   row0 = pending won ring or placeholder;
+    //   Group 1 (Won / Discard), col x=303:   row0 = pending won ring or placeholder;
     //                                          row1 = DISCARD slot.
-    //   Group 2 (Status / HP), col x=382:      row0 = STATUS (thumb); row1 = HP (heart).
-    //                                          Isolated by gaps on BOTH sides.
-    //   Group 3 (Combat), cols x=560/660:      row0 = A1,A2; row1 = D1,D2.
+    //   Group 2 (Status / HP), col x=460:      row0 = STATUS (thumb); row1 = HP (heart).
+    //                                          Isolated by gaps on BOTH sides (~65px each).
+    //   Group 3 (Combat), cols x=617/721:      row0 = A1,A2; row1 = D1,D2. Pair gap 12px.
     // Rows: row0 y=150, row1 y=240. Labels sit at row_y − 34.
-    const GROUP1_X = 262;
-    const GROUP2_X = 382;
-    const GROUP3_X = [560, 660];
+    // Derivation (inner span [192,832], W=92, half=46, margins=gaps=65, pair=12):
+    //   G1=192+65+46=303; G2=303+92+65=460; A1=460+92+65=617; A2=617+92+12=721;
+    //   right margin=832−(721+46)=65. Equal margins + equal STATUS/HP isolation. #350
+    const GROUP1_X = 303;
+    const GROUP2_X = 460;
+    const GROUP3_X = [617, 721];
     const ROW0_Y = 150;
     const ROW1_Y = 240;
 
@@ -326,9 +329,14 @@ export class BattleHandOverlay {
     }
 
     // ── Group 1, row 1 — DISCARD slot (3-step safe discard, no × buttons) ─────
-    // A card-shaped faint-red outline with NO permanent text label (#348). Clicking
+    // A card-shaped faint-red outline with a DISCARD label above it (#350). Clicking
     // it WITH a card selected opens the confirm modal; with nothing selected it is a
     // no-op. Named so E2E can locate it without a pixel read.
+    // #350 — DISCARD label, slot-label style, 11px, origin 0.5, ~34px above slot centre.
+    const discardLbl = this.scene.add
+      .text(GROUP1_X, ROW1_Y - 34, 'DISCARD', { fontSize: '11px', color: '#aa4444' })
+      .setScrollFactor(0)
+      .setOrigin(0.5);
     const discardRect = this.scene.add
       .rectangle(GROUP1_X, ROW1_Y, 92, 80, 0x331a1a, 0.4)
       .setScrollFactor(0)
@@ -336,7 +344,7 @@ export class BattleHandOverlay {
       .setName('discard-slot')
       .setInteractive({ useHandCursor: true })
       .on('pointerdown', () => this.onDiscardSlotClick());
-    container.add(discardRect);
+    container.add([discardLbl, discardRect]);
 
     // ── Group 2 row 1 — HP (heart) card; element + HP pips, recharge/swap. ────
     this.renderHeartCard(container, GROUP2_X, ROW1_Y);
@@ -447,6 +455,26 @@ export class BattleHandOverlay {
     // Per-row group containers toggled by updateSpareVisibility() (only used when a
     // spareCapacity > 10 forces more than the 2 always-visible rows).
     const spareRowGroups: Map<number, Phaser.GameObjects.Container[]> = new Map();
+    // #350 — pre-compute whether an empty spare placeholder should be interactive.
+    // A pending won ring (in allRings but NOT in manageRings) is identified by its
+    // localStorage id. Battle-slot and heart selections are identified by selFromSlot.
+    // Spare-selected or nothing-selected → no-op (isActionable = false).
+    const _pendingIdForSpare = localStorage.getItem('er_pending_ring');
+    const _emptySelId = this.selRingId;
+    const _emptySelSlot = this.selFromSlot;
+    // isHoldingPending: selection source is 'spare' (selFromSlot===null) AND the id
+    // matches the pending won ring (which is not yet carried, so NOT in manageRings).
+    const _isHoldingPending =
+      _emptySelId !== null &&
+      _emptySelSlot === null &&
+      _emptySelId === _pendingIdForSpare &&
+      !this.manageRings.some((r) => r.id === _emptySelId);
+    const _isBattleSlotSel = _emptySelId !== null && _emptySelSlot !== null && _emptySelSlot !== HEART_SLOT;
+    const _isHeartSel = _emptySelSlot === HEART_SLOT;
+    const emptySpareActionable = _isBattleSlotSel || _isHeartSel || _isHoldingPending;
+    const emptySpareSelId = _emptySelId;
+    const emptySpareSelSlot = _emptySelSlot;
+
     // Render filled spare cards, then dim placeholders up to spareCapacity so the
     // grid reads complete (5×2). Capacity normally ≤ 10 → exactly the 2 visible rows.
     const gridCells = Math.max(usedSpares, Math.min(spareCapacity, SPARE_COLS * SPARE_ROW_Y.length));
@@ -493,12 +521,19 @@ export class BattleHandOverlay {
           this.scene.add.text(0, 24, `T${ring.tier}`, { fontSize: '9px', color: '#000000' }).setScrollFactor(0).setOrigin(0.5),
         ]);
       } else {
-        // Dim empty placeholder up to spareCapacity.
+        // #350 — empty spare placeholder: interactive when a battle-slot ring,
+        // heart ring, or pending won ring is held, so the player can unstake /
+        // release it to the spare pool. Spare-selected or nothing-selected → no-op.
         const ph = this.scene.add
           .rectangle(0, 0, 72, 80, 0x2a2a33)
           .setScrollFactor(0)
-          .setStrokeStyle(2, 0x444455)
-          .setAlpha(0.5);
+          .setStrokeStyle(2, emptySpareActionable ? 0x665544 : 0x444455)
+          .setAlpha(emptySpareActionable ? 0.7 : 0.5);
+        if (emptySpareActionable) {
+          ph.setInteractive({ useHandCursor: true }).on('pointerdown', () => {
+            void this.moveHeldRingToSpare(emptySpareSelId!, emptySpareSelSlot);
+          });
+        }
         ringGrp.add(ph);
       }
 
@@ -861,6 +896,123 @@ export class BattleHandOverlay {
       }
     } catch {
       this.setManageStatus('Network error during heart swap');
+      return;
+    }
+    this.swap.clear();
+    await this.refreshManageData();
+  }
+
+  /**
+   * #350 — dispatch a "move held ring to the spare pool" action routed by the
+   * selection's source slot:
+   *  - battle slot (a1/a2/d1/d2 or thumb) → PUT /api/loadout { [slot]: null }
+   *    unstakes the ring (it remains carried; the slot just becomes empty).
+   *  - heart → PUT /api/heart-slot { releaseTo: 'spare' } (no ringId);
+   *    heart slot empties → 0 HP.
+   *  - pending won ring (selFromSlot===null, not in manageRings) → carry as spare
+   *    via the existing PUT /api/carry path (cap-checked; 400 → "Free a slot first").
+   *  - spare or nothing → no-op (callers guard against this case already).
+   */
+  private async moveHeldRingToSpare(
+    ringId: string,
+    fromSlot: BattleSlot | HeartSel | null,
+  ): Promise<void> {
+    if (fromSlot === HEART_SLOT) {
+      await this.releaseHeartToSpare();
+      return;
+    }
+    if (fromSlot !== null) {
+      // Battle slot (thumb/a1/a2/d1/d2) — clear the slot, ring stays carried.
+      await this.unstakeBattleSlotToSpare(fromSlot);
+      return;
+    }
+    // fromSlot === null: pending won ring (not yet carried). Carry it as a spare
+    // reusing the same tryAutoCarryPending path: set the localStorage flag and call it.
+    if (!getToken()) return;
+    const alreadyPending = localStorage.getItem('er_pending_ring');
+    if (!alreadyPending) {
+      // The ring was already auto-carried or discarded elsewhere.
+      this.swap.clear();
+      await this.refreshManageData();
+      return;
+    }
+    let rings: { id: string; in_carry: number }[];
+    let carryCap: number;
+    try {
+      const data = await fetchMe<{ player: { carry_cap?: number }; rings: { id: string; in_carry: number }[] }>();
+      rings = data.rings;
+      carryCap = data.player.carry_cap ?? 10;
+    } catch {
+      return;
+    }
+    const carriedCount = rings.filter((r) => r.in_carry === 1).length;
+    if (carriedCount >= carryCap) {
+      this.setManageStatus('Free a slot first');
+      return;
+    }
+    const carried = new Set(rings.filter((r) => r.in_carry === 1).map((r) => r.id));
+    carried.add(ringId);
+    try {
+      const res = await apiFetch('/api/carry', { method: 'PUT', json: { ringIds: Array.from(carried) } });
+      if (res.status === 400) {
+        this.setManageStatus('Free a slot first');
+        return;
+      }
+      if (!res.ok) {
+        this.setManageStatus(`Carry failed (${res.status})`);
+        return;
+      }
+    } catch {
+      this.setManageStatus('Network error during carry update');
+      return;
+    }
+    localStorage.removeItem('er_pending_ring');
+    if (window.__encounterState) window.__encounterState.pendingWonRing = null;
+    this.swap.clear();
+    await this.refreshManageData();
+  }
+
+  /**
+   * #350 — clear a battle slot via PUT /api/loadout { [slot]: null }. The ring
+   * remains carried (it moves to the spare pool). Self-refreshes.
+   */
+  private async unstakeBattleSlotToSpare(slot: BattleSlot): Promise<void> {
+    if (!getToken()) return;
+    try {
+      const res = await apiFetch('/api/loadout', {
+        method: 'PUT',
+        json: { [slot]: null },
+      });
+      if (!res.ok) {
+        this.setManageStatus(`Unstake failed (${res.status})`);
+        return;
+      }
+    } catch {
+      this.setManageStatus('Network error during unstake');
+      return;
+    }
+    this.swap.clear();
+    await this.refreshManageData();
+  }
+
+  /**
+   * #350 — release the equipped heart ring to the spare pool via
+   * PUT /api/heart-slot { releaseTo: 'spare' } (no ringId). The heart slot is then
+   * empty → 0 HP. Self-refreshes.
+   */
+  private async releaseHeartToSpare(): Promise<void> {
+    if (!getToken()) return;
+    try {
+      const res = await apiFetch('/api/heart-slot', {
+        method: 'PUT',
+        json: { releaseTo: 'spare' },
+      });
+      if (!res.ok) {
+        this.setManageStatus(`Heart release failed (${res.status})`);
+        return;
+      }
+    } catch {
+      this.setManageStatus('Network error during heart release');
       return;
     }
     this.swap.clear();
