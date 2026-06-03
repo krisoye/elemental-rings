@@ -913,10 +913,13 @@ export const packLoadout = db.transaction(
       if (!ownerRingSet.has(id)) throw new Error(`ring ${id} not owned by player`);
     }
 
-    // #182 — Reliquary cap guard: count owned non-escrowed rings; the ones NOT
-    // in the new carry set will rest in the Reliquary.
+    // #182 — Reliquary cap guard: count owned non-escrowed, non-heart-slot rings;
+    // the ones NOT in the new carry set will rest in the Reliquary. heart_slot=1
+    // rings are excluded because they occupy their own dedicated slot, not a
+    // Reliquary slot — omitting this caused neutral swaps to fail when a heart
+    // ring was equipped (the heart ring inflated the count by 1).
     const ownedNonEscrowed = (
-      db.prepare('SELECT COUNT(*) as cnt FROM rings WHERE owner_id = ? AND escrowed = 0')
+      db.prepare('SELECT COUNT(*) as cnt FROM rings WHERE owner_id = ? AND escrowed = 0 AND heart_slot = 0')
         .get(playerId) as { cnt: number }
     ).cnt;
     const resultingReliquary = ownedNonEscrowed - unique.length;
