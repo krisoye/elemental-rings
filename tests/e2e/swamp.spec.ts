@@ -9,9 +9,12 @@ import type { Page } from '@playwright/test';
  * carries TWO Anchorages — `swamp_anchor_1` (Mire) and `swamp_anchor_2` (Deepmuck)
  * — that auto-attune on walk-in (GDD §10.7). The old `forest_sw_stone` attunement
  * gate and the `swamp_secret_forest` (Ironbark Rune) reveal mechanic were REMOVED:
- *   - the Forest→Swamp biome_exit (forest_swamp_gate) is now UNGATED — a boss
- *     physically blocks the path rather than an attunement gate (BaseBiomeScene
- *     .tryBiomeExit no longer reads a `gate` waystone), so any player can transition.
+ *   - the Forest→Swamp biome_exit (forest_swamp_gate) is gated by the Bogwood Warden
+ *     boss (#344): BaseBiomeScene.tryBiomeExit now checks the roster (GET
+ *     /api/overworld/npcs) and blocks the transition while the warden is alive.
+ *     Defeating the warden (or seeding the defeat via /api/test/seed-npc-defeat)
+ *     removes it from the roster and opens the way. Tests that transition to the Swamp
+ *     must seed the defeat first.
  *   - the hidden Forest alcove Anchorage (`forest_hidden_anchor`, on the
  *     forest_hidden_alcove screen) has no walking path and is reached only by
  *     teleporting to it once attuned — there is no longer a swamp Rune that reveals it.
@@ -59,6 +62,27 @@ async function readWaystone(page: Page, id: string): Promise<{ attuned: boolean 
     const payload = (window as any).__waystones;
     return payload?.waystones?.find((w: any) => w.id === wid) ?? null;
   }, id);
+}
+
+/**
+ * Seed an NPC defeat for the authenticated player via the test-only route.
+ * Mirrors the authoritative path the BattleRoom uses (recordNpcDefeat).
+ * #344 — required before transitioning through any boss-gated biome_exit.
+ */
+async function seedNpcDefeat(page: Page, npcId: string): Promise<void> {
+  const status = await page.evaluate(
+    async ([api, id]) => {
+      const token = localStorage.getItem('er_token');
+      const res = await fetch(`${api}/api/test/seed-npc-defeat`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ npcId: id }),
+      });
+      return res.status;
+    },
+    [API_URL, npcId] as const,
+  );
+  if (status !== 200) throw new Error(`seedNpcDefeat(${npcId}): got ${status}`);
 }
 
 /** Attune a waystone directly via the server (no walking required). */
@@ -109,17 +133,24 @@ test('swamp: the Swamp catalog is present and attuning swamp_anchor_1 persists',
   await ctx.close();
 });
 
-// ── Scenario 2: Forest→Swamp biome exit is ungated (transitions for any player) ─
-test('swamp: the forest_swamp_gate biome_exit transitions a fresh player to SwampScene', async ({ browser }) => {
+// ── Scenario 2: Forest→Swamp biome exit is roster-gated (requires warden defeat) ─
+// #344 — tryBiomeExit now checks the roster. The Bogwood Warden must be defeated
+// (or seeded-defeated) before the biome_exit transitions. Seed the defeat first so
+// the test exercises the post-defeat open path.
+test('swamp: the forest_swamp_gate biome_exit transitions to SwampScene after Bogwood Warden is defeated', async ({ browser }) => {
   const ctx = await browser.newContext();
-  await seedAuthToken(ctx); // fresh user — no attunement prerequisite anymore
+  await seedAuthToken(ctx);
   const page = await ctx.newPage();
   await loadSanctum(page);
   // 8E (#107): the SW biome_exit lives on the forest_swamp_gate screen.
   await enterForestScreen(page, 'forest_swamp_gate');
 
-  // The exit is ungated (a boss physically blocks the path, not an attunement
-  // gate): pressing E at the biome_exit transitions straight into the Swamp.
+  // #344 — seed the Bogwood Warden defeat so the roster check passes.
+  await seedNpcDefeat(page, 'forest_bogwood_warden');
+  // Re-enter so the NPC roster refreshes without the warden.
+  await enterForestScreen(page, 'forest_swamp_gate');
+
+  // The warden is now absent; pressing E at the biome_exit transitions to SwampScene.
   await walkToZone(page, await zoneCenter(page, 'biome_exit'), 'biome_exit');
   await page.evaluate(() => (window as any).__sanctumInteract());
   await page.waitForFunction(() => (window as any).__activeScene === 'SwampScene', {
@@ -134,6 +165,10 @@ test('swamp: walking onto swamp_anchor_1 auto-attunes it (server round-trip)', a
   await seedAuthToken(ctx);
   const page = await ctx.newPage();
   await loadSanctum(page);
+  await enterForestScreen(page, 'forest_swamp_gate');
+
+  // #344 — seed Bogwood Warden defeat so the biome_exit roster gate passes.
+  await seedNpcDefeat(page, 'forest_bogwood_warden');
   await enterForestScreen(page, 'forest_swamp_gate');
 
   await walkToZone(page, await zoneCenter(page, 'biome_exit'), 'biome_exit');
@@ -164,6 +199,10 @@ test('swamp: walking onto swamp_anchor_2 auto-attunes it (server round-trip)', a
   await seedAuthToken(ctx);
   const page = await ctx.newPage();
   await loadSanctum(page);
+  await enterForestScreen(page, 'forest_swamp_gate');
+
+  // #344 — seed Bogwood Warden defeat so the biome_exit roster gate passes.
+  await seedNpcDefeat(page, 'forest_bogwood_warden');
   await enterForestScreen(page, 'forest_swamp_gate');
 
   await walkToZone(page, await zoneCenter(page, 'biome_exit'), 'biome_exit');
