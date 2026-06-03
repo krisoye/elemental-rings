@@ -154,6 +154,6 @@ Inverted: snow/ground patch surrounded by water with a soil shore ring.
 
 ---
 
-## Not Yet Catalogued
+## Transparent (unused)
 
-Tiles 65–69, 75–79, 85–89 (rows 6–8, cols 5–9) are visible in the sheet but not yet described.
+Tiles 65–69, 75–79, 85–89 (rows 6–8, cols 5–9) are fully transparent — no content.
