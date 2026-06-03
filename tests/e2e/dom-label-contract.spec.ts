@@ -11,6 +11,12 @@
  *   - Clicking through a DOM label reaches the canvas (input passthrough)
  *   - DomLabel nodes are cleaned up on modal close/reopen (no duplicate nodes)
  *
+ * Selector convention (mirrors the dev's overworld-hud-stats.spec.ts):
+ *   - Named labels: `document.querySelector('[data-label="<name>"]')` — scoped globally,
+ *     no container root needed. Known names: "overworld-hud", "biome-title", "npc-prompt".
+ *   - Scanning all game DOM labels: root = `document.querySelector('#game-container')`
+ *     (the Phaser parent div declared in index.html / main.ts:408).
+ *
  * DO NOT fold these into overworld-hud-stats.spec.ts or manage-battle-rings.spec.ts
  * — those are owned by the dev agent and must not be touched by QA per spawn instructions.
  *
@@ -62,11 +68,11 @@ async function closeBattleHand(page: Page): Promise<void> {
 // Group A — HUD DOM label (BaseBiomeScene #362)
 // ═══════════════════════════════════════════════════════════════════════════
 
-// #362 adversarial: after DOM migration the HUD text must live in the DOM, not
-// in the Phaser scene graph — if the old canvas Text still exists alongside the
-// DOM node, two texts overlap and the old scene-hook tests silently pass against
-// stale canvas text.
-test('dom-label #362 A1: HUD DOM node exists in the Phaser DOM container after overworld loads', async ({
+// #362 adversarial: after DOM migration the HUD text must live in the DOM node
+// [data-label="overworld-hud"], not in the Phaser scene graph — if the old
+// canvas Text still exists alongside the DOM node, two texts overlap and the
+// old scene-hook tests silently pass against stale canvas text.
+test('dom-label #362 A1: HUD DOM node [data-label="overworld-hud"] exists after overworld loads', async ({
   browser,
 }) => {
   const ctx = await browser.newContext();
@@ -74,32 +80,23 @@ test('dom-label #362 A1: HUD DOM node exists in the Phaser DOM container after o
   const page = await ctx.newPage();
   await loadForest(page);
 
-  // Wait for HUD content — the DOM node must appear with at least Day/Gold/Food
+  // Wait for the HUD DOM node to appear with populated content
   await page.waitForFunction(
     () => {
-      const container = document.querySelector('#phaser-game [data-ph-dom]') ??
-                        document.querySelector('#phaser-game div');
-      if (!container) return false;
-      // Look for any element whose textContent includes 'Day'
-      return Array.from(container.querySelectorAll('*'))
-        .some((el) => el.textContent?.includes('Day'));
+      const node = document.querySelector('[data-label="overworld-hud"]');
+      return !!node && (node.textContent?.includes('Day') ?? false);
     },
     { timeout: 8000 },
   );
 
-  // The HUD DOM node must exist somewhere within the Phaser canvas wrapper
-  const hudDomExists = await page.evaluate(() => {
-    // Phaser DOM elements are inserted into the div#phaser-game DOM container
-    const root = document.querySelector('#phaser-game');
-    if (!root) return false;
-    const allEls = Array.from(root.querySelectorAll('*'));
-    return allEls.some((el) => (el as HTMLElement).innerText?.includes('Day'));
-  });
+  const hudText = await page.evaluate(
+    () => document.querySelector('[data-label="overworld-hud"]')?.textContent ?? '',
+  );
 
   expect(
-    hudDomExists,
-    'HUD DOM node with "Day" segment must exist in the Phaser game container',
-  ).toBe(true);
+    hudText,
+    'HUD DOM node [data-label="overworld-hud"] must exist and contain "Day" segment',
+  ).toContain('Day');
 
   await ctx.close();
 });
@@ -116,22 +113,14 @@ test('dom-label #362 A2: HUD DOM node has computed pointer-events === "none"', a
   await loadForest(page);
 
   await page.waitForFunction(
-    () => {
-      const root = document.querySelector('#phaser-game');
-      if (!root) return false;
-      return Array.from(root.querySelectorAll('*'))
-        .some((el) => (el as HTMLElement).innerText?.includes('Day'));
-    },
+    () => !!document.querySelector('[data-label="overworld-hud"]')?.textContent?.includes('Day'),
     { timeout: 8000 },
   );
 
   const pointerEvents = await page.evaluate(() => {
-    const root = document.querySelector('#phaser-game');
-    if (!root) return null;
-    const hudEl = Array.from(root.querySelectorAll('*'))
-      .find((el) => (el as HTMLElement).innerText?.includes('Day')) as HTMLElement | undefined;
-    if (!hudEl) return null;
-    return window.getComputedStyle(hudEl).pointerEvents;
+    const node = document.querySelector('[data-label="overworld-hud"]') as HTMLElement | null;
+    if (!node) return null;
+    return window.getComputedStyle(node).pointerEvents;
   });
 
   expect(
@@ -154,27 +143,19 @@ test('dom-label #362 A3: HUD DOM node computed font-family includes monospace st
   await loadForest(page);
 
   await page.waitForFunction(
-    () => {
-      const root = document.querySelector('#phaser-game');
-      if (!root) return false;
-      return Array.from(root.querySelectorAll('*'))
-        .some((el) => (el as HTMLElement).innerText?.includes('Day'));
-    },
+    () => !!document.querySelector('[data-label="overworld-hud"]')?.textContent?.includes('Day'),
     { timeout: 8000 },
   );
 
   const fontFamily = await page.evaluate(() => {
-    const root = document.querySelector('#phaser-game');
-    if (!root) return null;
-    const hudEl = Array.from(root.querySelectorAll('*'))
-      .find((el) => (el as HTMLElement).innerText?.includes('Day')) as HTMLElement | undefined;
-    if (!hudEl) return null;
-    return window.getComputedStyle(hudEl).fontFamily;
+    const node = document.querySelector('[data-label="overworld-hud"]') as HTMLElement | null;
+    if (!node) return null;
+    return window.getComputedStyle(node).fontFamily;
   });
 
   expect(fontFamily).not.toBeNull();
   // The font-family stack must include a monospace font (Courier New or monospace).
-  // Browser resolved fontFamily may quote names: `"Courier New", Courier, monospace`
+  // Browsers may resolve fontFamily with quotes: `"Courier New", Courier, monospace`
   const lowerFont = (fontFamily ?? '').toLowerCase();
   const hasMonospace = lowerFont.includes('courier') || lowerFont.includes('monospace');
   expect(
@@ -188,7 +169,7 @@ test('dom-label #362 A3: HUD DOM node computed font-family includes monospace st
 // #362 adversarial: if a second DOM node is created on each HUD refresh (instead
 // of updating textContent in place), nodes accumulate over time — the DOM bloats,
 // old values are still visible through the new node, and memory leaks.
-test('dom-label #362 A4: repeated HUD refreshes do not create duplicate DOM nodes', async ({
+test('dom-label #362 A4: repeated HUD refreshes do not create duplicate [data-label="overworld-hud"] nodes', async ({
   browser,
 }) => {
   const ctx = await browser.newContext();
@@ -196,15 +177,17 @@ test('dom-label #362 A4: repeated HUD refreshes do not create duplicate DOM node
   const page = await ctx.newPage();
   await loadForest(page);
 
-  // Count HUD-like nodes before refresh
-  const countBefore = await page.evaluate(() => {
-    const root = document.querySelector('#phaser-game');
-    if (!root) return 0;
-    return Array.from(root.querySelectorAll('*'))
-      .filter((el) => (el as HTMLElement).innerText?.includes('Day')).length;
-  });
+  await page.waitForFunction(
+    () => !!document.querySelector('[data-label="overworld-hud"]')?.textContent?.includes('Day'),
+    { timeout: 8000 },
+  );
 
-  // Trigger a refresh by calling refreshHud twice
+  // Count HUD nodes before refresh — must be exactly 1
+  const countBefore = await page.evaluate(
+    () => document.querySelectorAll('[data-label="overworld-hud"]').length,
+  );
+
+  // Trigger two refreshes in quick succession
   await page.evaluate(() => {
     const scene = (window as any).__game?.scene?.getScene('ForestScene') as any;
     scene?.refreshHud?.();
@@ -214,16 +197,13 @@ test('dom-label #362 A4: repeated HUD refreshes do not create duplicate DOM node
   // Brief wait for async fetch
   await page.waitForTimeout(500);
 
-  const countAfter = await page.evaluate(() => {
-    const root = document.querySelector('#phaser-game');
-    if (!root) return 0;
-    return Array.from(root.querySelectorAll('*'))
-      .filter((el) => (el as HTMLElement).innerText?.includes('Day')).length;
-  });
+  const countAfter = await page.evaluate(
+    () => document.querySelectorAll('[data-label="overworld-hud"]').length,
+  );
 
   expect(
     countAfter,
-    `HUD DOM node count after two refreshes (${countAfter}) must equal count before (${countBefore}) — refreshing must update textContent, not create new nodes`,
+    `[data-label="overworld-hud"] count after two refreshes (${countAfter}) must equal count before (${countBefore}) — refreshing must update textContent, not create new nodes`,
   ).toBe(countBefore);
 
   await ctx.close();
@@ -236,7 +216,7 @@ test('dom-label #362 A4: repeated HUD refreshes do not create duplicate DOM node
 // #362 adversarial: the two-row location label uses `\n` which requires
 // white-space:pre in CSS to render as two visible lines. Without it, the `\n`
 // renders as a space and the label collapses to a single line.
-test('dom-label #362 B1: two-row location label DOM node has computed white-space === "pre"', async ({
+test('dom-label #362 B1: two-row location label [data-label="biome-title"] has computed white-space === "pre"', async ({
   browser,
 }) => {
   const ctx = await browser.newContext();
@@ -244,30 +224,18 @@ test('dom-label #362 B1: two-row location label DOM node has computed white-spac
   const page = await ctx.newPage();
   await loadForest(page);
 
-  // Wait for the location label to appear (it contains "Forest")
+  // Wait for the biome-title DOM node to appear
   await page.waitForFunction(
-    () => {
-      const root = document.querySelector('#phaser-game');
-      if (!root) return false;
-      return Array.from(root.querySelectorAll('*'))
-        .some((el) => (el as HTMLElement).innerText?.includes('Forest'));
-    },
+    () => !!document.querySelector('[data-label="biome-title"]')?.textContent?.includes('Forest'),
     { timeout: 8000 },
   );
 
   const { whiteSpace, textContent } = await page.evaluate(() => {
-    const root = document.querySelector('#phaser-game');
-    if (!root) return { whiteSpace: null, textContent: null };
-    // Find the label that contains "Forest" and also contains "Anchorage" or a newline
-    const locationEl = Array.from(root.querySelectorAll('*'))
-      .find((el) => {
-        const t = (el as HTMLElement).innerText ?? '';
-        return t.includes('Forest') && (t.includes('\n') || t.includes('Anchorage'));
-      }) as HTMLElement | undefined;
-    if (!locationEl) return { whiteSpace: null, textContent: null };
+    const node = document.querySelector('[data-label="biome-title"]') as HTMLElement | null;
+    if (!node) return { whiteSpace: null, textContent: null };
     return {
-      whiteSpace: window.getComputedStyle(locationEl).whiteSpace,
-      textContent: locationEl.textContent,
+      whiteSpace: window.getComputedStyle(node).whiteSpace,
+      textContent: node.textContent,
     };
   });
 
@@ -276,7 +244,7 @@ test('dom-label #362 B1: two-row location label DOM node has computed white-spac
     'Two-row location label must have white-space: pre — without it \\n renders as a space (label collapses)',
   ).toBe('pre');
 
-  // Verify the two-row content
+  // Verify the two-row content is present
   expect(textContent).toContain('Forest');
 
   await ctx.close();
@@ -285,7 +253,7 @@ test('dom-label #362 B1: two-row location label DOM node has computed white-spac
 // #362 adversarial: the two-row label must also have pointer-events:none —
 // it overlays a visually prominent area of the screen; a click on the location
 // label text could otherwise block overworld movement/interaction.
-test('dom-label #362 B2: two-row location label DOM node has pointer-events === "none"', async ({
+test('dom-label #362 B2: two-row location label [data-label="biome-title"] has pointer-events === "none"', async ({
   browser,
 }) => {
   const ctx = await browser.newContext();
@@ -294,30 +262,19 @@ test('dom-label #362 B2: two-row location label DOM node has pointer-events === 
   await loadForest(page);
 
   await page.waitForFunction(
-    () => {
-      const root = document.querySelector('#phaser-game');
-      if (!root) return false;
-      return Array.from(root.querySelectorAll('*'))
-        .some((el) => (el as HTMLElement).innerText?.includes('Forest'));
-    },
+    () => !!document.querySelector('[data-label="biome-title"]')?.textContent?.includes('Forest'),
     { timeout: 8000 },
   );
 
   const pointerEvents = await page.evaluate(() => {
-    const root = document.querySelector('#phaser-game');
-    if (!root) return null;
-    const locationEl = Array.from(root.querySelectorAll('*'))
-      .find((el) => {
-        const t = (el as HTMLElement).innerText ?? '';
-        return t.includes('Forest');
-      }) as HTMLElement | undefined;
-    if (!locationEl) return null;
-    return window.getComputedStyle(locationEl).pointerEvents;
+    const node = document.querySelector('[data-label="biome-title"]') as HTMLElement | null;
+    if (!node) return null;
+    return window.getComputedStyle(node).pointerEvents;
   });
 
   expect(
     pointerEvents,
-    'Location label DOM node must have pointer-events: none',
+    'Location label DOM node [data-label="biome-title"] must have pointer-events: none',
   ).toBe('none');
 
   await ctx.close();
@@ -326,7 +283,7 @@ test('dom-label #362 B2: two-row location label DOM node has pointer-events === 
 // #362 adversarial: `Forest` on line 1 and `The Anchorage` on line 2 is the
 // two-row format the spec mandates. If the implementation collapses them
 // (renders "Forest The Anchorage" on one line), the visual layout breaks.
-test('dom-label #362 B3: location label textContent contains both biome and area separated by newline', async ({
+test('dom-label #362 B3: [data-label="biome-title"] textContent contains biome and area separated by newline', async ({
   browser,
 }) => {
   const ctx = await browser.newContext();
@@ -336,24 +293,16 @@ test('dom-label #362 B3: location label textContent contains both biome and area
 
   await page.waitForFunction(
     () => {
-      const root = document.querySelector('#phaser-game');
-      if (!root) return false;
-      return Array.from(root.querySelectorAll('*'))
-        .some((el) => (el as HTMLElement).innerText?.includes('Forest'));
+      const node = document.querySelector('[data-label="biome-title"]');
+      const t = node?.textContent ?? '';
+      return t.includes('Forest') && t.includes('Anchorage');
     },
     { timeout: 8000 },
   );
 
-  const textContent = await page.evaluate(() => {
-    const root = document.querySelector('#phaser-game');
-    if (!root) return null;
-    const locationEl = Array.from(root.querySelectorAll('*'))
-      .find((el) => {
-        const t = (el as HTMLElement).innerText ?? '';
-        return t.includes('Forest') && t.includes('Anchorage');
-      }) as HTMLElement | undefined;
-    return locationEl?.textContent ?? null;
-  });
+  const textContent = await page.evaluate(
+    () => document.querySelector('[data-label="biome-title"]')?.textContent ?? null,
+  );
 
   expect(textContent).not.toBeNull();
   expect(
@@ -375,7 +324,7 @@ test('dom-label #362 B3: location label textContent contains both biome and area
 // #363 adversarial: the overlay title and SPARE HEADER labels are screen-fixed
 // and must migrate to DOM. If they are still canvas Text objects, they remain
 // blurry on fractional DPI and the migration AC is violated.
-test('dom-label #363 C1: BattleHandOverlay title label exists as a DOM node (not canvas text)', async ({
+test('dom-label #363 C1: BattleHandOverlay screen-fixed labels exist as DOM nodes (not canvas text)', async ({
   browser,
 }) => {
   const ctx = await browser.newContext();
@@ -384,25 +333,26 @@ test('dom-label #363 C1: BattleHandOverlay title label exists as a DOM node (not
   await loadForest(page);
   await openBattleHand(page);
 
-  // The overlay should have DOM labels for the title/section headers.
-  // Wait briefly for the overlay to fully render.
+  // Wait briefly for the overlay to fully render its DOM labels
   await page.waitForTimeout(500);
 
-  // Look for DOM nodes containing "MANAGE" or "SPARE" or "BATTLE" (overlay section labels)
+  // Look for DOM nodes within #game-container containing known overlay section headers.
+  // Known data-label values per spec: "battle-hand-title", "spare-header", "discard-label",
+  // or discovered by scanning the container for the header text.
   const domOverlayLabelExists = await page.evaluate(() => {
-    const root = document.querySelector('#phaser-game');
+    const root = document.querySelector('#game-container');
     if (!root) return false;
     const allEls = Array.from(root.querySelectorAll('*'));
     return allEls.some((el) => {
       const t = (el as HTMLElement).innerText ?? '';
-      // Match known overlay section headers per the spec
+      // Match known overlay section headers per the spec (title or spare section labels)
       return t.includes('MANAGE') || t.includes('SPARE') || t.includes('DISCARD') || t.includes('BATTLE HAND');
     });
   });
 
   expect(
     domOverlayLabelExists,
-    'BattleHandOverlay screen-fixed labels (title/SPARE/DISCARD headers) must exist as DOM nodes after #363 migration',
+    'BattleHandOverlay screen-fixed labels (title/SPARE/DISCARD headers) must exist as DOM nodes in #game-container after #363 migration',
   ).toBe(true);
 
   await ctx.close();
@@ -424,7 +374,7 @@ test('dom-label #363 C2: per-card spare labels in spareContainer remain in canva
 
   await page.waitForTimeout(300);
 
-  // Check that per-card label text (element names like "FIRE", "WATER", tier "T1",
+  // Check that per-card label text (element names like "FIRE", tier "T1",
   // XP labels like "Xp: 0") are in the Phaser scene graph (not DOM)
   const canvasCardLabelsExist = await page.evaluate(() => {
     const scene = (window as any).__game?.scene?.getScene('ForestScene') as any;
@@ -459,7 +409,7 @@ test('dom-label #363 C2: per-card spare labels in spareContainer remain in canva
 // #363 adversarial: all DOM labels in the overlay must have pointer-events:none.
 // The overlay has interactive buttons (assign, equip, DISCARD) — any DOM label
 // intercepting clicks near those buttons silently breaks their hit testing.
-test('dom-label #363 C3: all DOM labels in the overlay have pointer-events === "none"', async ({
+test('dom-label #363 C3: all DOM text labels visible in #game-container have pointer-events === "none"', async ({
   browser,
 }) => {
   const ctx = await browser.newContext();
@@ -470,15 +420,18 @@ test('dom-label #363 C3: all DOM labels in the overlay have pointer-events === "
 
   await page.waitForTimeout(300);
 
-  // Find all DOM text elements inside the Phaser container and check computed styles
+  // Find all DOM text elements inside the game container and check computed styles.
+  // Exclude elements that are login <input> fields (they legitimately receive input).
   const violations = await page.evaluate(() => {
-    const root = document.querySelector('#phaser-game');
+    const root = document.querySelector('#game-container');
     if (!root) return [] as string[];
     const bad: string[] = [];
     for (const el of Array.from(root.querySelectorAll('*'))) {
       const htmlEl = el as HTMLElement;
-      const t = htmlEl.innerText ?? '';
-      if (t.trim().length === 0) continue;
+      // Skip form controls — login inputs legitimately receive pointer events
+      if (htmlEl.tagName === 'INPUT' || htmlEl.tagName === 'BUTTON' || htmlEl.tagName === 'CANVAS') continue;
+      const t = (htmlEl.innerText ?? '').trim();
+      if (t.length === 0) continue;
       const style = window.getComputedStyle(htmlEl);
       if (style.pointerEvents !== 'none') {
         bad.push(`"${t.slice(0, 40)}" has pointer-events: ${style.pointerEvents}`);
@@ -503,7 +456,7 @@ test('dom-label #363 C3: all DOM labels in the overlay have pointer-events === "
 // the Phaser DOM element's underlying <div> remains in the DOM even after
 // the Phaser object is removed from the scene graph. On reopen a second <div>
 // is added — labels stack and overlap, values from the previous open remain visible.
-test('dom-label #363 D1: DOM label count is stable after close+reopen cycle (no node proliferation)', async ({
+test('dom-label #363 D1: DOM label count in #game-container is stable after close+reopen cycle', async ({
   browser,
 }) => {
   const ctx = await browser.newContext();
@@ -513,12 +466,16 @@ test('dom-label #363 D1: DOM label count is stable after close+reopen cycle (no 
   await openBattleHand(page);
   await page.waitForTimeout(300);
 
-  // Count DOM text nodes after first open
+  // Count all DOM text nodes inside the game container after first open.
+  // Exclude canvas and input elements to focus on DomLabel-produced nodes.
   const countAfterOpen1 = await page.evaluate(() => {
-    const root = document.querySelector('#phaser-game');
+    const root = document.querySelector('#game-container');
     if (!root) return 0;
     return Array.from(root.querySelectorAll('*'))
-      .filter((el) => (el as HTMLElement).innerText?.trim().length > 0).length;
+      .filter((el) => {
+        if ((el as HTMLElement).tagName === 'CANVAS' || (el as HTMLElement).tagName === 'INPUT') return false;
+        return ((el as HTMLElement).innerText ?? '').trim().length > 0;
+      }).length;
   });
 
   await closeBattleHand(page);
@@ -529,10 +486,13 @@ test('dom-label #363 D1: DOM label count is stable after close+reopen cycle (no 
   await page.waitForTimeout(300);
 
   const countAfterOpen2 = await page.evaluate(() => {
-    const root = document.querySelector('#phaser-game');
+    const root = document.querySelector('#game-container');
     if (!root) return 0;
     return Array.from(root.querySelectorAll('*'))
-      .filter((el) => (el as HTMLElement).innerText?.trim().length > 0).length;
+      .filter((el) => {
+        if ((el as HTMLElement).tagName === 'CANVAS' || (el as HTMLElement).tagName === 'INPUT') return false;
+        return ((el as HTMLElement).innerText ?? '').trim().length > 0;
+      }).length;
   });
 
   expect(
@@ -558,19 +518,14 @@ test('SpecConformance #361 E1: clicking at HUD DOM label position reaches the ca
   await loadForest(page);
 
   await page.waitForFunction(
-    () => {
-      const root = document.querySelector('#phaser-game');
-      if (!root) return false;
-      return Array.from(root.querySelectorAll('*'))
-        .some((el) => (el as HTMLElement).innerText?.includes('Day'));
-    },
+    () => !!document.querySelector('[data-label="overworld-hud"]')?.textContent?.includes('Day'),
     { timeout: 8000 },
   );
 
-  // Record how many pointer events the canvas receives before the click
+  // Register a pointerdown listener on the canvas to count how many clicks reach it
   await page.evaluate(() => {
     (window as any).__canvasPointerdownCount = 0;
-    const canvas = document.querySelector('#phaser-game canvas');
+    const canvas = document.querySelector('#game-container canvas');
     if (canvas) {
       canvas.addEventListener('pointerdown', () => {
         (window as any).__canvasPointerdownCount++;
@@ -580,12 +535,9 @@ test('SpecConformance #361 E1: clicking at HUD DOM label position reaches the ca
 
   // Find the HUD label's bounding rect and click at its center
   const hudBounds = await page.evaluate(() => {
-    const root = document.querySelector('#phaser-game');
-    if (!root) return null;
-    const hudEl = Array.from(root.querySelectorAll('*'))
-      .find((el) => (el as HTMLElement).innerText?.includes('Day')) as HTMLElement | undefined;
-    if (!hudEl) return null;
-    const rect = hudEl.getBoundingClientRect();
+    const node = document.querySelector('[data-label="overworld-hud"]') as HTMLElement | null;
+    if (!node) return null;
+    const rect = node.getBoundingClientRect();
     return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
   });
 
@@ -604,8 +556,8 @@ test('SpecConformance #361 E1: clicking at HUD DOM label position reaches the ca
 });
 
 // Spec AC: "Typeface unchanged — monospace parity maintained throughout"
-// All DOM labels must use a monospace font — verified across HUD, location, overlay.
-test('SpecConformance #361 E2: all Phaser DOM container text labels use monospace font family', async ({
+// All DOM labels in the game container must use a monospace font.
+test('SpecConformance #361 E2: all DOM text labels in #game-container use monospace font family', async ({
   browser,
 }) => {
   const ctx = await browser.newContext();
@@ -614,22 +566,19 @@ test('SpecConformance #361 E2: all Phaser DOM container text labels use monospac
   await loadForest(page);
 
   await page.waitForFunction(
-    () => {
-      const root = document.querySelector('#phaser-game');
-      if (!root) return false;
-      return Array.from(root.querySelectorAll('*'))
-        .some((el) => (el as HTMLElement).innerText?.includes('Day'));
-    },
+    () => !!document.querySelector('[data-label="overworld-hud"]')?.textContent?.includes('Day'),
     { timeout: 8000 },
   );
 
   const proportionalFontViolations = await page.evaluate(() => {
-    const root = document.querySelector('#phaser-game');
+    const root = document.querySelector('#game-container');
     if (!root) return [] as string[];
     const PROPORTIONAL = ['sans-serif', 'Arial', 'Helvetica', 'Georgia', 'Verdana'];
     const bad: string[] = [];
     for (const el of Array.from(root.querySelectorAll('*'))) {
       const htmlEl = el as HTMLElement;
+      // Skip canvas and inputs — not DomLabel-produced text nodes
+      if (htmlEl.tagName === 'CANVAS' || htmlEl.tagName === 'INPUT') continue;
       const t = (htmlEl.innerText ?? '').trim();
       if (t.length === 0) continue;
       const ff = window.getComputedStyle(htmlEl).fontFamily.toLowerCase();
@@ -654,7 +603,7 @@ test('SpecConformance #361 E2: all Phaser DOM container text labels use monospac
 // Spec AC: "HUD content updates dynamically when player stats change"
 // After DOM migration, refreshHud must update the DOM node's textContent —
 // not leave the old text visible because the implementation forgot to update the node.
-test('SpecConformance #362 E3: HUD DOM node textContent updates after refreshHud() call', async ({
+test('SpecConformance #362 E3: [data-label="overworld-hud"] textContent updates after refreshHud() call', async ({
   browser,
 }) => {
   const ctx = await browser.newContext();
@@ -664,24 +613,14 @@ test('SpecConformance #362 E3: HUD DOM node textContent updates after refreshHud
 
   // Wait for HUD to appear with initial content
   await page.waitForFunction(
-    () => {
-      const root = document.querySelector('#phaser-game');
-      if (!root) return false;
-      return Array.from(root.querySelectorAll('*'))
-        .some((el) => (el as HTMLElement).innerText?.includes('Day'));
-    },
+    () => !!document.querySelector('[data-label="overworld-hud"]')?.textContent?.includes('Day'),
     { timeout: 8000 },
   );
 
   // Capture the initial HUD text
-  const textBefore = await page.evaluate(() => {
-    const root = document.querySelector('#phaser-game');
-    if (!root) return '';
-    const hudEl = Array.from(root.querySelectorAll('*'))
-      .find((el) => (el as HTMLElement).innerText?.includes('Day')) as HTMLElement | undefined;
-    return hudEl?.textContent ?? '';
-  });
-
+  const textBefore = await page.evaluate(
+    () => document.querySelector('[data-label="overworld-hud"]')?.textContent ?? '',
+  );
   expect(textBefore.length).toBeGreaterThan(0);
 
   // Trigger a refreshHud() and wait for it to settle
@@ -691,14 +630,10 @@ test('SpecConformance #362 E3: HUD DOM node textContent updates after refreshHud
   });
   await page.waitForTimeout(1000);
 
-  // Text should remain non-empty and still contain core segments
-  const textAfter = await page.evaluate(() => {
-    const root = document.querySelector('#phaser-game');
-    if (!root) return '';
-    const hudEl = Array.from(root.querySelectorAll('*'))
-      .find((el) => (el as HTMLElement).innerText?.includes('Day')) as HTMLElement | undefined;
-    return hudEl?.textContent ?? '';
-  });
+  // Text must remain non-empty and still contain core segments
+  const textAfter = await page.evaluate(
+    () => document.querySelector('[data-label="overworld-hud"]')?.textContent ?? '',
+  );
 
   expect(
     textAfter.length,
@@ -712,7 +647,8 @@ test('SpecConformance #362 E3: HUD DOM node textContent updates after refreshHud
 // Spec AC: "NPC prompt shows on zone enter and hides on zone exit"
 // After DOM migration the NPC prompt is a DOM node that must be shown/hidden,
 // not a canvas Text with setVisible() — both mechanisms should work.
-test('SpecConformance #362 E4: NPC prompt DOM node hides when not in NPC zone (initially hidden)', async ({
+// (Mirrors the show/hide assertion in overworld-hud-stats.spec.ts #362 C.)
+test('SpecConformance #362 E4: [data-label="npc-prompt"] is hidden when player is not in an NPC zone', async ({
   browser,
 }) => {
   const ctx = await browser.newContext();
@@ -722,25 +658,18 @@ test('SpecConformance #362 E4: NPC prompt DOM node hides when not in NPC zone (i
 
   await page.waitForTimeout(500);
 
-  // The NPC prompt should not be visible initially (player not in NPC zone)
-  // It may exist in the DOM but should not be visible/displayed
+  // The NPC prompt node may or may not exist in the DOM at load time (lazily created).
+  // If it exists, it must not be visible (display:none or visibility:hidden).
   const npcPromptVisible = await page.evaluate(() => {
-    const root = document.querySelector('#phaser-game');
-    if (!root) return false;
-    // NPC prompt text typically says "Approach [E]" or similar
-    const promptEl = Array.from(root.querySelectorAll('*'))
-      .find((el) => {
-        const t = (el as HTMLElement).innerText ?? '';
-        return t.includes('[E]') || t.includes('Approach');
-      }) as HTMLElement | undefined;
-    if (!promptEl) return false; // not in DOM — definitely hidden
-    const style = window.getComputedStyle(promptEl);
+    const node = document.querySelector('[data-label="npc-prompt"]') as HTMLElement | null;
+    if (!node) return false; // not in DOM at all — definitely not visible
+    const style = window.getComputedStyle(node);
     return style.display !== 'none' && style.visibility !== 'hidden' && style.opacity !== '0';
   });
 
   expect(
     npcPromptVisible,
-    'NPC prompt DOM node must not be visible when player is not in an NPC zone',
+    '[data-label="npc-prompt"] must not be visible when player is not in an NPC zone',
   ).toBe(false);
 
   await ctx.close();
