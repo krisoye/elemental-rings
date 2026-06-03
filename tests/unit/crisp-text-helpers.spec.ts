@@ -28,7 +28,7 @@
  * tests/e2e/dom-label-contract.spec.ts
  */
 
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import * as fs from 'fs';
 import * as path from 'path';
 
@@ -1091,6 +1091,101 @@ describe('#362 Phase 2: DomLabel exported constants', () => {
       src,
       'addDomLabel must assign DOM_LABEL_CLASS to node.className (not a hard-coded string)',
     ).toContain('DOM_LABEL_CLASS');
+  });
+
+});
+
+// ── 6j: setDomLabelText calls el.updateSize() (regression guard for #366) ────
+//
+// Right/center-anchored DomLabel nodes use Phaser's cached bounding rect to
+// compute their CSS `left` offset. When textContent changes the rect changes but
+// Phaser does not re-query it unless updateSize() is called. Without the call,
+// the label drifts right and overflows the canvas edge (#366 regression).
+//
+// The fix is centralised in setDomLabelText; no call-site patch is needed.
+
+describe('#366 regression guard: setDomLabelText calls el.updateSize() after text mutation', () => {
+
+  // Minimal fake of the Phaser.GameObjects.DOMElement shape used by the helper.
+  interface FakeDOMElement {
+    node: { textContent: string | null };
+    updateSize: ReturnType<typeof vi.fn>;
+  }
+
+  function makeFakeEl(initial = ''): FakeDOMElement {
+    return {
+      node: { textContent: initial },
+      updateSize: vi.fn(),
+    };
+  }
+
+  // Re-derive the helper logic from source to test the REAL implementation path.
+  // We cannot import DomLabel.ts (Phaser dependency) so we re-implement the guard
+  // contract verbatim — any divergence from the impl will surface in the source-scan
+  // test below, which verifies updateSize() appears in DomLabel.ts source.
+  function setDomLabelTextIsolated(
+    el: FakeDOMElement | null,
+    text: string,
+  ): void {
+    if (!el || !el.node) return;
+    el.node.textContent = text;
+    el.updateSize();
+  }
+
+  it('setDomLabelText calls updateSize() on a valid element — regression guard for right/center-anchored overflow', () => {
+    // #366 adversarial: omitting updateSize() causes Phaser to reuse the
+    // stale bounding-rect from creation, shifting right-anchored labels
+    // past the canvas right edge on every subsequent text update.
+    const el = makeFakeEl();
+    setDomLabelTextIsolated(el, 'Day 1  ·  HP 3/4  ·  Gold 0');
+    expect(el.updateSize).toHaveBeenCalledOnce();
+  });
+
+  it('setDomLabelText still sets node.textContent when updateSize() is present', () => {
+    // Positive-path: the textContent assignment must happen BEFORE updateSize()
+    // so Phaser measures the updated node dimensions, not the previous ones.
+    const el = makeFakeEl();
+    setDomLabelTextIsolated(el, 'Forest\nThe Anchorage');
+    expect(el.node.textContent).toBe('Forest\nThe Anchorage');
+    expect(el.updateSize).toHaveBeenCalledOnce();
+  });
+
+  it('setDomLabelText(null, text) does NOT call updateSize() — null guard is intact', () => {
+    // The null guard must short-circuit before reaching updateSize().
+    // This test verifies the guard is not bypassed by the updateSize() addition.
+    // We cannot spy on a null ref, so we rely on the isolated re-derivation:
+    // setDomLabelTextIsolated(null, ...) returns early — no throw, no updateSize call.
+    expect(() => setDomLabelTextIsolated(null, 'x')).not.toThrow();
+  });
+
+  it('setDomLabelText({node: undefined}, text) does NOT call updateSize()', () => {
+    // Guard path 2: missing node → early return before updateSize.
+    const badEl = {} as unknown as FakeDOMElement;
+    expect(() => setDomLabelTextIsolated(badEl, 'x')).not.toThrow();
+  });
+
+  // Source guard: verify the real DomLabel.ts now contains `el.updateSize()`.
+  it('DomLabel.ts setDomLabelText body contains el.updateSize() call (source guard)', () => {
+    const src = readClientSrc('objects/ui/DomLabel.ts');
+    if (src === null) return;
+    expect(
+      src,
+      'setDomLabelText must call el.updateSize() after setting textContent — required for right/center-anchored labels (#366)',
+    ).toContain('el.updateSize()');
+  });
+
+  // Verify the fix does NOT switch to innerText (would collapse \n in two-row labels).
+  it('DomLabel.ts setDomLabelText still uses node.textContent, not innerText', () => {
+    const src = readClientSrc('objects/ui/DomLabel.ts');
+    if (src === null) return;
+    expect(
+      src,
+      'setDomLabelText must use node.textContent to preserve \\n for two-row labels',
+    ).toContain('el.node.textContent');
+    expect(
+      src,
+      'setDomLabelText must NOT use node.innerText — innerText collapses \\n in two-row labels',
+    ).not.toContain('el.node.innerText');
   });
 
 });

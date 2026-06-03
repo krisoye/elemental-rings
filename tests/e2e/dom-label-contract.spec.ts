@@ -209,6 +209,46 @@ test('dom-label #362 A4: repeated HUD refreshes do not create duplicate [data-la
   await ctx.close();
 });
 
+// #366 regression guard: after refreshHud() populates the HUD DOM node its right
+// edge must not exceed the canvas right edge. Before the setDomLabelText fix,
+// Phaser used a stale bounding-rect from creation time — the right-anchored label
+// overflowed the canvas on every text update because the cached width was wrong.
+test('dom-label #366 A5: [data-label="overworld-hud"] right edge does not exceed canvas right edge after populate', async ({
+  browser,
+}) => {
+  const ctx = await browser.newContext();
+  await seedAuthToken(ctx);
+  const page = await ctx.newPage();
+  await loadForest(page);
+
+  // Wait for the HUD to be populated with real content (post-refreshHud fetch)
+  await page.waitForFunction(
+    () => !!document.querySelector('[data-label="overworld-hud"]')?.textContent?.includes('Day'),
+    { timeout: 8000 },
+  );
+
+  const overflow = await page.evaluate(() => {
+    const hud = document.querySelector('[data-label="overworld-hud"]') as HTMLElement | null;
+    const canvas = document.querySelector('#game-container canvas') as HTMLElement | null;
+    if (!hud || !canvas) return null;
+    const hudRight = hud.getBoundingClientRect().right;
+    const canvasRight = canvas.getBoundingClientRect().right;
+    return { hudRight, canvasRight, overflows: hudRight > canvasRight };
+  });
+
+  expect(
+    overflow,
+    '[data-label="overworld-hud"] and canvas must both be found in the DOM',
+  ).not.toBeNull();
+
+  expect(
+    overflow!.overflows,
+    `HUD right edge (${overflow!.hudRight}px) must not exceed canvas right edge (${overflow!.canvasRight}px) — indicates setDomLabelText updateSize() regression (#366)`,
+  ).toBe(false);
+
+  await ctx.close();
+});
+
 // ═══════════════════════════════════════════════════════════════════════════
 // Group B — Two-row location label (BaseBiomeScene #362)
 // ═══════════════════════════════════════════════════════════════════════════

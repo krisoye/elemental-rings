@@ -120,6 +120,11 @@ export function addDomLabel(
 /**
  * Update a DomLabel's text. Thin wrapper over `el.node.textContent`; supports
  * '\n' for two-row labels (the node uses `white-space: pre`).
+ *
+ * el.updateSize() is called after mutating textContent so Phaser re-measures the
+ * DOM node's bounding rect and repositions it correctly for right/center-anchored
+ * labels. Without this call, the cached size from creation time is stale after a
+ * text change, causing right/center-aligned labels to overflow their intended edge.
  */
 export function setDomLabelText(
   el: Phaser.GameObjects.DOMElement | null,
@@ -129,6 +134,7 @@ export function setDomLabelText(
   // than a crash — this simplifies call-site guards.
   if (!el || !el.node) return;
   el.node.textContent = text;
+  el.updateSize();
 }
 
 /**
