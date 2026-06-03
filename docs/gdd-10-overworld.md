@@ -337,3 +337,10 @@ Sell price = **base + floor(xp / 100)** GP, where base is element-type determine
 
 ---
 
+### 10.12 Design-Change Log (Overworld)
+
+This log records how the overworld's design has evolved — what it *became* and why. It is not a build log; implementation status, issues, and PRs live in GitHub.
+
+- **The Forest deep wing is now exclusively post-boss.** The old `Root Tangle → Deepwood` backdoor was removed so the deep forest (Verdant Descent and beyond) can only be reached by defeating the warden north of Boss Clearing. `Briar Pass` was relocated to the **west** of Crossroads, and the `Briar Pass → Deepwood → Boss Clearing` chain became a clean vertical spine. This eliminated a non-planar 5-cycle in the screen graph, so cardinal navigation is now coherent (`N→E→S→W` returns to start).
+- **The World Map modal is fully derived from the Forest screen manifest.** The M-key overworld map (`OverworldMapModal`) no longer carries hardcoded node positions or edges; it reads every node's grid cell from `FOREST_SCREENS` coords (`col = x`, `row = −y`) and derives its edge set from the screens' reciprocal exits. Display-only metadata (short labels, boss-tier glyphs) lives in `client/src/objects/world/forestMeta.ts`. The reason: a hardcoded mirror of `forest.ts` could drift independently after any graph change — deriving the modal makes the manifest the single source of truth. Adding a Forest screen now requires one entry in `shared/world/forest.ts` (with a `coord`) and one label/metadata entry in `forestMeta.ts`; the only remaining hardcoded positions are the isolated Hidden Alcove (teleport-only, no coord) and the Swamp biome's entry node (not a Forest screen).
+
