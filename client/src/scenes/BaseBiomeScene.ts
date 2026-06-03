@@ -1819,14 +1819,22 @@ export abstract class BaseBiomeScene extends DualCameraScene {
           spirit_current?: number;
           spirit_max?: number;
           aggregate_xp?: number;
+          heart_ring?: { current_uses: number; max_uses: number } | null;
+          total_xp?: number;
+          battle_hand_avg_xp?: number;
         };
       } = await res.json();
       const p = data.player;
       const xpStr = (p.aggregate_xp ?? 0).toLocaleString();
       const spiritStr = `${p.spirit_current ?? 0}/${p.spirit_max ?? 0}`;
+      const heart = p.heart_ring;
+      const heartStr = heart ? `${heart.current_uses}/${heart.max_uses}` : '0/0';
+      const totalXpStr = (p.total_xp ?? 0).toLocaleString();
+      const avgXpStr = Math.round(p.battle_hand_avg_xp ?? 0).toLocaleString();
       this.hudText.setText(
         `Day ${p.game_day ?? 1}  ·  Gold ${p.gold ?? 0}  ·  Food ${p.food_units ?? 0}` +
-          `  ·  Spirit ${spiritStr}  ·  XP ${xpStr}`,
+          `  ·  Spirit ${spiritStr}  ·  ♥ ${heartStr}  ·  XP ${xpStr}` +
+          `  ·  Total: ${totalXpStr}  ·  Avg: ${avgXpStr}`,
       );
     } catch {
       // Network failure — leave the HUD showing its last good value.

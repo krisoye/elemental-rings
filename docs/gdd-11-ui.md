@@ -29,7 +29,28 @@ When a ring is extinguished during battle the use count for that element type dr
 ### 11.5 Status Effect Display
 Active status effects are shown in the battle HUD alongside the affected player's hearts. The status name, icon, and current gauge value are visible to both players. Statuses persist as long as the gauge meets or exceeds the threshold — they have no fixed turn duration (see §7.1 for gauge mechanics). The Shadow gauge additionally shows how many HUD elements are currently hidden.
 
-### 11.6 Passive Trigger Visual (Phase 6+)
+### 11.6 Overworld Resource HUD
+
+While in any biome (Forest, Swamp, Snow, etc.) the player always sees a compact stat bar pinned to the top-right corner of the screen:
+
+```
+Day N · Gold N · Food N · Spirit N/N · ♥ N/N · XP N · Total: N · Avg: N
+```
+
+Each segment reads directly from the server (`GET /api/me`) and is never computed client-side:
+
+- **Day** — current in-game day.
+- **Gold** — current gold supply.
+- **Food** — food units remaining.
+- **Spirit N/N** — spirit gauge (current / max).
+- **♥ N/N** — equipped heart ring HP (current uses / max uses); shows `♥ 0/0` when the heart slot is empty.
+- **XP N** — aggregate XP across all carried rings (the `aggregate_xp` field).
+- **Total: N** — total ring XP across the full collection (`total_xp`).
+- **Avg: N** — average XP earned per battle hand (`battle_hand_avg_xp`), rounded to the nearest integer.
+
+The purpose of this bar is **at-a-glance resource awareness without opening a menu** — the player can see their HP, food, spirit, and ring growth trajectory at a single glance while exploring. The heart HP segment is intentionally duplicated in the Manage Battle Rings modal (as the column label above the HP card) for readability at close range; the HUD serves the broader field-navigation context.
+
+### 11.7 Passive Trigger Visual (Phase 6+)
 When a Thumb passive triggers mid-battle (Wellspring block refund, Deep Roots heart guard, Tailwind attack refund), a brief elemental pulse effect plays on the Thumb ring — color matching the element. Both players see this, signaling that the passive fired and the Thumb ring lost a use. *Visual not yet implemented; flagged for Phase 6.*
 
 ---
