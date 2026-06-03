@@ -116,6 +116,7 @@ export class FusionPanel {
         fontSize: '12px',
         color: '#aaaaaa',
       })
+      .setResolution(window.devicePixelRatio)
       .setOrigin(0.5);
 
     container.add([subtitle]);
@@ -141,6 +142,7 @@ export class FusionPanel {
     // Status line for inline error / success feedback.
     const status = this.scene.add
       .text(CANVAS_W / 2, CANVAS_H / 2 + 230, '', { fontSize: '13px', color: '#ff8888' })
+      .setResolution(window.devicePixelRatio)
       .setOrigin(0.5)
       .setName('fusion-status');
     container.add(status);
@@ -212,7 +214,7 @@ export class FusionPanel {
     const [ea, eb] = avail.recipe.parents;
     const label = `${ELEMENT_NAMES[ea]}+${ELEMENT_NAMES[eb]} → ${ELEMENT_NAMES[avail.recipe.result]}`;
     const labelColor = avail.ready ? '#ffffff' : '#888888';
-    const labelText = this.scene.add.text(x, y, label, { fontSize: '13px', color: labelColor });
+    const labelText = this.scene.add.text(x, y, label, { fontSize: '13px', color: labelColor }).setResolution(window.devicePixelRatio);
     container.add(labelText);
 
     if (avail.ready && avail.parentA && avail.parentB) {
@@ -220,6 +222,7 @@ export class FusionPanel {
       const b = avail.parentB;
       const fuseBtn = this.scene.add
         .text(x + 250, y, '[Fuse]', { fontSize: '13px', color: '#aaffaa' })
+        .setResolution(window.devicePixelRatio)
         .setName(`fuse-btn-${avail.recipe.result}`)
         .setInteractive({ useHandCursor: true })
         .on('pointerdown', () => void this.handleFuse(a.id, b.id));
@@ -232,7 +235,7 @@ export class FusionPanel {
       const hint = this.scene.add.text(x + 250, y, `need ${missing.join(' & ')}`, {
         fontSize: '11px',
         color: '#aa6666',
-      });
+      }).setResolution(window.devicePixelRatio);
       container.add(hint);
     }
   }

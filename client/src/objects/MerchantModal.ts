@@ -151,9 +151,11 @@ export class MerchantModal {
     // Header: "MERCHANT" + current gold (the shell provides the close-X).
     const title = this.scene.add
       .text(CANVAS_W / 2 - 200, 60, 'MERCHANT', { fontSize: '20px', color: '#ffffff' })
+      .setResolution(window.devicePixelRatio)
       .setScrollFactor(0);
     this.goldText = this.scene.add
       .text(CANVAS_W / 2 + 60, 60, `Gold: ${this.gold}`, { fontSize: '16px', color: '#f5e070' })
+      .setResolution(window.devicePixelRatio)
       .setScrollFactor(0);
 
     // Tab buttons.
@@ -163,6 +165,7 @@ export class MerchantModal {
     // Status text (error / success toasts inside the modal).
     this.statusText = this.scene.add
       .text(CANVAS_W / 2, 130, '', { fontSize: '13px', color: '#ff8888' })
+      .setResolution(window.devicePixelRatio)
       .setOrigin(0.5, 0)
       .setScrollFactor(0);
 
@@ -225,7 +228,7 @@ export class MerchantModal {
     foodGroup.add([
       this.scene.add.text(col1, 0, `Food  ${this.catalog.food.buyPrice} GP/unit  (have: ${this.food})`, {
         fontSize: '14px', color: '#e8e0d0',
-      }).setScrollFactor(0),
+      }).setResolution(window.devicePixelRatio).setScrollFactor(0),
       this.makeActionBtn('[×1]', col2a, 0, async () => { await this.executeBuyFood(1); }),
       this.makeActionBtn('[×25]', col2b, 0, async () => { await this.executeBuyFood(25); }),
     ]);
@@ -240,7 +243,7 @@ export class MerchantModal {
       rowGroup.add([
         this.scene.add.text(col1, 0, `${name} Ring T${entry.tier}  ${entry.buyPrice} GP  (own: ${ownedCount})`, {
           fontSize: '14px', color: '#e8e0d0',
-        }).setScrollFactor(0),
+        }).setResolution(window.devicePixelRatio).setScrollFactor(0),
         this.makeActionBtn('Buy', col3, 0, async () => { await this.executeBuyRing(entry.elementIndex); }),
       ]);
       scrollContainer.add(rowGroup);
@@ -264,7 +267,7 @@ export class MerchantModal {
       this.container.add(
         this.scene.add.text(CANVAS_W / 2, CONTENT_TOP + VISIBLE_H + 2, '▼ scroll', {
           fontSize: '11px', color: '#556677',
-        }).setScrollFactor(0).setOrigin(0.5, 0),
+        }).setResolution(window.devicePixelRatio).setScrollFactor(0).setOrigin(0.5, 0),
       );
     }
 
@@ -295,7 +298,7 @@ export class MerchantModal {
     foodGroup.add([
       this.scene.add.text(col1, 0, `Food  ${this.catalog.food.sellPrice} GP/unit  (have: ${this.food})`, {
         fontSize: '14px', color: '#e8e0d0',
-      }).setScrollFactor(0),
+      }).setResolution(window.devicePixelRatio).setScrollFactor(0),
       this.makeActionBtn('[×1]', col2a, 0, async () => { await this.executeSellFood(1); }),
       this.makeActionBtn('[×25]', col2b, 0, async () => { await this.executeSellFood(25); }),
     ]);
@@ -318,7 +321,7 @@ export class MerchantModal {
       rowGroup.add([
         this.scene.add.text(col1, 0, `${name} Ring T${ring.tier}  ${price} GP  (${ring.current_uses}/${ring.max_uses} uses, xp ${ring.xp})`, {
           fontSize: '14px', color: '#e8e0d0',
-        }).setScrollFactor(0),
+        }).setResolution(window.devicePixelRatio).setScrollFactor(0),
         this.makeActionBtn('Sell', col3, 0, async () => { await this.executeSellRing(ring.id); }),
       ]);
       scrollContainer.add(rowGroup);
@@ -342,7 +345,7 @@ export class MerchantModal {
       this.container.add(
         this.scene.add.text(CANVAS_W / 2, CONTENT_TOP + VISIBLE_H + 2, '▼ scroll', {
           fontSize: '11px', color: '#556677',
-        }).setScrollFactor(0).setOrigin(0.5, 0),
+        }).setResolution(window.devicePixelRatio).setScrollFactor(0).setOrigin(0.5, 0),
       );
     }
 
@@ -440,6 +443,7 @@ export class MerchantModal {
   ): Phaser.GameObjects.Text {
     return this.scene.add
       .text(x, y, `[${label}]`, { fontSize: '13px', color: '#88ddff' })
+      .setResolution(window.devicePixelRatio)
       .setScrollFactor(0)
       .setInteractive({ useHandCursor: true })
       .on('pointerdown', () => void onClick());
@@ -453,6 +457,7 @@ export class MerchantModal {
   ): Phaser.GameObjects.Text {
     return this.scene.add
       .text(x, y, label, { fontSize: '15px', color: '#ccddff' })
+      .setResolution(window.devicePixelRatio)
       .setOrigin(0.5, 0)
       .setScrollFactor(0)
       .setInteractive({ useHandCursor: true })

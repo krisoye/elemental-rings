@@ -45,13 +45,13 @@ export class PlayerDuelist extends Phaser.GameObjects.Container {
     this.hearts = scene.add.text(PLAYER_X + 50, PLAYER_Y - 55, '♥♥♥', {
       fontSize: '14px',
       color: '#ff4444',
-    });
+    }).setResolution(window.devicePixelRatio);
 
     GAUGE_ELEMENTS.forEach((el, i) => {
       const gt = scene.add.text(PLAYER_X + 50, PLAYER_Y - 35 + i * 18, `${ELEMENT_NAMES[el]}: 0`, {
         fontSize: '11px',
         color: cssColor(ELEMENT_COLORS[el]),
-      });
+      }).setResolution(window.devicePixelRatio);
       this.gaugeTexts.push(gt);
     });
 
@@ -63,6 +63,7 @@ export class PlayerDuelist extends Phaser.GameObjects.Container {
         color: cssColor(ELEMENT_COLORS[SHADOW_ELEMENT]),
         fontStyle: 'bold',
       })
+      .setResolution(window.devicePixelRatio)
       .setVisible(false);
 
     // Active-status badge line beneath the gauges (e.g. "🔥 BURN  💧 DROWN").
@@ -71,7 +72,7 @@ export class PlayerDuelist extends Phaser.GameObjects.Container {
       fontSize: '11px',
       color: '#ffaa44',
       fontStyle: 'bold',
-    });
+    }).setResolution(window.devicePixelRatio);
 
     scene.add.existing(this);
   }
