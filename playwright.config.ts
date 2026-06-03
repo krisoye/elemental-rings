@@ -86,6 +86,7 @@ const SOLO_SPECS = [
   'battle-feedback.spec.ts', // #313 — battleKey threading + AI spirit broadcast
   'battle-entry-gating.spec.ts', // #319 — null-thumb 4001 guard + EncounterScene catch
   'snow-biome.spec.ts', // #335 — Snow biome v1: Frost Sentinel gate + SnowScene transitions + World Map node
+  'world-map-modal.spec.ts',    // #334 — fit-to-viewport + zoom/pan E2E
 ];
 
 export default defineConfig({
