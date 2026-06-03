@@ -82,7 +82,7 @@ export const GID_PATH_D = 224 + 215; // = 439
 // ── tileset_village_main_a (firstgid=480, 16 cols) ──────────────────────────
 export const GID_VILLAGE_BASE = 480;
 export const GID_GRASS_FILL = 480 + 78; // = 558 — local (4,14) dominant forest floor
-export const GID_VILLAGE_CANOPY = 480 + 144; // = 624 — local (9,0) large canopy
+export const GID_VILLAGE_FENCE_MID = 480 + 144; // = 624 — local (9,0) vertical fence, middle section
 
 // ── terrain_forest_void (firstgid=736) ──────────────────────────────────────
 export const GID_VOID = 736; // local 0 — perimeter frame / void border
