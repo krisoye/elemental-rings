@@ -633,7 +633,7 @@ test('manage-battle-rings (#350): selecting a battle-slot ring and clicking empt
   }, ringId);
 
   // Find and click an empty spare placeholder (a rectangle with no text children in
-  // the spare sub-container that has useHandCursor set).
+  // the spare sub-container that is interactive (Phaser 4 maps useHandCursor:true → input.cursor==='pointer')).
   const clicked = await page.evaluate(() => {
     const scene = (window as any).__game?.scene?.getScene('ForestScene');
     const modal = scene?.battleHand?.manageModal;
@@ -649,7 +649,7 @@ test('manage-battle-rings (#350): selecting a battle-slot ring and clicking empt
     for (const cell of grid.getAll()) {
       if (!cell.getAll) continue;
       const children = cell.getAll();
-      if (children.length === 1 && children[0].input?.useHandCursor) {
+      if (children.length === 1 && children[0].input?.cursor === 'pointer') {
         children[0].emit('pointerdown');
         return true;
       }
@@ -725,7 +725,7 @@ test('manage-battle-rings (#350): selecting heart card and clicking empty spare 
     for (const cell of grid.getAll()) {
       if (!cell.getAll) continue;
       const children = cell.getAll();
-      if (children.length === 1 && children[0].input?.useHandCursor) {
+      if (children.length === 1 && children[0].input?.cursor === 'pointer') {
         children[0].emit('pointerdown');
         return true;
       }
