@@ -4,6 +4,7 @@ import { LoginScene } from './scenes/LoginScene';
 import { CampScene } from './scenes/CampScene';
 import { ForestScene } from './scenes/ForestScene';
 import { SwampScene } from './scenes/SwampScene';
+import { SnowScene } from './scenes/SnowScene';
 import { EncounterScene } from './scenes/EncounterScene';
 import { LobbyScene } from './scenes/LobbyScene';
 import { BattleScene } from './scenes/BattleScene';
@@ -243,7 +244,7 @@ declare global {
     // (instead of the EncounterScene hub) and the biome scene's create() restores
     // the player near {x,y}, then clears it. null/unset for hub/marker duels (which
     // return to the EncounterScene hub) and after consumption.
-    __duelOrigin?: { scene: 'ForestScene' | 'SwampScene'; x: number; y: number; screenId?: string } | null;
+    __duelOrigin?: { scene: 'ForestScene' | 'SwampScene' | 'SnowScene'; x: number; y: number; screenId?: string } | null;
     // Teleport modal snapshot (set by CampScene.openTeleportModal before render).
     __teleportState?: {
       anchor: string;
@@ -427,6 +428,7 @@ const game = new Phaser.Game({
     CampScene,
     ForestScene,
     SwampScene,
+    SnowScene,
     EncounterScene,
     LobbyScene,
     BattleScene,

@@ -145,8 +145,18 @@ dead-end wing entered exclusively through the boss gate.
 #### `forest_snow_gate` — Snow Gate
 - **size:** 32×20
 - **exits:** south → `forest_north_road`
+- **biome_exit:** north → `SnowScene` *(held by the Frost Sentinel gate warden until defeated)*
 - **danger:** 2
-- **content:** A widening clearing at the forest's northern fringe. A mid-tier Frost Sentinel mini-boss patrols here. The northern edge is a wall of frost-touched firs — the path onward into the Snow Fields opens once that biome is authored and its boss gate placed. For now, a dead end.
+- **content:** A widening clearing at the forest's northern fringe. Frost-touched firs press in from the east and west; the air is noticeably colder here than deeper in the Forest. The **Frost Sentinel** — a gate-tier WIND-element boss — stands in the northern passage. Until it falls, the north exit is physically blocked; defeating it drops a food cache and opens the path into the Snow Fields. The Sentinel's WIND thumb transfers to the winner like any duel (§9.1).
+
+---
+
+#### `snow_entry` — Snow Fields
+- **size:** 32×24
+- **exits:** south → `forest_snow_gate`
+- **anchorage:** `snow_anchor_1`
+- **danger:** 2
+- **content:** A single open screen of windswept snowfield reached by walking north through Snow Gate. The ground is pale and flat — packed snow broken by ice patches and snow-dusted boulders. The sky is pale grey-white; the air is still and cold. Two mid-tier roamers patrol the field (a Wind monster and a Water monster — cold air and icy water, thematically). The Snow Fields Anchorage sits near the north-center; discovering it allows teleportation back here from the Sanctum. Walking south returns to forest_snow_gate. A cool-blue ambient overlay distinguishes the visual tone from the Forest.
 
 ---
 

@@ -163,18 +163,21 @@ export const NPC_SPAWNS: NpcSpawnDef[] = [
   // seal-key.
   { id: 'forest_bloom_shrine_guardian', biome: 'forest', screen: 'forest_bloom_hollow', personality: 'DEFENSIVE', type: 'duelist', element: WOOD, spriteFrame: 4, tx: 20, ty: 15, respawnDays: 0, foodDrop: 0, boss: { tier: 'sub', name: 'Bloom Guardian', fusedThumb: ElementEnum.BLOOM } },
 
-  // ── Forest: Frost Sentinel mini-boss (#269, GDD §10.15) ─────────────────────
-  // forest_snow_gate is the Forest's northern dead-end clearing. PR #255 marks it
-  // on the World Map with a gate-tier boss icon, so a real mini-boss must live
-  // there. The Sentinel is a permanent (respawnDays: 0) mini-boss fought for XP and
-  // a one-time food cache — it is NOT a biome-exit gate (the north edge is a dead
-  // end, so no BOSS_WARDENS entry blocks it). AILoadout supports only BASE-element
-  // thumbs and AGGRESSIVE has no WATER template, so the frost theme maps to WIND
-  // (AGGRESSIVE supports WIND): thematically the cold wind of the northern fringe.
-  // A future Snow Fields biome design pass may introduce an Ice element; until then
-  // WIND is the correct mechanical thumb. spriteFrame 3 = WIND monster (matching
-  // the element, per the atlas convention above).
-  { id: 'forest_frost_sentinel', biome: 'forest', screen: 'forest_snow_gate', personality: 'AGGRESSIVE', type: 'monster', element: WIND, spriteFrame: 3, tx: 16, ty: 8, respawnDays: 0, foodDrop: MINI_BOSS_FOOD_DROP },
+  // ── Forest: Frost Sentinel gate warden (#335, GDD §10.15) ───────────────────
+  // The Frost Sentinel is the gate WARDEN for forest_snow_gate, physically blocking
+  // the northern passage into the Snow Fields biome until defeated. Promoted from
+  // mini-boss to a gate-tier boss with a `boss` descriptor so BaseBiomeScene renders
+  // it with the gate-warden collar + displayName. AILoadout supports only BASE-element
+  // thumbs; AGGRESSIVE supports WIND, matching the frost theme (cold northern wind).
+  // spriteFrame 3 = WIND monster. BOSS_WARDENS maps forest_snow_gate → this entry.
+  { id: 'forest_frost_sentinel', biome: 'forest', screen: 'forest_snow_gate', personality: 'AGGRESSIVE', type: 'monster', element: WIND, spriteFrame: 3, tx: 16, ty: 8, respawnDays: 0, foodDrop: MINI_BOSS_FOOD_DROP, boss: { tier: 'gate', name: 'Frost Sentinel', fusedThumb: ElementEnum.WIND } },
+
+  // ── Snow ──────────────────────────────────────────────────────────────────────
+  // Two mid-tier roamers for the single Snow Fields screen. AGGRESSIVE Wind monster
+  // (spriteFrame 3) and RESILIENT Water monster (spriteFrame 1) — thematic cold-air
+  // and icy-water flavour. respawnDays:1 matches danger-2 roamer convention.
+  { id: 'snow_npc_1', biome: 'snow', screen: 'snow_entry', personality: 'AGGRESSIVE',  type: 'monster', element: WIND,  spriteFrame: 3, tx: 8,  ty: 6,  respawnDays: 1 },
+  { id: 'snow_npc_2', biome: 'snow', screen: 'snow_entry', personality: 'RESILIENT',   type: 'monster', element: WATER, spriteFrame: 1, tx: 22, ty: 14, respawnDays: 1 },
 
   // ── Swamp ─────────────────────────────────────────────────────────────────────
   { id: 'swamp_npc_1', biome: 'swamp', screen: 'swamp_entry', personality: 'AGGRESSIVE',    type: 'monster', element: WIND,  spriteFrame: 3, tx: 5, ty: 5, respawnDays: 1 },

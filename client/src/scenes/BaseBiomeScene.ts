@@ -513,7 +513,7 @@ export abstract class BaseBiomeScene extends DualCameraScene {
 
     // Biome title (pinned to the camera). #137 — parented into uiRoot so it
     // renders at 1:1 through uiCam, not the zoomed world camera.
-    const biomeName = this.scene.key === 'SwampScene' ? 'Swamp' : 'Forest';
+    const biomeName = this.scene.key === 'SwampScene' ? 'Swamp' : this.scene.key === 'SnowScene' ? 'Snow' : 'Forest';
     const areaName = this.screenDef?.name;
     const biomeTitle = this.add
       .text(16, 16, areaName ? `${biomeName}  –  ${areaName}` : biomeName, {
@@ -1512,7 +1512,7 @@ export abstract class BaseBiomeScene extends DualCameraScene {
    */
   private async loadOverworldNpcs(): Promise<void> {
     if (!getToken()) return;
-    const biome = this.scene.key === 'SwampScene' ? 'swamp' : 'forest';
+    const biome = this.scene.key === 'SwampScene' ? 'swamp' : this.scene.key === 'SnowScene' ? 'snow' : 'forest';
     try {
       const res = await apiFetch(
         `/api/overworld/npcs?biome=${biome}&screen=${this.screenId}`,

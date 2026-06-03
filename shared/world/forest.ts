@@ -68,7 +68,8 @@ export const FOREST_SCREENS: ScreenDef[] = [
     exits: { south: 'forest_north_road' },
     coord: { x: 0, y: 2 },
     danger: 2,
-    // Boss guards the northern exit to Snow Fields; no waystone needed.
+    // Frost Sentinel gates the northern exit to Snow Fields; defeated it opens the way.
+    biomeExit: { dir: 'north', target: 'SnowScene' },
   },
   {
     id: 'forest_mossy_fen',
@@ -294,4 +295,5 @@ export function getForestScreen(id: string): ScreenDef | undefined {
 export const BOSS_WARDENS: Readonly<Record<string, string>> = {
   forest_swamp_gate: 'forest_bogwood_warden',
   forest_boss_clearing: 'forest_thornwood_warden',
+  forest_snow_gate: 'forest_frost_sentinel',
 };

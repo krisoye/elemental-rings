@@ -38,6 +38,17 @@ const SWAMP_NODE = {
   biome: 'swamp' as const,
 };
 
+// snow_entry is not a Forest ScreenDef — it belongs to the Snow biome.
+// Placed one step north of forest_snow_gate (coord (0,2) → col=0, row=−2;
+// the snow entry sits one step further north at row=−3).
+const SNOW_NODE = {
+  id: 'snow_entry',
+  label: 'Snow Fields',
+  col: 0,
+  row: -3,
+  biome: 'snow' as const,
+};
+
 // New layout is 9 cols (−2..6) × 9 rows (−5..3). At CELL_W=110 / CELL_H=72 the
 // grid content is 990×648px; margins for title + padding bring the panel to
 // ~1110×760, centered in the 1280×720 canvas (PANEL_Y clamped ≥10).
@@ -57,6 +68,7 @@ const COLOR_D1    = 0x1f4a1f;   // green – danger 1
 const COLOR_D2    = 0x5a3210;   // amber – danger 2
 const COLOR_D3    = 0x5a1010;   // red   – danger 3
 const COLOR_SWAMP = 0x0d2a17;   // teal-green – swamp biome
+const COLOR_SNOW  = 0x4a7ca8;   // icy blue   – snow biome
 const COLOR_UNK   = 0x222222;   // fallback
 
 const STROKE_DEFAULT  = 0x445577;
@@ -98,7 +110,7 @@ interface RenderNode {
   label:     string;
   col:       number;
   row:       number;
-  biome:     'forest' | 'swamp';
+  biome:     'forest' | 'swamp' | 'snow';
   danger?:   1 | 2 | 3;
   safe?:     true;
   anchorage?: string;   // anchorage id on this screen
@@ -131,6 +143,7 @@ const RENDER_NODES: RenderNode[] = FOREST_SCREENS.map((screen) => {
   };
 });
 RENDER_NODES.push(SWAMP_NODE);
+RENDER_NODES.push(SNOW_NODE);
 
 /**
  * Undirected edge list derived from `FOREST_SCREENS.exits`. Each reciprocal pair
@@ -151,6 +164,7 @@ const DERIVED_EDGES: Array<{ a: string; b: string; type?: EdgeType }> = [];
     }
   }
   DERIVED_EDGES.push({ a: 'forest_swamp_gate', b: 'swamp_entry', type: 'biome' });
+  DERIVED_EDGES.push({ a: 'forest_snow_gate',  b: 'snow_entry',  type: 'biome' });
 }
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
@@ -164,6 +178,7 @@ function nodeCenter(col: number, row: number): { x: number; y: number } {
 
 function nodeBgColor(spec: RenderNode): number {
   if (spec.biome === 'swamp') return COLOR_SWAMP;
+  if (spec.biome === 'snow')  return COLOR_SNOW;
   if (spec.safe)              return COLOR_SAFE;
   switch (spec.danger) {
     case 1: return COLOR_D1;
@@ -348,6 +363,7 @@ export class OverworldMapModal {
       { color: COLOR_D2,    label: 'D2' },
       { color: COLOR_D3,    label: 'D3' },
       { color: COLOR_SWAMP, label: 'Swamp' },
+      { color: COLOR_SNOW,  label: 'Snow' },
     ];
     let lx = PANEL_X + 14;
     for (const entry of legendEntries) {
