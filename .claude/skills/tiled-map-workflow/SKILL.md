@@ -35,9 +35,19 @@ You may include an `npcs` layer in Tiled for authoring reference (painting where
 
 ## Tileset Rules
 
+**Tileset reference sheets** — detailed tile-by-tile visual descriptions and layer conventions for the tilesets used in Forest maps are in `.claude/skills/tiled-map-workflow/references/`:
+
+| File | Tileset |
+|------|---------|
+| `terrain_forest_modern.md` | ModernEra GreenForest (trees, water pool, cliff rocks) |
+| `terrain_plains_fantasy.md` | Plains Fantasy (trees, brown cliffs, dirt island) |
+| `tileset_village_main_a.md` | Village Main A (grass, fence, houses, trees, gray cliff) |
+
+Read the relevant reference before placing tiles from these tilesets.
+
 - **Tile size:** 16 px (hand-authored hub screens) or 32 px (generated biome screens).
 - Hub screens render at **2× world zoom** so 16 px reads as 32 px on screen.
-- Each tileset image must be present in `client/public/assets/tiles/` (for generated screens) or `client/public/assets/tiles/regions/<biome>/` (for hand-authored art).
+- Each tileset image must be present under `client/public/assets/` in the appropriate subdirectory: `terrain/` for terrain tilesets, `structures/` for building/decoration tilesets, `flora/` for flora. The `tiles/` path is outdated — do not use it.
 - The scene's `ForestScene.preload()` lists which image keys to load; add new tileset images there.
 - The **`collides` property** only needs to be set on tiles that should block movement in the `ground` layer (e.g. water/void boundary tiles). The `behind` layer uses `setCollisionByExclusion([-1])` — all non-empty tiles block automatically. The `in-front` layer uses no collision.
 
