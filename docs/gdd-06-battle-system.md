@@ -49,6 +49,7 @@ The **initiative holder** chooses one of three actions:
 - The forfeiting player **loses their staked Thumb ring** and pays **25 gold** (`GOLD_FORFEIT_PENALTY` in constants.ts).
 - Forfeiting is only available during your own initiative phase — the reactor cannot flee mid-telegraph.
 - This is the escape valve when the duel cannot be won, but it costs more than just the stake.
+- Forfeiting preserves the heart ring — it is only destroyed if hearts reach 0 (§6.7).
 
 **Phase-locked input:** Attack buttons (A1/A2) only register during the **attack phase**. Defense buttons (D1/D2) only register during the **defense phase**. Wrong-phase presses are silently ignored — protective, not punishing. The phase transition is the most visually prominent UI moment in a battle.
 
@@ -180,6 +181,7 @@ Neutrals are pure attrition exchanges — safe on hearts, with the gauge and use
 - Hearts are lost when an attack lands uncontested (no-block or mistime), on a weak catch (block or parry with an element the attack beats), or via status effect damage
 - When all hearts are gone that player loses the duel
 - Hearts reset between duels
+- When a player's hearts reach 0 and the duel ends, their heart ring is permanently destroyed (broken)
 
 ### 6.8 Post-Battle Loadout Management
 
@@ -195,20 +197,19 @@ Neutrals are pure attrition exchanges — safe on hearts, with the gauge and use
 
 **After losing:**
 - The staked Thumb ring is forfeited — removed from carry and from the player's inventory
-- No additional penalty beyond the ring loss (monsters are an exception — see §6.9)
+- If the loss was by depletion (hearts reached 0), the heart ring is destroyed (§6.7) — a forfeit with hearts still > 0 preserves it
+- No additional penalty beyond the ring loss
 
 After losing a duel:
 1. The player's staked ring is forfeited to the opponent
-2. A monster opponent also steals one random ring from the player's full inventory (not just the loadout)
-3. An NPC opponent only takes the staked ring
+2. If hearts reached 0, the heart ring is permanently destroyed; a forfeit preserves it
 
 ### 6.9 Monster Encounters
 - Monsters always initiate encounters in the overworld
 - The player can **flee** before formally agreeing to duel — always free, no penalty
 - Once a duel is formally agreed, fleeing is not possible
-- If a monster wins it **steals a random ring from the player's full inventory** and flees
+- If a monster wins it takes the player's staked Thumb ring and flees — the same stake an NPC or human win claims
 - If a monster loses it **drops a ring as loot** and flees — outside the staking system
-- A monster that has stolen your ring is now carrying it in the world — it can be tracked down and won back
 - Monsters **respawn on a real-time or in-game day cycle**; named/boss monsters do not respawn
 
 ---
