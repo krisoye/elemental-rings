@@ -1,6 +1,8 @@
 import Phaser from 'phaser';
 import { CANVAS_W, CANVAS_H } from '../Constants';
 import { createOverlay } from './ui/ModalShell';
+import { FOREST_SCREENS } from '../../../shared/world/forest';
+import { FOREST_SCREEN_META, type BossTier } from './world/forestMeta';
 
 // ── Layout constants ────────────────────────────────────────────────────────
 
@@ -9,14 +11,36 @@ const CELL_H = 72;   // pixels per grid row
 const NODE_W = 96;   // node rectangle width
 const NODE_H = 52;   // node rectangle height
 
-// Grid extents: columns −1..5 (7 wide), rows −2..3 (6 tall)
-const MIN_COL = -1;
-const MIN_ROW = -2;
+// Grid extents (derived from FOREST_SCREENS coords): columns −2..6 (9 wide),
+// rows −5..3 (9 tall). MIN_COL/MIN_ROW are computed dynamically below so the
+// layout follows the screen manifest with no manual sync.
+const _coords = FOREST_SCREENS.filter((s) => s.coord).map((s) => s.coord!);
+const MIN_COL = Math.min(..._coords.map((c) => c.x));
+const MIN_ROW = Math.min(..._coords.map((c) => -c.y));
 
-const PANEL_W = 830;
-const PANEL_H = 512;
-const PANEL_X = Math.floor((CANVAS_W - PANEL_W) / 2);
-const PANEL_Y = Math.floor((CANVAS_H - PANEL_H) / 2);
+// The hidden alcove is teleport-only (no coord, exits {}). It is the ONLY
+// node with a hardcoded grid position — placed isolated at the east edge.
+const ALCOVE_COL = 6;
+const ALCOVE_ROW = 0;
+
+// swamp_entry is not a Forest ScreenDef — it belongs to the Swamp biome.
+// Kept as a single static node south of forest_swamp_gate (coord (−1,−2) →
+// col=−1, row=2; the swamp sits one step further south at row=3).
+const SWAMP_NODE = {
+  id: 'swamp_entry',
+  label: 'Swamp',
+  col: -1,
+  row: 3,
+  biome: 'swamp' as const,
+};
+
+// New layout is 9 cols (−2..6) × 9 rows (−5..3). At CELL_W=110 / CELL_H=72 the
+// grid content is 990×648px; margins for title + padding bring the panel to
+// ~1110×760, centered in the 1280×720 canvas (PANEL_Y clamped ≥10).
+const PANEL_W = 1110;
+const PANEL_H = 700;
+const PANEL_X = Math.max(10, Math.round((CANVAS_W - PANEL_W) / 2));
+const PANEL_Y = Math.max(10, Math.round((CANVAS_H - PANEL_H) / 2));
 
 // Top-left of the grid drawing area (inside the panel)
 const GRID_LEFT = PANEL_X + 30;
@@ -55,18 +79,17 @@ const BOSS_COLOR: Record<BossTier, string> = {
   guardian: '#cc88ff', // violet – a fusion-shrine guardian (matches altar art)
 };
 
-// ── Static data ─────────────────────────────────────────────────────────────
+// ── Derived data ────────────────────────────────────────────────────────────
+
+type EdgeType = 'normal' | 'biome';
 
 /**
- * Boss-tier classification for the map marker:
- *   'major'    – the region's major boss (Thornwood Warden).
- *   'gate'     – a warden that physically blocks an exit until defeated
- *                (Bogwood Warden, Frost Sentinel).
- *   'guardian' – a fusion-shrine sub-boss (Thornado / Bloom Guardians).
+ * A renderable map node. Positions and the danger/safe/anchorage tags are
+ * derived from `ScreenDef` (shared/world/forest.ts); the label + boss tier come
+ * from `FOREST_SCREEN_META`. The only hardcoded node is `swamp_entry` (Swamp
+ * biome) and the only hardcoded position is `forest_hidden_alcove` (isolated).
  */
-type BossTier = 'major' | 'gate' | 'guardian';
-
-interface NodeSpec {
+interface RenderNode {
   id:        string;
   label:     string;
   col:       number;
@@ -74,93 +97,57 @@ interface NodeSpec {
   biome:     'forest' | 'swamp';
   danger?:   1 | 2 | 3;
   safe?:     true;
-  anchorage?: string; // anchorage id on this screen
-  isolated?:  true;   // no walking exits — teleport only
+  anchorage?: string;   // anchorage id on this screen
+  isolated?:  true;     // no walking exits — teleport only
   boss?:      BossTier; // a boss-tier NPC lives on this screen
 }
 
-// Grid positions are anchored so forest_anchorage (hub) sits at col=0, row=0.
-// Row decreases northward; col increases eastward.
-const NODE_SPECS: NodeSpec[] = [
-  // ── North arm ──────────────────────────────────────────────────────────────
-  { id: 'forest_snow_gate',        label: 'Snow Gate',        col:  0, row: -2, biome: 'forest', danger: 2, boss: 'gate' },
-  { id: 'forest_north_road',       label: 'North Road',       col:  0, row: -1, biome: 'forest', danger: 1 },
-  // ── West arm (fen wing) ────────────────────────────────────────────────────
-  { id: 'forest_fen_ridge',        label: 'Fen Ridge',        col: -2, row: -1, biome: 'forest', danger: 2 },
-  { id: 'forest_deep_fen',         label: 'Deep Fen',         col: -2, row:  0, biome: 'forest', danger: 2 },
-  { id: 'forest_mossy_fen',        label: 'Mossy Fen',        col: -1, row:  0, biome: 'forest', danger: 1 },
-  // ── Hub ────────────────────────────────────────────────────────────────────
-  { id: 'forest_anchorage',        label: 'Anchorage',        col:  0, row:  0, biome: 'forest', safe: true, anchorage: 'forest_entry' },
-  // ── East corridor → Thornado wing ─────────────────────────────────────────
-  { id: 'forest_east_path',        label: 'East Path',        col:  1, row:  0, biome: 'forest', danger: 1 },
-  { id: 'forest_glade',            label: 'The Glade',        col:  2, row:  0, biome: 'forest', danger: 1, anchorage: 'forest_glade' },
-  { id: 'forest_heath',            label: 'The Heath',        col:  3, row:  0, biome: 'forest', danger: 2 },
-  { id: 'forest_wind_shelf',       label: 'Wind Shelf',       col:  4, row:  0, biome: 'forest', danger: 2 },
-  { id: 'forest_thornado_shrine',  label: 'Thornado\nShrine', col:  5, row:  0, biome: 'forest', danger: 2, boss: 'guardian' },
-  // ── South arm ──────────────────────────────────────────────────────────────
-  { id: 'forest_south_path',       label: 'South Path',       col:  0, row:  1, biome: 'forest', danger: 1 },
-  { id: 'forest_hollow',           label: 'Hollow',           col:  0, row:  2, biome: 'forest', danger: 2 },
-  { id: 'forest_swamp_gate',       label: 'Swamp Gate',       col: -1, row:  2, biome: 'forest', danger: 2, boss: 'gate' },
-  // ── Northeast cluster ──────────────────────────────────────────────────────
-  { id: 'forest_crossroads',       label: 'Crossroads',       col:  2, row: -1, biome: 'forest', danger: 1 },
-  { id: 'forest_rocky_overlook',   label: 'Rocky\nOverlook',  col:  2, row: -3, biome: 'forest', danger: 2 },
-  { id: 'forest_ridge',            label: 'Ridge',            col:  2, row: -2, biome: 'forest', danger: 2 },
-  { id: 'forest_briar_pass',       label: 'Briar Pass',       col:  3, row: -1, biome: 'forest', danger: 2 },
-  { id: 'forest_gale_lookout',     label: 'Gale\nLookout',    col:  3, row: -3, biome: 'forest', danger: 2 },
-  { id: 'forest_deepwood',         label: 'Deepwood',         col:  3, row: -2, biome: 'forest', danger: 3, anchorage: 'forest_depths' },
-  { id: 'forest_boss_clearing',    label: 'Boss\nClearing',   col:  4, row: -2, biome: 'forest', danger: 3, boss: 'major' },
-  // ── Post-boss wing (south of boss clearing) ────────────────────────────────
-  { id: 'forest_verdant_descent',  label: 'Verdant\nDescent', col:  4, row: -1, biome: 'forest', danger: 2 },
-  { id: 'forest_bloom_hollow',     label: 'Bloom\nHollow',    col:  3, row:  1, biome: 'forest', danger: 2, boss: 'guardian' },
-  { id: 'forest_ancient_grove',    label: 'Ancient\nGrove',   col:  4, row:  1, biome: 'forest', danger: 3 },
-  { id: 'forest_root_tangle',      label: 'Root Tangle',      col:  5, row:  1, biome: 'forest', danger: 3 },
-  { id: 'forest_canopy_walk',      label: 'Canopy Walk',      col:  5, row:  2, biome: 'forest', danger: 3 },
-  { id: 'forest_briar_thicket',    label: 'Briar\nThicket',   col:  6, row:  2, biome: 'forest', danger: 3 },
-  // ── Isolated (teleport only) ───────────────────────────────────────────────
-  { id: 'forest_hidden_alcove',    label: 'Hidden\nAlcove',   col:  6, row:  0, biome: 'forest', danger: 1, isolated: true, anchorage: 'forest_hidden_anchor' },
-  // ── Swamp biome ────────────────────────────────────────────────────────────
-  { id: 'swamp_entry',             label: 'Swamp',            col: -1, row:  3, biome: 'swamp' },
-];
+/**
+ * Node list derived from FOREST_SCREENS. Each screen's grid cell comes from its
+ * `coord` (`col = x`, `row = −y`); the isolated alcove (no coord) gets the only
+ * static position. Display label + boss tier are looked up in FOREST_SCREEN_META.
+ * The static `SWAMP_NODE` is appended last (not a Forest ScreenDef).
+ */
+const RENDER_NODES: RenderNode[] = FOREST_SCREENS.map((screen) => {
+  const meta = FOREST_SCREEN_META[screen.id];
+  const isolated = meta?.isolated;
+  const col = screen.coord ? screen.coord.x : ALCOVE_COL;
+  const row = screen.coord ? -screen.coord.y : ALCOVE_ROW;
+  return {
+    id: screen.id,
+    label: meta?.label ?? screen.name,
+    col,
+    row,
+    biome: 'forest' as const,
+    danger: screen.danger,
+    safe: screen.safe,
+    anchorage: screen.anchorage,
+    isolated,
+    boss: meta?.boss,
+  };
+});
+RENDER_NODES.push(SWAMP_NODE);
 
-type EdgeType = 'normal' | 'biome';
-
-const EDGES: Array<{ a: string; b: string; type?: EdgeType }> = [
-  // North arm
-  { a: 'forest_anchorage',       b: 'forest_north_road' },
-  { a: 'forest_north_road',      b: 'forest_snow_gate' },
-  // Fen wing
-  { a: 'forest_anchorage',       b: 'forest_mossy_fen' },
-  { a: 'forest_mossy_fen',       b: 'forest_deep_fen' },
-  { a: 'forest_deep_fen',        b: 'forest_fen_ridge' },
-  // East corridor → Thornado wing
-  { a: 'forest_anchorage',       b: 'forest_east_path' },
-  { a: 'forest_east_path',       b: 'forest_glade' },
-  { a: 'forest_glade',           b: 'forest_heath' },
-  { a: 'forest_heath',           b: 'forest_gale_lookout' },
-  { a: 'forest_heath',           b: 'forest_wind_shelf' },
-  { a: 'forest_wind_shelf',      b: 'forest_thornado_shrine' },
-  // South arm
-  { a: 'forest_anchorage',       b: 'forest_south_path' },
-  { a: 'forest_south_path',      b: 'forest_hollow' },
-  { a: 'forest_hollow',          b: 'forest_swamp_gate' },
-  { a: 'forest_swamp_gate',      b: 'swamp_entry', type: 'biome' },
-  // Northeast cluster
-  { a: 'forest_glade',           b: 'forest_crossroads' },
-  { a: 'forest_crossroads',      b: 'forest_ridge' },
-  { a: 'forest_crossroads',      b: 'forest_briar_pass' },
-  { a: 'forest_ridge',           b: 'forest_rocky_overlook' },
-  { a: 'forest_ridge',           b: 'forest_deepwood' },
-  { a: 'forest_deepwood',        b: 'forest_boss_clearing' },
-  { a: 'forest_briar_pass',      b: 'forest_boss_clearing' },
-  // Post-boss wing
-  { a: 'forest_boss_clearing',   b: 'forest_verdant_descent' },
-  { a: 'forest_verdant_descent', b: 'forest_ancient_grove' },
-  { a: 'forest_ancient_grove',   b: 'forest_bloom_hollow' },
-  { a: 'forest_ancient_grove',   b: 'forest_root_tangle' },
-  { a: 'forest_deepwood',        b: 'forest_root_tangle' },
-  { a: 'forest_root_tangle',     b: 'forest_canopy_walk' },
-  { a: 'forest_canopy_walk',     b: 'forest_briar_thicket' },
-];
+/**
+ * Undirected edge list derived from `FOREST_SCREENS.exits`. Each reciprocal pair
+ * is emitted once via a canonical `[min, max]` dedup key. The biome edge to
+ * `swamp_entry` is added statically (swamp_entry is not a Forest ScreenDef).
+ * The removed `root_tangle ↔ deepwood` backdoor never appears here because it no
+ * longer exists in `forest.ts`.
+ */
+const DERIVED_EDGES: Array<{ a: string; b: string; type?: EdgeType }> = [];
+{
+  const seenEdges = new Set<string>();
+  for (const screen of FOREST_SCREENS) {
+    for (const neighborId of Object.values(screen.exits)) {
+      const key = [screen.id, neighborId as string].sort().join('|');
+      if (seenEdges.has(key)) continue;
+      seenEdges.add(key);
+      DERIVED_EDGES.push({ a: screen.id, b: neighborId as string });
+    }
+  }
+  DERIVED_EDGES.push({ a: 'forest_swamp_gate', b: 'swamp_entry', type: 'biome' });
+}
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -171,7 +158,7 @@ function nodeCenter(col: number, row: number): { x: number; y: number } {
   };
 }
 
-function nodeBgColor(spec: NodeSpec): number {
+function nodeBgColor(spec: RenderNode): number {
   if (spec.biome === 'swamp') return COLOR_SWAMP;
   if (spec.safe)              return COLOR_SAFE;
   switch (spec.danger) {
@@ -240,10 +227,10 @@ export class OverworldMapModal {
     c.add(gfx);
 
     // Build lookup for node positions
-    const byId = new Map(NODE_SPECS.map((n) => [n.id, n]));
+    const byId = new Map(RENDER_NODES.map((n) => [n.id, n]));
 
     // Edges
-    for (const edge of EDGES) {
+    for (const edge of DERIVED_EDGES) {
       const a = byId.get(edge.a);
       const b = byId.get(edge.b);
       if (!a || !b) continue;
@@ -277,7 +264,7 @@ export class OverworldMapModal {
     }
 
     // Node boxes + text labels + indicator dots
-    for (const spec of NODE_SPECS) {
+    for (const spec of RENDER_NODES) {
       const { x, y } = nodeCenter(spec.col, spec.row);
       const isCurrent = spec.id === currentScreenId;
       const bg = nodeBgColor(spec);
