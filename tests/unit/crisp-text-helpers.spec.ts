@@ -238,7 +238,18 @@ describe('#364 crispCanvasText contract: setResolution always paired with LINEAR
 // These tests also serve as a spec conformance log: if the contract changes,
 // the re-derivation below must be updated deliberately.
 
-/** Re-derive the expected DomLabel CSS from spec language (NOT copy-paste from impl). */
+/**
+ * Re-derive the expected DomLabel inline-CSS properties from spec language
+ * (NOT copy-paste from impl).
+ *
+ * E2E delta (Phase 3): `pointer-events` is NOT in this set. The implementation
+ * sets `el.pointerEvents = 'none'` on the Phaser DOMElement object AFTER
+ * `scene.add.dom(...)` — Phaser's DOMElementCSSRenderer copies this property
+ * to `node.style.pointerEvents` every frame, so a bare `css.pointerEvents`
+ * set before `add.dom` would be overwritten. The correct guard for this
+ * property is the `el.pointerEvents` source-scan and the E2E computed-style
+ * check in dom-label-contract.spec.ts.
+ */
 function buildExpectedCss(opts: {
   fontPx: number;
   color: string;
@@ -258,7 +269,7 @@ function buildExpectedCss(opts: {
     `color: ${opts.color}`,
     `font-weight: ${weight}`,
     `text-align: ${align}`,
-    `pointer-events: none`,
+    // pointer-events is NOT set here — see comment above.
     `white-space: pre`,
     `user-select: none`,
   ];
@@ -276,12 +287,31 @@ function buildExpectedCss(opts: {
 
 describe('#362 DomLabel CSS contract: spec-required CSS properties', () => {
 
-  // #362 adversarial: omitting pointer-events:none means the DOM label will absorb
-  // clicks intended for the canvas — a P1 regression that silently breaks all
-  // canvas interaction wherever a label is placed.
-  it('re-derived CSS contains pointer-events: none', () => {
+  // #362 adversarial: DomLabel must guarantee pointer-events:none so labels never
+  // intercept canvas clicks. E2E delta (Phase 3): the mechanism is el.pointerEvents
+  // (Phaser property), not inline CSS — Phaser overwrites inline CSS every frame.
+  // This test verifies DomLabel.ts uses the correct API: `el.pointerEvents = 'none'`.
+  it('DomLabel.ts sets el.pointerEvents = "none" (Phaser API, not inline CSS)', () => {
+    const src = readClientSrc('objects/ui/DomLabel.ts');
+    if (src === null) return;
+    // The Phaser DOMElement property must be used — inline css.pointerEvents would
+    // be overwritten by the Phaser renderer every frame (defaulting back to 'auto').
+    expect(
+      src,
+      'DomLabel.ts must set el.pointerEvents = "none" via Phaser DOMElement property',
+    ).toContain("el.pointerEvents = 'none'");
+    // Negative guard: inline css.pointerEvents must NOT be set — it would be a no-op.
+    expect(
+      src,
+      'DomLabel.ts must NOT set css.pointerEvents inline (Phaser overwrites it every frame)',
+    ).not.toContain('css.pointerEvents');
+  });
+
+  // Derived assertion: the inline CSS built for the node does NOT include pointer-events.
+  // pointer-events is handled via el.pointerEvents (Phaser property) after add.dom.
+  it('re-derived inline CSS does NOT contain pointer-events (Phaser property handles it)', () => {
     const css = buildExpectedCss({ fontPx: 14, color: '#ddeeff' });
-    expect(css).toContain('pointer-events: none');
+    expect(css).not.toContain('pointer-events');
   });
 
   // #362 adversarial: wrong font-family (e.g. sans-serif) changes the typeface
@@ -432,16 +462,24 @@ describe('#362 DomLabel source guards: CSS construction in DomLabel.ts', () => {
     ).toContain('addDomLabel');
   });
 
-  // #362 adversarial: if pointer-events:none is omitted from the CSS built
-  // in addDomLabel, DOM labels will capture mouse events intended for the
-  // canvas underneath — silent interaction regression.
-  it('DomLabel.ts CSS construction includes pointer-events', () => {
+  // #362 adversarial / E2E delta (Phase 3): pointer-events must be enforced so
+  // DOM labels never absorb canvas clicks. The correct mechanism (confirmed by E2E)
+  // is `el.pointerEvents = 'none'` on the Phaser DOMElement, not inline CSS.
+  // Inline css.pointerEvents is overwritten by Phaser's DOMElementCSSRenderer every
+  // frame (it copies el.pointerEvents → node.style.pointerEvents, defaulting to 'auto').
+  it('DomLabel.ts enforces pointer-events via el.pointerEvents (Phaser API) not inline CSS', () => {
     const src = readClientSrc('objects/ui/DomLabel.ts');
     if (src === null) return;
+    // Phaser DOMElement property must be set.
     expect(
       src,
-      'DomLabel.ts must include pointer-events in the CSS string — omission causes canvas click interception',
-    ).toContain('pointer-events');
+      "DomLabel.ts must set el.pointerEvents = 'none' after scene.add.dom() — the only effective API",
+    ).toContain("el.pointerEvents = 'none'");
+    // The inline node.style must NOT attempt to set pointerEvents — it would be overwritten.
+    expect(
+      src,
+      'DomLabel.ts must NOT use css.pointerEvents — Phaser renders this property from el.pointerEvents',
+    ).not.toContain('css.pointerEvents');
   });
 
   // #362 adversarial: if the implementation omits white-space:pre from CSS,
