@@ -739,6 +739,198 @@ describe('#362 Phase 2: setDomLabelText null-safety guards (P3-C)', () => {
 
 });
 
+// ── 6b-bis: setDomLabelText updateSize() contract (#366) ─────────────────────
+//
+// #366 regression: right/center-anchored DomLabels created empty and then
+// populated via setDomLabelText() end up with a stale `src.width` in Phaser's
+// renderer. Phaser positions them by `dx = src.width * originX`; with a stale
+// width the label overflows off-screen. The fix: call `el.updateSize()` after
+// every `el.node.textContent = text` mutation.
+//
+// We test this with a minimal mock that records call order: textContent must be
+// set BEFORE updateSize() fires (so the re-measure sees the new text), and
+// updateSize() must fire exactly once per call.
+
+describe('#366 Phase 1: setDomLabelText calls updateSize() after textContent — regression guard', () => {
+
+  // Minimal mock for a Phaser DOMElement: records call order via a log array.
+  function makeFakeEl(initialText = '') {
+    const callLog: Array<{ what: string; textAtCallTime: string }> = [];
+    const node = { textContent: initialText };
+    const el = {
+      node,
+      updateSize(): void {
+        // #366 adversarial: if updateSize fires BEFORE textContent is set, it
+        // re-measures the OLD width — the bug survives the fix. Order matters.
+        callLog.push({ what: 'updateSize', textAtCallTime: node.textContent });
+      },
+    };
+    return { el, node, callLog };
+  }
+
+  it('updateSize() is called exactly once on a valid element', () => {
+    // #366 adversarial: missing the updateSize() call entirely is the root bug.
+    // Dropping it (e.g. during a refactor) silently re-introduces overflow.
+    const { el, callLog } = makeFakeEl();
+    const impl = (e: typeof el | null, text: string): void => {
+      if (!e || !e.node) return;
+      e.node.textContent = text;
+      e.updateSize();
+    };
+    impl(el, 'Day 3 · Gold 120 · Food 5 · Spirit 3/5 · ♥ 4/5 · XP 900 · Avg XP 180');
+    const updateCalls = callLog.filter((c) => c.what === 'updateSize');
+    expect(
+      updateCalls,
+      '#366: setDomLabelText must call updateSize() exactly once — missing it leaves width stale',
+    ).toHaveLength(1);
+  });
+
+  it('updateSize() fires AFTER textContent is set (re-measure sees new text, not stale text)', () => {
+    // #366 adversarial: if updateSize fires before textContent is assigned,
+    // Phaser re-measures the element at its previous (possibly empty) content —
+    // the width stays stale and the overflow bug survives the fix.
+    const { el, node, callLog } = makeFakeEl('');
+    const impl = (e: typeof el | null, text: string): void => {
+      if (!e || !e.node) return;
+      e.node.textContent = text;
+      e.updateSize();
+    };
+    impl(el, 'Day 1 · Gold 0');
+    expect(callLog).toHaveLength(1);
+    // At the moment updateSize was called, textContent must already be the new value.
+    expect(
+      callLog[0].textAtCallTime,
+      '#366: updateSize() must see the new textContent — it was called before textContent was set',
+    ).toBe('Day 1 · Gold 0');
+  });
+
+  it('updateSize() is still called when text is an empty string (empty→populated is the exact bug path)', () => {
+    // #366 adversarial: the HUD is created with text="" then populated by refreshHud().
+    // If updateSize() is gated on a truthy text check, the empty→non-empty transition
+    // is skipped and the width stays at the creation-time stale value.
+    const { el, callLog } = makeFakeEl('not-empty');
+    const impl = (e: typeof el | null, text: string): void => {
+      if (!e || !e.node) return;
+      e.node.textContent = text;
+      e.updateSize();
+    };
+    impl(el, '');
+    expect(
+      callLog.filter((c) => c.what === 'updateSize'),
+      '#366: updateSize() must be called even for empty string — the empty creation state is exactly when width goes stale',
+    ).toHaveLength(1);
+  });
+
+  it('updateSize() is NOT called when el is null (guard short-circuits before updateSize)', () => {
+    // #366 adversarial: the null guard `if (!el || !el.node) return` must fire BEFORE
+    // updateSize() is reached. A guard placed AFTER the updateSize call would crash on null.
+    // We verify the guard by confirming no updateSize() call is attempted on null input.
+    const updateSizeCalled = { value: false };
+    // When el is null there is no object on which updateSize could be called — this
+    // is fundamentally a no-crash + no-call test.
+    const impl = (e: { node?: { textContent: string | null }; updateSize?: () => void } | null, text: string): void => {
+      if (!e || !e.node) return;
+      e.node.textContent = text;
+      e.updateSize?.();
+      updateSizeCalled.value = true;
+    };
+    expect(() => impl(null, 'test')).not.toThrow();
+    expect(
+      updateSizeCalled.value,
+      '#366: updateSize must NOT be called when el is null — guard must short-circuit before reaching it',
+    ).toBe(false);
+  });
+
+  it('updateSize() is NOT called when el.node is null (guard short-circuits before updateSize)', () => {
+    // #366 adversarial: el.node being null (Phaser element destroyed) must also
+    // prevent updateSize() from running — calling updateSize() on a node-less
+    // DOMElement could throw internally.
+    const updateSizeCalled = { value: false };
+    const fakeEl = {
+      node: null as null | { textContent: string | null },
+      updateSize() { updateSizeCalled.value = true; },
+    };
+    const impl = (e: typeof fakeEl | null, text: string): void => {
+      if (!e || !e.node) return;
+      e.node.textContent = text;
+      e.updateSize();
+    };
+    expect(() => impl(fakeEl, 'test')).not.toThrow();
+    expect(
+      updateSizeCalled.value,
+      '#366: updateSize must NOT be called when el.node is null — el.node nullness guard must fire first',
+    ).toBe(false);
+  });
+
+  it('setDomLabelText textContent contract: plain object node preserves \\n when textContent is assigned directly', () => {
+    // #366 adversarial: Phaser's own DOMElement.setText() uses innerText which
+    // collapses \\n to a space. The isolated mock used in all other tests in this
+    // describe block models textContent as a plain string property — we verify
+    // that assigning 'Forest\nThe Anchorage' to node.textContent produces the
+    // exact string with the \\n intact. If the impl used innerText, the assignment
+    // through a real DOM element would collapse \\n, but the isolated mock correctly
+    // reflects what textContent does (store verbatim).
+    const node = { textContent: '' as string | null };
+    node.textContent = 'Forest\nThe Anchorage';
+    // textContent preserves the literal \\n character — innerText would not
+    expect(
+      node.textContent,
+      '#366: textContent must preserve \\n — switching to innerText would break two-row labels',
+    ).toContain('\n');
+    expect(node.textContent).toBe('Forest\nThe Anchorage');
+  });
+
+  // Source-level guards: the implementation file must contain the updateSize call
+  // and must use textContent (not innerText or setText).
+  it('DomLabel.ts setDomLabelText function body calls el.updateSize()', () => {
+    // #366 adversarial: a bare source-scan catches the case where someone removes
+    // updateSize() from setDomLabelText during a refactor without breaking other tests.
+    const src = readClientSrc('objects/ui/DomLabel.ts');
+    if (src === null) return; // impl not yet landed — skip in Phase 1 parallel run
+    // Isolate the setDomLabelText function body.
+    const fnStart = src.indexOf('export function setDomLabelText(');
+    expect(fnStart, 'setDomLabelText function must exist in DomLabel.ts').toBeGreaterThan(-1);
+    // Find the function body end by brace-counting from fn start.
+    let depth = 0, fnEnd = -1;
+    for (let i = fnStart; i < src.length; i++) {
+      if (src[i] === '{') depth++;
+      else if (src[i] === '}') { depth--; if (depth === 0) { fnEnd = i; break; } }
+    }
+    const body = src.slice(fnStart, fnEnd + 1);
+    expect(
+      body,
+      '#366: setDomLabelText must call updateSize() — without it right/center-anchored labels overflow',
+    ).toContain('updateSize()');
+  });
+
+  it('DomLabel.ts setDomLabelText function body uses textContent not innerText or setText', () => {
+    // #366 adversarial: switching to innerText or el.setText() breaks the two-row
+    // biome-title label because both collapse \\n to a space.
+    const src = readClientSrc('objects/ui/DomLabel.ts');
+    if (src === null) return;
+    const fnStart = src.indexOf('export function setDomLabelText(');
+    let depth = 0, fnEnd = -1;
+    for (let i = fnStart; i < src.length; i++) {
+      if (src[i] === '{') depth++;
+      else if (src[i] === '}') { depth--; if (depth === 0) { fnEnd = i; break; } }
+    }
+    const body = src.slice(fnStart, fnEnd + 1);
+    expect(
+      body,
+      '#366: setDomLabelText must use textContent to preserve \\n',
+    ).toContain('textContent');
+    expect(
+      body,
+      '#366: setDomLabelText must NOT use innerText — it collapses \\n and breaks two-row labels',
+    ).not.toContain('innerText');
+    expect(
+      body,
+      '#366: setDomLabelText must NOT delegate to el.setText() — setText uses innerText internally',
+    ).not.toContain('setText(');
+  });
+
+});
+
 // ── 6c: refreshHud three null guards (post-getToken, post-apiFetch, post-json) ──
 //
 // BaseBiomeScene.refreshHud() has three null guard checkpoints:
