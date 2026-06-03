@@ -93,8 +93,6 @@ export function addDomLabel(
   // PARITY: '\n' must render as a real line break for two-row labels.
   css.whiteSpace = 'pre';
   css.margin = '0';
-  // CSS MUST include pointer-events:none so labels never intercept canvas clicks.
-  css.pointerEvents = 'none';
   // User-select off — these are decorative labels, not selectable copy.
   css.userSelect = 'none';
   if (style.lineHeight !== undefined) css.lineHeight = `${style.lineHeight}px`;
@@ -103,6 +101,11 @@ export function addDomLabel(
   if (style.padding) css.padding = style.padding;
 
   const el = scene.add.dom(x, y, node);
+  // CSS MUST be pointer-events:none so labels never intercept canvas clicks.
+  // Phaser's DOMElementCSSRenderer copies `el.pointerEvents` → `node.style.pointerEvents`
+  // every frame (defaulting to 'auto'), so setting it on the node inline style is
+  // overwritten. Set the Phaser DOMElement property — the correct API — instead.
+  el.pointerEvents = 'none';
   // setOrigin(0.5) by default to match canvas setOrigin(0.5); align overrides the
   // horizontal origin so left/right-anchored labels pin to their stated edge.
   const originX = align === 'left' ? 0 : align === 'right' ? 1 : 0.5;

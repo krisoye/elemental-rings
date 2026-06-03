@@ -63,9 +63,15 @@ async function modalTexts(page: Page): Promise<string[]> {
       walk(modal);
     }
     // #363 — include DOM chrome labels (title, WON ◆, DISCARD, A1/A2/D1/D2/STATUS,
-    // spare HEADER) rendered over the canvas via addDomLabel.
+    // spare HEADER) rendered over the canvas via addDomLabel. EXCLUDE the persistent
+    // overworld labels (HUD, biome-title, npc-prompt): the HUD contains "Day N · Gold N"
+    // and would otherwise trip the modal's "no header segments" assertions.
+    const PERSISTENT = ['overworld-hud', 'biome-title', 'npc-prompt'];
     document.querySelectorAll('.er-dom-label').forEach((n) => {
-      if (n.textContent) out.push(n.textContent);
+      const id = (n as HTMLElement).getAttribute('data-label');
+      if (id && PERSISTENT.includes(id)) return;
+      const txt = (n as HTMLElement).textContent;
+      if (txt) out.push(txt);
     });
     return out;
   });
@@ -230,10 +236,10 @@ test('manage-battle-rings (#352): no header row, panel starts at y≥44, ♥ HP 
     const canvasRect = canvas.getBoundingClientRect();
     const scaleY = canvasRect.height / 576; // canvas backing store is 1024×576 logical
 
-    // STATUS — DOM label: screen top straight from the node.
+    // STATUS — DOM label: screen top straight from the node (trim to ignore whitespace).
     let statusTop: number | null = null;
     document.querySelectorAll('.er-dom-label').forEach((n) => {
-      if (n.textContent === 'STATUS') {
+      if ((n as HTMLElement).textContent?.trim() === 'STATUS') {
         statusTop = (n as HTMLElement).getBoundingClientRect().top;
       }
     });
@@ -283,7 +289,7 @@ test('manage-battle-rings (#352): no header row, panel starts at y≥44, ♥ HP 
     const wanted = new Set(['STATUS', 'A1', 'A2', 'D1', 'D2', 'DISCARD', 'WON ◆']);
     let domLabelsWithBacking = 0;
     document.querySelectorAll('.er-dom-label').forEach((n) => {
-      const txt = n.textContent ?? '';
+      const txt = (n as HTMLElement).textContent?.trim() ?? '';
       if (!wanted.has(txt)) return;
       const bg = getComputedStyle(n as HTMLElement).backgroundColor;
       // rgba(0,0,0,0.55) → not "transparent" / not fully transparent.
@@ -625,20 +631,36 @@ test('manage-battle-rings (#350): cluster X-centres are 303/460/617/721 with equ
   await openBattleHand(page);
 
   const positions = await page.evaluate(() => {
-    const scene = (window as any).__game?.scene?.getScene('ForestScene');
-    const modal = scene?.battleHand?.manageModal;
+    const game = (window as any).__game;
     const result: Record<string, number> = {};
+
+    // #363 — STATUS/A1/A2/D1/D2 are DOM labels (centered at logical x). Map each
+    // node's screen center-X back to logical canvas X via the canvas rect + scale.
+    const canvas: HTMLCanvasElement = game?.canvas;
+    const canvasRect = canvas.getBoundingClientRect();
+    const scaleX = canvasRect.width / 1024;
+    document.querySelectorAll('.er-dom-label').forEach((n) => {
+      const el = n as HTMLElement;
+      const text = el.textContent?.trim();
+      if (!text) return;
+      const rect = el.getBoundingClientRect();
+      const logicalX = Math.round((rect.left + rect.width / 2 - canvasRect.left) / scaleX);
+      if (text === 'STATUS') result.STATUS = logicalX;
+      if (text === 'A1') result.A1 = logicalX;
+      if (text === 'A2') result.A2 = logicalX;
+      if (text === 'D1') result.D1 = logicalX;
+      if (text === 'D2') result.D2 = logicalX;
+    });
+
+    // ♥ HP stays on canvas — read its logical x from the scene graph.
+    const scene = game?.scene?.getScene('ForestScene');
+    const modal = scene?.battleHand?.manageModal;
     const walk = (c: any): void => {
       for (const o of c.getAll ? c.getAll() : []) {
-        if (o.text === 'STATUS') result.STATUS = Math.round(o.x);
         // #352 — HP label is now "♥ N/M"; capture it under the 'HP' key.
         if (typeof o.text === 'string' && o.text.startsWith('♥') && !o.text.includes('\n')) {
           result.HP = Math.round(o.x);
         }
-        if (o.text === 'A1') result.A1 = Math.round(o.x);
-        if (o.text === 'A2') result.A2 = Math.round(o.x);
-        if (o.text === 'D1') result.D1 = Math.round(o.x);
-        if (o.text === 'D2') result.D2 = Math.round(o.x);
         if (o.getAll) walk(o);
       }
     };
@@ -646,14 +668,15 @@ test('manage-battle-rings (#350): cluster X-centres are 303/460/617/721 with equ
     return result;
   });
 
-  // GROUP2 (STATUS/HP) — both at 460.
-  expect(positions.STATUS).toBe(460);
+  // GROUP2 (STATUS/HP) — both at 460. STATUS is DOM-measured (screen→logical
+  // round-trip) so allow ±1px; HP is exact (canvas logical coord).
+  expect(Math.abs(positions.STATUS - 460)).toBeLessThanOrEqual(1);
   expect(positions.HP).toBe(460);
-  // GROUP3 (Combat) — A1/D1 at 617, A2/D2 at 721.
-  expect(positions.A1).toBe(617);
-  expect(positions.A2).toBe(721);
-  expect(positions.D1).toBe(617);
-  expect(positions.D2).toBe(721);
+  // GROUP3 (Combat) — A1/D1 at 617, A2/D2 at 721. DOM-measured → ±1px tolerance.
+  expect(Math.abs(positions.A1 - 617)).toBeLessThanOrEqual(1);
+  expect(Math.abs(positions.A2 - 721)).toBeLessThanOrEqual(1);
+  expect(Math.abs(positions.D1 - 617)).toBeLessThanOrEqual(1);
+  expect(Math.abs(positions.D2 - 721)).toBeLessThanOrEqual(1);
 
   // Equal margins: left card-left edge ≈ 303−46 = 257 ≈ inner-left 192+65;
   // right card-right edge ≈ 721+46 = 767 ≈ inner-right 832−65 = 767. Both ≈65.
@@ -667,7 +690,8 @@ test('manage-battle-rings (#350): cluster X-centres are 303/460/617/721 with equ
   const leftMargin = 303 - CARD_HALF - INNER_LEFT;
   const rightMargin = INNER_RIGHT - (positions.A2 + CARD_HALF);
   expect(leftMargin).toBe(65);
-  expect(rightMargin).toBe(65);
+  // A2 is DOM-measured (±1px), so the derived right margin carries the same tolerance.
+  expect(Math.abs(rightMargin - 65)).toBeLessThanOrEqual(1);
 
   await ctx.close();
 });
@@ -686,12 +710,16 @@ test('manage-battle-rings (#350): DISCARD label exists above discard-slot; slot 
   const result = await page.evaluate(() => {
     const scene = (window as any).__game?.scene?.getScene('ForestScene');
     const modal = scene?.battleHand?.manageModal;
+    // #363 — the DISCARD label is now a DOM node; scan the DOM for it.
     let hasDiscardLabel = false;
+    document.querySelectorAll('.er-dom-label').forEach((n) => {
+      if ((n as HTMLElement).textContent?.trim() === 'DISCARD') hasDiscardLabel = true;
+    });
+    // The discard-slot rect stays on canvas — verify via the scene graph.
     let discardSlotFound = false;
     let discardSlotHasTextChild = false;
     const walk = (c: any): void => {
       for (const o of c.getAll ? c.getAll() : []) {
-        if (typeof o.text === 'string' && o.text === 'DISCARD') hasDiscardLabel = true;
         if (o.name === 'discard-slot') {
           discardSlotFound = true;
           // The discard-slot rect is a Rectangle (no getAll); it has no text children
@@ -1023,34 +1051,45 @@ test('manage-battle-rings (#352 regression): exactly 7 unconditional card labels
     const modal = scene?.battleHand?.manageModal;
     if (!modal) return { labelCount: 0, allHaveBacking: false, details: [] as any[] };
 
-    const all = modal.getAll ? modal.getAll() : [];
-    // The 7 unconditional labels (no WON ◆ — no pending ring).
-    const UNCONDITIONAL_LABELS = ['STATUS', 'A1', 'A2', 'D1', 'D2', 'DISCARD'];
-    let labelCount = 0;
-    let allHaveBacking = true;
     const details: { text: string; hasBacking: boolean }[] = [];
+    let allHaveBacking = true;
 
+    // #363 — the 6 unconditional section labels (STATUS/A1/A2/D1/D2/DISCARD) are now
+    // DOM nodes whose backing is a non-transparent CSS `background-color`.
+    const DOM_UNCONDITIONAL = ['STATUS', 'A1', 'A2', 'D1', 'D2', 'DISCARD'];
+    let domLabelCount = 0;
+    document.querySelectorAll('.er-dom-label').forEach((n) => {
+      const text = (n as HTMLElement).textContent?.trim() ?? '';
+      if (!DOM_UNCONDITIONAL.includes(text)) return;
+      domLabelCount++;
+      const bg = getComputedStyle(n as HTMLElement).backgroundColor;
+      const hasBacking = !!bg && bg !== 'transparent' && bg !== 'rgba(0, 0, 0, 0)';
+      if (!hasBacking) allHaveBacking = false;
+      details.push({ text, hasBacking });
+    });
+
+    // ♥ HP stays on canvas with a preceding backing Rectangle in the container list.
+    const all = modal.getAll ? modal.getAll() : [];
+    let canvasLabelCount = 0;
     for (let i = 1; i < all.length; i++) {
       const o = all[i];
       if (typeof o.text !== 'string') continue;
-      const isUnconditional =
-        UNCONDITIONAL_LABELS.includes(o.text) ||
-        (o.text.startsWith('♥') && !o.text.includes('\n')); // ♥ 0/0 or ♥ N/M
-      if (!isUnconditional) continue;
-      labelCount++;
+      if (!(o.text.startsWith('♥') && !o.text.includes('\n'))) continue; // ♥ 0/0 or ♥ N/M
+      canvasLabelCount++;
       const prev = all[i - 1];
       const hasBacking = typeof prev?.text !== 'string';
       if (!hasBacking) allHaveBacking = false;
       details.push({ text: o.text, hasBacking });
     }
-    return { labelCount, allHaveBacking, details };
+
+    return { labelCount: domLabelCount + canvasLabelCount, allHaveBacking, details };
   });
 
-  // Exactly 7 unconditional labels (STATUS + A1 + A2 + D1 + D2 + DISCARD + ♥ 0/0).
+  // Exactly 7 unconditional labels (STATUS + A1 + A2 + D1 + D2 + DISCARD [DOM] + ♥ 0/0 [canvas]).
   expect(result.labelCount).toBe(7);
   expect(
     result.allHaveBacking,
-    `Labels missing backing rects: ${JSON.stringify(result.details.filter((d) => !d.hasBacking))}`,
+    `Labels missing backing: ${JSON.stringify(result.details.filter((d) => !d.hasBacking))}`,
   ).toBe(true);
 
   await ctx.close();
