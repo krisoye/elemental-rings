@@ -1744,6 +1744,7 @@ export abstract class BaseBiomeScene extends DualCameraScene {
           backgroundColor: '#000000aa',
           padding: { x: 8, y: 4 },
         })
+        .setResolution(window.devicePixelRatio)
         .setOrigin(0.5, 0)
         .setScrollFactor(0)
         .setDepth(1000);

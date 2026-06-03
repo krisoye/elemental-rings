@@ -446,9 +446,7 @@ export class BattleHandOverlay {
     const SPARE_ROW_H = 80;
     const spareLabelText = `Spare: ${usedSpares} / ${spareCapacity} — select to assign, or click two slots to swap`;
     const spareLabelColor = spareFull ? '#ff8888' : '#aaccff';
-    // #356 — spare label y offset increased to −56 (from −34) to clear row-0 card top.
-    // Label spans ±24px vertically; with y at 334, bottom is 358 — clears row-0 card
-    // top at 350 by 8px (accounting for card half-height ±40).
+    // #356 — spare label y=334 (SPARE_ROW_Y[0]−56); 12px font → half-height≈14px → bottom≈348; card-0 top=350; clearance≈2px.
     const carriedLbl = this.scene.add
       .text(CANVAS_W / 2, SPARE_ROW_Y[0] - 56, spareLabelText, {
         fontSize: '12px',
