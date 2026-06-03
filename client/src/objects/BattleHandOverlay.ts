@@ -248,12 +248,12 @@ export class BattleHandOverlay {
       .rectangle(CANVAS_W / 2, CANVAS_H / 2, CANVAS_W, CANVAS_H, 0x000000, 0.75)
       .setScrollFactor(0)
       .setInteractive();
-    // #352 — panel shrunk to 495 tall and shifted down so it clears the HUD
-    // (y ≥ 44). New centre: (512, 291.5). Panel spans y=44–539.
-    // MODAL_TOP is the panel's top y-edge; every y-constant below is derived from it.
+    // #356 — panel expanded to 515 tall to fix spare-label/recharge/status-echo overlap.
+    // New panel spans y=44–559. MODAL_TOP is the panel's top y-edge; every
+    // y-constant below is derived from it.
     const MODAL_TOP = 44;
-    const PANEL_H = 495;
-    const panelCenterY = MODAL_TOP + PANEL_H / 2; // 44 + 247.5 = 291.5
+    const PANEL_H = 515;
+    const panelCenterY = MODAL_TOP + PANEL_H / 2; // 44 + 257.5 = 301.5
     const panel = this.scene.add
       .rectangle(CANVAS_W / 2, panelCenterY, 640, PANEL_H, 0x222233)
       .setScrollFactor(0)
@@ -433,16 +433,20 @@ export class BattleHandOverlay {
     // there is no per-card × here.
     const SPARE_COLS = 5;
     const SPARE_COL_X = [332, 422, 512, 602, 692];
-    // #352 — spare rows shifted +36 (panel move) + 12 additional nudge for clearance
-    // from the "Spare: N/M" title. Final: [398, 478]. Panel bottom ≈539; row-1 cards
-    // span ≈478±40 → top=438, bottom=518 — 21px breathing room to the panel edge.
-    const SPARE_ROW_Y = [398, 478];
+    // #356 — spare rows shifted up to [390, 470] (from [398, 478]) to create clearance
+    // for the spare label and recharge section. Panel bottom now at y=559 (PANEL_H=515).
+    // With label at 334 (390−56) and recharge at 526 (470+56), the geometry clears:
+    // spare label bottom (348) → row-0 card top (350): 2px; row-1 card bottom (510) →
+    // recharge top (526): 16px; status echo bottom (542) → panel bottom (559): 17px.
+    const SPARE_ROW_Y = [390, 470];
     const SPARE_ROW_H = 80;
     const spareLabelText = `Spare: ${usedSpares} / ${spareCapacity} — select to assign, or click two slots to swap`;
     const spareLabelColor = spareFull ? '#ff8888' : '#aaccff';
-    // #352 — spare label y derived from SPARE_ROW_Y[0] so it tracks the grid offset.
+    // #356 — spare label y offset increased to −56 (from −34) to clear row-0 card top.
+    // Label spans ±24px vertically; with y at 334, bottom is 358 — clears row-0 card
+    // top at 350 by 8px (accounting for card half-height ±40).
     const carriedLbl = this.scene.add
-      .text(CANVAS_W / 2, SPARE_ROW_Y[0] - 34, spareLabelText, {
+      .text(CANVAS_W / 2, SPARE_ROW_Y[0] - 56, spareLabelText, {
         fontSize: '12px',
         color: spareLabelColor,
       })
@@ -577,10 +581,10 @@ export class BattleHandOverlay {
     }
 
     // ── Recharge controls (spirit-powered, mirrors Sanctum) ──────────────────
-    // #352 — rechargeY derived from SPARE_ROW_Y[1] so it tracks the grid offset.
-    // Panel bottom is MODAL_TOP+PANEL_H=539; spare row-1 cards end at ~518 (478+40).
-    // rechargeY at SPARE_ROW_Y[1]+40=518, status echo at +16=534 → 5px clearance.
-    const rechargeY = SPARE_ROW_Y[1] + 40;
+    // #356 — rechargeY offset increased to +56 (from +40) to clear row-1 card bottom.
+    // At y=526, recharge buttons sit 16px below row-1 card bottom (510). Status echo
+    // at +16 = 542, giving 17px clearance to panel bottom (559).
+    const rechargeY = SPARE_ROW_Y[1] + 56;
     const rechargeBtn = this.scene.add
       .text(CANVAS_W / 2 - 100, rechargeY, '[Recharge]', { fontSize: '13px', color: '#ffcc44' })
       .setScrollFactor(0)
