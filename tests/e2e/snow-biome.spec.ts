@@ -14,7 +14,7 @@ import type { Page } from '@playwright/test';
  *                                        to forest_snow_gate via a biome-type edge.
  *
  * All assertions read live server/scene state — no mocks.
- * The Frost Sentinel is at tx:16, ty:8 → world px (264, 136) on forest_snow_gate.
+ * The Frost Sentinel is at tx:16, ty:2 → world px (264, 40) on forest_snow_gate (#344).
  */
 
 const URL = 'http://localhost:8090';
@@ -27,8 +27,9 @@ const SANCTUM_DOOR = { x: 87, y: 152 };
  * Frost Sentinel world position (tx*16+8, ty*16+8). The server confirms these
  * in frost-sentinel.spec.ts; mirrored here for warden-detection and collision
  * assertions without an extra round-trip.
+ * #344 — repositioned from ty:8 to ty:2 (stands in the northern passage).
  */
-const SENTINEL_POS = { x: 264, y: 136 }; // tx:16, ty:8 → 16*16+8=264, 8*16+8=136
+const SENTINEL_POS = { x: 264, y: 40 }; // tx:16, ty:2 → 16*16+8=264, 2*16+8=40
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -260,9 +261,14 @@ test(
   },
 );
 
-// ── Scenario 2: Warden collision blocks north transition ──────────────────────
+// ── Scenario 2: Roster-authoritative gate blocks north transition ─────────────
+// #344 — The gate is now ROSTER-AUTHORITATIVE: tryBiomeExit checks
+// this.overworldNpcs before transitioning. Even if a player bypasses the
+// physical collider, the roster check blocks the transition and shows a barrier
+// message. This test drives the player directly to the biome_exit zone to prove
+// the roster gate fires (not just the physics collider).
 test(
-  'snow-biome: walking north past the living Frost Sentinel does NOT transition to SnowScene',
+  'snow-biome: walking north with the living Frost Sentinel shows barrier and does NOT transition to SnowScene',
   async ({ browser }) => {
     const ctx = await browser.newContext();
     await seedAuthToken(ctx);
@@ -278,33 +284,19 @@ test(
     );
     expect(sentinelInRoster, 'Sentinel present in NPC roster').toBe(true);
 
-    // Position the player just south of the Sentinel (sentinel is at y=136; place
-    // player 40px below at y=176, same x). The player's physics body will push
-    // against the warden sprite's body when it tries to walk north.
-    await page.evaluate(([x, y]) => (window as any).__player.setPosition(x, y), [
-      SENTINEL_POS.x,
-      SENTINEL_POS.y + 40,
-    ]);
+    // Teleport the player directly onto the biome_exit zone (y=8, inside the
+    // 16px-tall zone at y=0). The roster-authoritative gate in tryBiomeExit must
+    // block the transition and show a barrier message — regardless of whether the
+    // physics collider was bypassed.
+    await page.evaluate(() => (window as any).__player.setPosition(256, 8));
+    // Give the physics overlap a frame to fire tryBiomeExit.
+    await page.waitForTimeout(200);
 
-    // Hold ArrowUp for 1.2 s — enough to reach the Sentinel's Y position and try
-    // to push past it. Without the warden the player would reach y≤24 and trigger
-    // the north biome_exit zone or the south edge transition.
-    // (PLAYER_SPEED × 1.2 s ≈ 120px displacement ≫ the 40px gap, so the player
-    // fully presses against the warden body for most of the hold.)
-    await page.keyboard.down('ArrowUp');
-    await page.waitForTimeout(1200);
-    await page.keyboard.up('ArrowUp');
-
-    // The scene must remain in ForestScene on forest_snow_gate: the warden's
-    // physics collider absorbed the northward momentum and the biome_exit zone
-    // at y=0 was never reached.
+    // The scene must remain in ForestScene on forest_snow_gate.
     const scene = await page.evaluate(() => (window as any).__activeScene);
-    expect(scene, 'still in ForestScene — not transitioned to SnowScene').toBe('ForestScene');
+    expect(scene, 'still in ForestScene — roster gate blocked transition').toBe('ForestScene');
     expect(scene, 'specifically NOT SnowScene').not.toBe('SnowScene');
 
-    // Confirm still on forest_snow_gate (warden also prevents north edge-step to
-    // forest_north_road, since the biome_exit zone is north of the warden and the
-    // warden is between the player and the zone).
     const screenId = await page.evaluate(() => (window as any).__forestScreenId);
     expect(screenId, 'still on forest_snow_gate').toBe('forest_snow_gate');
 
@@ -337,10 +329,11 @@ test(
     );
     expect(sentinelGone, 'Sentinel absent from NPC roster after defeat').toBe(true);
 
-    // Walk to the biome_exit zone and interact → SnowScene.
+    // #344 — the north biome_exit zone is edge-placed (y=0), so it auto-fires on
+    // contact. Place the player inside the zone; the physics overlap callback calls
+    // tryBiomeExit, which now finds the warden absent and starts SnowScene.
     const exitCenter = await zoneCenter(page, 'biome_exit');
-    await walkToZone(page, exitCenter, 'biome_exit');
-    await page.evaluate(() => (window as any).__sanctumInteract());
+    await page.evaluate(([x, y]) => (window as any).__player.setPosition(x, y), [exitCenter.x, exitCenter.y]);
 
     await page.waitForFunction(() => (window as any).__activeScene === 'SnowScene', {
       timeout: 8000,
@@ -382,10 +375,11 @@ test(
     // Wait for zone centers to be published (loadWaystones completes + publishes them).
     await page.waitForFunction(() => !!(window as any).__zoneCenters, { timeout: 10000 });
 
-    // Walk to the biome_exit zone and interact → should return to ForestScene.
+    // #344 — the south biome_exit on snow_entry is edge-placed (y+h≥mapH-16), so it
+    // auto-fires on contact. Place the player inside the zone; the overlap fires
+    // tryBiomeExit (no warden on SnowScene) → ForestScene starts.
     const exitCenter = await zoneCenter(page, 'biome_exit');
-    await walkToZone(page, exitCenter, 'biome_exit');
-    await page.evaluate(() => (window as any).__sanctumInteract());
+    await page.evaluate(([x, y]) => (window as any).__player.setPosition(x, y), [exitCenter.x, exitCenter.y]);
 
     await page.waitForFunction(() => (window as any).__activeScene === 'ForestScene', {
       timeout: 8000,

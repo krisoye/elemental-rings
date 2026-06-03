@@ -49,7 +49,8 @@ test('frost-sentinel: forest_snow_gate roster includes forest_frost_sentinel for
   expect(sentinel, 'forest_frost_sentinel present on forest_snow_gate').toBeDefined();
   expect(sentinel!.personality).toBe('AGGRESSIVE');
   expect(sentinel!.type).toBe('monster');
-  // tx:16, ty:8 → world px = tile*16 + 8 (TILE_SIZE=16 in routes.ts).
+  // #344 — repositioned from tx:16,ty:8 to tx:16,ty:2 (stands in the northern passage).
+  // world px = tile*16 + 8 (TILE_SIZE=16 in routes.ts).
   expect(sentinel!.x).toBe(16 * 16 + 8); // 264
-  expect(sentinel!.y).toBe(8 * 16 + 8); // 136
+  expect(sentinel!.y).toBe(2 * 16 + 8);  // 40
 });

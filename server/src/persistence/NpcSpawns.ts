@@ -170,7 +170,9 @@ export const NPC_SPAWNS: NpcSpawnDef[] = [
   // it with the gate-warden collar + displayName. AILoadout supports only BASE-element
   // thumbs; AGGRESSIVE supports WIND, matching the frost theme (cold northern wind).
   // spriteFrame 3 = WIND monster. BOSS_WARDENS maps forest_snow_gate → this entry.
-  { id: 'forest_frost_sentinel', biome: 'forest', screen: 'forest_snow_gate', personality: 'AGGRESSIVE', type: 'monster', element: WIND, spriteFrame: 3, tx: 16, ty: 8, respawnDays: 0, foodDrop: MINI_BOSS_FOOD_DROP, boss: { tier: 'gate', name: 'Frost Sentinel', fusedThumb: ElementEnum.WIND /* TODO: replace with ice/frost fused element when added to element system */ } },
+  // #344 — repositioned from tx:16,ty:8 to tx:16,ty:2 so the Sentinel stands
+  // visibly in the northern passage (cols 14–17, just inside the carved opening).
+  { id: 'forest_frost_sentinel', biome: 'forest', screen: 'forest_snow_gate', personality: 'AGGRESSIVE', type: 'monster', element: WIND, spriteFrame: 3, tx: 16, ty: 2, respawnDays: 0, foodDrop: MINI_BOSS_FOOD_DROP, boss: { tier: 'gate', name: 'Frost Sentinel', fusedThumb: ElementEnum.WIND /* TODO: replace with ice/frost fused element when added to element system */ } },
 
   // ── Snow ──────────────────────────────────────────────────────────────────────
   // Two mid-tier roamers for the single Snow Fields screen. AGGRESSIVE Wind monster

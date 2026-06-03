@@ -969,23 +969,55 @@ export abstract class BaseBiomeScene extends DualCameraScene {
   /**
    * Build InteractionZones for named map rectangles. `sanctum_return` is built
    * dynamically in loadWaystones at the anchored waystone position, so it is
-   * skipped here. A `biome_exit` object transitions to an adjacent biome, gated on
-   * its attunement waystone where applicable.
+   * skipped here. A `biome_exit` object transitions to an adjacent biome via the
+   * roster-authoritative boss-defeat gate in tryBiomeExit.
+   *
+   * #344 — Edge-placement detection: a biome_exit zone whose rect touches a map
+   * edge (within 16px of y=0, x=0, y=mapH, or x=mapW) is treated as an EDGE exit
+   * and fires tryBiomeExit on contact (matching checkEdgeTransition's model).
+   * Interior biome_exit zones (e.g. forest_swamp_gate's south exit at row 16)
+   * still require an E press so the player can read the prompt and choose to engage.
    */
   private buildZones(map: Phaser.Tilemaps.Tilemap): void {
     const objs = map.getObjectLayer('objects')?.objects ?? [];
+    const mapW = map.widthInPixels;
+    const mapH = map.heightInPixels;
+    const EDGE_THRESHOLD = 16; // 1 tile — zone rect must touch within this px of an edge
     for (const o of objs) {
       if (o.name === 'sanctum_return') continue;
       if (o.name === 'biome_exit') {
         const target = this.targetSceneOf(o) ?? 'SwampScene';
         const targetScreen = this.stringPropOf(o, 'targetScreen');
         const spawnEdge = this.stringPropOf(o, 'spawnEdge') as 'north'|'south'|'east'|'west'|undefined;
-        // Future boss-defeat gate: read from the map object's `gate` property.
-        // All exits are currently ungated; bosses block the path physically.
         const gate = this.gateOf(o);
-        const zone = new InteractionZone(this, o, () => this.tryBiomeExit(target, gate, targetScreen, spawnEdge));
-        this.physics.add.overlap(this.player, zone.overlapZone);
-        this.zones.push(zone);
+        // Determine whether this zone sits on a map edge (auto-fire) or interior (E-press).
+        // The discriminator checks the zone rect's ORIGIN (top-left corner) against the
+        // map edge. This mirrors the issue spec: treat as edge-placed when origin is
+        // within EDGE_THRESHOLD px of y=0, x=0, y=mapH, or x=mapW. Interior exits like
+        // forest_swamp_gate's south exit (oy=256 in a 288px-tall map, 32px from bottom)
+        // are NOT caught by this check and keep their E-press interaction.
+        const ox = o.x ?? 0;
+        const oy = o.y ?? 0;
+        const isEdgePlaced =
+          oy <= EDGE_THRESHOLD ||
+          ox <= EDGE_THRESHOLD ||
+          oy >= mapH - EDGE_THRESHOLD ||
+          ox >= mapW - EDGE_THRESHOLD;
+        if (isEdgePlaced) {
+          // Auto-fire on contact: suppress the E prompt, trigger via overlap callback.
+          const zone = new InteractionZone(this, o, () => this.tryBiomeExit(target, gate, targetScreen, spawnEdge), null);
+          this.physics.add.overlap(
+            this.player,
+            zone.overlapZone,
+            () => this.tryBiomeExit(target, gate, targetScreen, spawnEdge),
+          );
+          this.zones.push(zone);
+        } else {
+          // Interior exit: E-press required (player chooses to enter).
+          const zone = new InteractionZone(this, o, () => this.tryBiomeExit(target, gate, targetScreen, spawnEdge));
+          this.physics.add.overlap(this.player, zone.overlapZone);
+          this.zones.push(zone);
+        }
         continue;
       }
       if (o.name === 'forage_node') {
@@ -1038,9 +1070,14 @@ export abstract class BaseBiomeScene extends DualCameraScene {
   }
 
   /**
-   * Attempt a biome transition through a biome_exit zone. When a gate waystone is
-   * Biome transitions are ungated — bosses physically block the path until
-   * defeated. Once clear the player simply walks through.
+   * Attempt a biome transition through a biome_exit zone. Roster-authoritative
+   * boss-defeat gate: if the warden for this screen is still present in
+   * this.overworldNpcs (server-owned), the transition is blocked and a barrier
+   * message is shown. Once the warden is absent from the roster (permanent defeat
+   * drops it server-side), the transition proceeds.
+   *
+   * Guards isTransitioning so the auto-fire physics overlap callback cannot fire
+   * scene.start() multiple times per frame.
    */
   private tryBiomeExit(
     target: string,
@@ -1048,7 +1085,24 @@ export abstract class BaseBiomeScene extends DualCameraScene {
     targetScreen?: string,
     spawnEdge?: 'north' | 'south' | 'east' | 'west',
   ): void {
-    void gate; // formerly a waystone attunement gate; now reserved for future boss-defeat gates
+    if (this.isTransitioning) return;
+    void gate; // formerly a waystone attunement gate; superseded by roster-authoritative boss gate below
+    // #344 — roster-authoritative boss-defeat gate. BOSS_WARDENS maps each gated
+    // screen to the warden NPC id (server/src/persistence/NpcSpawns.ts). The
+    // server is the authority: when the warden is alive it stays in the roster
+    // (GET /api/overworld/npcs); when defeated (respawnDays=0) the server drops
+    // it permanently, clearing the way.
+    const wardenId = BOSS_WARDENS[this.screenId];
+    if (wardenId) {
+      const wardenAlive = this.overworldNpcs.some((npc) => npc.id === wardenId);
+      if (wardenAlive) {
+        const npc = this.overworldNpcs.find((n) => n.id === wardenId);
+        const name = npc?.displayName ?? 'The warden';
+        this.showBarrierMessage(`${name} blocks the way.`);
+        return;
+      }
+    }
+    this.isTransitioning = true;
     const data: Record<string, string> = {};
     if (targetScreen) data.screenId = targetScreen;
     if (spawnEdge) data.spawnEdge = spawnEdge;
