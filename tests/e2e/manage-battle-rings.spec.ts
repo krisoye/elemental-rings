@@ -839,3 +839,256 @@ test('manage-battle-rings (#350): selecting heart card and clicking empty spare 
 
   await ctx.close();
 });
+
+// ── Regression #4 — no header on reopen (modal lifecycle) ────────────────────
+// The header removal must persist across close/reopen cycles. A re-render bug
+// (stale cached state, conditional header add) would restore the header on the
+// second open. This locks in the "no header" invariant across modal lifecycle.
+test('manage-battle-rings (#352 regression): header segments absent after close and reopen', async ({ browser }) => {
+  const ctx = await browser.newContext();
+  await seedAuthToken(ctx);
+  const page = await ctx.newPage();
+  await loadForest(page);
+  await openBattleHand(page);
+
+  // First open — verify header is absent (mirrors Scenario 1b).
+  const textsFirst = await modalTexts(page);
+  expect(textsFirst.some((t) => /Day:?\s*\d/.test(t))).toBe(false);
+  expect(textsFirst.some((t) => /Gold:?\s*\d/.test(t))).toBe(false);
+  expect(textsFirst.some((t) => t.includes('Total XP:'))).toBe(false);
+  expect(textsFirst.some((t) => t.includes('Avg Battle XP:'))).toBe(false);
+
+  // Close the overlay.
+  await page.evaluate(() => {
+    const scene = (window as any).__game?.scene?.getScene('ForestScene') as any;
+    scene?.battleHand?.close?.();
+  });
+  await page.waitForFunction(() => (window as any).__overworldBattleHandOpen !== true, {
+    timeout: 5000,
+  });
+
+  // Reopen and re-check — the header must still be absent after the second render.
+  await openBattleHand(page);
+  const textsSecond = await modalTexts(page);
+  expect(textsSecond.some((t) => /Day:?\s*\d/.test(t))).toBe(false);
+  expect(textsSecond.some((t) => /Gold:?\s*\d/.test(t))).toBe(false);
+  expect(textsSecond.some((t) => /Food:?\s*\d/.test(t))).toBe(false);
+  expect(textsSecond.some((t) => /Spirit:?\s*\d/.test(t))).toBe(false);
+  expect(textsSecond.some((t) => t.includes('Total XP:'))).toBe(false);
+  expect(textsSecond.some((t) => t.includes('Avg Battle XP:'))).toBe(false);
+
+  // Structural elements still present after the second render.
+  expect(textsSecond).toContain('Manage Battle Rings');
+  expect(textsSecond).toContain('STATUS');
+  expect(textsSecond.some((t) => t.startsWith('♥'))).toBe(true);
+
+  await ctx.close();
+});
+
+// ── Regression #5 — panel geometry boundary ──────────────────────────────────
+// Panel bottom is MODAL_TOP + PANEL_H = 44 + 495 = 539. No text object in the
+// modal (including recharge status text, spare label, and recharge buttons) may
+// have its y-centre beyond that boundary. A y > 539 means the element exits the
+// panel, overlapping whatever is rendered below it.
+test('manage-battle-rings (#352 regression): no text object y-centre exceeds the panel bottom (y=539)', async ({ browser }) => {
+  const ctx = await browser.newContext();
+  await seedAuthToken(ctx);
+  const page = await ctx.newPage();
+  await loadForest(page);
+  await openBattleHand(page);
+
+  const PANEL_BOTTOM = 44 + 495; // MODAL_TOP + PANEL_H = 539
+
+  const offenders = await page.evaluate((panelBottom) => {
+    const scene = (window as any).__game?.scene?.getScene('ForestScene') as any;
+    const modal = scene?.battleHand?.manageModal;
+    if (!modal) return [];
+    const violations: { text: string; y: number }[] = [];
+    const walk = (c: any): void => {
+      for (const o of c.getAll ? c.getAll() : []) {
+        // Only check text objects (labels, buttons, status lines).
+        if (typeof o.text === 'string' && !o.text.includes('\n')) {
+          if (o.y > panelBottom) {
+            violations.push({ text: o.text.slice(0, 40), y: Math.round(o.y) });
+          }
+        }
+        if (o.getAll) walk(o);
+      }
+    };
+    walk(modal);
+    return violations;
+  }, PANEL_BOTTOM);
+
+  expect(
+    offenders,
+    `Text objects below panel bottom y=${PANEL_BOTTOM}: ${JSON.stringify(offenders)}`,
+  ).toHaveLength(0);
+
+  await ctx.close();
+});
+
+// ── Regression #6 — label count with empty battle hand ───────────────────────
+// With no rings equipped in any slot (no won ring pending), the 7 unconditional
+// card labels must still each have a dark backing rect: STATUS, A1, A2, D1, D2,
+// DISCARD, and ♥ 0/0. The WON ◆ label appears only when a pending won ring
+// exists, so this test deliberately uses an empty hand to assert the baseline 7.
+test('manage-battle-rings (#352 regression): exactly 7 unconditional card labels each have a backing rect (empty hand)', async ({ browser }) => {
+  const ctx = await browser.newContext();
+  await seedAuthToken(ctx);
+  const page = await ctx.newPage();
+
+  await page.goto(URL);
+  await page.waitForFunction(() => (window as any).__activeScene === 'CampScene', {
+    timeout: 10000,
+  });
+  const tok = await page.evaluate(() => localStorage.getItem('er_token') ?? '');
+
+  // Remove the heart ring to produce an empty heart slot.
+  const me = (await (
+    await fetch(`${API_URL}/api/me`, { headers: { Authorization: `Bearer ${tok}` } })
+  ).json()) as { player: { heart_ring?: { id: string } | null } };
+  const heartId = me.player.heart_ring?.id;
+  if (heartId) {
+    await fetch(`${API_URL}/api/rings/${heartId}`, {
+      method: 'DELETE',
+      headers: { Authorization: `Bearer ${tok}` },
+    });
+  }
+
+  // Also clear battle-hand slots so none of the 4 combat slots have a ring — we
+  // want the minimum-content render to assert baseline labels.
+  await fetch(`${API_URL}/api/loadout`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${tok}` },
+    body: JSON.stringify({ a1: null, a2: null, d1: null, d2: null, thumb: null }),
+  });
+
+  await enterForestScreen(page, 'forest_anchorage');
+  await page.waitForFunction(
+    () => typeof (window as any).__overworldToggleBattleHand === 'function',
+    { timeout: 8000 },
+  );
+  await openBattleHand(page);
+
+  const result = await page.evaluate(() => {
+    const scene = (window as any).__game?.scene?.getScene('ForestScene') as any;
+    const modal = scene?.battleHand?.manageModal;
+    if (!modal) return { labelCount: 0, allHaveBacking: false, details: [] as any[] };
+
+    const all = modal.getAll ? modal.getAll() : [];
+    // The 7 unconditional labels (no WON ◆ — no pending ring).
+    const UNCONDITIONAL_LABELS = ['STATUS', 'A1', 'A2', 'D1', 'D2', 'DISCARD'];
+    let labelCount = 0;
+    let allHaveBacking = true;
+    const details: { text: string; hasBacking: boolean }[] = [];
+
+    for (let i = 1; i < all.length; i++) {
+      const o = all[i];
+      if (typeof o.text !== 'string') continue;
+      const isUnconditional =
+        UNCONDITIONAL_LABELS.includes(o.text) ||
+        (o.text.startsWith('♥') && !o.text.includes('\n')); // ♥ 0/0 or ♥ N/M
+      if (!isUnconditional) continue;
+      labelCount++;
+      const prev = all[i - 1];
+      const hasBacking = typeof prev?.text !== 'string';
+      if (!hasBacking) allHaveBacking = false;
+      details.push({ text: o.text, hasBacking });
+    }
+    return { labelCount, allHaveBacking, details };
+  });
+
+  // Exactly 7 unconditional labels (STATUS + A1 + A2 + D1 + D2 + DISCARD + ♥ 0/0).
+  expect(result.labelCount).toBe(7);
+  expect(
+    result.allHaveBacking,
+    `Labels missing backing rects: ${JSON.stringify(result.details.filter((d) => !d.hasBacking))}`,
+  ).toBe(true);
+
+  await ctx.close();
+});
+
+// ── Regression #7 — adversarial empty hand render ────────────────────────────
+// With NO rings in any slot and NO heart ring, the modal must render without
+// throwing, show all structural elements (DISCARD slot, spare grid, recharge
+// buttons), and display ♥ 0/0 (not crash or show a stale value).
+test('manage-battle-rings (#352 regression): empty hand renders structurally intact with ♥ 0/0', async ({ browser }) => {
+  const ctx = await browser.newContext();
+  await seedAuthToken(ctx);
+  const page = await ctx.newPage();
+
+  await page.goto(URL);
+  await page.waitForFunction(() => (window as any).__activeScene === 'CampScene', {
+    timeout: 10000,
+  });
+  const tok = await page.evaluate(() => localStorage.getItem('er_token') ?? '');
+
+  // Delete the heart ring so the heart slot is empty.
+  const me = (await (
+    await fetch(`${API_URL}/api/me`, { headers: { Authorization: `Bearer ${tok}` } })
+  ).json()) as { player: { heart_ring?: { id: string } | null } };
+  const heartId = me.player.heart_ring?.id;
+  if (heartId) {
+    await fetch(`${API_URL}/api/rings/${heartId}`, {
+      method: 'DELETE',
+      headers: { Authorization: `Bearer ${tok}` },
+    });
+  }
+
+  // Clear all battle-hand slots.
+  await fetch(`${API_URL}/api/loadout`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${tok}` },
+    body: JSON.stringify({ a1: null, a2: null, d1: null, d2: null, thumb: null }),
+  });
+
+  await enterForestScreen(page, 'forest_anchorage');
+  await page.waitForFunction(
+    () => typeof (window as any).__overworldToggleBattleHand === 'function',
+    { timeout: 8000 },
+  );
+
+  // Open the overlay — must not throw or hang.
+  await openBattleHand(page);
+
+  // The heart card state hook reports the empty slot.
+  const heartState = await page.evaluate(() => (window as any).__heartCardState);
+  expect(heartState).toBeTruthy();
+  expect(heartState.equipped).toBe(false);
+
+  const texts = await modalTexts(page);
+
+  // Title present (overlay rendered successfully).
+  expect(texts).toContain('Manage Battle Rings');
+
+  // ♥ 0/0 label present (the spec-mandated empty-slot readout).
+  expect(texts.some((t) => t === '♥ 0/0')).toBe(true);
+
+  // DISCARD slot structural element still present with its label.
+  expect(texts).toContain('DISCARD');
+  const discardSlotFound = await page.evaluate(() => {
+    const scene = (window as any).__game?.scene?.getScene('ForestScene') as any;
+    const modal = scene?.battleHand?.manageModal;
+    if (!modal) return false;
+    let found = false;
+    const walk = (c: any): void => {
+      for (const o of c.getAll ? c.getAll() : []) {
+        if (o.name === 'discard-slot') found = true;
+        if (o.getAll) walk(o);
+      }
+    };
+    walk(modal);
+    return found;
+  });
+  expect(discardSlotFound).toBe(true);
+
+  // Recharge buttons present (not conditionally hidden on empty hand).
+  expect(texts.some((t) => t.includes('Recharge'))).toBe(true);
+
+  // Spare grid present (spareContainer renders even with zero spares).
+  const grid = await spareGridInfo(page);
+  // grid.rows may be 0 if no spares, but the call must not throw.
+  expect(grid).toBeTruthy();
+
+  await ctx.close();
+});

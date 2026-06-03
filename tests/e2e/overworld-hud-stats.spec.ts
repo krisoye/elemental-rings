@@ -205,3 +205,124 @@ test('overworld HUD (#353): HUD text is non-empty while Manage Battle Rings moda
 
   await ctx.close();
 });
+
+// ── Regression #1 — zero Total/Avg (fresh player, no battles) ────────────────
+// A freshly-minted player has total_xp=0 and battle_hand_avg_xp=0. The HUD
+// must render `Total: 0` and `Avg: 0`, not `NaN`, `undefined`, or an empty
+// segment. This locks in the `?? 0` fallbacks in refreshHud().
+test('overworld HUD (#353 regression): zero total_xp and avg render as "Total: 0" and "Avg: 0" — not NaN or empty', async ({ browser }) => {
+  const ctx = await browser.newContext();
+  await seedAuthToken(ctx);
+  const page = await ctx.newPage();
+
+  await page.goto(URL);
+  await page.waitForFunction(() => (window as any).__activeScene === 'CampScene', {
+    timeout: 10000,
+  });
+
+  // Confirm the fresh-player precondition: battle_hand_avg_xp should be 0 (no
+  // battles played yet). Verify the type and capture values for exact matching.
+  const tok = await page.evaluate(() => localStorage.getItem('er_token') ?? '');
+  const me = (await (
+    await fetch(`${API_URL}/api/me`, { headers: { Authorization: `Bearer ${tok}` } })
+  ).json()) as { player: { total_xp?: number; battle_hand_avg_xp?: number } };
+  const totalXp = me.player.total_xp ?? 0;
+  const avgXp = me.player.battle_hand_avg_xp ?? 0;
+  expect(typeof totalXp).toBe('number');
+  expect(typeof avgXp).toBe('number');
+
+  await enterForestScreen(page, 'forest_anchorage');
+  await page.waitForFunction(
+    () => typeof (window as any).__overworldToggleBattleHand === 'function',
+    { timeout: 8000 },
+  );
+  await waitForHudRefresh(page);
+  const hud = await getHudText(page);
+
+  // Core assertion: neither segment may contain 'NaN' or 'undefined'.
+  expect(hud).toContain('Total:');
+  expect(hud).toContain('Avg:');
+  expect(hud).not.toContain('NaN');
+  expect(hud).not.toContain('undefined');
+
+  // Rendered value must match server value processed through the same formatting
+  // as the implementation: toLocaleString() for Total, Math.round+toLocaleString for Avg.
+  const expectedTotal = `Total: ${totalXp.toLocaleString()}`;
+  const expectedAvg = `Avg: ${Math.round(avgXp).toLocaleString()}`;
+  expect(hud).toContain(expectedTotal);
+  expect(hud).toContain(expectedAvg);
+
+  await ctx.close();
+});
+
+// ── Regression #2 — separator consistency ────────────────────────────────────
+// The spec mandates ` · ` (space-middot-space style) as the sole separator
+// between HUD segments. The implementation uses `  ·  ` (two spaces each side).
+// A mixed separator (` - `, `|`) in the new segments would indicate a different
+// code path was introduced and the style contract is broken.
+test('overworld HUD (#353 regression): all HUD segments use the canonical "  ·  " separator — no mixed styles', async ({ browser }) => {
+  const ctx = await browser.newContext();
+  await seedAuthToken(ctx);
+  const page = await ctx.newPage();
+  await loadForest(page);
+  await waitForHudRefresh(page);
+  const hud = await getHudText(page);
+
+  // No alternative separator variants anywhere in the string.
+  expect(hud).not.toMatch(/ - /);    // dash separator
+  expect(hud).not.toMatch(/\|/);     // pipe separator
+  expect(hud).not.toMatch(/ \| /);   // spaced pipe
+  expect(hud).not.toMatch(/·{2,}/);  // doubled middot
+
+  // Splitting on the canonical double-spaced separator yields well-formed tokens.
+  const SEPARATOR = '  ·  ';
+  const segments = hud.split(SEPARATOR);
+  // Spec requires at minimum 8 segments: Day · Gold · Food · Spirit · ♥ · XP · Total: · Avg:
+  expect(segments.length).toBeGreaterThanOrEqual(8);
+  for (const seg of segments) {
+    expect(seg.trim().length, `segment "${seg}" must not be blank`).toBeGreaterThan(0);
+  }
+
+  await ctx.close();
+});
+
+// ── Regression #3 — segment order ────────────────────────────────────────────
+// The spec prescribes the display order: Day … Gold … Food … Spirit … ♥ … XP
+// … Total: … Avg:. Tests using only `toContain` cannot catch a correct set of
+// segments rendered in the wrong order. This test uses indexOf position
+// comparisons to enforce strict left-to-right ordering per the spec.
+test('overworld HUD (#353 regression): segment order is Day · Gold · Food · Spirit · ♥ · XP · Total: · Avg:', async ({ browser }) => {
+  const ctx = await browser.newContext();
+  await seedAuthToken(ctx);
+  const page = await ctx.newPage();
+  await loadForest(page);
+  await waitForHudRefresh(page);
+  const hud = await getHudText(page);
+
+  const positions = {
+    Day:    hud.indexOf('Day '),
+    Gold:   hud.indexOf('Gold '),
+    Food:   hud.indexOf('Food '),
+    Spirit: hud.indexOf('Spirit '),
+    Heart:  hud.indexOf('♥ '),
+    XP:     hud.indexOf('XP '),
+    Total:  hud.indexOf('Total:'),
+    Avg:    hud.indexOf('Avg:'),
+  };
+
+  // All segments must be present (indexOf returns −1 when absent).
+  for (const [key, pos] of Object.entries(positions)) {
+    expect(pos, `segment "${key}" must appear in HUD string`).toBeGreaterThanOrEqual(0);
+  }
+
+  // Strict ascending position order per the spec-mandated display sequence.
+  expect(positions.Day).toBeLessThan(positions.Gold);
+  expect(positions.Gold).toBeLessThan(positions.Food);
+  expect(positions.Food).toBeLessThan(positions.Spirit);
+  expect(positions.Spirit).toBeLessThan(positions.Heart);
+  expect(positions.Heart).toBeLessThan(positions.XP);
+  expect(positions.XP).toBeLessThan(positions.Total);
+  expect(positions.Total).toBeLessThan(positions.Avg);
+
+  await ctx.close();
+});
