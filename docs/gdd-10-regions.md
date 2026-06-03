@@ -185,7 +185,7 @@ The Forest is a **multi-screen region** — a graph of discrete maps connected b
 - **exits:** east → `forest_hollow`
 - **danger:** 2
 - **biome_exit:** south → `SwampScene` *(held by the Bogwood Warden boss gate until defeated)*
-- **content:** The southwestern fringe. Ground shifts from dirt to mud; standing water pools near the edge. The **Bogwood Warden** — a mid-tier boss wielding Mud (Water+Earth) attack and Wood defense — stands in the south passage. Until it falls, the south edge is impassable; defeating it opens the way into the Swamp and drops a food cache.
+- **content:** The southwestern fringe. Ground shifts from dirt to mud; standing water pools near the edge. The **Bogwood Warden** — a mid-tier boss wielding Mud (Water+Earth) attack and Wood defense — stands in the south passage. Until it falls, the south edge is impassable; defeating it opens the way into the Swamp, drops a food cache, and yields its staked **Mud** (Water+Earth) ring — the Warden's fused thumb transfers to the winner like any duel (§9.1).
 
 ---
 
@@ -233,6 +233,7 @@ A towering spirit of bark and howling wind, the oldest guardian the Forest has e
 1. **Reliquary Shard** — the first shard in the game. Expands the Reliquary from 20 to 30 ring slots (§4.1.1).
 2. **Large food cache** — biome boss food drop (§10.5).
 3. **South exit opens** — the Verdant Descent becomes accessible, unlocking the Bloom wing.
+4. **Thornado ring** — the Warden's staked **Thornado** (Wood+Wind) fused thumb transfers to the winner, like any duel (§9.1).
 
 **Content:** A circular clearing of stamped earth ringed by ancient standing stones, unnaturally still and quiet. The Warden blocks the south passage; the clearing is reachable from two directions before the fight — Briar Pass from the north, Deepwood from the west — but there is no way south until the Warden is defeated.
 
@@ -293,7 +294,7 @@ A towering spirit of bark and howling wind, the oldest guardian the Forest has e
 - **exits:** east → `forest_ancient_grove`
 - **danger:** 2
 - **shrine:** Bloom (Wood + Earth)
-- **content:** A sunken hollow west of the Ancient Grove. The ground dips into a natural bowl thick with flowering vines, wild roses, and earthen mounds. The Bloom shrine altar sits at the lowest point — its doors stand open, unsealed long before the Forest was settled, awaiting whoever comes to use it. A shrine guardian defends the hollow. Dead end — the western edge is a sheer root wall.
+- **content:** A sunken hollow west of the Ancient Grove. The ground dips into a natural bowl thick with flowering vines, wild roses, and earthen mounds. The Bloom shrine altar sits at the lowest point — its doors stand open, unsealed long before the Forest was settled, awaiting whoever comes to use it. A shrine guardian defends the hollow; defeating the **Bloom Guardian** grants a **Bloom** (Wood+Earth) ring — because the altar is already open, this fused thumb is a combat reward rather than a seal-key (§9.1). Dead end — the western edge is a sheer root wall.
 
 ---
 

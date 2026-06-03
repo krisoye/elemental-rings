@@ -876,15 +876,14 @@ export class BattleRoom extends Room<{ state: BattleState }> {
         }
       } else if (!loserPlayerId && winnerPlayerId && loserId) {
         // vsAI win: AI has no DB ring to transfer, so grant the winner a new
-        // ring matching the AI's thumb element (GDD §9.1).
-        //
-        // #257 — SUPPRESS this generic grant for a FUSED-THUMB BOSS. A boss stakes
-        // its thematic fusion; beating it must NOT hand the player that fusion for
-        // free (the curated rewards stand alone — the food cache below, and the
-        // Thornado Guardian's grantRingToCarry(THORNADO)). The thumb is a fusion
-        // exactly when this is a boss with a fused thumb, so guard on isFusion.
+        // ring matching the AI's thumb element (GDD §9.1: winner receives the
+        // staked ring). This fires for fused-thumb bosses too — a boss stakes its
+        // thematic fusion, and defeating it transfers that fusion to the winner
+        // exactly like any duel (the fused element flows straight into the
+        // two-tone won-ring card; no per-NPC wiring needed). The only stake-free
+        // duel is a practice rematch, which early-returns above (#262).
         const aiPs = this.state.players.get(loserId);
-        if (aiPs && !aiPs.thumb.isFusion) {
+        if (aiPs) {
           const t = aiPs.thumb;
           wonRingId = PlayerRepo.grantRing(winnerPlayerId, t.element, t.tier, t.maxUses, t.xp);
           wonRingElement = t.element;
@@ -905,11 +904,6 @@ export class BattleRoom extends Room<{ state: BattleState }> {
             if (npcSpawn?.respawnDays === 0) {
               const foodDrop = npcSpawn.foodDrop ?? 0;
               if (foodDrop > 0) PlayerRepo.addFood(winnerPlayerId, foodDrop);
-            }
-            // #231 — defeating the Thornado Shrine Guardian drops a Thornado ring
-            // directly into the winner's carry on first defeat only.
-            if (this.npcId === 'forest_thornado_shrine_guardian') {
-              PlayerRepo.grantRingToCarry(winnerPlayerId, ElementEnum.THORNADO, 2);
             }
           }
         }

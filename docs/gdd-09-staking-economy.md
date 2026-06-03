@@ -6,6 +6,7 @@
 - The Thumb ring grants a **passive ability** during battle (see §9.3) but is **never pressed in combat**
 - **Loser forfeits their staked ring and all XP associated with it**
 - **Winner receives the staked ring and its full XP**
+- **Bosses and shrine guardians are no exception** — their stake is their thematic fused thumb, and defeating them transfers that fusion ring to the winner exactly like any duel. The only consequence-free duel is a **training / practice rematch** (re-fighting an already-beaten boss for practice): no stake changes hands.
 
 > **Design note (v4.2):** Earlier drafts allowed the staked ring to be any ring outside the battle loadout. The current design places the stake in the Thumb slot, making it part of the loadout and always visible to both players.
 

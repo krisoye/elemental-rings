@@ -8,7 +8,8 @@
  *
  * Covers:
  *  #257 — fused-thumb stake (thumb element / isFusion / fusionParents) + two-tone
- *         telegraph (attackerElements length 2) + suppressed generic won-ring grant.
+ *         telegraph (attackerElements length 2). Defeating a fused-thumb boss
+ *         grants its fusion via the standard §9.1 won-ring path (#328).
  *  #258 — BOSS_MODIFIERS hearts / uses / modified profile.
  *  #259 — enrage flag on threshold crossing.
  *  #260 — gauge pressure multiplier.
