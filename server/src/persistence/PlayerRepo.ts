@@ -415,12 +415,8 @@ export const saveLoadout = db.transaction(
     if (!current) throw new Error(`No loadout for player ${playerId}`);
     // #171 — carry-cap guard: reject if the player is currently carrying more
     // rings than the XP-derived cap (5 + ceil(log_2(aggregate_xp))). Single-
-    // sourced via getCarryCap so the limit matches packLoadout and the route check.
-    const carriedCount = (selectCarryByOwner.all(playerId) as RingRow[]).length;
-    const cap = getCarryCap(playerId);
-    if (carriedCount > cap) {
-      throw new Error(`carry cap exceeded (${carriedCount} > ${cap})`);
-    }
+    // sourced via assertCarryWithinCap so the limit matches packLoadout and the route check.
+    assertCarryWithinCap(playerId);
 
     const ownerRings = new Set(getRingsForPlayer(playerId).map((r) => r.id));
 
@@ -894,6 +890,32 @@ export function getCarryCap(_playerId: string): number {
 }
 
 /**
+ * The number of rings the player would be carrying after applying the given
+ * delta to the current carried set (in_carry=1). Heart-slot rings (in_carry=0)
+ * are never in the carried set, so they never count. Dedupes so a repeated id
+ * cannot inflate the count.
+ */
+export function carriedCountAfter(
+  playerId: string,
+  { adding = [], removing = [] }: { adding?: string[]; removing?: string[] } = {},
+): number {
+  const set = new Set(getCarry(playerId).map((r) => r.id));
+  for (const id of removing) set.delete(id);
+  for (const id of adding) set.add(id);
+  return set.size;
+}
+
+/** Throws 'carry cap exceeded (n > cap)' if the post-delta carried count exceeds the cap. */
+export function assertCarryWithinCap(
+  playerId: string,
+  delta: { adding?: string[]; removing?: string[] } = {},
+): void {
+  const n = carriedCountAfter(playerId, delta);
+  const cap = getCarryCap(playerId);
+  if (n > cap) throw new Error(`carry cap exceeded (${n} > ${cap})`);
+}
+
+/**
  * Atomically set the carried set to EXACTLY the given ring ids. Validates that
  * the count is within the player's carry_cap and that every id is owned by the
  * player; throws otherwise. All other rings have their in_carry flag cleared.
@@ -904,12 +926,9 @@ export function getCarryCap(_playerId: string): number {
  */
 export const packLoadout = db.transaction(
   (playerId: string, ringIds: string[]): void => {
-    const cap = getCarryCap(playerId);
     // Dedupe defensively so a repeated id can't inflate the count past the cap.
     const unique = Array.from(new Set(ringIds));
-    if (unique.length > cap) {
-      throw new Error(`carry cap exceeded (${unique.length} > ${cap})`);
-    }
+    assertCarryWithinCap(playerId, { adding: unique, removing: getCarry(playerId).map((r) => r.id) });
     const ownerRings = getRingsForPlayer(playerId);
     const ownerRingSet = new Set(ownerRings.map((r) => r.id));
     for (const id of unique) {
@@ -1179,12 +1198,10 @@ export const setHeartRing = db.transaction(
       if (oldHeartId && oldHeartId !== ringId) {
         setRingHeartSlot(oldHeartId, 0);
         if (releaseTo === 'spare') {
-          // Carry-cap guard: the released ring joins the carry, so the resulting
-          // carried count must not exceed the cap.
-          const carriedCount = getCarry(playerId).length;
-          if (carriedCount + 1 > getCarryCap(playerId)) {
-            throw new Error('carry cap exceeded');
-          }
+          // Carry-cap guard: old heart joins the carry, incoming spare leaves it —
+          // a net-zero swap. assertCarryWithinCap accounts for both sides so the
+          // guard correctly passes when carry is exactly at cap.
+          assertCarryWithinCap(playerId, { adding: [oldHeartId], removing: ringId ? [ringId] : [] });
           setRingCarry(oldHeartId, 1);
         } else {
           // 'reliquary' — rest it (in_carry = 0).
