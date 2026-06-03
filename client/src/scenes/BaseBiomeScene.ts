@@ -684,9 +684,21 @@ export abstract class BaseBiomeScene extends DualCameraScene {
 
     // After returning from a battle, automatically open the battle-hand manager
     // so the player can reassign slots before moving on (GDD §6.8).
-    const sceneData = this.scene.settings.data as { openBattleHand?: boolean } | undefined;
+    const sceneData = this.scene.settings.data as
+      { openBattleHand?: boolean; hint?: string } | undefined;
     if (sceneData?.openBattleHand) {
       this.openBattleHand();
+    }
+
+    // EPIC #319 (A2) — when EncounterScene catches a server rejection (e.g.
+    // ServerError 4000/4001) it routes back here via scene.start with a `hint`
+    // string. Flash it briefly so the player understands why the duel was blocked.
+    if (sceneData?.hint) {
+      const hintText = sceneData.hint;
+      this.time.delayedCall(200, () => {
+        this.showNpcPrompt(hintText);
+        this.time.delayedCall(2500, () => this.hideNpcPrompt());
+      });
     }
   }
 
@@ -1548,6 +1560,12 @@ export abstract class BaseBiomeScene extends DualCameraScene {
    */
   private onNpcClick(npc: NpcInfo): void {
     if (this.overlayOpen) return;
+    // EPIC #319 (A2) — mirror the same pre-flight gate as checkNpcDetection() so
+    // double-clicking a blocked NPC is a no-op (no duel launch, no scene transition).
+    const campState = window.__campState;
+    const heartOk = !!(campState?.heart_ring) && (campState.heart_ring.current_uses ?? 0) > 0;
+    const thumbOk = campState?.loadout?.thumb != null;
+    if (!heartOk || !thumbOk) return;
     const now = this.time.now;
     const prev = this.npcLastClick.get(npc.id) ?? -Infinity;
     this.npcLastClick.set(npc.id, now);
@@ -1577,6 +1595,15 @@ export abstract class BaseBiomeScene extends DualCameraScene {
    * #83 — per-frame detection (GDD §10.3). Find the nearest NPC within
    * detectionRadius(); set this.detectedNpc to it (or null when none in range).
    * Show/hide a camera-pinned Approach [E] prompt and publish window.__detectedNpc.
+   *
+   * EPIC #319 (A2) — Discovery finding: in all production code paths the player
+   * must pass through CampScene before entering any BaseBiomeScene (BootScene →
+   * CampScene → ForestScene/SwampScene; BattleScene returns to the biome with the
+   * global still set). window.__campState is therefore always populated at biome
+   * entry in production. E2E tests that navigate directly to a biome scene without
+   * CampScene will see campState as undefined; the gate predicates below handle
+   * that safely via optional-chaining (undefined → blocked). No fallback fetch is
+   * needed for production correctness, but E2E harness setup must set __campState.
    */
   private checkNpcDetection(): void {
     const px = this.player.x;
@@ -1585,6 +1612,29 @@ export abstract class BaseBiomeScene extends DualCameraScene {
     const found = nearest({ x: px, y: py }, this.overworldNpcs, radius);
 
     if (found) {
+      // EPIC #319 (A2) — pre-flight battle-entry gate.
+      // Heart: must be assigned AND have uses remaining (drained = blocked).
+      // Thumb: must be assigned — any uses value, including 0, is allowed.
+      const campState = window.__campState;
+      const heartOk =
+        !!(campState?.heart_ring) && (campState.heart_ring.current_uses ?? 0) > 0;
+      const thumbOk = campState?.loadout?.thumb != null;
+
+      if (!heartOk) {
+        // Leave detectedNpc null so handleInteract() and onNpcClick() are no-ops.
+        this.detectedNpc = null;
+        this.showNpcPrompt('Equip & recharge a heart ring to fight');
+        window.__detectedNpc = null;
+        return;
+      }
+      if (!thumbOk) {
+        this.detectedNpc = null;
+        this.showNpcPrompt('Stake a ring to fight');
+        window.__detectedNpc = null;
+        return;
+      }
+
+      // Both preconditions met — show the normal approach prompt.
       this.detectedNpc = {
         id: found.id,
         personality: found.personality,

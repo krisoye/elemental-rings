@@ -200,6 +200,8 @@ export class EncounterScene extends Phaser.Scene {
       this.scene.settings.data = {};
       this.npcDuel = null;
       // #87 Part C — a double-click NPC launch (ambush) pays for first strike.
+      // EPIC #319 (A2) — catch any server rejection (e.g. ServerError 4000/4001)
+      // so the player is returned to the overworld rather than seeing a dark screen.
       void this.startAIDuel(
         personality,
         undefined,
@@ -209,7 +211,24 @@ export class EncounterScene extends Phaser.Scene {
         spriteFrame,
         battleKey,
         thumbElement,
-      );
+      ).catch((err: unknown) => {
+        const code = (err as any)?.code as number | undefined;
+        const hint =
+          code === 4000 ? 'Equip & recharge a heart ring to fight' :
+          code === 4001 ? 'Stake a ring to fight' :
+          'Could not start battle — try again';
+        const origin = window.__duelOrigin;
+        if (origin) {
+          this.scene.start(origin.scene, {
+            returnX: origin.x,
+            returnY: origin.y,
+            screenId: origin.screenId,
+            hint,
+          });
+        } else {
+          this.scene.start('CampScene');
+        }
+      });
       return;
     }
 
