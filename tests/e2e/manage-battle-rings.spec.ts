@@ -309,9 +309,9 @@ test('manage-battle-rings: Recharge All includes the heart ring (stays equipped,
 });
 
 // ── Scenario 5 — three grouped clusters + 5×2 spare grid, both rows visible ───
-// #348 Scenario 1: seed ≥7 spares, assert the STATUS/HP cards sit at the group-2
-// cluster x (382, isolated by gaps), and the spare grid shows two visible rows
-// (no scroll) covering all spares.
+// #348 Scenario 1 / #350: seed ≥7 spares, assert the STATUS/HP cards sit at the
+// group-2 cluster x (460 after #350 rebalance, isolated by 65px gaps on both
+// sides), and the spare grid shows two visible rows (no scroll) covering all spares.
 test('manage-battle-rings: three clusters render and the 5×2 spare grid shows both rows', async ({ browser }) => {
   const ctx = await browser.newContext();
   await seedAuthToken(ctx);
@@ -330,8 +330,8 @@ test('manage-battle-rings: three clusters render and the 5×2 spare grid shows b
   );
   await openBattleHand(page);
 
-  // STATUS (thumb) and HP (heart) cards share the group-2 column x (382), isolated
-  // by gaps from group 1 (262) and group 3 (560/660). Their labels sit at x=382.
+  // STATUS (thumb) and HP (heart) cards share the group-2 column x (460 after #350
+  // rebalance), isolated by 65px gaps from group 1 (303) and group 3 (617/721).
   const labelXs = await page.evaluate(() => {
     const scene = (window as any).__game?.scene?.getScene('ForestScene');
     const modal = scene?.battleHand?.manageModal;
@@ -345,8 +345,8 @@ test('manage-battle-rings: three clusters render and the 5×2 spare grid shows b
     walk(modal);
     return out;
   });
-  expect(labelXs.STATUS).toBe(382);
-  expect(labelXs.HP).toBe(382);
+  expect(labelXs.STATUS).toBe(460); // #350 rebalance: GROUP2_X = 460
+  expect(labelXs.HP).toBe(460);
 
   // The spare grid shows exactly 2 rows (both visible, no scroll) and ≥7 cells.
   const grid = await spareGridInfo(page);
@@ -358,7 +358,7 @@ test('manage-battle-rings: three clusters render and the 5×2 spare grid shows b
 
 // ── Scenario 6 — safe 3-step discard: select → DISCARD slot → Cancel/Confirm ──
 // #348 Scenario 2. Drives REAL Phaser pointer events: select a spare, click the
-// DISCARD slot (group-1 row-1, x=262 y=240) → __discardConfirmOpen true, no ring
+// DISCARD slot (group-1 row-1, x=303 y=240 after #350 rebalance) → __discardConfirmOpen true, no ring
 // gone; Cancel → ring still present; reselect + Discard → /api/me shows it removed.
 test('manage-battle-rings: discarding a spare requires select → DISCARD slot → confirm', async ({ browser }) => {
   const ctx = await browser.newContext();
