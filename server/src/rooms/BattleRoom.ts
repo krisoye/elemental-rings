@@ -340,6 +340,11 @@ export class BattleRoom extends Room<{ state: BattleState }> {
           this.state.players.get(AI_ID)!,
           this.npcId,
         );
+        // E2E override: aiHeartwoodCharges=0 disables Heartwood so the duel ends
+        // on the first heart-loss (makes Thornwood tests deterministic under load).
+        if (options.aiHeartwoodCharges !== undefined) {
+          this.heartwoodCharges = options.aiHeartwoodCharges;
+        }
       }
 
       // Build the boss-modified AI profile (no-op when not a boss). The modifier

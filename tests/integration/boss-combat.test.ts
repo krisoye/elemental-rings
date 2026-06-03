@@ -614,13 +614,15 @@ describe('#328 — spec conformance: every fused-thumb boss grants its fusion ri
     // THORNADO ring (via generic §9.1 won-ring path) AND the BOSS_FOOD_DROP (50
     // units). Both rewards must be credited; neither may be omitted.
     //
-    // The Thornwood Warden has Heartwood (2 charges, absorbs first 2 heart-losses),
-    // requiring 3 clean hits even at aiHearts:1. The polling helper handles this
-    // naturally — it keeps attacking until the room reaches ENDED.
+    // Disable Heartwood via the E2E override so the warden dies on the first
+    // heart-loss (aiHearts:1 + aiHeartwoodCharges:0 = guaranteed single-hit KO).
+    // This makes the test deterministic under load; it still verifies that both
+    // the ring grant and the food-cache path fire, which is the acceptance criterion.
     const { playerId, wonRing, room } = await winAgainstBoss(
       'forest_thornwood_warden',
       'RESILIENT',
       101,
+      { aiHeartwoodCharges: 0 },
     );
 
     expect(room.state.phase).toBe('ENDED');
@@ -640,7 +642,7 @@ describe('#328 — spec conformance: every fused-thumb boss grants its fusion ri
     // Client message for the ring.
     expect(wonRing).toBeDefined();
     expect(wonRing?.element).toBe(ElementEnum.THORNADO);
-  }, 30000);
+  }, 20000);
 
   test('Thornado Guardian grants exactly ONE THORNADO ring — no double-grant regression (#328)', async () => {
     // Regression guard: before #328, a special-case grantRingToCarry block fired in

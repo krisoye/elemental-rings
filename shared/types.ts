@@ -79,6 +79,11 @@ export interface BattleRoomOptions {
   //   aiUses: 0    → AI attacks/defends with extinguished rings → AI forfeits
   aiHearts?: number;
   aiUses?: number;
+  // E2E-only: override the Heartwood charge count on a boss that has it (e.g.
+  // Thornwood Warden). Pass 0 to disable Heartwood so the fight ends on the
+  // first heart-loss rather than after N absorbed losses. Only affects the
+  // Heartwood mechanic; the boss's rings, HP, and passives are otherwise unchanged.
+  aiHeartwoodCharges?: number;
   // E2E-only: a unique key used by Colyseus `filterBy(['e2eRoomId'])` matchmaking
   // (gated by E2E_TEST_ROUTES on the server) so two contexts that joinOrCreate
   // 'battle' with the SAME id pair into one isolated room. Absent in production,
