@@ -11,8 +11,8 @@ const CARD_H = 90;
  * `onEscrowed()` is called instead so the host can surface a status message.
  *
  * The shared card body (bg + fused fill + element/pips/xp/tier rows + selection
- * stroke) lives in {@link RingCard}; this panel adds the THUMB title, the escrow
- * LOCKED label, and the "click to stake" hint.
+ * stroke) lives in {@link RingCard}; this panel adds the STATUS title (#347), the
+ * escrow LOCKED label, and the "click to stake" hint.
  */
 export class StakePanel extends Phaser.GameObjects.Container {
   private readonly bg: Phaser.GameObjects.Rectangle;
@@ -59,8 +59,9 @@ export class StakePanel extends Phaser.GameObjects.Container {
     this.add(this.card);
     this.bg = this.card.bg;
 
+    // #347 — the Thumb slot is surfaced as STATUS across all screens for clarity.
     this.titleLbl = scene.add
-      .text(cx, cy - 36, 'THUMB', { fontSize: '9px', color: '#ffcc44' })
+      .text(cx, cy - 36, 'STATUS', { fontSize: '9px', color: '#ffcc44' })
       .setOrigin(0.5);
 
     this.lockLbl = scene.add

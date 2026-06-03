@@ -117,6 +117,9 @@ declare global {
     // #125 — true while the BattleScene forfeit confirm prompt is open. E2E reads
     // this to assert the Z+C (a1+a2) / 3+4 (d1+d2) chord raised the prompt.
     __forfeitPromptOpen?: boolean;
+    // #348 — true while the BattleHandOverlay discard-confirm modal is open. Mirrors
+    // __forfeitPromptOpen so E2E can assert the safe 3-step discard without pixels.
+    __discardConfirmOpen?: boolean;
     // #135 — the LOCAL player's rendered HUD (Blinded `?` substitution applied).
     // E2E asserts own-HUD hiding against this without reading pixels.
     // #211 — `spirit` is the rendered ⚡ readout as 'current/max' (or undefined

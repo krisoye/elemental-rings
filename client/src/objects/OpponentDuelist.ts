@@ -130,8 +130,9 @@ export class OpponentDuelist extends Phaser.GameObjects.Container {
     // jewelry position). Dim overlay signals passive exhaustion.
     this.thumbCard = scene.add.rectangle(-90, 20, 40, 56, 0x555555);
     this.thumbCard.setStrokeStyle(1, 0xaa8800);
+    // #348 — STATUS label, matching the player-side wording across all screens.
     const thumbLbl = scene.add
-      .text(-90, 45, 'THUMB', { fontSize: '8px', color: '#ffcc44' })
+      .text(-90, 45, 'STATUS', { fontSize: '8px', color: '#ffcc44' })
       .setOrigin(0.5);
 
     this.thumbDimOverlay = scene.add.rectangle(-90, 20, 40, 56, 0x000000, 0.6);

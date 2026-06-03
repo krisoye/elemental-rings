@@ -96,8 +96,17 @@ export class BattleHandOverlay {
   private manageLoadout: Record<string, string | null> = {};
   /** Full /api/me ring list (carried or not) — needed to show a pending won ring. */
   private allRings: RingData[] = [];
-  private managePlayer: { game_day?: number; gold?: number; food_units?: number; spirit_current?: number; spirit_max?: number; aggregate_xp?: number; carry_cap?: number; spareCapacity?: number } | null = null;
+  private managePlayer: { game_day?: number; gold?: number; food_units?: number; spirit_current?: number; spirit_max?: number; aggregate_xp?: number; carry_cap?: number; spareCapacity?: number; total_xp?: number; battle_hand_avg_xp?: number } | null = null;
   private manageStatusText: Phaser.GameObjects.Text | null = null;
+  /**
+   * #348 — the open discard-confirm modal container (mirrors BattleScene's
+   * forfeitPrompt), or null. Built by {@link openDiscardConfirm}; torn down by
+   * {@link dismissDiscardConfirm}. Its open state is mirrored on
+   * `window.__discardConfirmOpen` for E2E.
+   */
+  private discardConfirm: Phaser.GameObjects.Container | null = null;
+  /** #348 — detacher for the discard-confirm Y/N key listeners. */
+  private discardKeyHandlers: (() => void) | null = null;
 
   /**
    * @param scene the host spatial/encounter scene
@@ -184,6 +193,9 @@ export class BattleHandOverlay {
       this.scene.input.off('wheel', this.spareWheelHandler);
       this.spareWheelHandler = null;
     }
+    // #348 — the discard confirm is a separate depth-3000 container (not a child of
+    // manageModal), so a re-render would orphan it. Dismiss it before rebuilding.
+    this.dismissDiscardConfirm();
     // #305 — the previous render's Thumb-passive tooltip is bound to objects in the
     // about-to-be-destroyed container; detach it before rebuilding.
     if (this.thumbTooltipDetach) {
@@ -203,93 +215,143 @@ export class BattleHandOverlay {
       .rectangle(CANVAS_W / 2, CANVAS_H / 2, CANVAS_W, CANVAS_H, 0x000000, 0.75)
       .setScrollFactor(0)
       .setInteractive();
+    // #348 — panel grown to 560 tall (spans y 8–568 inside the 576 canvas) so the
+    // 5×2 spare grid + recharge row fit below the three card clusters. The old
+    // separate won-ring banner is folded into group-1 row-0, freeing that height.
     const panel = this.scene.add
-      .rectangle(CANVAS_W / 2, CANVAS_H / 2, 640, 520, 0x222233)
+      .rectangle(CANVAS_W / 2, CANVAS_H / 2, 640, 560, 0x222233)
       .setScrollFactor(0)
       .setStrokeStyle(2, 0xffcc88);
     const title = this.scene.add
-      .text(CANVAS_W / 2, CANVAS_H / 2 - 245, 'Manage Battle Rings', {
+      .text(CANVAS_W / 2, CANVAS_H / 2 - 265, 'Manage Battle Rings', {
         fontSize: '18px',
         color: '#ffffff',
       })
       .setScrollFactor(0)
       .setOrigin(0.5);
     const close = this.scene.add
-      .text(CANVAS_W / 2 + 290, CANVAS_H / 2 - 245, CLOSE_GLYPH, { fontSize: '18px', color: '#ff8888' })
+      .text(CANVAS_W / 2 + 290, CANVAS_H / 2 - 265, CLOSE_GLYPH, { fontSize: '18px', color: '#ff8888' })
       .setScrollFactor(0)
       .setOrigin(0.5)
       .setInteractive({ useHandCursor: true })
       .on('pointerdown', () => this.close());
     container.add([overlay, panel, title, close]);
 
-    // Player status line — mirrors the Sanctum screen stat bar.
+    // #348 — three-part stats header, parity with the Reliquary modal
+    // (CampScene.renderReliquaryHeader). Left keeps the field context (Day | Gold |
+    // Food | Spirit cur/max) since the overlay opens mid-overworld; centre adds the
+    // ♥ HP readout from the equipped heart ring; right adds Total/Avg battle XP. All
+    // values are read VERBATIM from /api/me — never computed client-side.
     const p = this.managePlayer;
-    const statLine = this.scene.add
+    const heart = this.heartRing;
+    const hp = heart ? `${heart.current_uses}/${heart.max_uses}` : '0/0';
+    const headerY = CANVAS_H / 2 - 240;
+    const headerLeft = this.scene.add
       .text(
-        CANVAS_W / 2,
-        CANVAS_H / 2 - 228,
+        CANVAS_W / 2 - 300,
+        headerY,
         p
-          ? `Day: ${p.game_day ?? 0} | Gold: ${p.gold ?? 0} | Food: ${p.food_units ?? 0} | Spirit: ${p.spirit_current ?? 0}/${p.spirit_max ?? 0} | XP: ${p.aggregate_xp ?? 0}`
+          ? `Day: ${p.game_day ?? 0} | Gold: ${p.gold ?? 0} | Food: ${p.food_units ?? 0} | Spirit: ${p.spirit_current ?? 0}/${p.spirit_max ?? 0}`
           : '',
         { fontSize: '12px', color: '#ffdd66' },
       )
       .setScrollFactor(0)
+      .setOrigin(0, 0.5);
+    const headerCenter = this.scene.add
+      .text(CANVAS_W / 2, headerY, `♥ ${hp}`, { fontSize: '12px', color: '#ff8888' })
+      .setScrollFactor(0)
       .setOrigin(0.5);
-    container.add(statLine);
+    const totalXp = (p?.total_xp ?? p?.aggregate_xp ?? 0).toLocaleString();
+    const avgXp = Math.round(p?.battle_hand_avg_xp ?? 0).toLocaleString();
+    const headerRight = this.scene.add
+      .text(CANVAS_W / 2 + 300, headerY, `Total XP: ${totalXp}  |  Avg Battle XP: ${avgXp}`, {
+        fontSize: '11px',
+        color: '#aaccff',
+      })
+      .setScrollFactor(0)
+      .setOrigin(1, 0.5);
+    container.add([headerLeft, headerCenter, headerRight]);
 
-    // Pending won ring (top section). The won ring is not yet carried, so it lives
-    // in allRings (full /api/me list), not manageRings. The player frees a carried
-    // slot (discard) to make room; tryAutoCarryPending then carries it.
+    // ── #348 — three gap-separated 2-row clusters ────────────────────────────
+    // Absolute card-centre coordinates (canvas 1024×576; modal centred 512,288).
+    // Cards are 92×80 (span ±46 / ±40). Clusters:
+    //   Group 1 (Won / Discard), col x=262:   row0 = pending won ring or placeholder;
+    //                                          row1 = DISCARD slot.
+    //   Group 2 (Status / HP), col x=382:      row0 = STATUS (thumb); row1 = HP (heart).
+    //                                          Isolated by gaps on BOTH sides.
+    //   Group 3 (Combat), cols x=560/660:      row0 = A1,A2; row1 = D1,D2.
+    // Rows: row0 y=150, row1 y=240. Labels sit at row_y − 34.
+    const GROUP1_X = 262;
+    const GROUP2_X = 382;
+    const GROUP3_X = [560, 660];
+    const ROW0_Y = 150;
+    const ROW1_Y = 240;
+
+    // ── Group 1, row 0 — pending won ring, or a dim placeholder ───────────────
+    // The won ring is not yet carried, so it lives in allRings (full /api/me list),
+    // not manageRings. Selecting it then clicking the DISCARD slot discards it.
     const pendingId = localStorage.getItem('er_pending_ring');
     const pendingRing = pendingId ? this.allRings.find((r) => r.id === pendingId) : undefined;
     if (pendingRing) {
-      const py = CANVAS_H / 2 - 168;
-      const pRect = this.scene.add
-        .rectangle(CANVAS_W / 2 - 250, py, 72, 80, ELEMENT_COLORS[pendingRing.element] ?? 0x444444)
+      const wonSelected = this.selRingId === pendingRing.id && this.selFromSlot === null;
+      const wonLbl = this.scene.add
+        .text(GROUP1_X, ROW0_Y - 34, 'WON ◆', { fontSize: '11px', color: '#ffcc44' })
         .setScrollFactor(0)
-        .setStrokeStyle(3, 0xffcc44);
-      container.add(pRect);
-      this.addRingInfo(container, CANVAS_W / 2 - 250, py, pendingRing);
-      const pLbl = this.scene.add
-        .text(
-          CANVAS_W / 2 - 200,
-          py,
-          `WON: ${ELEMENT_NAMES[pendingRing.element] ?? '?'} ring — discard a carried ring to keep it`,
-          { fontSize: '11px', color: '#ffdd66' },
-        )
+        .setOrigin(0.5);
+      const wonRect = this.scene.add
+        .rectangle(GROUP1_X, ROW0_Y, 92, 80, ELEMENT_COLORS[pendingRing.element] ?? 0x444444)
         .setScrollFactor(0)
-        .setOrigin(0, 0.5);
-      const pDiscard = this.scene.add
-        .text(CANVAS_W / 2 + 250, py, '[× Discard]', { fontSize: '11px', color: '#ff8888' })
-        .setScrollFactor(0)
-        .setOrigin(1, 0.5)
+        .setStrokeStyle(3, wonSelected ? 0xffff00 : 0xffcc44)
         .setInteractive({ useHandCursor: true })
         .on('pointerdown', () => {
-          void (async () => {
-            await this.discardPendingWonRing();
-            this.renderManageModal();
-          })();
+          // Select / deselect the pending won ring (source 'spare' sentinel — it is
+          // not a slot; the held id alone identifies it for the discard route).
+          if (wonSelected) this.swap.clear();
+          else this.swap.select(pendingRing.id, 'spare');
+          this.renderManageModal();
         });
-      container.add([pLbl, pDiscard]);
+      this.addRingInfo(container, GROUP1_X, ROW0_Y, pendingRing);
+      container.add([wonLbl, wonRect]);
       if (window.__encounterState) {
         window.__encounterState.pendingWonRing = { ringId: pendingRing.id, element: pendingRing.element };
       }
+    } else {
+      // Dim placeholder holds group-1 row-0 when no won ring is pending.
+      const ph = this.scene.add
+        .rectangle(GROUP1_X, ROW0_Y, 92, 80, 0x2a2a33)
+        .setScrollFactor(0)
+        .setStrokeStyle(2, 0x555566)
+        .setAlpha(0.5);
+      container.add(ph);
     }
 
-    // Top row (#305): 6 cards across — the Heart slot leftmost (index 0), then the
-    // 5 battle-hand slots (indices 1–5). Tightened from 120px to 100px pitch so all
-    // six 92px cards clear the 640px panel (leftmost center −270, rightmost +230,
-    // each card spanning ±46px → 46px clearance from each panel edge).
-    const slotY = CANVAS_H / 2 - 70;
-    const topCardX = (index: number): number => CANVAS_W / 2 - 270 + index * 100;
+    // ── Group 1, row 1 — DISCARD slot (3-step safe discard, no × buttons) ─────
+    // A card-shaped faint-red outline with NO permanent text label (#348). Clicking
+    // it WITH a card selected opens the confirm modal; with nothing selected it is a
+    // no-op. Named so E2E can locate it without a pixel read.
+    const discardRect = this.scene.add
+      .rectangle(GROUP1_X, ROW1_Y, 92, 80, 0x331a1a, 0.4)
+      .setScrollFactor(0)
+      .setStrokeStyle(2, 0xaa4444)
+      .setName('discard-slot')
+      .setInteractive({ useHandCursor: true })
+      .on('pointerdown', () => this.onDiscardSlotClick());
+    container.add(discardRect);
 
-    // Heart card at index 0 — element + HP pips, recharge/swap selectable, discardable.
-    this.renderHeartCard(container, topCardX(0), slotY);
+    // ── Group 2 row 1 — HP (heart) card; element + HP pips, recharge/swap. ────
+    this.renderHeartCard(container, GROUP2_X, ROW1_Y);
 
-    // Battle slots (indices 1–5). Filled slots show the same 4-line info as the
-    // Sanctum and get a small [×] discard button.
-    SLOT_KEYS.forEach((slot, i) => {
-      const sx = topCardX(i + 1);
+    // ── Group 2 row 0 (thumb→STATUS) + Group 3 (a1/a2 row 0, d1/d2 row 1) ─────
+    // SLOT_KEYS = ['thumb','a1','a2','d1','d2']. Map each to its cluster position.
+    const slotPos: Record<BattleSlot, { x: number; y: number }> = {
+      thumb: { x: GROUP2_X, y: ROW0_Y },
+      a1: { x: GROUP3_X[0], y: ROW0_Y },
+      a2: { x: GROUP3_X[1], y: ROW0_Y },
+      d1: { x: GROUP3_X[0], y: ROW1_Y },
+      d2: { x: GROUP3_X[1], y: ROW1_Y },
+    };
+    SLOT_KEYS.forEach((slot) => {
+      const { x: sx, y: slotY } = slotPos[slot];
       const ringId = this.manageLoadout[slot] ?? null;
       const ring = ringId ? this.manageRings.find((r) => r.id === ringId) : null;
       const color = ring ? ELEMENT_COLORS[ring.element] ?? 0x333333 : 0x333333;
@@ -324,13 +386,15 @@ export class BattleHandOverlay {
             this.renderManageModal();
           }
         });
+      // #347/#348 — the thumb slot reads STATUS (cross-screen parity); a1/a2/d1/d2
+      // keep their uppercase labels.
+      const labelText = slot === 'thumb' ? 'STATUS' : slot.toUpperCase();
       const slotLbl = this.scene.add
-        .text(sx, slotY - 34, slot.toUpperCase(), { fontSize: '11px', color: '#cccccc' })
+        .text(sx, slotY - 34, labelText, { fontSize: '11px', color: '#cccccc' })
         .setScrollFactor(0)
         .setOrigin(0.5);
       container.add([slotRect, slotLbl]);
-      // #305 — the Thumb passive is now a hover tooltip on the Thumb card (replacing
-      // the always-on strip below it), keeping the tightened 6-card row uncluttered.
+      // #305 — the Thumb passive is a hover tooltip on the STATUS card.
       if (slot === 'thumb') {
         this.thumbTooltipDetach = attachTooltip(this.scene, slotRect, () => this.thumbPassiveText(), {
           maxWidth: 180,
@@ -338,16 +402,6 @@ export class BattleHandOverlay {
       }
       if (ring) {
         this.addRingInfo(container, sx, slotY, ring);
-        const slotX = this.scene.add
-          .text(sx + 38, slotY - 32, '×', { fontSize: '13px', color: '#ff3333' })
-          .setScrollFactor(0)
-          .setOrigin(0.5)
-          .setInteractive({ useHandCursor: true })
-          .on('pointerdown', (_p: unknown, _x: number, _y: number, evt: { stopPropagation?: () => void }) => {
-            evt?.stopPropagation?.();
-            void this.discardCarriedRing(ring.id);
-          });
-        container.add(slotX);
       } else {
         const dash = this.scene.add
           .text(sx, slotY, '—', { fontSize: '11px', color: '#888888' })
@@ -368,101 +422,95 @@ export class BattleHandOverlay {
     const usedSpares = availableRings.length;
     const spareFull = usedSpares >= spareCapacity && spareCapacity >= 0;
 
-    // #85 Fix 3 — push the carried-rings section down 49px so the label + row clear
-    // the (now uncapped) Thumb passive strip below the battle slots. When the
-    // spare-full warning line is shown (+18px), bump the grid down an extra 20px
-    // so the warning text doesn't overlap the first row of ring cards.
-    const ringY = CANVAS_H / 2 + (spareFull ? 114 : 94);
-    const spareLabelText = `Spare rings — select to assign, or click two slots to swap:   Spare: ${usedSpares} / ${spareCapacity}`;
+    // #348 — spare grid is 5 cols × 2 rows, both rows always visible (≤10 cells).
+    // Label sits above the grid; the warning line (when full) tucks beside it so the
+    // two fixed grid rows never shift. Discard now goes through the DISCARD slot, so
+    // there is no per-card × here.
+    const SPARE_COLS = 5;
+    const SPARE_COL_X = [332, 422, 512, 602, 692];
+    const SPARE_ROW_Y = [350, 430]; // row 0, row 1 — cards span 310–390 / 390–470
+    const SPARE_ROW_H = 80;
+    const spareLabelText = `Spare: ${usedSpares} / ${spareCapacity} — select to assign, or click two slots to swap`;
     const spareLabelColor = spareFull ? '#ff8888' : '#aaccff';
     const carriedLbl = this.scene.add
-      .text(CANVAS_W / 2, CANVAS_H / 2 + 44, spareLabelText, {
+      .text(CANVAS_W / 2, CANVAS_H / 2 + 12, spareLabelText, {
         fontSize: '12px',
         color: spareLabelColor,
       })
       .setScrollFactor(0)
       .setOrigin(0.5);
     container.add(carriedLbl);
-    if (spareFull) {
-      const fullLbl = this.scene.add
-        .text(CANVAS_W / 2, CANVAS_H / 2 + 62, 'Spare full — discard a carried ring or move one to a battle slot', {
-          fontSize: '11px',
-          color: '#ff8888',
-        })
-        .setScrollFactor(0)
-        .setOrigin(0.5);
-      container.add(fullLbl);
-    }
-    // Spare cards sub-container — visibility-windowed (replaces GeometryMask, which
-    // is unreliable in nested Container / multi-camera Phaser 4 setups; same fix as
-    // InventoryGrid PR #168).
-    const SPARE_TOP = 377;
-    const SPARE_H = 115;
-    const SPARE_ROW_H = 90;
-    const totalRows = Math.ceil(availableRings.length / 6);
-    // SPARE_H (115px) fits exactly 1 complete row of SPARE_ROW_H (90px); a second
-    // row would bleed into the recharge controls, so cap at 1 visible row.
-    const VISIBLE_ROWS = 1;
 
+    // Spare cards sub-container — visibility-windowed (kept for the >10 fallback).
     const spareContainer = this.scene.add.container(0, 0);
     container.add(spareContainer);
-    // Per-row group containers toggled visible/hidden by updateSpareVisibility().
+    // Per-row group containers toggled by updateSpareVisibility() (only used when a
+    // spareCapacity > 10 forces more than the 2 always-visible rows).
     const spareRowGroups: Map<number, Phaser.GameObjects.Container[]> = new Map();
-
-    availableRings.forEach((ring, i) => {
-      const col = i % 6;
-      const row = Math.floor(i / 6);
-      const rx = CANVAS_W / 2 - 250 + col * 90;
-      const ry = ringY + row * SPARE_ROW_H;
-      const selected = this.selRingId === ring.id && this.selFromSlot === null;
-      const cardAlpha = spareFull ? 0.45 : 1;
-
+    // Render filled spare cards, then dim placeholders up to spareCapacity so the
+    // grid reads complete (5×2). Capacity normally ≤ 10 → exactly the 2 visible rows.
+    const gridCells = Math.max(usedSpares, Math.min(spareCapacity, SPARE_COLS * SPARE_ROW_Y.length));
+    for (let i = 0; i < Math.max(gridCells, usedSpares); i++) {
+      const col = i % SPARE_COLS;
+      const row = Math.floor(i / SPARE_COLS);
+      const rx = SPARE_COL_X[col];
+      // Rows 0/1 use the fixed y; any overflow row (capacity > 10) extends downward
+      // off the always-visible window and is reachable only via the wheel fallback.
+      const ry = row < SPARE_ROW_Y.length ? SPARE_ROW_Y[row] : SPARE_ROW_Y[1] + (row - 1) * SPARE_ROW_H;
+      const ring = availableRings[i];
       const ringGrp = this.scene.add.container(rx, ry);
 
-      const rect = this.scene.add
-        .rectangle(0, 0, 72, 80, ELEMENT_COLORS[ring.element] ?? 0x444444)
-        .setScrollFactor(0)
-        .setStrokeStyle(selected ? 3 : 2, selected ? 0xffff00 : 0x888888)
-        .setAlpha(cardAlpha)
-        .setInteractive({ useHandCursor: !spareFull })
-        .on('pointerdown', () => {
-          const selSlot = this.selFromSlot;
-          const selId = this.selRingId;
-          if (selSlot === HEART_SLOT) {
-            // #305 — heart ring selected, then a spare clicked: equip this spare into
-            // the heart slot, releasing the old heart ring to spare.
-            void this.equipHeartFromSpare(ring.id);
-          } else if (selSlot !== null && selId !== null) {
-            void this.swapSlotWithSpare(selSlot, selId, ring.id);
-          } else {
-            if (selected) { this.swap.clear(); } else { this.swap.select(ring.id, 'spare'); }
-            this.renderManageModal();
-          }
-        });
-      ringGrp.add(rect);
-
-      const pips = usePips(ring.current_uses, ring.max_uses);
-      ringGrp.add([
-        this.scene.add.text(0, -22, ELEMENT_NAMES[ring.element] ?? '?', { fontSize: '9px', color: '#000000' }).setScrollFactor(0).setOrigin(0.5),
-        this.scene.add.text(0, -6, pips, { fontSize: '10px', color: '#000000' }).setScrollFactor(0).setOrigin(0.5),
-        this.scene.add.text(0, 10, `Xp: ${ring.xp}`, { fontSize: '9px', color: '#000000' }).setScrollFactor(0).setOrigin(0.5),
-        this.scene.add.text(0, 24, `T${ring.tier}`, { fontSize: '9px', color: '#000000' }).setScrollFactor(0).setOrigin(0.5),
-        this.scene.add
-          .text(30, -32, '×', { fontSize: '13px', color: '#ff3333' })
+      if (ring) {
+        const selected = this.selRingId === ring.id && this.selFromSlot === null;
+        const cardAlpha = spareFull ? 0.45 : 1;
+        const rect = this.scene.add
+          .rectangle(0, 0, 72, 80, ELEMENT_COLORS[ring.element] ?? 0x444444)
           .setScrollFactor(0)
-          .setOrigin(0.5)
-          .setInteractive({ useHandCursor: true })
-          .on('pointerdown', (_p: unknown, _x: number, _y: number, evt: { stopPropagation?: () => void }) => {
-            evt?.stopPropagation?.();
-            void this.discardCarriedRing(ring.id);
-          }),
-      ]);
+          .setStrokeStyle(selected ? 3 : 2, selected ? 0xffff00 : 0x888888)
+          .setAlpha(cardAlpha)
+          .setInteractive({ useHandCursor: !spareFull })
+          .on('pointerdown', () => {
+            const selSlot = this.selFromSlot;
+            const selId = this.selRingId;
+            if (selSlot === HEART_SLOT) {
+              // #305 — heart selected, then a spare: equip this spare into the heart
+              // slot, releasing the old heart ring to spare.
+              void this.equipHeartFromSpare(ring.id);
+            } else if (selSlot !== null && selId !== null) {
+              void this.swapSlotWithSpare(selSlot, selId, ring.id);
+            } else {
+              if (selected) { this.swap.clear(); } else { this.swap.select(ring.id, 'spare'); }
+              this.renderManageModal();
+            }
+          });
+        ringGrp.add(rect);
+
+        const pips = usePips(ring.current_uses, ring.max_uses);
+        ringGrp.add([
+          this.scene.add.text(0, -22, ELEMENT_NAMES[ring.element] ?? '?', { fontSize: '9px', color: '#000000' }).setScrollFactor(0).setOrigin(0.5),
+          this.scene.add.text(0, -6, pips, { fontSize: '10px', color: '#000000' }).setScrollFactor(0).setOrigin(0.5),
+          this.scene.add.text(0, 10, `Xp: ${ring.xp}`, { fontSize: '9px', color: '#000000' }).setScrollFactor(0).setOrigin(0.5),
+          this.scene.add.text(0, 24, `T${ring.tier}`, { fontSize: '9px', color: '#000000' }).setScrollFactor(0).setOrigin(0.5),
+        ]);
+      } else {
+        // Dim empty placeholder up to spareCapacity.
+        const ph = this.scene.add
+          .rectangle(0, 0, 72, 80, 0x2a2a33)
+          .setScrollFactor(0)
+          .setStrokeStyle(2, 0x444455)
+          .setAlpha(0.5);
+        ringGrp.add(ph);
+      }
 
       spareContainer.add(ringGrp);
       if (!spareRowGroups.has(row)) spareRowGroups.set(row, []);
       spareRowGroups.get(row)!.push(ringGrp);
-    });
+    }
 
+    // Both rows of the 5×2 grid are always visible. The wheel handler is retained
+    // ONLY as a fallback for the rare spareCapacity > 10 case; otherwise a no-op.
+    const totalRows = Math.max(1, Math.ceil(Math.max(gridCells, usedSpares) / SPARE_COLS));
+    const VISIBLE_ROWS = SPARE_ROW_Y.length; // 2
     const updateSpareVisibility = (): void => {
       spareRowGroups.forEach((grps, row) => {
         const visible = row >= this.spareScrollRow && row < this.spareScrollRow + VISIBLE_ROWS;
@@ -472,30 +520,29 @@ export class BattleHandOverlay {
     };
     updateSpareVisibility();
 
-    // Overflow hint + wheel scroll.
-    if (totalRows > 1) {
+    if (this.spareWheelHandler) {
+      this.scene.input.off('wheel', this.spareWheelHandler);
+      this.spareWheelHandler = null;
+    }
+    if (totalRows > VISIBLE_ROWS) {
       const hint = this.scene.add
-        .text(CANVAS_W / 2, SPARE_TOP + SPARE_H + 3, '▼ scroll', {
+        .text(CANVAS_W / 2, SPARE_ROW_Y[1] + 48, '▼ scroll', {
           fontSize: '11px', color: '#556677',
         })
         .setScrollFactor(0)
         .setOrigin(0.5, 0);
       container.add(hint);
+      this.spareWheelHandler = (_p: unknown, _g: unknown, _dx: number, dy: number) => {
+        const maxRow = Math.max(0, totalRows - VISIBLE_ROWS);
+        this.spareScrollRow = Phaser.Math.Clamp(this.spareScrollRow + (dy > 0 ? 1 : -1), 0, maxRow);
+        updateSpareVisibility();
+      };
+      this.scene.input.on('wheel', this.spareWheelHandler);
     }
-
-    if (this.spareWheelHandler) {
-      this.scene.input.off('wheel', this.spareWheelHandler);
-      this.spareWheelHandler = null;
-    }
-    this.spareWheelHandler = (_p: unknown, _g: unknown, _dx: number, dy: number) => {
-      const maxRow = Math.max(0, totalRows - VISIBLE_ROWS);
-      this.spareScrollRow = Phaser.Math.Clamp(this.spareScrollRow + (dy > 0 ? 1 : -1), 0, maxRow);
-      updateSpareVisibility();
-    };
-    this.scene.input.on('wheel', this.spareWheelHandler);
 
     // ── Recharge controls (spirit-powered, mirrors Sanctum) ──────────────────
-    // #85 Fix 3 — shifted 35px down (185→220) to follow the lowered carried-rings row.
+    // #348 — y=508 sits below the 2nd spare row (cards end ≈470) and above the
+    // status echo (530), all inside the grown 560-tall panel (bottom edge 568).
     const rechargeY = CANVAS_H / 2 + 220;
     const rechargeBtn = this.scene.add
       .text(CANVAS_W / 2 - 100, rechargeY, '[Recharge]', { fontSize: '13px', color: '#ffcc44' })
@@ -542,9 +589,10 @@ export class BattleHandOverlay {
   }
 
   /**
-   * #305 — render the dedicated Heart-slot card (leftmost in the top row). The
-   * equipped heart ring shows the standard element + HP-pip info and an [×] discard
-   * button; an empty slot shows a grayed-out ♥ placeholder. The card participates
+   * #305 / #348 — render the dedicated Heart-slot card (HP, group-2 row-1). The
+   * equipped heart ring shows the standard element + HP-pip info; an empty slot
+   * shows a grayed-out ♥ placeholder. Discard routes through the DISCARD slot's
+   * 3-step confirm (#348), so the card no longer carries an × button. It participates
    * in the existing select-then-click system via the {@link HEART_SLOT} sentinel:
    *  - heart selected + [Recharge] → POST /api/spirit/recharge (heart ring id)
    *  - heart selected + click spare/battle slot (or the reverse) → PUT /api/heart-slot
@@ -562,24 +610,16 @@ export class BattleHandOverlay {
       .setAlpha(heart ? 1 : 0.5)
       .setInteractive({ useHandCursor: true })
       .on('pointerdown', () => this.onHeartCardClick());
+    // #347/#348 — the heart card reads HP (cross-screen parity). Discard now routes
+    // through the DISCARD slot's 3-step confirm, so there is no per-card × here.
     const lbl = this.scene.add
-      .text(cx, cy - 34, '♥ HEART', { fontSize: '11px', color: heart ? '#ff99aa' : '#777777' })
+      .text(cx, cy - 34, 'HP', { fontSize: '11px', color: heart ? '#ff99aa' : '#777777' })
       .setScrollFactor(0)
       .setOrigin(0.5);
     container.add([rect, lbl]);
 
     if (heart) {
       this.addRingInfo(container, cx, cy, heart);
-      const discard = this.scene.add
-        .text(cx + 38, cy - 32, '×', { fontSize: '13px', color: '#ff3333' })
-        .setScrollFactor(0)
-        .setOrigin(0.5)
-        .setInteractive({ useHandCursor: true })
-        .on('pointerdown', (_p: unknown, _x: number, _y: number, evt: { stopPropagation?: () => void }) => {
-          evt?.stopPropagation?.();
-          void this.discardHeartRing(heart.id);
-        });
-      container.add(discard);
     } else {
       const placeholder = this.scene.add
         .text(cx, cy, '♥\nempty\n0 HP', {
@@ -843,6 +883,127 @@ export class BattleHandOverlay {
     await this.refreshManageData();
   }
 
+  /**
+   * #348 — DISCARD slot click. The safe 3-step flow's step 2: with a card selected,
+   * open the confirm modal (it does NOT discard yet). With nothing selected it is a
+   * no-op (a hint nudges the player). The held ring is resolved from the swap
+   * manager's selection: a battle slot, the {@link HEART_SLOT} sentinel, the pending
+   * won ring, or a spare (both of the latter carry the `'spare'` source).
+   */
+  private onDiscardSlotClick(): void {
+    const ringId = this.selRingId;
+    if (!ringId) {
+      this.setManageStatus('Select a ring first, then click DISCARD');
+      return;
+    }
+    this.openDiscardConfirm(ringId);
+  }
+
+  /**
+   * #348 — the discard confirm modal (mirrors {@link BattleScene.showForfeitPrompt}).
+   * A centred rect + `Discard [Element] T[tier] ring? Permanent.` with clickable
+   * `[Discard]` / `[Cancel]` buttons (also Y / N keys). Confirm routes to the correct
+   * existing server helper by the held ring's source; Cancel clears with no mutation.
+   * `window.__discardConfirmOpen` mirrors the open state for E2E.
+   */
+  private openDiscardConfirm(ringId: string): void {
+    if (this.discardConfirm) return;
+
+    // Resolve the held ring + its source for the routing + the prompt label.
+    const selSlot = this.selFromSlot;
+    const pendingId = localStorage.getItem('er_pending_ring');
+    const isPendingWon = selSlot === null && ringId === pendingId;
+    const ring =
+      selSlot === HEART_SLOT
+        ? this.heartRing
+        : this.allRings.find((r) => r.id === ringId) ?? null;
+    const elementName = ring ? ELEMENT_NAMES[ring.element] ?? '?' : '?';
+    const tier = ring ? ring.tier : '?';
+
+    const bg = this.scene.add
+      .rectangle(CANVAS_W / 2, CANVAS_H / 2, 460, 110, 0x000000, 0.9)
+      .setScrollFactor(0)
+      .setStrokeStyle(2, 0xff4444);
+    const text = this.scene.add
+      .text(CANVAS_W / 2, CANVAS_H / 2 - 20, `Discard ${elementName} T${tier} ring? Permanent.`, {
+        fontSize: '16px',
+        color: '#ffdddd',
+      })
+      .setScrollFactor(0)
+      .setOrigin(0.5);
+    const discardBtn = this.scene.add
+      .text(CANVAS_W / 2 - 70, CANVAS_H / 2 + 22, '[Discard]', { fontSize: '15px', color: '#ff8888' })
+      .setScrollFactor(0)
+      .setOrigin(0.5)
+      .setInteractive({ useHandCursor: true })
+      .setName('discard-confirm-yes')
+      .on('pointerdown', () => this.confirmDiscard(ringId, selSlot, isPendingWon));
+    const cancelBtn = this.scene.add
+      .text(CANVAS_W / 2 + 70, CANVAS_H / 2 + 22, '[Cancel]', { fontSize: '15px', color: '#aaccff' })
+      .setScrollFactor(0)
+      .setOrigin(0.5)
+      .setInteractive({ useHandCursor: true })
+      .setName('discard-confirm-no')
+      .on('pointerdown', () => this.dismissDiscardConfirm());
+    // Depth above the modal container (2000) so it overlays the cards.
+    const prompt = this.scene.add
+      .container(0, 0, [bg, text, discardBtn, cancelBtn])
+      .setDepth(3000);
+    this.onModalRender?.(prompt); // #137 — route to the UI camera under 2× zoom.
+    this.discardConfirm = prompt;
+    window.__discardConfirmOpen = true;
+
+    const KC = Phaser.Input.Keyboard.KeyCodes;
+    const kb = this.scene.input.keyboard;
+    if (kb) {
+      const yKey = kb.addKey(KC.Y);
+      const nKey = kb.addKey(KC.N);
+      const onYes = (): void => this.confirmDiscard(ringId, selSlot, isPendingWon);
+      const onNo = (): void => this.dismissDiscardConfirm();
+      yKey.on('down', onYes);
+      nKey.on('down', onNo);
+      this.discardKeyHandlers = () => {
+        yKey.off('down', onYes);
+        nKey.off('down', onNo);
+      };
+    }
+  }
+
+  /**
+   * #348 — confirm step: route the discard to the correct existing helper by the
+   * held ring's source, then tear down the prompt. The helpers self-refresh the
+   * modal (re-render), so no extra render here.
+   */
+  private confirmDiscard(
+    ringId: string,
+    selSlot: BattleSlot | HeartSel | null,
+    isPendingWon: boolean,
+  ): void {
+    this.dismissDiscardConfirm();
+    void (async () => {
+      if (isPendingWon) {
+        await this.discardPendingWonRing();
+      } else if (selSlot === HEART_SLOT) {
+        await this.discardHeartRing(ringId);
+      } else {
+        // Spare or battle slot — both route through the carried-ring discard.
+        await this.discardCarriedRing(ringId);
+      }
+    })();
+  }
+
+  /** #348 — tear down the discard confirm modal + its Y/N listeners; clear selection. */
+  private dismissDiscardConfirm(): void {
+    if (this.discardKeyHandlers) {
+      this.discardKeyHandlers();
+      this.discardKeyHandlers = null;
+    }
+    this.discardConfirm?.destroy(true);
+    this.discardConfirm = null;
+    window.__discardConfirmOpen = false;
+    this.swap.clear();
+  }
+
   /** Close the modal and fire the close callback (host re-enables movement). */
   close(): void {
     if (this.spareWheelHandler) {
@@ -850,6 +1011,8 @@ export class BattleHandOverlay {
       this.spareWheelHandler = null;
     }
     this.spareScrollRow = 0;
+    // #348 — tear down the discard confirm modal if it is open.
+    this.dismissDiscardConfirm();
     // #305 — tear down the Thumb-passive hover tooltip before the modal is gone.
     if (this.thumbTooltipDetach) {
       this.thumbTooltipDetach();
@@ -1020,6 +1183,7 @@ export class BattleHandOverlay {
       this.scene.input.off('wheel', this.spareWheelHandler);
       this.spareWheelHandler = null;
     }
+    this.dismissDiscardConfirm(); // #348
     if (this.thumbTooltipDetach) {
       this.thumbTooltipDetach(); // #305
       this.thumbTooltipDetach = null;
