@@ -19,8 +19,10 @@ import { describe, test, expect, beforeAll, afterAll } from 'vitest';
 import { ColyseusTestServer, boot } from '@colyseus/testing';
 import { Server } from 'colyseus';
 import { BattleRoom } from '../../server/src/rooms/BattleRoom';
-import { ElementEnum } from '../../shared/types';
-import { STARTING_HEARTS } from '../../server/src/game/constants';
+import { createPlayer, getRingsByOwner } from '../../server/src/persistence/PlayerRepo';
+import { signToken } from '../../server/src/auth/auth';
+import { ElementEnum, type WonRingPayload } from '../../shared/types';
+import { TELEGRAPH_MS, BLOCK_WINDOW_MS, STARTING_HEARTS } from '../../server/src/game/constants';
 
 let colyseus: ColyseusTestServer<any>;
 
@@ -49,6 +51,38 @@ async function joinBoss(npcId: string, personality: string, aiSeed: number, extr
   await room.waitForNextPatch();
   await sleep(20);
   return { room, human };
+}
+
+/**
+ * Create a vsAI boss room with a TOKEN-authenticated human (a real DB player), so
+ * a win resolves `winnerPlayerId` and the §9.1 won-ring grant + `wonRing` message
+ * fire. Mirrors {@link joinBoss} but seats the human from its DB loadout and forces
+ * a deterministic protagonist WIN via the documented test overrides: the human pays
+ * the ambush `firstStrike` to open the duel, and the AI is seated with `aiHearts:1`
+ * + `aiUses:0` (extinguished rings → it cannot defend), so the human's opening a1
+ * lands the killing blow regardless of millisecond timing.
+ */
+async function joinBossAsWinner(npcId: string, personality: string, aiSeed: number) {
+  const username = `boss_winner_${Math.random().toString(36).slice(2)}`;
+  const playerId = createPlayer(username, 'x');
+  const token = signToken({ playerId, username });
+  const room = await colyseus.createRoom<any>('battle-ai', {
+    vsAI: true,
+    personality,
+    aiSeed,
+    npcId,
+    aiHearts: 1,
+    aiUses: 0,
+  });
+  const human = await colyseus.connectTo(room, { token, firstStrike: true });
+  await room.waitForNextPatch();
+  await sleep(20);
+  return { room, human, playerId };
+}
+
+const RESOLVE_BUFFER_MS = 250;
+async function waitForResolve() {
+  await sleep(TELEGRAPH_MS + BLOCK_WINDOW_MS + RESOLVE_BUFFER_MS);
 }
 
 describe('#257 — bosses stake their fused thumb', () => {
@@ -94,6 +128,49 @@ describe('#257 — bosses stake their fused thumb', () => {
     expect(ai.thumb.fusionParents.length).toBe(2);
     expect(Array.from(ai.thumb.fusionParents)).toEqual([ElementEnum.WOOD, ElementEnum.WIND]);
   });
+
+  test('beating a fused-thumb boss grants its staked fusion ring (#328)', async () => {
+    // #328 — defeating a fused-thumb boss transfers its staked fusion to the winner
+    // via the standard §9.1 won-ring path (no per-NPC carve-out). The Thornado
+    // Guardian is one representative boss; the Bloom/Mud/Thornado wins are
+    // structurally identical code paths.
+    const { room, human, playerId } = await joinBossAsWinner(
+      'forest_thornado_shrine_guardian',
+      'AGGRESSIVE',
+      999,
+    );
+
+    let wonRing: WonRingPayload | undefined;
+    human.onMessage('wonRing', (msg: WonRingPayload) => {
+      wonRing = msg;
+    });
+
+    // Drive the duel to ENDED: the human (opener) throws an uncontested a1 hit on
+    // its turn. The AI cannot defend (aiUses:0) and dies at one heart, so this
+    // resolves within a couple of exchanges; the loop tolerates initiative passing.
+    for (let i = 0; i < 6 && room.state.phase !== 'ENDED'; i++) {
+      if (room.state.currentAttackerId === human.sessionId) {
+        human.send('selectAttack', { slot: 'a1' });
+      }
+      await waitForResolve();
+    }
+
+    expect(room.state.phase).toBe('ENDED');
+    expect(room.state.winnerId).toBe(human.sessionId);
+
+    // The won ring landed in the winner's reliquary: assert via the DB.
+    const thornado = getRingsByOwner(playerId).filter(
+      (r) => r.element === ElementEnum.THORNADO,
+    );
+    expect(thornado.length).toBe(1);
+    expect(thornado[0].fusionParents.length).toBe(2);
+
+    // …and the client received exactly one matching `wonRing` message.
+    await sleep(50);
+    expect(wonRing).toBeDefined();
+    expect(wonRing?.element).toBe(ElementEnum.THORNADO);
+    expect(wonRing?.ringId).toBe(thornado[0].id);
+  }, 20000);
 });
 
 describe('#257 — boss seating leaves the combat hand intact', () => {

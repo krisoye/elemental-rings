@@ -145,7 +145,8 @@ export const NPC_SPAWNS: NpcSpawnDef[] = [
   // its thumb. `element=WOOD` (Thornado's triangle component) drives the overworld
   // sprite. Defeating it grants the player a THORNADO ring via the standard §9.1
   // won-ring path (the staked fused thumb transfers to the winner), which doubles
-  // as the altar seal-key the player carries to unseal the shrine.
+  // as the altar seal-key; the won ring lands in the reliquary, so the player must
+  // carry it (via the post-duel carry prompt) before presenting it to the altar.
   // No foodDrop — shrine guardians reward a ring, not a food cache.
   { id: 'forest_thornado_shrine_guardian', biome: 'forest', screen: 'forest_thornado_shrine', personality: 'AGGRESSIVE', type: 'duelist', element: WOOD, spriteFrame: 4, tx: 20, ty: 15, respawnDays: 0, boss: { tier: 'sub', name: 'Thornado Guardian', fusedThumb: ElementEnum.THORNADO } },
 
