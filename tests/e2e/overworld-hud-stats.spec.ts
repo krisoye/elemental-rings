@@ -8,6 +8,12 @@
  * tests assert that all segments appear and match server data, and
  * that the HUD and the Manage Battle Rings modal do not overlap.
  * The location label (biomeTitle) renders as two rows (biome / area) when area exists.
+ *
+ * #362 — the HUD line, the two-row location label, and the NPC prompt are now
+ * rendered as DOM elements (`addDomLabel`) layered over the WebGL canvas, NOT as
+ * Phaser Text in the scene graph. These assertions therefore query the DOM nodes
+ * (`[data-label="overworld-hud"]`, `[data-label="biome-title"]`, etc.) via the
+ * Playwright browser context rather than scene/canvas hooks.
  */
 import { test, expect } from '@playwright/test';
 import { seedAuthToken, enterForestScreen } from './helpers';
@@ -29,26 +35,41 @@ async function loadForest(page: Page): Promise<void> {
   );
 }
 
-/** Read the current hudText string from the live ForestScene. */
+/**
+ * Read the current HUD text from the DOM node (#362 migration). The HUD line is
+ * now a DOM element with `data-label="overworld-hud"`, not a Phaser Text object.
+ */
 async function getHudText(page: Page): Promise<string> {
   return page.evaluate(() => {
-    const scene = (window as any).__game?.scene?.getScene('ForestScene') as any;
-    return scene?.hudText?.text ?? '';
+    const node = document.querySelector('[data-label="overworld-hud"]');
+    return node?.textContent ?? '';
   });
 }
 
-/** Trigger refreshHud() and wait until it resolves (no direct await, but a brief poll suffices). */
+/**
+ * Read the two-row location label text from its DOM node (#362). The biome title
+ * is a DOM element with `data-label="biome-title"`; its `textContent` preserves
+ * the `\n` between biome (line 1) and area (line 2).
+ */
+async function getBiomeTitleText(page: Page): Promise<string> {
+  return page.evaluate(() => {
+    const node = document.querySelector('[data-label="biome-title"]');
+    return node?.textContent ?? '';
+  });
+}
+
+/** Trigger refreshHud() and wait until the HUD DOM node reflects the update. */
 async function waitForHudRefresh(page: Page, timeout = 4000): Promise<void> {
   await page.evaluate(() => {
     const scene = (window as any).__game?.scene?.getScene('ForestScene') as any;
     // refreshHud is private but accessible at runtime for E2E.
     return scene?.refreshHud?.();
   });
-  // Give the async fetch time to complete.
+  // Give the async fetch time to complete; poll the DOM node, not a scene object.
   await page.waitForFunction(
     () => {
-      const scene = (window as any).__game?.scene?.getScene('ForestScene') as any;
-      const txt: string = scene?.hudText?.text ?? '';
+      const node = document.querySelector('[data-label="overworld-hud"]');
+      const txt: string = node?.textContent ?? '';
       return txt.includes('♥') && txt.includes('Avg XP');
     },
     { timeout },
@@ -124,11 +145,11 @@ test('overworld HUD (#353): shows ♥ 0/0 when heart slot is empty', async ({ br
       { timeout: 8000 },
     );
 
-    // Wait for HUD with empty heart (♥ 0/0).
+    // Wait for HUD with empty heart (♥ 0/0). Poll the DOM node (#362), not a scene object.
     await page.waitForFunction(
       () => {
-        const scene = (window as any).__game?.scene?.getScene('ForestScene') as any;
-        const txt: string = scene?.hudText?.text ?? '';
+        const node = document.querySelector('[data-label="overworld-hud"]');
+        const txt: string = node?.textContent ?? '';
         return txt.includes('♥ 0/0');
       },
       { timeout: 6000 },
@@ -332,14 +353,9 @@ test('overworld HUD (#355): location label renders two rows (biome / area) when 
   const page = await ctx.newPage();
   await loadForest(page);
 
-  const labelText = await page.evaluate(() => {
-    const scene = (window as any).__game?.scene?.getScene('ForestScene') as any;
-    // biomeTitle is the text object added to the scene in BaseBiomeScene.ts:518.
-    // It's a child of uiRoot and accessible via the scene's children.
-    const children = scene?.uiRoot?.getAll?.() ?? [];
-    const biomeTitle = children.find((o: any) => o.text && o.text.includes('Forest'));
-    return biomeTitle?.text ?? '';
-  });
+  // #362 — biomeTitle is now a DOM node ([data-label="biome-title"]); textContent
+  // preserves the '\n' between biome (line 1) and area (line 2).
+  const labelText = await getBiomeTitleText(page);
 
   // The text should contain a newline when area name is present (forest_anchorage has area name).
   expect(labelText).toContain('\n');
@@ -476,12 +492,7 @@ test('overworld HUD (#355 regression): biomeTitle uses newline separator (not da
   const page = await ctx.newPage();
   await loadForest(page);  // loads forest_anchorage, which has area name "The Anchorage"
 
-  const labelText = await page.evaluate(() => {
-    const scene = (window as any).__game?.scene?.getScene('ForestScene') as any;
-    const children = scene?.uiRoot?.getAll?.() ?? [];
-    const biomeTitle = children.find((o: any) => o.text && o.text.includes('Forest'));
-    return biomeTitle?.text ?? '';
-  });
+  const labelText = await getBiomeTitleText(page); // #362 — DOM node textContent
 
   // Spec says: `${biomeName}\n${areaName}` — newline separator, not ` – `.
   expect(
@@ -508,18 +519,123 @@ test('overworld HUD (#355 regression): biomeTitle does not use old "  –  " das
   const page = await ctx.newPage();
   await loadForest(page);  // loads forest_anchorage
 
-  const labelText = await page.evaluate(() => {
-    const scene = (window as any).__game?.scene?.getScene('ForestScene') as any;
-    const children = scene?.uiRoot?.getAll?.() ?? [];
-    const biomeTitle = children.find((o: any) => o.text && o.text.includes('Forest'));
-    return biomeTitle?.text ?? '';
-  });
+  const labelText = await getBiomeTitleText(page); // #362 — DOM node textContent
 
   // Spec says: separator is `\n`, not `  –  `. The old three-space-dash pattern must be gone.
   expect(
     labelText,
     'biomeTitle must not use the old "  –  " dash separator',
   ).not.toContain('  –  ');
+
+  await ctx.close();
+});
+
+// ══════════════════════════════════════════════════════════════════════════════
+// #362 — DOM-overlay migration: HUD / location label / NPC prompt are DOM nodes
+// ══════════════════════════════════════════════════════════════════════════════
+
+// ── #362 A — HUD, location label, and NPC prompt render as DOM nodes ─────────
+// After the DOM migration these are real DOM elements layered over the WebGL
+// canvas (addDomLabel), NOT Phaser Text in the scene graph. Assert the DOM nodes
+// exist and carry the expected content.
+test('overworld DOM (#362): HUD line and two-row location label are DOM nodes, not Phaser Text', async ({ browser }) => {
+  const ctx = await browser.newContext();
+  await seedAuthToken(ctx);
+  const page = await ctx.newPage();
+  await loadForest(page);
+  await waitForHudRefresh(page);
+
+  // HUD DOM node exists with the populated stat line.
+  const hud = await getHudText(page);
+  expect(hud).toContain('♥');
+  expect(hud).toContain('Avg XP');
+
+  // Location-label DOM node exists with the two-row biome/area content.
+  const loc = await getBiomeTitleText(page);
+  expect(loc).toBe('Forest\nThe Anchorage');
+
+  // The migrated objects must NOT be Phaser Text in the scene graph anymore:
+  // hudText/npcPrompt are DOMElement instances; the scene no longer exposes a
+  // `.text` string on them. Assert the DOM nodes are the source of truth.
+  const domCounts = await page.evaluate(() => ({
+    hud: document.querySelectorAll('[data-label="overworld-hud"]').length,
+    title: document.querySelectorAll('[data-label="biome-title"]').length,
+  }));
+  expect(domCounts.hud).toBe(1);
+  expect(domCounts.title).toBe(1);
+
+  await ctx.close();
+});
+
+// ── #362 B — DOM labels are non-interactive (pointer-events: none) ───────────
+// The EPIC mandates `pointer-events: none` on every DomLabel so the label never
+// intercepts a click meant for the canvas beneath it. Verify via computed style.
+test('overworld DOM (#362): HUD and location DOM labels have pointer-events:none (do not intercept canvas clicks)', async ({ browser }) => {
+  const ctx = await browser.newContext();
+  await seedAuthToken(ctx);
+  const page = await ctx.newPage();
+  await loadForest(page);
+  await waitForHudRefresh(page);
+
+  const pe = await page.evaluate(() => {
+    const read = (sel: string) => {
+      const node = document.querySelector(sel) as HTMLElement | null;
+      return node ? getComputedStyle(node).pointerEvents : 'MISSING';
+    };
+    return {
+      hud: read('[data-label="overworld-hud"]'),
+      title: read('[data-label="biome-title"]'),
+    };
+  });
+  expect(pe.hud).toBe('none');
+  expect(pe.title).toBe('none');
+
+  await ctx.close();
+});
+
+// ── #362 C — NPC prompt DOM node shows on zone enter, hides on exit ──────────
+// The Approach [E] prompt is a lazily-created DOM label. Show/hide must continue
+// to work via setVisible after the migration.
+test('overworld DOM (#362): NPC prompt is a DOM node that shows when detected and hides when not', async ({ browser }) => {
+  const ctx = await browser.newContext();
+  await seedAuthToken(ctx);
+  const page = await ctx.newPage();
+  await loadForest(page);
+
+  // Drive the prompt directly through the scene's private API (accessible at
+  // runtime) so the test does not depend on NPC placement/pathing.
+  await page.evaluate(() => {
+    const scene = (window as any).__game?.scene?.getScene('ForestScene') as any;
+    scene?.showNpcPrompt?.('Approach [E]', false);
+  });
+  await page.waitForFunction(
+    () => {
+      const node = document.querySelector('[data-label="npc-prompt"]') as HTMLElement | null;
+      // Phaser DOMElement.setVisible toggles the node's CSS display.
+      return !!node && node.textContent === 'Approach [E]' && getComputedStyle(node).display !== 'none';
+    },
+    { timeout: 4000 },
+  );
+
+  // pointer-events:none on the prompt too.
+  const promptPe = await page.evaluate(() => {
+    const node = document.querySelector('[data-label="npc-prompt"]') as HTMLElement | null;
+    return node ? getComputedStyle(node).pointerEvents : 'MISSING';
+  });
+  expect(promptPe).toBe('none');
+
+  // Hide it; the node persists but becomes display:none (reused next detection).
+  await page.evaluate(() => {
+    const scene = (window as any).__game?.scene?.getScene('ForestScene') as any;
+    scene?.hideNpcPrompt?.();
+  });
+  await page.waitForFunction(
+    () => {
+      const node = document.querySelector('[data-label="npc-prompt"]') as HTMLElement | null;
+      return !!node && getComputedStyle(node).display === 'none';
+    },
+    { timeout: 4000 },
+  );
 
   await ctx.close();
 });

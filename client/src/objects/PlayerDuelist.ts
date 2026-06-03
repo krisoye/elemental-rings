@@ -9,6 +9,7 @@ import {
   PLAYER_Y,
 } from '../Constants';
 import { STATUS_BADGES, heartsString, cssColor } from './ui/format';
+import { crispCanvasText } from './ui/DomLabel';
 
 /**
  * Full-information panel for the local player: body, hearts, and the three
@@ -42,37 +43,46 @@ export class PlayerDuelist extends Phaser.GameObjects.Container {
     // Compact stats panel beneath the sprite (height trimmed from 120 to 40).
     scene.add.rectangle(PLAYER_X, PLAYER_Y, 80, 40, 0x444444, 0.8).setStrokeStyle(1, 0x888888);
 
-    this.hearts = scene.add.text(PLAYER_X + 50, PLAYER_Y - 55, '♥♥♥', {
-      fontSize: '14px',
-      color: '#ff4444',
-    }).setResolution(window.devicePixelRatio);
+    // #364 — duelist labels are world-space (live inside this Container, not
+    // screen-fixed) → DOM-ineligible. crispCanvasText raises the glyph resolution
+    // and applies a LINEAR texture filter so they are smooth (not jagged) on
+    // fractional DPI — the accepted ceiling for canvas text under pixelArt.
+    this.hearts = crispCanvasText(
+      scene.add.text(PLAYER_X + 50, PLAYER_Y - 55, '♥♥♥', {
+        fontSize: '14px',
+        color: '#ff4444',
+      }),
+    );
 
     GAUGE_ELEMENTS.forEach((el, i) => {
-      const gt = scene.add.text(PLAYER_X + 50, PLAYER_Y - 35 + i * 18, `${ELEMENT_NAMES[el]}: 0`, {
-        fontSize: '11px',
-        color: cssColor(ELEMENT_COLORS[el]),
-      }).setResolution(window.devicePixelRatio);
+      const gt = crispCanvasText(
+        scene.add.text(PLAYER_X + 50, PLAYER_Y - 35 + i * 18, `${ELEMENT_NAMES[el]}: 0`, {
+          fontSize: '11px',
+          color: cssColor(ELEMENT_COLORS[el]),
+        }),
+      );
       this.gaugeTexts.push(gt);
     });
 
     // #135 — the 4th (shadow) gauge bar, dark-purple, beneath the triangle three.
     // Hidden at shadowGauge 0; shown 1–5 when Shadow has been inflicted.
-    this.shadowGaugeText = scene.add
-      .text(PLAYER_X + 50, PLAYER_Y - 35 + GAUGE_ELEMENTS.length * 18, '', {
+    this.shadowGaugeText = crispCanvasText(
+      scene.add.text(PLAYER_X + 50, PLAYER_Y - 35 + GAUGE_ELEMENTS.length * 18, '', {
         fontSize: '11px',
         color: cssColor(ELEMENT_COLORS[SHADOW_ELEMENT]),
         fontStyle: 'bold',
-      })
-      .setResolution(window.devicePixelRatio)
-      .setVisible(false);
+      }),
+    ).setVisible(false);
 
     // Active-status badge line beneath the gauges (e.g. "🔥 BURN  💧 DROWN").
     // Stacks all active statuses; empty when none are active.
-    this.statusBadge = scene.add.text(PLAYER_X + 50, PLAYER_Y + 40, '', {
-      fontSize: '11px',
-      color: '#ffaa44',
-      fontStyle: 'bold',
-    }).setResolution(window.devicePixelRatio);
+    this.statusBadge = crispCanvasText(
+      scene.add.text(PLAYER_X + 50, PLAYER_Y + 40, '', {
+        fontSize: '11px',
+        color: '#ffaa44',
+        fontStyle: 'bold',
+      }),
+    );
 
     scene.add.existing(this);
   }

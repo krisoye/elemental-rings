@@ -19,6 +19,7 @@ import { WanderingNpc } from '../objects/world/WanderingNpc';
 import { FusionPanel } from '../objects/FusionPanel';
 import type { RingData } from '../objects/InventoryGrid';
 import { showTransientText } from '../objects/ui/toast';
+import { addDomLabel, setDomLabelText } from '../objects/ui/DomLabel';
 import { apiFetch, fetchMe, getToken } from '../net/api';
 import { DualCameraScene } from './DualCameraScene';
 import { withinRadius, nearest } from '../util/geometry';
@@ -191,9 +192,11 @@ export abstract class BaseBiomeScene extends DualCameraScene {
     stakeXp?: number;
   } | null = null;
   /** Camera-pinned Approach [E] detection prompt; created lazily, reused/hidden. */
-  private npcPrompt: Phaser.GameObjects.Text | null = null;
+  private npcPrompt: Phaser.GameObjects.DOMElement | null = null;
   /** #112 — camera-pinned persistent HUD (Day · Gold · Food · Spirit · XP). */
-  private hudText: Phaser.GameObjects.Text | null = null;
+  private hudText: Phaser.GameObjects.DOMElement | null = null;
+  /** #355 — two-row location label (biome / area). DOM-rendered for crispness (#362). */
+  private biomeTitle: Phaser.GameObjects.DOMElement | null = null;
   /** #88 — true when this create() restored the player from window.__duelOrigin. */
   private returnedFromDuel = false;
   /** #87 Part A — double-click-to-blink controller (onto interaction zones). */
@@ -511,38 +514,42 @@ export abstract class BaseBiomeScene extends DualCameraScene {
     this.physics.add.collider(this.player, this.decorationGroup);
     window.__decorationCount = 0;
 
-    // Biome title (pinned to the camera). #137 — parented into uiRoot so it
-    // renders at 1:1 through uiCam, not the zoomed world camera.
+    // Biome title (pinned to the camera). #362 — DOM element layered over the
+    // canvas (no longer in uiRoot): DOM composites at 1:1 physical resolution.
     const biomeName = this.scene.key === 'SwampScene' ? 'Swamp' : this.scene.key === 'SnowScene' ? 'Snow' : 'Forest';
     const areaName = this.screenDef?.name;
-    const biomeTitle = this.add
-      .text(16, 16, areaName ? `${biomeName}\n${areaName}` : biomeName, {
-        fontSize: '14px',
+    // #362 — DOM-rendered for crisp HiDPI text. Top-left anchored (origin 0,0),
+    // two rows via '\n' + white-space:pre + lineHeight; preserves the #355 format
+    // (biome on line 1, area on line 2) and the prior color/background/padding.
+    this.biomeTitle = addDomLabel(
+      this,
+      16,
+      16,
+      areaName ? `${biomeName}\n${areaName}` : biomeName,
+      {
+        fontPx: 14,
         color: '#ddeeff',
-        backgroundColor: '#00000099',
-        padding: { x: 8, y: 5 },
-      })
-      .setResolution(window.devicePixelRatio)
-      .setScrollFactor(0)
-      .setDepth(500);
-    this.uiRoot.add(biomeTitle);
+        align: 'left',
+        lineHeight: 19,
+        background: '#00000099',
+        padding: '5px 8px',
+        id: 'biome-title',
+      },
+    ).setOrigin(0, 0);
 
     // #112 — persistent resource HUD pinned to the top-right corner. Sits below
     // the compass (depth 500) and above the world; right-aligned 12px from the
     // edge. Populated immediately and refreshed on every relevant server event.
-    // #137 — parented into uiRoot so it renders at 1:1 through uiCam.
-    this.hudText = this.add
-      .text(this.scale.width - 12, 10, '', {
-        fontSize: '13px',
-        color: '#e8e0d0',
-        backgroundColor: '#00000088',
-        padding: { x: 8, y: 4 },
-      })
-      .setResolution(window.devicePixelRatio)
-      .setOrigin(1, 0)
-      .setScrollFactor(0)
-      .setDepth(490);
-    this.uiRoot.add(this.hudText);
+    // #362 — DOM-rendered for crisp HiDPI text. Top-right anchored (origin 1,0),
+    // right-aligned 12px from the edge; preserves prior color/background/padding.
+    this.hudText = addDomLabel(this, this.scale.width - 12, 10, '', {
+      fontPx: 13,
+      color: '#e8e0d0',
+      align: 'right',
+      background: '#00000088',
+      padding: '4px 8px',
+      id: 'overworld-hud',
+    }).setOrigin(1, 0);
     void this.refreshHud();
 
     // Compass HUD (8B.2) — hidden until the first update() finds a target.
@@ -649,6 +656,10 @@ export abstract class BaseBiomeScene extends DualCameraScene {
       this.npcPrompt = null;
       this.hudText?.destroy();
       this.hudText = null;
+      // #362 — biomeTitle is now a DOM element (not parented into uiRoot), so it
+      // must be destroyed explicitly to avoid a stale node lingering after shutdown.
+      this.biomeTitle?.destroy();
+      this.biomeTitle = null;
       this.zones.forEach((z) => z.destroy());
       this.forageNodes.forEach((n) => n.destroy());
       this.forageNodes.clear();
@@ -1737,26 +1748,27 @@ export abstract class BaseBiomeScene extends DualCameraScene {
   /** Show (or update) the camera-pinned detection prompt. Created lazily. */
   private showNpcPrompt(text: string, isBoss = false): void {
     if (!this.npcPrompt) {
-      this.npcPrompt = this.add
-        .text(CANVAS_W / 2, 80, '', {
-          fontSize: '14px',
-          color: '#ffeeaa',
-          backgroundColor: '#000000aa',
-          padding: { x: 8, y: 4 },
-        })
-        .setResolution(window.devicePixelRatio)
-        .setOrigin(0.5, 0)
-        .setScrollFactor(0)
-        .setDepth(1000);
-      // #137 — the detection prompt is camera-pinned UI: parent it into uiRoot so
-      // it renders at 1:1 through uiCam, not the zoomed world camera.
-      this.uiRoot.add(this.npcPrompt);
+      // #362 — DOM-rendered for crisp HiDPI text. Top-center anchored (origin 0.5,0);
+      // color/background are set per-call below to reflect the boss vs normal state.
+      this.npcPrompt = addDomLabel(this, CANVAS_W / 2, 80, '', {
+        fontPx: 14,
+        color: '#ffeeaa',
+        align: 'center',
+        background: '#000000aa',
+        padding: '4px 8px',
+        id: 'npc-prompt',
+      }).setOrigin(0.5, 0);
     }
-    this.npcPrompt.setStyle({
-      color: isBoss ? '#ff8844' : '#ffeeaa',
-      backgroundColor: isBoss ? '#550000cc' : '#000000aa',
-    });
-    this.npcPrompt.setText(text).setVisible(true);
+    // Reflect the boss vs normal palette directly on the DOM node's style. Guard
+    // the cast: if the DOM container was never created or has been torn down,
+    // `.node` can be undefined — skip the style mutation rather than crash.
+    const promptNode = this.npcPrompt?.node as HTMLElement | null;
+    if (promptNode) {
+      promptNode.style.color = isBoss ? '#ff8844' : '#ffeeaa';
+      promptNode.style.background = isBoss ? '#550000cc' : '#000000aa';
+    }
+    setDomLabelText(this.npcPrompt, text);
+    this.npcPrompt.setVisible(true);
   }
 
   /** Hide the detection prompt without destroying it (reused next detection). */
@@ -1827,13 +1839,16 @@ export abstract class BaseBiomeScene extends DualCameraScene {
           battle_hand_avg_xp?: number;
         };
       } = await res.json();
+      // The scene may have shut down during the JSON parse; bail if the HUD is gone.
+      if (!this.hudText) return;
       const p = data.player;
       const spiritStr = `${p.spirit_current ?? 0}/${p.spirit_max ?? 0}`;
       const heart = p.heart_ring;
       const heartStr = heart ? `${heart.current_uses}/${heart.max_uses}` : '0/0';
       const totalXpStr = (p.total_xp ?? 0).toLocaleString();
       const avgXpStr = Math.round(p.battle_hand_avg_xp ?? 0).toLocaleString();
-      this.hudText.setText(
+      setDomLabelText(
+        this.hudText,
         `Day ${p.game_day ?? 1}  ·  Gold ${p.gold ?? 0}  ·  Food ${p.food_units ?? 0}` +
           `  ·  Spirit ${spiritStr}  ·  ♥ ${heartStr}  ·  XP ${totalXpStr}` +
           `  ·  Avg XP ${avgXpStr}`,

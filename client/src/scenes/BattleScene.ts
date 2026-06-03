@@ -5,6 +5,7 @@ import { PlayerDuelist } from '../objects/PlayerDuelist';
 import { OpponentDuelist } from '../objects/OpponentDuelist';
 import { Hud } from '../objects/Hud';
 import { BattleEndModal } from '../objects/BattleEndModal';
+import { crispCanvasText } from '../objects/ui/DomLabel';
 import type {
   ExchangeResultPayload,
   RechargeResultPayload,
@@ -409,10 +410,13 @@ export class BattleScene extends Phaser.Scene {
       window.__orbOutcomeLog = window.__orbOutcomeLog ?? [];
       window.__orbOutcomeLog.push({ orb: orbIndex, label: outcome.label });
     }
-    const t = this.add.text(512, y, label, {
+    // crispCanvasText applied consistently to all canvas text — ephemeral labels included for policy uniformity; texture cost is acceptable for sub-second display
+    // #364 — animated, transient combo-outcome label (tweens position + fades out)
+    // → DOM-ineligible. crispCanvasText keeps it smooth on fractional DPI.
+    const t = crispCanvasText(this.add.text(512, y, label, {
       fontSize: outcome.size, color: outcome.color, fontStyle: 'bold',
       stroke: '#000000', strokeThickness: 4,
-    }).setResolution(window.devicePixelRatio).setOrigin(0.5).setDepth(1100);
+    })).setOrigin(0.5).setDepth(1100);
     this.tweens.add({
       targets: t, alpha: 0, y: y - 40,
       duration: 750, ease: 'Power2',
@@ -441,14 +445,16 @@ export class BattleScene extends Phaser.Scene {
     w.__enrageBannerCount = (w.__enrageBannerCount ?? 0) + 1;
 
     const name = opp.displayName ? opp.displayName : 'The boss';
-    const banner = this.add
-      .text(512, 120, `${name} roars!`, {
+    // #364 — animated one-shot banner (fades + rises) → crispCanvasText.
+    const banner = crispCanvasText(
+      this.add.text(512, 120, `${name} roars!`, {
         fontSize: '32px',
         color: '#ff4444',
         fontStyle: 'bold',
         stroke: '#000000',
         strokeThickness: 5,
-      })
+      }),
+    )
       .setOrigin(0.5)
       .setDepth(1200)
       .setName('enrageBanner');
@@ -479,11 +485,13 @@ export class BattleScene extends Phaser.Scene {
         ? { label: 'Not enough spirit!', color: '#ff4444' }
         : { label: `Restored ${p.restored}/${p.requested} — low spirit`, color: '#ffaa33' };
     // Positioned just above the player's slot row (the bottom hand), low on screen.
-    const t = this.add
-      .text(512, 470, label, {
+    // #364 — animated, transient recharge feedback (fades + rises) → crispCanvasText.
+    const t = crispCanvasText(
+      this.add.text(512, 470, label, {
         fontSize: '24px', color, fontStyle: 'bold',
         stroke: '#000000', strokeThickness: 4,
-      })
+      }),
+    )
       .setOrigin(0.5)
       .setDepth(1100);
     this.tweens.add({
@@ -531,11 +539,14 @@ export class BattleScene extends Phaser.Scene {
       // the player immediate feedback so they know why nothing happened.
       const me = state.players?.get(myId);
       if (me?.[slot]?.isExtinguished) {
-        const t = this.add
-          .text(512, 205, 'Ring exhausted!', {
+        // #364 — animated, transient exhausted-ring toast (fades + rises) →
+        // crispCanvasText (it animates position, so not a static DOM candidate).
+        const t = crispCanvasText(
+          this.add.text(512, 205, 'Ring exhausted!', {
             fontSize: '22px', color: '#ff8888', fontStyle: 'bold',
             stroke: '#000000', strokeThickness: 3,
-          })
+          }),
+        )
           .setOrigin(0.5)
           .setDepth(1100)
           .setScrollFactor(0);
@@ -805,12 +816,14 @@ export class BattleScene extends Phaser.Scene {
     if (this.forfeitPrompt) return;
 
     const bg = this.add.rectangle(512, 288, 560, 90, 0x000000, 0.85).setStrokeStyle(2, 0xff4444);
-    const text = this.add
-      .text(512, 288, 'Forfeit duel? Lose staked ring + 25 gold  [Y/N]', {
+    // #364 — forfeit-prompt text is wrapped in a Container (container-bound) →
+    // DOM-ineligible. crispCanvasText keeps it smooth on fractional DPI.
+    const text = crispCanvasText(
+      this.add.text(512, 288, 'Forfeit duel? Lose staked ring + 25 gold  [Y/N]', {
         fontSize: '18px',
         color: '#ffdddd',
-      })
-      .setOrigin(0.5);
+      }),
+    ).setOrigin(0.5);
     const prompt = this.add.container(0, 0, [bg, text]).setDepth(1500);
     this.forfeitPrompt = prompt;
     // E2E hook so a test can assert the prompt is open without reading pixels.
