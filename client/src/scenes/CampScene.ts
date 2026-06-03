@@ -352,7 +352,10 @@ export class CampScene extends DualCameraScene {
       window.__reliquarySelect = undefined;
       window.__reliquaryLocked = undefined;
       window.__teleportState = undefined;
-      window.__campState = undefined;
+      // __campState intentionally NOT cleared: Phaser's scene queue stops the old
+      // scene (firing shutdown) before starting the new one, so clearing here would
+      // wipe campState before the biome scene's checkNpcDetection can read it.
+      // The global persists until the next CampScene.refreshPools() overwrites it.
       window.__fusionState = undefined;
       window.__player = null;
       window.__scene = null;

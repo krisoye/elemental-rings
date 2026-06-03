@@ -1569,7 +1569,11 @@ export abstract class BaseBiomeScene extends DualCameraScene {
       // Show the same hint that checkNpcDetection() would display for the current
       // blocking condition, so double-clicking a gated NPC gives visible feedback.
       if (!heartOk) {
-        this.showNpcPrompt('Equip & recharge a heart ring to fight');
+        this.showNpcPrompt(
+          campState?.heart_ring
+            ? 'Recharge your heart ring to fight'
+            : 'Equip a heart ring to fight',
+        );
       } else {
         this.showNpcPrompt('Stake a ring to fight');
       }
@@ -1632,7 +1636,11 @@ export abstract class BaseBiomeScene extends DualCameraScene {
       if (!heartOk) {
         // Leave detectedNpc null so handleInteract() and onNpcClick() are no-ops.
         this.detectedNpc = null;
-        this.showNpcPrompt('Equip & recharge a heart ring to fight');
+        this.showNpcPrompt(
+          campState?.heart_ring
+            ? 'Recharge your heart ring to fight'
+            : 'Equip a heart ring to fight',
+        );
         window.__detectedNpc = null;
         return;
       }
