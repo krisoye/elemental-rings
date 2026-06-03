@@ -19,10 +19,10 @@ import { describe, test, expect, beforeAll, afterAll } from 'vitest';
 import { ColyseusTestServer, boot } from '@colyseus/testing';
 import { Server } from 'colyseus';
 import { BattleRoom } from '../../server/src/rooms/BattleRoom';
-import { createPlayer, getRingsByOwner } from '../../server/src/persistence/PlayerRepo';
+import { createPlayer, getRingsByOwner, getSpiritAndFood } from '../../server/src/persistence/PlayerRepo';
 import { signToken } from '../../server/src/auth/auth';
 import { ElementEnum, type WonRingPayload } from '../../shared/types';
-import { TELEGRAPH_MS, BLOCK_WINDOW_MS, STARTING_HEARTS } from '../../server/src/game/constants';
+import { TELEGRAPH_MS, BLOCK_WINDOW_MS, STARTING_HEARTS, BOSS_FOOD_DROP, MINI_BOSS_FOOD_DROP } from '../../server/src/game/constants';
 
 let colyseus: ColyseusTestServer<any>;
 
@@ -481,4 +481,378 @@ describe('#261 — boss unique passives', () => {
       expect(room.state.players.get('AI').hearts).toBe(3);
     }
   }, 25000);
+});
+
+// ---------------------------------------------------------------------------
+// #328 — fused-thumb boss won-ring grant: regression and adversarial tests
+// ---------------------------------------------------------------------------
+
+/**
+ * Helper: create a fresh DB player, build a vsAI room against the given boss
+ * (with the AI at aiHearts:1 / aiUses:0 so it dies on the human's first hit),
+ * drive the duel to ENDED with the human as winner, and return identifiers for
+ * the winner, the collected `wonRing` message, and the live room.
+ *
+ * Uses a 200 ms polling loop (up to 60 iterations) so the AI's 300 ms forfeit
+ * timer always fires between polls regardless of boss passive state. The polling
+ * approach mirrors the `driveAiTo` helper used by the #259 enrage tests and
+ * handles all boss variants — including those with Bulwark defense uses (Bogwood)
+ * and Heartwood charge absorption (Thornwood) — without per-boss loop budgets.
+ */
+async function winAgainstBoss(
+  npcId: string,
+  personality: string,
+  aiSeed: number,
+  extra: object = {},
+): Promise<{ playerId: string; wonRing: WonRingPayload | undefined; room: any; human: any }> {
+  const username = `reg_winner_${Math.random().toString(36).slice(2)}`;
+  const playerId = createPlayer(username, 'x');
+  const token = signToken({ playerId, username });
+  const room = await colyseus.createRoom<any>('battle-ai', {
+    vsAI: true,
+    personality,
+    aiSeed,
+    npcId,
+    aiHearts: 1,
+    aiUses: 0,
+    ...extra,
+  });
+  const human = await colyseus.connectTo(room, { token, firstStrike: true });
+  await room.waitForNextPatch();
+  await sleep(20);
+
+  let wonRing: WonRingPayload | undefined;
+  human.onMessage('wonRing', (msg: WonRingPayload) => {
+    wonRing = msg;
+  });
+
+  // Poll every 200 ms. The AI's forfeit/recharge timers fire in ~300 ms (non-fast
+  // mode), so polling at 200 ms catches every state change without waiting a full
+  // TELEGRAPH+BLOCK cycle. The human only sends an attack on its own ATTACK_SELECT
+  // turn; the loop is otherwise passive so the AI can take its turns naturally.
+  //
+  // Alternate a1/a2 so that a DEFENSIVE boss's Bulwark-driven parry+rally counter
+  // doesn't exhaust a single ring (isExtinguished guard drops silently exhausted
+  // attacks, which would stall the duel if the human only ever sent 'a1').
+  const ATTACK_SLOTS_CYCLE = ['a1', 'a2'] as const;
+  let slotIdx = 0;
+  for (let i = 0; i < 60 && room.state.phase !== 'ENDED'; i++) {
+    if (
+      room.state.phase === 'ATTACK_SELECT' &&
+      room.state.currentAttackerId === human.sessionId
+    ) {
+      const ps = room.state.players.get(human.sessionId);
+      // Prefer the slot that still has uses; cycle if the current choice is exhausted.
+      if (ps?.getSlot(ATTACK_SLOTS_CYCLE[slotIdx])?.isExtinguished) {
+        slotIdx = (slotIdx + 1) % ATTACK_SLOTS_CYCLE.length;
+      }
+      human.send('selectAttack', { slot: ATTACK_SLOTS_CYCLE[slotIdx] });
+    }
+    await sleep(200);
+  }
+
+  await sleep(50);
+  return { playerId, wonRing, room, human };
+}
+
+/** Starting food for any freshly-created player (schema default: 100 units). */
+const STARTER_FOOD = 100;
+
+describe('#328 — spec conformance: every fused-thumb boss grants its fusion ring', () => {
+  test('Bloom Guardian grants exactly one BLOOM ring (fusion, two parents)', async () => {
+    // Acceptance criterion: beating forest_bloom_shrine_guardian grants a BLOOM ring
+    // delivered via the standard wonRing path with two fusionParents (Wood + Earth).
+    // This was the original bug — the guardian granted nothing before #328.
+    const { playerId, wonRing, room } = await winAgainstBoss(
+      'forest_bloom_shrine_guardian',
+      'DEFENSIVE',
+      42,
+    );
+
+    expect(room.state.phase).toBe('ENDED');
+
+    // DB: exactly one BLOOM ring in inventory.
+    const bloomRings = getRingsByOwner(playerId).filter(
+      (r) => r.element === ElementEnum.BLOOM,
+    );
+    expect(bloomRings.length).toBe(1);
+
+    // A fusion ring carries two fusionParents (non-empty array, populated on read).
+    expect(bloomRings[0].fusionParents.length).toBe(2);
+
+    // The client received a wonRing message naming the BLOOM element.
+    expect(wonRing).toBeDefined();
+    expect(wonRing?.element).toBe(ElementEnum.BLOOM);
+    expect(wonRing?.ringId).toBe(bloomRings[0].id);
+  }, 20000);
+
+  test('Bogwood Warden grants exactly one MUD ring (fusion, two parents)', async () => {
+    // Acceptance criterion: beating forest_bogwood_warden grants a MUD ring.
+    // The warden also drops a food cache, but the ring is the focus here; the food
+    // path is covered separately.
+    const { playerId, wonRing, room } = await winAgainstBoss(
+      'forest_bogwood_warden',
+      'DEFENSIVE',
+      77,
+    );
+
+    expect(room.state.phase).toBe('ENDED');
+
+    const mudRings = getRingsByOwner(playerId).filter(
+      (r) => r.element === ElementEnum.MUD,
+    );
+    expect(mudRings.length).toBe(1);
+    expect(mudRings[0].fusionParents.length).toBe(2);
+
+    expect(wonRing).toBeDefined();
+    expect(wonRing?.element).toBe(ElementEnum.MUD);
+    expect(wonRing?.ringId).toBe(mudRings[0].id);
+  }, 20000);
+
+  test('Thornwood Warden grants THORNADO ring AND food cache on first defeat', async () => {
+    // Acceptance criterion: forest_thornwood_warden first-defeat gives both a
+    // THORNADO ring (via generic §9.1 won-ring path) AND the BOSS_FOOD_DROP (50
+    // units). Both rewards must be credited; neither may be omitted.
+    //
+    // The Thornwood Warden has Heartwood (2 charges, absorbs first 2 heart-losses),
+    // requiring 3 clean hits even at aiHearts:1. The polling helper handles this
+    // naturally — it keeps attacking until the room reaches ENDED.
+    const { playerId, wonRing, room } = await winAgainstBoss(
+      'forest_thornwood_warden',
+      'RESILIENT',
+      101,
+    );
+
+    expect(room.state.phase).toBe('ENDED');
+
+    // Ring: exactly one THORNADO ring in inventory.
+    const thornadoRings = getRingsByOwner(playerId).filter(
+      (r) => r.element === ElementEnum.THORNADO,
+    );
+    expect(thornadoRings.length).toBe(1);
+    expect(thornadoRings[0].fusionParents.length).toBe(2);
+
+    // Food: food_units incremented by BOSS_FOOD_DROP (50) over the 100-unit starter
+    // balance every fresh player begins with (db.ts DEFAULT 100).
+    const { food_units } = getSpiritAndFood(playerId);
+    expect(food_units).toBe(STARTER_FOOD + BOSS_FOOD_DROP);
+
+    // Client message for the ring.
+    expect(wonRing).toBeDefined();
+    expect(wonRing?.element).toBe(ElementEnum.THORNADO);
+  }, 30000);
+
+  test('Thornado Guardian grants exactly ONE THORNADO ring — no double-grant regression (#328)', async () => {
+    // Regression guard: before #328, a special-case grantRingToCarry block fired in
+    // addition to the generic grant, yielding two THORNADO rings. Verify the count
+    // is exactly 1 after the deletion of that block.
+    const { playerId, room } = await winAgainstBoss(
+      'forest_thornado_shrine_guardian',
+      'AGGRESSIVE',
+      999,
+    );
+
+    expect(room.state.phase).toBe('ENDED');
+
+    const thornadoRings = getRingsByOwner(playerId).filter(
+      (r) => r.element === ElementEnum.THORNADO,
+    );
+    // Must be exactly 1 — not 0 (ring must be granted) and not 2+ (no double-grant).
+    expect(thornadoRings.length).toBe(1);
+  }, 20000);
+});
+
+describe('#328 — adversarial / boundary: grant path guards', () => {
+  test('practice rematch vs a fused-thumb boss grants nothing (ring and food unchanged)', async () => {
+    // Acceptance criterion: isPracticeRematch === true causes persistBattleResult to
+    // early-return before any ring grant or food credit. A player who practice-fights
+    // a fused-thumb boss must receive no ring, no food, no XP.
+    const username = `prac_${Math.random().toString(36).slice(2)}`;
+    const playerId = createPlayer(username, 'x');
+    const token = signToken({ playerId, username });
+
+    const ringCountBefore = getRingsByOwner(playerId).length;
+    const foodBefore = getSpiritAndFood(playerId).food_units;
+
+    const room = await colyseus.createRoom<any>('battle-ai', {
+      vsAI: true,
+      isPracticeRematch: true,
+      personality: 'DEFENSIVE',
+      aiSeed: 55,
+      npcId: 'forest_bloom_shrine_guardian',
+      aiHearts: 1,
+      aiUses: 0,
+    });
+    const human = await colyseus.connectTo(room, { token, firstStrike: true });
+    await room.waitForNextPatch();
+    await sleep(20);
+
+    let wonRingReceived: WonRingPayload | undefined;
+    human.onMessage('wonRing', (msg: WonRingPayload) => {
+      wonRingReceived = msg;
+    });
+
+    const pracSlots = ['a1', 'a2'] as const;
+    let pracSlotIdx = 0;
+    for (let i = 0; i < 60 && room.state.phase !== 'ENDED'; i++) {
+      if (
+        room.state.phase === 'ATTACK_SELECT' &&
+        room.state.currentAttackerId === human.sessionId
+      ) {
+        const ps = room.state.players.get(human.sessionId);
+        if (ps?.getSlot(pracSlots[pracSlotIdx])?.isExtinguished) {
+          pracSlotIdx = (pracSlotIdx + 1) % pracSlots.length;
+        }
+        human.send('selectAttack', { slot: pracSlots[pracSlotIdx] });
+      }
+      await sleep(200);
+    }
+
+    await sleep(50);
+
+    expect(room.state.phase).toBe('ENDED');
+
+    // No ring added to inventory.
+    const ringCountAfter = getRingsByOwner(playerId).length;
+    expect(ringCountAfter).toBe(ringCountBefore);
+
+    // No food credited.
+    const foodAfter = getSpiritAndFood(playerId).food_units;
+    expect(foodAfter).toBe(foodBefore);
+
+    // No wonRing message dispatched to the client.
+    expect(wonRingReceived).toBeUndefined();
+  }, 20000);
+
+  test('non-boss vsAI win still grants a base-element ring (generic path not broken)', async () => {
+    // Regression guard: the deletion of the !aiPs.thumb.isFusion guard must not
+    // accidentally break the base-element (non-boss) grant path. A plain vsAI duel
+    // with no npcId must still award exactly one new ring matching the AI's base
+    // thumb element. We assert on the delta (rings gained = 1) rather than the
+    // absolute count because a fresh player already holds starter rings in the same
+    // element pool (EARTH × 3, WIND × 3 via createPlayer).
+    const username = `base_${Math.random().toString(36).slice(2)}`;
+    const playerId = createPlayer(username, 'x');
+    const token = signToken({ playerId, username });
+
+    // Snapshot inventory before the duel.
+    const ringsBefore = getRingsByOwner(playerId);
+    const ringIdsBefore = new Set(ringsBefore.map((r) => r.id));
+
+    const room = await colyseus.createRoom<any>('battle-ai', {
+      vsAI: true,
+      personality: 'AGGRESSIVE',
+      aiSeed: 7,
+      aiHearts: 1,
+      aiUses: 0,
+    });
+    const human = await colyseus.connectTo(room, { token, firstStrike: true });
+    await room.waitForNextPatch();
+    await sleep(20);
+
+    // Capture the AI thumb element BEFORE the duel ends.
+    const aiThumbElement: number = room.state.players.get('AI').thumb.element;
+    const aiThumbIsFusion: boolean = room.state.players.get('AI').thumb.isFusion;
+
+    let wonRingMsg: WonRingPayload | undefined;
+    human.onMessage('wonRing', (msg: WonRingPayload) => {
+      wonRingMsg = msg;
+    });
+
+    const baseSlots = ['a1', 'a2'] as const;
+    let baseSlotIdx = 0;
+    for (let i = 0; i < 60 && room.state.phase !== 'ENDED'; i++) {
+      if (
+        room.state.phase === 'ATTACK_SELECT' &&
+        room.state.currentAttackerId === human.sessionId
+      ) {
+        const ps = room.state.players.get(human.sessionId);
+        if (ps?.getSlot(baseSlots[baseSlotIdx])?.isExtinguished) {
+          baseSlotIdx = (baseSlotIdx + 1) % baseSlots.length;
+        }
+        human.send('selectAttack', { slot: baseSlots[baseSlotIdx] });
+      }
+      await sleep(200);
+    }
+
+    await sleep(50);
+
+    expect(room.state.phase).toBe('ENDED');
+
+    // The AI seated a base (non-fusion) thumb for this non-boss encounter.
+    expect(aiThumbIsFusion).toBe(false);
+
+    // Exactly one new ring was added to the inventory (delta = 1).
+    const ringsAfter = getRingsByOwner(playerId);
+    const newRings = ringsAfter.filter((r) => !ringIdsBefore.has(r.id));
+    expect(newRings.length).toBe(1);
+
+    // The new ring matches the AI's thumb element and is a base ring (no fusionParents).
+    expect(newRings[0].element).toBe(aiThumbElement);
+    expect(newRings[0].fusionParents.length).toBe(0);
+
+    // Client received the wonRing message.
+    expect(wonRingMsg).toBeDefined();
+    expect(wonRingMsg?.element).toBe(aiThumbElement);
+  }, 20000);
+
+  test('Bogwood Warden grants MINI_BOSS_FOOD_DROP food on first defeat (orthogonal reward survives refactor)', async () => {
+    // Regression guard: the food cache is an orthogonal first-defeat reward (#229/#230)
+    // that must survive the #328 refactor unharmed. The warden drops MINI_BOSS_FOOD_DROP
+    // (20 units) on top of the 100-unit starter balance every fresh player begins
+    // with (db.ts schema DEFAULT 100).
+    const username = `bogfood_${Math.random().toString(36).slice(2)}`;
+    const playerId = createPlayer(username, 'x');
+    const token = signToken({ playerId, username });
+
+    const room = await colyseus.createRoom<any>('battle-ai', {
+      vsAI: true,
+      personality: 'DEFENSIVE',
+      aiSeed: 13,
+      npcId: 'forest_bogwood_warden',
+      aiHearts: 1,
+      aiUses: 0,
+    });
+    const human = await colyseus.connectTo(room, { token, firstStrike: true });
+    await room.waitForNextPatch();
+    await sleep(20);
+
+    const bogwoodSlots = ['a1', 'a2'] as const;
+    let bogwoodSlotIdx = 0;
+    for (let i = 0; i < 60 && room.state.phase !== 'ENDED'; i++) {
+      if (
+        room.state.phase === 'ATTACK_SELECT' &&
+        room.state.currentAttackerId === human.sessionId
+      ) {
+        const ps = room.state.players.get(human.sessionId);
+        if (ps?.getSlot(bogwoodSlots[bogwoodSlotIdx])?.isExtinguished) {
+          bogwoodSlotIdx = (bogwoodSlotIdx + 1) % bogwoodSlots.length;
+        }
+        human.send('selectAttack', { slot: bogwoodSlots[bogwoodSlotIdx] });
+      }
+      await sleep(200);
+    }
+
+    expect(room.state.phase).toBe('ENDED');
+
+    const { food_units } = getSpiritAndFood(playerId);
+    expect(food_units).toBe(STARTER_FOOD + MINI_BOSS_FOOD_DROP);
+  }, 20000);
+
+  test('wonRing payload ringId matches the ring in the DB (data integrity)', async () => {
+    // Assert that the ringId carried in the wonRing client message is the same record
+    // that was written to the DB. A mismatch would mean the client is trying to carry
+    // a ring it cannot find — breaking the manage-rings flow entirely.
+    const { playerId, wonRing } = await winAgainstBoss(
+      'forest_bloom_shrine_guardian',
+      'DEFENSIVE',
+      200,
+    );
+
+    expect(wonRing).toBeDefined();
+    const ownedRings = getRingsByOwner(playerId);
+    const matchById = ownedRings.find((r) => r.id === wonRing?.ringId);
+    expect(matchById).toBeDefined();
+    expect(matchById?.element).toBe(ElementEnum.BLOOM);
+  }, 20000);
 });
