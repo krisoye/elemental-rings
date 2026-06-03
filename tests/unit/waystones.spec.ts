@@ -2,7 +2,7 @@ import fs from 'fs';
 import path from 'path';
 import { describe, test, it, expect } from 'vitest';
 import { WAYSTONES, getWaystone, canTeleport } from '../../shared/waystones';
-import { FOREST_SCREENS } from '../../shared/world/forest';
+import { FOREST_SCREENS, type ScreenDef } from '../../shared/world/forest';
 import { SWAMP_SCREENS } from '../../shared/world/swamp';
 
 // ---------------------------------------------------------------------------
@@ -193,6 +193,48 @@ describe('FOREST_SCREENS drift', () => {
         'waystone' in screen,
         `${screen.id} should not have a waystone field`,
       ).toBe(false);
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// FOREST_SCREENS grid consistency — no coord collision, unit-step exits
+// ---------------------------------------------------------------------------
+
+const DELTA: Record<string, { dx: number; dy: number }> = {
+  north: { dx: 0, dy: 1 },
+  south: { dx: 0, dy: -1 },
+  east: { dx: 1, dy: 0 },
+  west: { dx: -1, dy: 0 },
+};
+
+describe('FOREST_SCREENS grid consistency', () => {
+  it('no two screens share the same coordinate', () => {
+    const seen = new Map<string, string>(); // 'x,y' → screenId
+    for (const screen of FOREST_SCREENS) {
+      if (!screen.coord) continue; // exempt teleport-only (empty exits)
+      const key = `${screen.coord.x},${screen.coord.y}`;
+      expect(seen.has(key), `${screen.id} and ${seen.get(key)} share coord (${key})`).toBe(false);
+      seen.set(key, screen.id);
+    }
+  });
+
+  it('every exit points to the room at the adjacent unit cell', () => {
+    const byCoord = new Map<string, ScreenDef>();
+    for (const screen of FOREST_SCREENS) {
+      if (screen.coord) byCoord.set(`${screen.coord.x},${screen.coord.y}`, screen);
+    }
+    for (const screen of FOREST_SCREENS) {
+      if (!screen.coord) continue;
+      for (const [dir, neighborId] of Object.entries(screen.exits)) {
+        const { dx, dy } = DELTA[dir];
+        const expectedKey = `${screen.coord.x + dx},${screen.coord.y + dy}`;
+        const actual = byCoord.get(expectedKey);
+        expect(
+          actual?.id,
+          `${screen.id}.${dir} exits to ${neighborId} but the room at ${expectedKey} is ${actual?.id ?? 'nothing'}`,
+        ).toBe(neighborId);
+      }
     }
   });
 });
