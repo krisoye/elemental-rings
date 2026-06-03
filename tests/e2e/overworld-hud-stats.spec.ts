@@ -357,3 +357,169 @@ test('overworld HUD (#355): location label renders two rows (biome / area) when 
 // triggered via E2E (the manifest provides a name for every real screen), so
 // we omit a test for it. The code path is tested via unit tests of the
 // formatting logic in refreshHud().
+
+// ══════════════════════════════════════════════════════════════════════════════
+// #355 REGRESSION TESTS — lock in HUD XP rename and two-row location label
+// ══════════════════════════════════════════════════════════════════════════════
+
+// ── #355 Regression A — no legacy colon-style labels ─────────────────────────
+// The old HUD used `Total:` and `Avg:` with colons. The spec renames them to
+// `XP` and `Avg XP` (no colons). Any copy-paste reversion would immediately
+// re-introduce the colon forms. This test guards that gate.
+test('overworld HUD (#355 regression): HUD does not contain legacy "Total:" or "Avg:" colon-style labels', async ({ browser }) => {
+  const ctx = await browser.newContext();
+  await seedAuthToken(ctx);
+  const page = await ctx.newPage();
+  await loadForest(page);
+  await waitForHudRefresh(page);
+  const hud = await getHudText(page);
+
+  // Spec says: rename `Total:` → `XP` and `Avg:` → `Avg XP` — no colons.
+  expect(hud, 'HUD must not contain legacy "Total:" label').not.toContain('Total:');
+  expect(hud, 'HUD must not contain legacy "Avg:" label').not.toContain('Avg:');
+
+  // Positive assertion: the new-style labels are present.
+  expect(hud).toContain('XP');
+  expect(hud).toContain('Avg XP');
+
+  await ctx.close();
+});
+
+// ── #355 Regression B — aggregate_xp segment not rendered ────────────────────
+// The old HUD rendered a separate `XP {aggregate_xp}` segment (Reliquary-only XP)
+// between `♥` and the total XP. The spec removes it. When aggregate_xp ≠ total_xp
+// (rings split between carry and Reliquary), the old code would produce two
+// different XP numbers — the new code must show only total_xp under the `XP` label.
+// When aggregate_xp === total_xp (no Reliquary rings), the test degrades to a
+// conformance assertion: `XP` label present, no `Total:` label.
+test('overworld HUD (#355 regression): aggregate_xp segment is not rendered — only total_xp appears as "XP N"', async ({ browser }) => {
+  const ctx = await browser.newContext();
+  await seedAuthToken(ctx);
+  const page = await ctx.newPage();
+  await loadForest(page);
+
+  const tok = await page.evaluate(() => localStorage.getItem('er_token') ?? '');
+  const me = (await (
+    await fetch(`${API_URL}/api/me`, { headers: { Authorization: `Bearer ${tok}` } })
+  ).json()) as {
+    player: {
+      aggregate_xp?: number;
+      total_xp?: number;
+    };
+  };
+
+  const aggregateXp = me.player.aggregate_xp ?? 0;
+  const totalXp = me.player.total_xp ?? 0;
+
+  await waitForHudRefresh(page);
+  const hud = await getHudText(page);
+
+  if (aggregateXp !== totalXp) {
+    // When they differ, the Reliquary-only number is distinct from the total.
+    // The old HUD would render both; the new HUD must render ONLY total_xp.
+    // Guard: aggregate_xp's formatted value must not appear as a separate segment
+    // to the LEFT of the `XP` label (i.e. between ♥ and XP).
+    const heartPos = hud.indexOf('♥ ');
+    const xpPos    = hud.indexOf('  ·  XP ');
+    expect(heartPos, 'Heart segment must be present').toBeGreaterThanOrEqual(0);
+    expect(xpPos,    'XP segment must be present').toBeGreaterThanOrEqual(0);
+
+    // The substring between ♥ and XP must NOT contain the Reliquary-only number.
+    const segmentBetween = hud.slice(heartPos, xpPos);
+    const aggregateFormatted = aggregateXp.toLocaleString();
+    expect(
+      segmentBetween,
+      `Reliquary-only aggregate_xp value "${aggregateFormatted}" must not appear between ♥ and XP segments`,
+    ).not.toContain(aggregateFormatted);
+  } else {
+    // aggregate_xp === total_xp: values coincide, cannot distinguish by number alone.
+    // Informational: assert the new-style label and absence of old-style label.
+    expect(hud).toContain('XP');
+    expect(hud).not.toContain('Total:');
+  }
+
+  await ctx.close();
+});
+
+// ── #355 Regression C — exact segment count ──────────────────────────────────
+// The spec defines exactly 7 HUD segments separated by `  ·  ` (two-space middot):
+//   Day · Gold · Food · Spirit · ♥ · XP · Avg XP
+// That means exactly 6 separators. Fewer means a segment was dropped; more means
+// an extra segment was added (e.g. the removed aggregate_xp crept back in).
+test('overworld HUD (#355 regression): exactly 6 "  ·  " separators (7 segments: Day · Gold · Food · Spirit · ♥ · XP · Avg XP)', async ({ browser }) => {
+  const ctx = await browser.newContext();
+  await seedAuthToken(ctx);
+  const page = await ctx.newPage();
+  await loadForest(page);
+  await waitForHudRefresh(page);
+  const hud = await getHudText(page);
+
+  const SEPARATOR = '  ·  ';
+  // Count occurrences of the canonical separator.
+  const separatorCount = (hud.split(SEPARATOR).length - 1);
+  expect(
+    separatorCount,
+    `Expected exactly 6 "  ·  " separators (7 segments) but found ${separatorCount} in: "${hud}"`,
+  ).toBe(6);
+
+  await ctx.close();
+});
+
+// ── #355 Regression D — biomeTitle newline present for forest_anchorage ──────
+// The spec changes the location label separator from `  –  ` to `\n`. Phaser Text
+// renders `\n` as a second visible line. This test asserts the newline is present
+// for a screen that has an area name, guarding against a reversion to the old
+// dash-separated single-line format.
+test('overworld HUD (#355 regression): biomeTitle uses newline separator (not dash) when area name exists (forest_anchorage)', async ({ browser }) => {
+  const ctx = await browser.newContext();
+  await seedAuthToken(ctx);
+  const page = await ctx.newPage();
+  await loadForest(page);  // loads forest_anchorage, which has area name "The Anchorage"
+
+  const labelText = await page.evaluate(() => {
+    const scene = (window as any).__game?.scene?.getScene('ForestScene') as any;
+    const children = scene?.uiRoot?.getAll?.() ?? [];
+    const biomeTitle = children.find((o: any) => o.text && o.text.includes('Forest'));
+    return biomeTitle?.text ?? '';
+  });
+
+  // Spec says: `${biomeName}\n${areaName}` — newline separator, not ` – `.
+  expect(
+    labelText,
+    'biomeTitle must contain a newline when area name exists (area name is "The Anchorage")',
+  ).toContain('\n');
+
+  // Lines must split correctly into biome and area.
+  const lines = labelText.split('\n');
+  expect(lines[0], 'First line must be the biome name').toBe('Forest');
+  expect(lines[1], 'Second line must be the area name').toBe('The Anchorage');
+
+  await ctx.close();
+});
+
+// ── #355 Regression E — no old dash separator in biomeTitle ──────────────────
+// The old format was `Forest  –  The Anchorage` (two spaces on each side of an
+// en-dash). This test asserts that exact pattern is gone, regardless of which
+// screen is loaded. Guards against a partial revert that preserves the dash but
+// removes one space, or swaps the character — the complete old token must be absent.
+test('overworld HUD (#355 regression): biomeTitle does not use old "  –  " dash separator', async ({ browser }) => {
+  const ctx = await browser.newContext();
+  await seedAuthToken(ctx);
+  const page = await ctx.newPage();
+  await loadForest(page);  // loads forest_anchorage
+
+  const labelText = await page.evaluate(() => {
+    const scene = (window as any).__game?.scene?.getScene('ForestScene') as any;
+    const children = scene?.uiRoot?.getAll?.() ?? [];
+    const biomeTitle = children.find((o: any) => o.text && o.text.includes('Forest'));
+    return biomeTitle?.text ?? '';
+  });
+
+  // Spec says: separator is `\n`, not `  –  `. The old three-space-dash pattern must be gone.
+  expect(
+    labelText,
+    'biomeTitle must not use the old "  –  " dash separator',
+  ).not.toContain('  –  ');
+
+  await ctx.close();
+});
