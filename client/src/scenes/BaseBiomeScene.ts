@@ -870,7 +870,7 @@ export abstract class BaseBiomeScene extends DualCameraScene {
       // BattleScene returns to the correct screen when the duel ends, and create()
       // restores the player near the NPC.
       window.__duelOrigin = {
-        scene: this.scene.key as 'ForestScene' | 'SwampScene',
+        scene: this.scene.key as 'ForestScene' | 'SwampScene' | 'SnowScene',
         x: this.player.x,
         y: this.player.y,
         screenId: this.screenId,
@@ -1581,7 +1581,7 @@ export abstract class BaseBiomeScene extends DualCameraScene {
     if (now - prev > DOUBLE_CLICK_MS) return; // first click of a potential double
     this.npcLastClick.delete(npc.id); // consume the gesture
     window.__duelOrigin = {
-      scene: this.scene.key as 'ForestScene' | 'SwampScene',
+      scene: this.scene.key as 'ForestScene' | 'SwampScene' | 'SnowScene',
       x: this.player.x,
       y: this.player.y,
       screenId: this.screenId,
