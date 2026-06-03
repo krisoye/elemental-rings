@@ -994,6 +994,10 @@ export class BattleHandOverlay {
 
   /** #348 — tear down the discard confirm modal + its Y/N listeners; clear selection. */
   private dismissDiscardConfirm(): void {
+    // Only clear the swap selection when the confirm was actually open (i.e. the player
+    // cancelled mid-discard). renderManageModal calls this defensively on every rebuild
+    // so it must not wipe an in-progress ring selection.
+    const wasOpen = this.discardConfirm !== null;
     if (this.discardKeyHandlers) {
       this.discardKeyHandlers();
       this.discardKeyHandlers = null;
@@ -1001,7 +1005,7 @@ export class BattleHandOverlay {
     this.discardConfirm?.destroy(true);
     this.discardConfirm = null;
     window.__discardConfirmOpen = false;
-    this.swap.clear();
+    if (wasOpen) this.swap.clear();
   }
 
   /** Close the modal and fire the close callback (host re-enables movement). */
