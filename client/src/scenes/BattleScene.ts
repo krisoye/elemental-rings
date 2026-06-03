@@ -412,7 +412,7 @@ export class BattleScene extends Phaser.Scene {
     const t = this.add.text(512, y, label, {
       fontSize: outcome.size, color: outcome.color, fontStyle: 'bold',
       stroke: '#000000', strokeThickness: 4,
-    }).setResolution(window.devicePixelRatio).setOrigin(0.5).setDepth(1100);
+    }).setOrigin(0.5).setDepth(1100);
     this.tweens.add({
       targets: t, alpha: 0, y: y - 40,
       duration: 750, ease: 'Power2',

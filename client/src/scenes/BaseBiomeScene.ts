@@ -522,7 +522,6 @@ export abstract class BaseBiomeScene extends DualCameraScene {
         backgroundColor: '#00000099',
         padding: { x: 8, y: 5 },
       })
-      .setResolution(window.devicePixelRatio)
       .setScrollFactor(0)
       .setDepth(500);
     this.uiRoot.add(biomeTitle);
@@ -538,7 +537,6 @@ export abstract class BaseBiomeScene extends DualCameraScene {
         backgroundColor: '#00000088',
         padding: { x: 8, y: 4 },
       })
-      .setResolution(window.devicePixelRatio)
       .setOrigin(1, 0)
       .setScrollFactor(0)
       .setDepth(490);
@@ -1744,7 +1742,6 @@ export abstract class BaseBiomeScene extends DualCameraScene {
           backgroundColor: '#000000aa',
           padding: { x: 8, y: 4 },
         })
-        .setResolution(window.devicePixelRatio)
         .setOrigin(0.5, 0)
         .setScrollFactor(0)
         .setDepth(1000);

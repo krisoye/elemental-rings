@@ -91,15 +91,15 @@ export class OpponentDuelist extends Phaser.GameObjects.Container {
     this.heartsText = scene.add.text(-90, -55, '♥♥♥', {
       fontSize: '14px',
       color: '#ff4444',
-    }).setResolution(window.devicePixelRatio);
+    });
     this.atkText = scene.add.text(-90, -35, 'ATK: ?', {
       fontSize: '12px',
       color: '#ff8888',
-    }).setResolution(window.devicePixelRatio);
+    });
     this.defText = scene.add.text(-90, -20, 'DEF: ?', {
       fontSize: '12px',
       color: '#88aaff',
-    }).setResolution(window.devicePixelRatio);
+    });
     // #313 — opponent spirit readout (⚡ current/max), mirroring the local Hud
     // gauge format/colors. Placed in the right column of the stats panel; hidden
     // until updateFromState() confirms spiritMax > 0 (AI duels only).
@@ -108,7 +108,6 @@ export class OpponentDuelist extends Phaser.GameObjects.Container {
         fontSize: '12px',
         color: '#ffffff',
       })
-      .setResolution(window.devicePixelRatio)
       .setVisible(false);
 
     // Five element dots: gray = unrevealed, colored = revealed.
@@ -125,7 +124,7 @@ export class OpponentDuelist extends Phaser.GameObjects.Container {
       fontSize: '11px',
       color: '#ffaa44',
       fontStyle: 'bold',
-    }).setResolution(window.devicePixelRatio);
+    });
 
     // Thumb card — element always visible per GDD §9 (staked ring shows its
     // jewelry position). Dim overlay signals passive exhaustion.
@@ -134,7 +133,6 @@ export class OpponentDuelist extends Phaser.GameObjects.Container {
     // #348 — STATUS label, matching the player-side wording across all screens.
     const thumbLbl = scene.add
       .text(-90, 45, 'STATUS', { fontSize: '8px', color: '#ffcc44' })
-      .setResolution(window.devicePixelRatio)
       .setOrigin(0.5);
 
     this.thumbDimOverlay = scene.add.rectangle(-90, 20, 40, 56, 0x000000, 0.6);

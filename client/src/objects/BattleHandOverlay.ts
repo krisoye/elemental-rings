@@ -208,7 +208,6 @@ export class BattleHandOverlay {
     // Create the text first to measure its bounds; then back it with a rect.
     const lbl = this.scene.add
       .text(x, y, text, style)
-      .setResolution(window.devicePixelRatio)
       .setScrollFactor(0)
       .setOrigin(0.5);
     const tw = lbl.width;
@@ -266,12 +265,10 @@ export class BattleHandOverlay {
         fontSize: '18px',
         color: '#ffffff',
       })
-      .setResolution(window.devicePixelRatio)
       .setScrollFactor(0)
       .setOrigin(0.5);
     const close = this.scene.add
       .text(CANVAS_W / 2 + 290, titleY, CLOSE_GLYPH, { fontSize: '18px', color: '#ff8888' })
-      .setResolution(window.devicePixelRatio)
       .setScrollFactor(0)
       .setOrigin(0.5)
       .setInteractive({ useHandCursor: true })
@@ -413,7 +410,6 @@ export class BattleHandOverlay {
       } else {
         const dash = this.scene.add
           .text(sx, slotY, '—', { fontSize: '11px', color: '#888888' })
-          .setResolution(window.devicePixelRatio)
           .setScrollFactor(0)
           .setOrigin(0.5);
         container.add(dash);
@@ -454,7 +450,6 @@ export class BattleHandOverlay {
         fontSize: '12px',
         color: spareLabelColor,
       })
-      .setResolution(window.devicePixelRatio)
       .setScrollFactor(0)
       .setOrigin(0.5);
     container.add(carriedLbl);
@@ -525,10 +520,10 @@ export class BattleHandOverlay {
 
         const pips = usePips(ring.current_uses, ring.max_uses);
         ringGrp.add([
-          this.scene.add.text(0, -22, ELEMENT_NAMES[ring.element] ?? '?', { fontSize: '9px', color: '#000000' }).setResolution(window.devicePixelRatio).setScrollFactor(0).setOrigin(0.5),
-          this.scene.add.text(0, -6, pips, { fontSize: '10px', color: '#000000' }).setResolution(window.devicePixelRatio).setScrollFactor(0).setOrigin(0.5),
-          this.scene.add.text(0, 10, `Xp: ${ring.xp}`, { fontSize: '9px', color: '#000000' }).setResolution(window.devicePixelRatio).setScrollFactor(0).setOrigin(0.5),
-          this.scene.add.text(0, 24, `T${ring.tier}`, { fontSize: '9px', color: '#000000' }).setResolution(window.devicePixelRatio).setScrollFactor(0).setOrigin(0.5),
+          this.scene.add.text(0, -22, ELEMENT_NAMES[ring.element] ?? '?', { fontSize: '9px', color: '#000000' }).setScrollFactor(0).setOrigin(0.5),
+          this.scene.add.text(0, -6, pips, { fontSize: '10px', color: '#000000' }).setScrollFactor(0).setOrigin(0.5),
+          this.scene.add.text(0, 10, `Xp: ${ring.xp}`, { fontSize: '9px', color: '#000000' }).setScrollFactor(0).setOrigin(0.5),
+          this.scene.add.text(0, 24, `T${ring.tier}`, { fontSize: '9px', color: '#000000' }).setScrollFactor(0).setOrigin(0.5),
         ]);
       } else {
         // #350 — empty spare placeholder: interactive when a battle-slot ring,
@@ -574,7 +569,6 @@ export class BattleHandOverlay {
         .text(CANVAS_W / 2, SPARE_ROW_Y[1] + 48, '▼ scroll', {
           fontSize: '11px', color: '#556677',
         })
-        .setResolution(window.devicePixelRatio)
         .setScrollFactor(0)
         .setOrigin(0.5, 0);
       container.add(hint);
@@ -593,21 +587,18 @@ export class BattleHandOverlay {
     const rechargeY = SPARE_ROW_Y[1] + 56;
     const rechargeBtn = this.scene.add
       .text(CANVAS_W / 2 - 100, rechargeY, '[Recharge]', { fontSize: '13px', color: '#ffcc44' })
-      .setResolution(window.devicePixelRatio)
       .setScrollFactor(0)
       .setOrigin(0.5)
       .setInteractive({ useHandCursor: true })
       .on('pointerdown', () => void this.doManageRechargeSelected());
     const rechargeAllBtn = this.scene.add
       .text(CANVAS_W / 2 + 60, rechargeY, '[Recharge All]', { fontSize: '13px', color: '#ffcc44' })
-      .setResolution(window.devicePixelRatio)
       .setScrollFactor(0)
       .setOrigin(0.5)
       .setInteractive({ useHandCursor: true })
       .on('pointerdown', () => void this.doManageRechargeAll());
     this.manageStatusText = this.scene.add
       .text(CANVAS_W / 2, rechargeY + 16, '', { fontSize: '11px', color: '#ff8888' })
-      .setResolution(window.devicePixelRatio)
       .setScrollFactor(0)
       .setOrigin(0.5);
     container.add([rechargeBtn, rechargeAllBtn, this.manageStatusText]);
@@ -680,7 +671,6 @@ export class BattleHandOverlay {
           align: 'center',
           lineSpacing: 1,
         })
-        .setResolution(window.devicePixelRatio)
         .setScrollFactor(0)
         .setOrigin(0.5);
       container.add(placeholder);
@@ -736,22 +726,18 @@ export class BattleHandOverlay {
     const pips = usePips(ring.current_uses, ring.max_uses);
     const nameLbl = this.scene.add
       .text(cx, cy - 22, ELEMENT_NAMES[ring.element] ?? '?', { fontSize: '9px', color: '#000000' })
-      .setResolution(window.devicePixelRatio)
       .setScrollFactor(0)
       .setOrigin(0.5);
     const pipsLbl = this.scene.add
       .text(cx, cy - 6, pips, { fontSize: '10px', color: '#000000' })
-      .setResolution(window.devicePixelRatio)
       .setScrollFactor(0)
       .setOrigin(0.5);
     const xpLbl = this.scene.add
       .text(cx, cy + 10, `Xp: ${ring.xp}`, { fontSize: '9px', color: '#000000' })
-      .setResolution(window.devicePixelRatio)
       .setScrollFactor(0)
       .setOrigin(0.5);
     const tierLbl = this.scene.add
       .text(cx, cy + 24, `T${ring.tier}`, { fontSize: '9px', color: '#000000' })
-      .setResolution(window.devicePixelRatio)
       .setScrollFactor(0)
       .setOrigin(0.5);
     container.add([nameLbl, pipsLbl, xpLbl, tierLbl]);
@@ -1103,12 +1089,10 @@ export class BattleHandOverlay {
         fontSize: '16px',
         color: '#ffdddd',
       })
-      .setResolution(window.devicePixelRatio)
       .setScrollFactor(0)
       .setOrigin(0.5);
     const discardBtn = this.scene.add
       .text(CANVAS_W / 2 - 70, CANVAS_H / 2 + 22, '[Discard]', { fontSize: '15px', color: '#ff8888' })
-      .setResolution(window.devicePixelRatio)
       .setScrollFactor(0)
       .setOrigin(0.5)
       .setInteractive({ useHandCursor: true })
@@ -1116,7 +1100,6 @@ export class BattleHandOverlay {
       .on('pointerdown', () => this.confirmDiscard(ringId, selSlot, isPendingWon));
     const cancelBtn = this.scene.add
       .text(CANVAS_W / 2 + 70, CANVAS_H / 2 + 22, '[Cancel]', { fontSize: '15px', color: '#aaccff' })
-      .setResolution(window.devicePixelRatio)
       .setScrollFactor(0)
       .setOrigin(0.5)
       .setInteractive({ useHandCursor: true })
