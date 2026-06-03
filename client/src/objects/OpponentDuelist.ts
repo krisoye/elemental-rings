@@ -10,6 +10,7 @@ import {
 import { charsetFrame } from './world/charset';
 import { FusedCardFill } from './fusedFill';
 import { STATUS_BADGES, heartsString } from './ui/format';
+import { crispCanvasText } from './ui/DomLabel';
 
 // Combat slots whose remaining uses count toward the opponent's aggregate (the
 // thumb is a passive staked ring and is excluded from ATK/DEF totals).
@@ -88,27 +89,36 @@ export class OpponentDuelist extends Phaser.GameObjects.Container {
     // Semi-transparent panel behind the stats text (shrunken to stats area only)
     const panel = scene.add.rectangle(0, 0, 80, 40, 0x444444, 0.8).setStrokeStyle(1, 0x888888);
 
-    this.heartsText = scene.add.text(-90, -55, '♥♥♥', {
-      fontSize: '14px',
-      color: '#ff4444',
-    });
-    this.atkText = scene.add.text(-90, -35, 'ATK: ?', {
-      fontSize: '12px',
-      color: '#ff8888',
-    });
-    this.defText = scene.add.text(-90, -20, 'DEF: ?', {
-      fontSize: '12px',
-      color: '#88aaff',
-    });
+    // #364 — opponent panel labels are world-space (children of this Container) →
+    // DOM-ineligible. crispCanvasText (setResolution(ceil) + LINEAR filter) keeps
+    // them smooth on fractional DPI — the accepted ceiling for canvas text.
+    this.heartsText = crispCanvasText(
+      scene.add.text(-90, -55, '♥♥♥', {
+        fontSize: '14px',
+        color: '#ff4444',
+      }),
+    );
+    this.atkText = crispCanvasText(
+      scene.add.text(-90, -35, 'ATK: ?', {
+        fontSize: '12px',
+        color: '#ff8888',
+      }),
+    );
+    this.defText = crispCanvasText(
+      scene.add.text(-90, -20, 'DEF: ?', {
+        fontSize: '12px',
+        color: '#88aaff',
+      }),
+    );
     // #313 — opponent spirit readout (⚡ current/max), mirroring the local Hud
     // gauge format/colors. Placed in the right column of the stats panel; hidden
     // until updateFromState() confirms spiritMax > 0 (AI duels only).
-    this.spiritText = scene.add
-      .text(10, -55, '', {
+    this.spiritText = crispCanvasText(
+      scene.add.text(10, -55, '', {
         fontSize: '12px',
         color: '#ffffff',
-      })
-      .setVisible(false);
+      }),
+    ).setVisible(false);
 
     // Five element dots: gray = unrevealed, colored = revealed.
     for (let i = 0; i < 5; i++) {
@@ -120,20 +130,22 @@ export class OpponentDuelist extends Phaser.GameObjects.Container {
     this.statusOverlay.setVisible(false);
 
     // Active-status badge line — lists the opponent's active statuses by name.
-    this.statusBadge = scene.add.text(-90, 8, '', {
-      fontSize: '11px',
-      color: '#ffaa44',
-      fontStyle: 'bold',
-    });
+    this.statusBadge = crispCanvasText(
+      scene.add.text(-90, 8, '', {
+        fontSize: '11px',
+        color: '#ffaa44',
+        fontStyle: 'bold',
+      }),
+    );
 
     // Thumb card — element always visible per GDD §9 (staked ring shows its
     // jewelry position). Dim overlay signals passive exhaustion.
     this.thumbCard = scene.add.rectangle(-90, 20, 40, 56, 0x555555);
     this.thumbCard.setStrokeStyle(1, 0xaa8800);
     // #348 — STATUS label, matching the player-side wording across all screens.
-    const thumbLbl = scene.add
-      .text(-90, 45, 'STATUS', { fontSize: '8px', color: '#ffcc44' })
-      .setOrigin(0.5);
+    const thumbLbl = crispCanvasText(
+      scene.add.text(-90, 45, 'STATUS', { fontSize: '8px', color: '#ffcc44' }),
+    ).setOrigin(0.5);
 
     this.thumbDimOverlay = scene.add.rectangle(-90, 20, 40, 56, 0x000000, 0.6);
     this.thumbDimOverlay.setVisible(false);

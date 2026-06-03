@@ -7,7 +7,7 @@ import { CLOSE_GLYPH } from './ui/ModalShell';
 import { attachTooltip } from './ui/Tooltip';
 import { SlotSwapManager, type SwapSlot } from './ui/SlotSwapManager';
 import { apiFetch, fetchMe, getToken } from '../net/api';
-import { addDomLabel } from './ui/DomLabel';
+import { addDomLabel, crispCanvasText } from './ui/DomLabel';
 
 /**
  * EPIC #302 / #305 — sentinel slot identifier for the dedicated Heart slot. It
@@ -565,11 +565,14 @@ export class BattleHandOverlay {
         ringGrp.add(rect);
 
         const pips = usePips(ring.current_uses, ring.max_uses);
+        // #364 — per-card labels live inside the scrolling/masked spareContainer →
+        // DOM-ineligible (DOM cannot be clipped by a Phaser mask). crispCanvasText
+        // keeps them smooth on fractional DPI — the accepted canvas-text ceiling.
         ringGrp.add([
-          this.scene.add.text(0, -22, ELEMENT_NAMES[ring.element] ?? '?', { fontSize: '9px', color: '#000000' }).setScrollFactor(0).setOrigin(0.5),
-          this.scene.add.text(0, -6, pips, { fontSize: '10px', color: '#000000' }).setScrollFactor(0).setOrigin(0.5),
-          this.scene.add.text(0, 10, `Xp: ${ring.xp}`, { fontSize: '9px', color: '#000000' }).setScrollFactor(0).setOrigin(0.5),
-          this.scene.add.text(0, 24, `T${ring.tier}`, { fontSize: '9px', color: '#000000' }).setScrollFactor(0).setOrigin(0.5),
+          crispCanvasText(this.scene.add.text(0, -22, ELEMENT_NAMES[ring.element] ?? '?', { fontSize: '9px', color: '#000000' })).setScrollFactor(0).setOrigin(0.5),
+          crispCanvasText(this.scene.add.text(0, -6, pips, { fontSize: '10px', color: '#000000' })).setScrollFactor(0).setOrigin(0.5),
+          crispCanvasText(this.scene.add.text(0, 10, `Xp: ${ring.xp}`, { fontSize: '9px', color: '#000000' })).setScrollFactor(0).setOrigin(0.5),
+          crispCanvasText(this.scene.add.text(0, 24, `T${ring.tier}`, { fontSize: '9px', color: '#000000' })).setScrollFactor(0).setOrigin(0.5),
         ]);
       } else {
         // #350 — empty spare placeholder: interactive when a battle-slot ring,
