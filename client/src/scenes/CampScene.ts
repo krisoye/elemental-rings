@@ -49,20 +49,16 @@ const BATTLEHAND_RING_Y = 246;                  // 148 + one LoadoutPanel ROW_GA
 // Thumb card aligns with right ring column (A2/D2): center=837, origin=802.
 const BATTLEHAND_THUMB_X = BATTLEHAND_RING_X + 78; // 802
 
-// EPIC #302 — Heart slot card. Placed at the LoadoutPanel origin x (BATTLEHAND_RING_X
-// = 724) so its card body (centered at +35) sits directly above A1 (also +35). Row 0
-// of the battle-hand section → y=148, matching the Thumb row.
-const HEART_CARD_X = BATTLEHAND_RING_X; // 724 — same x-origin as LoadoutPanel
+// #347 — Heart slot card now lives in its own HEALTH column between SPARES and
+// COMBAT (it no longer sits above A1). Origin x is in the gap between the SPARES
+// grid right edge (≈600) and the A1 left edge (724): the card body (centered at
+// +35) renders at ≈659, spanning ≈624–694 — clear of both neighbours.
+const HEART_CARD_X = 624; // HEALTH column origin
 const HEART_CARD_Y = 148;
 // The ♥ heart card body matches the LoadoutPanel cell geometry (70×90, card center
-// at +35 horizontally) so it lines up column-for-column with A1 below it.
+// at +35 horizontally).
 const HEART_CARD_W = 70;
 const HEART_CARD_H = 90;
-// ATTACK / DEFENSE row labels sit just left of the A1/A2 and D1/D2 rows. The ring
-// grid origin (BATTLEHAND_RING_Y) is the A-row top; the D-row is one ROW_GAP (98) below.
-const BATTLEHAND_ROW_LABEL_X = 600;
-const BATTLEHAND_ATTACK_LABEL_Y = 246;
-const BATTLEHAND_DEFENSE_LABEL_Y = 344;
 
 // The off-screen holding origin for the reusable panel instances. The panels are
 // created once and parked here while the spatial room is shown; 8A.2 re-parents
@@ -152,9 +148,9 @@ export class CampScene extends DualCameraScene {
   private reliquaryHeaderCenter: Phaser.GameObjects.Text | null = null;
   private reliquaryHeaderRight: Phaser.GameObjects.Text | null = null;
   /**
-   * EPIC #302 — the Heart-slot card (above A1). A {@link RingCard} that
-   * participates in the click-then-click selection system as the `'heart'` source
-   * and target. Overlay-container-scoped: created on open, dropped on close.
+   * EPIC #302 / #347 — the Heart-slot card (in the HEALTH column). A {@link RingCard}
+   * that participates in the click-then-click selection system as the `'heart'`
+   * source and target. Overlay-container-scoped: created on open, dropped on close.
    */
   private heartCard: RingCard | null = null;
   /**
@@ -781,15 +777,26 @@ export class CampScene extends DualCameraScene {
       .on('pointerdown', () => void this.onSpareDropClicked());
     c.add(spareLabel);
 
-    // ── Right column — BATTLE HAND ────────────────────────────────────────────
+    // ── HEALTH column header (#347) ───────────────────────────────────────────
+    // Sits between SPARES and COMBAT, above the relocated Heart card.
     c.add(
       this.add
-        .text(COL_BATTLEHAND_X, 128, 'BATTLE HAND', { fontSize: '13px', color: '#cc88ff' })
+        .text(HEART_CARD_X, 128, 'HEALTH', { fontSize: '13px', color: '#ff99aa' })
+        .setScrollFactor(0)
+        .setName('health-label'),
+    );
+
+    // ── Right column — COMBAT (#347) ──────────────────────────────────────────
+    // Left edge lines up with the A1/D1 card left edge (BATTLEHAND_RING_X = 724).
+    c.add(
+      this.add
+        .text(BATTLEHAND_RING_X, 128, 'COMBAT', { fontSize: '13px', color: '#cc88ff' })
         .setScrollFactor(0)
         .setName('battle-hand-label'),
     );
+    // [n/m] loadout badge moves beside the COMBAT label so it clears the HEALTH column.
     this.loadoutBadge = this.add
-      .text(COL_BATTLEHAND_X + 95, 128, '', { fontSize: '13px', color: '#aaffaa' })
+      .text(BATTLEHAND_RING_X + 70, 128, '', { fontSize: '13px', color: '#aaffaa' })
       .setScrollFactor(0)
       .setName('loadout-badge');
     c.add(this.loadoutBadge);
@@ -804,30 +811,11 @@ export class CampScene extends DualCameraScene {
     this.adoptPanel(c, this.stakePanel, BATTLEHAND_THUMB_X, 148);
     this.adoptPanel(c, this.loadoutPanel, BATTLEHAND_RING_X, BATTLEHAND_RING_Y);
 
-    // EPIC #302 — Heart slot card + ATTACK/DEFENSE row labels. The heart card sits
-    // above A1 (same x-origin as the LoadoutPanel) in the Thumb row; the ATTACK and
-    // DEFENSE labels sit just left of the A1/A2 and D1/D2 rows.
+    // #347 — Heart slot card now renders in the HEALTH column (driven by the moved
+    // HEART_CARD_X), no longer above A1. The ATTACK/DEFENSE row labels are dropped:
+    // the four-column header (SPIRIT↓ | SPARES↓ | HEALTH | COMBAT) reads cleanly
+    // without them.
     this.buildHeartCard(c);
-    c.add(
-      this.add
-        .text(BATTLEHAND_ROW_LABEL_X, BATTLEHAND_ATTACK_LABEL_Y, 'ATTACK', {
-          fontSize: '11px',
-          color: '#ff9966',
-        })
-        .setOrigin(0, 0)
-        .setScrollFactor(0)
-        .setName('attack-row-label'),
-    );
-    c.add(
-      this.add
-        .text(BATTLEHAND_ROW_LABEL_X, BATTLEHAND_DEFENSE_LABEL_Y, 'DEFENSE', {
-          fontSize: '11px',
-          color: '#66aaff',
-        })
-        .setOrigin(0, 0)
-        .setScrollFactor(0)
-        .setName('defense-row-label'),
-    );
 
     // Cap the grids at their visible-row windows. Clipping is now done by
     // visibility-windowing (cards outside the window are hidden), not GeometryMask.
@@ -906,15 +894,15 @@ export class CampScene extends DualCameraScene {
   }
 
   /**
-   * EPIC #302 — build the Heart slot card above A1. A standalone {@link RingCard}
+   * EPIC #302 / #347 — build the Heart slot card in the HEALTH column. A standalone {@link RingCard}
    * (not a parked reusable panel) created fresh per overlay and added to the
    * overlay container `c`, so the container destroy on close reclaims it. Its bg is
    * made interactive and routes clicks through the universal-swap state machine as
-   * the `'heart'` source/target. A ♥ title sits above the card. The card is painted
-   * from `window.__campState.heart_ring`.
+   * the `'heart'` source/target. An `HP` title sits above the card. The card is
+   * painted from `window.__campState.heart_ring`.
    */
   private buildHeartCard(c: Phaser.GameObjects.Container): void {
-    const cx = HEART_CARD_W / 2; // 35 — line the card body up with A1 below
+    const cx = HEART_CARD_W / 2; // 35 — card body centred within its column
     const cy = HEART_CARD_H / 2;
     const card = new RingCard(this, HEART_CARD_X, HEART_CARD_Y, {
       width: HEART_CARD_W,
@@ -931,9 +919,10 @@ export class CampScene extends DualCameraScene {
       tierY: 27,
       xpPrefix: 'XP:',
     });
-    // ♥ title above the card.
+    // #347 — HP title above the card (was a bare ♥ glyph). The three-part header's
+    // centre `♥ cur/max` HP readout is a separate object and is unchanged.
     const title = this.add
-      .text(HEART_CARD_X + cx, HEART_CARD_Y + cy - 36, '♥', { fontSize: '12px', color: '#ff6688' })
+      .text(HEART_CARD_X + cx, HEART_CARD_Y + cy - 36, 'HP', { fontSize: '12px', color: '#ff6688' })
       .setOrigin(0.5)
       .setScrollFactor(0);
     card.add(title);

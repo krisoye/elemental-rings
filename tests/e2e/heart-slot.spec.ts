@@ -148,8 +148,11 @@ test('heart: the left column label reads SPIRIT (was RELIQUARY)', async ({ brows
   await ctx.close();
 });
 
-// ── Scenario 3: ATTACK / DEFENSE row labels are present ───────────────────────
-test('heart: ATTACK and DEFENSE row labels are rendered', async ({ browser }) => {
+// ── Scenario 3: four-column header (SPIRIT↓|SPARES↓|HEALTH|COMBAT), no ATK/DEF ─
+// #347 — the modal moved to a four-column read. The HEALTH header (over the
+// relocated Heart card) and the COMBAT label (was "BATTLE HAND") are present, and
+// the old ATTACK/DEFENSE row labels are gone.
+test('heart: four column headers render and ATTACK/DEFENSE labels are gone', async ({ browser }) => {
   const token = await registerAndToken();
   const ctx = await browser.newContext();
   await ctx.addInitScript(`localStorage.setItem('er_token', ${JSON.stringify(token)})`);
@@ -157,13 +160,20 @@ test('heart: ATTACK and DEFENSE row labels are rendered', async ({ browser }) =>
   await loadSanctum(page);
   await openReliquary(page);
 
-  expect(await campTextByName(page, 'attack-row-label')).toBe('ATTACK');
-  expect(await campTextByName(page, 'defense-row-label')).toBe('DEFENSE');
+  // All four column headers present, left → right.
+  expect(await campTextByName(page, 'reliquary-label')).toContain('SPIRIT');
+  expect(await campTextByName(page, 'spare-label')).toContain('SPARES');
+  expect(await campTextByName(page, 'health-label')).toBe('HEALTH');
+  expect(await campTextByName(page, 'battle-hand-label')).toBe('COMBAT');
+
+  // The retired ATTACK / DEFENSE row labels no longer exist anywhere in the modal.
+  expect(await campTextByName(page, 'attack-row-label')).toBeNull();
+  expect(await campTextByName(page, 'defense-row-label')).toBeNull();
   await ctx.close();
 });
 
-// ── Scenario 4: Heart card exists above A1 with the heart ring's HP pips ───────
-test('heart: a Heart card renders above A1 with the equipped ring HP pips', async ({ browser }) => {
+// ── Scenario 4: Heart card exists in the HEALTH column with the ring's HP pips ─
+test('heart: a Heart card renders in the HEALTH column with the equipped ring HP pips', async ({ browser }) => {
   const token = await registerAndToken();
   const me = await getMe(token);
   // A fresh player starts with a heart ring equipped (PlayerRepo seed).
@@ -185,9 +195,9 @@ test('heart: a Heart card renders above A1 with the equipped ring HP pips', asyn
   const expected = '●'.repeat(heart.current_uses) + '○'.repeat(heart.max_uses - heart.current_uses);
   expect(pips).toBe(expected);
 
-  // The card x-origin lines up with A1 (LoadoutPanel origin x = 724).
+  // #347 — the card x-origin is the HEALTH column origin (between SPARES and COMBAT).
   const heartX = await page.evaluate(() => (window as any).__scene.heartCard?.x);
-  expect(heartX).toBe(724);
+  expect(heartX).toBe(624);
   await ctx.close();
 });
 

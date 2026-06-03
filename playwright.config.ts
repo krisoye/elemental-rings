@@ -52,6 +52,7 @@ const SOLO_SPECS = [
   'overworld-battlehand.spec.ts',
   'overworld-transition.spec.ts',
   'heart-slot.spec.ts',      // EPIC #302 (#306) — Heart-slot reliquary modal restructure
+  'manage-battle-rings.spec.ts', // #305 / #348 — field BattleHandOverlay grouped layout + safe discard
   'reliquary-cap.spec.ts',   // #182
   'reliquary-modal.spec.ts',
   'ring-storage-ux.spec.ts',

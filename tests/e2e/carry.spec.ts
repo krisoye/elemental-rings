@@ -305,14 +305,46 @@ test('carry: full-carry win → discard in Manage Battle Hand auto-carries the w
     { timeout: 8000 },
   );
   // Compute typeof IN the browser — page.evaluate cannot serialize a function
-  // back to Node (it returns undefined), so checking typeof here is mandatory.
+  // back to Node (it returns undefined), so checking typeof here is mandatory. The
+  // programmatic hook is retained as a direct test affordance (#348).
   expect(await page.evaluate(() => typeof (window as any).__encounterDiscardRing)).toBe('function');
   // Confirm the FULL case before the discard (real server state).
   expect((await me(token)).rings.filter((r) => r.in_carry === 1).length).toBe(14);
 
-  // Discard a carried ring → frees a slot → tryAutoCarryPending carries the won
+  // #348 — drive the new safe 3-step discard UI (replaces the one-click ×): select
+  // the carried ring → click the DISCARD slot (group-1 row-1, x=262 y=240) → confirm
+  // [Discard]. Freeing a slot triggers tryAutoCarryPending, which carries the won
   // ring and clears er_pending_ring.
-  await page.evaluate((id) => (window as any).__encounterDiscardRing(id), discardId);
+  await page.waitForFunction(
+    () => (window as any).__game?.scene?.getScene('EncounterScene')?.battleHand?.isOpen?.() === true,
+    { timeout: 8000 },
+  );
+  // Step 1 — select the carried ring (source 'spare' routes to discardCarriedRing).
+  await page.evaluate((id) => {
+    const bh = (window as any).__game.scene.getScene('EncounterScene').battleHand;
+    bh.swap.select(id, 'spare');
+    bh.renderManageModal();
+  }, discardId);
+  // Step 2 — click the DISCARD slot → confirm modal opens, nothing deleted yet.
+  await page.evaluate(() => {
+    const modal = (window as any).__game.scene.getScene('EncounterScene').battleHand.manageModal;
+    let target: any = null;
+    const walk = (c: any): void => {
+      for (const o of c.getAll ? c.getAll() : []) {
+        if (o.name === 'discard-slot') target = o;
+        if (o.getAll) walk(o);
+      }
+    };
+    walk(modal);
+    target?.emit('pointerdown');
+  });
+  expect(await page.evaluate(() => (window as any).__discardConfirmOpen)).toBe(true);
+  // Step 3 — confirm [Discard].
+  await page.evaluate(() => {
+    const bh = (window as any).__game.scene.getScene('EncounterScene').battleHand;
+    const yes = bh.discardConfirm?.getAll().find((o: any) => o.name === 'discard-confirm-yes');
+    yes?.emit('pointerdown');
+  });
   await page.waitForFunction(() => localStorage.getItem('er_pending_ring') === null, {
     timeout: 8000,
   });
