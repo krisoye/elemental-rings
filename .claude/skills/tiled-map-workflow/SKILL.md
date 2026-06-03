@@ -40,6 +40,7 @@ You may include an `npcs` layer in Tiled for authoring reference (painting where
 | File | Tileset |
 |------|---------|
 | `autotile_snow_16.md` | Snow autotile sheet (dirt/ice/foliage/pond islands, transparent foliage) |
+| `terrain_snow_main.md` | Snow main tileset (rocky cliff, log house, chimney, conifer + round trees) |
 | `terrain_forest_modern.md` | ModernEra GreenForest (trees, water pool, cliff rocks) |
 | `terrain_plains_fantasy.md` | Plains Fantasy (trees, brown cliffs, dirt island) |
 | `tileset_village_main_a.md` | Village Main A (grass, fence, houses, trees, gray cliff) |
