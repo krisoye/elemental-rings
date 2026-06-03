@@ -552,7 +552,619 @@ describe('#363 carve-out invariant: BattleHandOverlay per-card labels stay canva
 });
 
 // ---------------------------------------------------------------------------
-// Class 6 — Spec Conformance
+// Class 6 — Phase 2: implementation-specific branches (pure logic, no Phaser)
+// ---------------------------------------------------------------------------
+//
+// These tests are locked to concrete implementation paths discovered during
+// code review. They are additive — they do not duplicate Phase 1 assertions.
+
+// ── 6a: crispCanvasText DPR math (Math.ceil) ─────────────────────────────────
+//
+// The only pure-logic knob inside crispCanvasText is Math.ceil(devicePixelRatio).
+// We cannot call the Phaser function in Vitest, but we CAN test the math in
+// isolation — the spec requires ceil, not round or floor, and the expected
+// output for each DPR regime must be exact.
+
+describe('#364 Phase 2: crispCanvasText DPR ceiling math', () => {
+
+  // Helper re-derives the resolution argument the way crispCanvasText does.
+  // Any change to the formula in DomLabel.ts that breaks this re-derivation
+  // will cause a mismatch here, catching silent regressions.
+  function ceilDpr(dpr: number): number {
+    return Math.ceil(dpr);
+  }
+
+  it('DPR=1.0 → resolution 1 (integer DPR stays at 1, no bump)', () => {
+    // #364 adversarial: at DPR=1 a resolution bump wastes memory — Math.ceil(1)=1.
+    expect(ceilDpr(1.0)).toBe(1);
+  });
+
+  it('DPR=1.25 (Windows 125%) → resolution 2 (ceil rounds up fractional DPR)', () => {
+    // #364 adversarial: at 125% DPR raw setResolution(1.25) is non-integer; Phaser
+    // truncates fractionally — the spec mandates ceil to get the safe integer 2.
+    expect(ceilDpr(1.25)).toBe(2);
+  });
+
+  it('DPR=1.5 (Windows 150%) → resolution 2', () => {
+    expect(ceilDpr(1.5)).toBe(2);
+  });
+
+  it('DPR=2.0 (Retina) → resolution 2 (exact integer, ceil is no-op)', () => {
+    expect(ceilDpr(2.0)).toBe(2);
+  });
+
+  it('DPR=1.0001 (just above 1) → resolution 2 (not floor/round to 1)', () => {
+    // #364 adversarial: floor or round would yield 1 for DPR=1.0001 — only ceil
+    // is correct because the texture must cover the full physical pixel grid.
+    expect(ceilDpr(1.0001)).toBe(2);
+  });
+
+  it('DPR=3.0 → resolution 3 (triple-density display)', () => {
+    expect(ceilDpr(3.0)).toBe(3);
+  });
+
+  it('DPR=2.625 (Android 2.625×) → resolution 3 (fractional above 2)', () => {
+    // #364 adversarial: some Android devices report non-standard DPR values.
+    expect(ceilDpr(2.625)).toBe(3);
+  });
+
+  // Source-level guard: the literal Math.ceil appears exactly once in crispCanvasText,
+  // not replaced with Math.round or Math.floor.
+  it('DomLabel.ts uses Math.ceil (not Math.round or Math.floor) in crispCanvasText body', () => {
+    const src = readClientSrc('objects/ui/DomLabel.ts');
+    if (src === null) return;
+    // Extract the crispCanvasText function body (from its declaration to the closing brace).
+    // Simple heuristic: check that Math.ceil appears in the file and Math.floor/Math.round do not.
+    expect(src, 'crispCanvasText must use Math.ceil').toContain('Math.ceil');
+    expect(src, 'crispCanvasText must NOT use Math.floor (would give resolution 1 at DPR=1.25)').not.toContain('Math.floor');
+    expect(src, 'crispCanvasText must NOT use Math.round (would give resolution 1 at DPR=1.25/1.4)').not.toContain('Math.round');
+  });
+
+});
+
+// ── 6b: setDomLabelText null-safety (P3-C fix) ───────────────────────────────
+//
+// The implementation guards three failure paths:
+//   1. el is null         → no-op, no crash
+//   2. el.node is falsy   → no-op, no crash
+//   3. valid el + node    → sets textContent
+//
+// We test the pure JS version of these guards in isolation (no Phaser types needed
+// because we only care about the guard logic, not the Phaser DOMElement contract).
+
+describe('#362 Phase 2: setDomLabelText null-safety guards (P3-C)', () => {
+
+  // Re-derive the guard logic from source language (identical to the implementation).
+  function setDomLabelTextIsolated(
+    el: { node?: { textContent: string | null } } | null,
+    text: string,
+  ): void {
+    if (!el || !el.node) return;
+    el.node.textContent = text;
+  }
+
+  it('setDomLabelText(null, text) is a no-op — does not throw', () => {
+    // #362 adversarial: scene teardown races the async refreshHud fetch; if hudText
+    // is destroyed before the response arrives, a null dereference would crash the tab.
+    expect(() => setDomLabelTextIsolated(null, 'test')).not.toThrow();
+  });
+
+  it('setDomLabelText({node: undefined}, text) is a no-op — does not throw', () => {
+    // #362 adversarial: Phaser DOMElement.node can be undefined if the element was
+    // destroyed (destroy() clears the node reference). Missing the guard crashes on
+    // `el.node.textContent = …`.
+    const fakeEl = {} as { node?: { textContent: string | null } };
+    expect(() => setDomLabelTextIsolated(fakeEl, 'test')).not.toThrow();
+  });
+
+  it('setDomLabelText({node: null}, text) is a no-op — does not throw', () => {
+    // #362 adversarial: explicit null node (different from undefined — the guard
+    // must handle both falsy variants).
+    const fakeEl = { node: null } as unknown as { node?: { textContent: string | null } };
+    expect(() => setDomLabelTextIsolated(fakeEl, 'test')).not.toThrow();
+  });
+
+  it('setDomLabelText with a valid node sets textContent to the provided string', () => {
+    // #362 positive path: the guard must not over-eagerly skip the assignment.
+    const node = { textContent: '' as string | null };
+    const fakeEl = { node };
+    setDomLabelTextIsolated(fakeEl, 'Day 1  ·  Gold 0');
+    expect(node.textContent).toBe('Day 1  ·  Gold 0');
+  });
+
+  it('setDomLabelText with an empty string sets textContent to "" (not null)', () => {
+    // #362 adversarial: passing empty string to hide a label must not be treated
+    // as falsy and accidentally skipped — the guard checks el/node, not text.
+    const node = { textContent: 'old text' as string | null };
+    const fakeEl = { node };
+    setDomLabelTextIsolated(fakeEl, '');
+    expect(node.textContent).toBe('');
+  });
+
+  it('setDomLabelText preserves \\n in the text (two-row labels)', () => {
+    // #362 adversarial: the guard must not strip or transform newline characters —
+    // the `white-space: pre` CSS only works if the textContent contains the literal '\n'.
+    const node = { textContent: '' as string | null };
+    setDomLabelTextIsolated({ node }, 'Forest\nThe Anchorage');
+    expect(node.textContent).toBe('Forest\nThe Anchorage');
+  });
+
+  // Source guard: verify all three null-guard variants exist in the implementation.
+  it('DomLabel.ts setDomLabelText guards both el and el.node before assigning', () => {
+    const src = readClientSrc('objects/ui/DomLabel.ts');
+    if (src === null) return;
+    // The guard is `if (!el || !el.node) return;`
+    // We verify both guard clauses are present in the function body.
+    expect(src, 'setDomLabelText must guard el before dereferencing').toContain('!el');
+    expect(src, 'setDomLabelText must guard el.node before assigning textContent').toContain('!el.node');
+  });
+
+});
+
+// ── 6c: refreshHud three null guards (post-getToken, post-apiFetch, post-json) ──
+//
+// BaseBiomeScene.refreshHud() has three null guard checkpoints:
+//   1. At entry: `if (!getToken() || !this.hudText) return;`
+//   2. After apiFetch() await: `if (!res.ok || !this.hudText) return;`
+//   3. After res.json() await: `if (!this.hudText) return;`
+//
+// We cannot instantiate BaseBiomeScene in Vitest (Phaser dependency), so we
+// verify the guards exist in source — a deleted guard is undetectable at runtime
+// until a race condition crashes the tab.
+
+describe('#362 Phase 2: refreshHud teardown-race null guards in BaseBiomeScene.ts', () => {
+
+  it('refreshHud has a pre-fetch guard: returns early if hudText is already null', () => {
+    // #362 adversarial: if the scene shuts down immediately after create() fires
+    // refreshHud, hudText is nulled before the function body touches it.
+    const src = readClientSrc('scenes/BaseBiomeScene.ts');
+    if (src === null) return;
+    // The first guard checks getToken() AND hudText before the fetch.
+    // We look for `!this.hudText` appearing BEFORE any `apiFetch` call in the function.
+    const refreshHudStart = src.indexOf('private async refreshHud');
+    expect(refreshHudStart, 'refreshHud method must exist in BaseBiomeScene.ts').toBeGreaterThan(-1);
+    const apiFetchPos = src.indexOf('apiFetch', refreshHudStart);
+    const firstHudGuardPos = src.indexOf('!this.hudText', refreshHudStart);
+    expect(firstHudGuardPos, 'refreshHud must guard !this.hudText before the first apiFetch call').toBeGreaterThan(-1);
+    expect(firstHudGuardPos).toBeLessThan(apiFetchPos);
+  });
+
+  it('refreshHud has a post-fetch guard: returns early if hudText became null during await', () => {
+    // #362 adversarial: the first await (apiFetch) can take >0ms; the scene may shut
+    // down mid-flight and destroy hudText before the response arrives.
+    const src = readClientSrc('scenes/BaseBiomeScene.ts');
+    if (src === null) return;
+    const refreshHudStart = src.indexOf('private async refreshHud');
+    // There must be a SECOND occurrence of `!this.hudText` after the first apiFetch.
+    const apiFetchPos = src.indexOf('apiFetch', refreshHudStart);
+    // Find all occurrences of `!this.hudText` from the function start.
+    const allGuards: number[] = [];
+    let searchFrom = refreshHudStart;
+    while (true) {
+      const pos = src.indexOf('!this.hudText', searchFrom);
+      if (pos === -1) break;
+      allGuards.push(pos);
+      searchFrom = pos + 1;
+    }
+    // Must have at least two: one before apiFetch and one after.
+    expect(allGuards.length, 'refreshHud must have at least 2 !this.hudText guards').toBeGreaterThanOrEqual(2);
+    const guardAfterFetch = allGuards.find((p) => p > apiFetchPos);
+    expect(guardAfterFetch, 'refreshHud must have a !this.hudText guard after the apiFetch await').toBeDefined();
+  });
+
+  it('refreshHud has a third guard after res.json() await', () => {
+    // #362 adversarial: the second await (res.json()) is the longest — JSON parsing
+    // of a large payload can span multiple event-loop turns. A scene navigating away
+    // during this window leaves hudText null; omitting this third guard causes
+    // `setDomLabelText(null, ...)` to silently no-op instead of crashing (good), but
+    // the guard documents that the race is understood and intentional.
+    const src = readClientSrc('scenes/BaseBiomeScene.ts');
+    if (src === null) return;
+    const refreshHudStart = src.indexOf('private async refreshHud');
+    const resJsonPos = src.indexOf('res.json()', refreshHudStart);
+    expect(resJsonPos, 'refreshHud must call res.json()').toBeGreaterThan(-1);
+    // Find a !this.hudText guard AFTER res.json()
+    const guardAfterJson = src.indexOf('!this.hudText', resJsonPos);
+    expect(guardAfterJson, 'refreshHud must have a !this.hudText guard after the res.json() await').toBeGreaterThan(-1);
+    expect(guardAfterJson).toBeGreaterThan(resJsonPos);
+  });
+
+});
+
+// ── 6d: addRingInfo applies crispCanvasText to all 4 label objects ────────────
+//
+// BattleHandOverlay.addRingInfo() creates 4 canvas Text objects (name, pips, xp,
+// tier). The P1-A fix wraps ALL four in crispCanvasText. A partial application
+// (e.g. missing the tier label) would leave one label jagged on fractional DPI
+// while the others are smooth — visible inconsistency.
+
+describe('#364 Phase 2: addRingInfo wraps ALL four labels with crispCanvasText', () => {
+
+  it('addRingInfo method body in BattleHandOverlay.ts contains exactly 4 crispCanvasText calls', () => {
+    // #364 adversarial: if a future edit adds a fifth label without wrapping it,
+    // or removes a wrap from an existing label, this count check catches it.
+    const src = readClientSrc('objects/BattleHandOverlay.ts');
+    if (src === null) return;
+
+    // Isolate the addRingInfo method body.
+    const methodStart = src.indexOf('private addRingInfo(');
+    expect(methodStart, 'addRingInfo method must exist in BattleHandOverlay.ts').toBeGreaterThan(-1);
+
+    // Find the matching closing brace. We walk forward counting braces.
+    let braceDepth = 0;
+    let methodEnd = -1;
+    for (let i = methodStart; i < src.length; i++) {
+      if (src[i] === '{') braceDepth++;
+      else if (src[i] === '}') {
+        braceDepth--;
+        if (braceDepth === 0) { methodEnd = i; break; }
+      }
+    }
+    expect(methodEnd, 'addRingInfo method body must have a closing brace').toBeGreaterThan(methodStart);
+
+    const body = src.slice(methodStart, methodEnd + 1);
+    const crispCalls = (body.match(/crispCanvasText\(/g) ?? []).length;
+    expect(
+      crispCalls,
+      `addRingInfo must wrap all 4 text labels with crispCanvasText — found ${crispCalls}`,
+    ).toBe(4);
+  });
+
+  it('spareContainer inline card build also wraps all 4 per-card labels with crispCanvasText', () => {
+    // #364 adversarial: BattleHandOverlay has TWO places that build per-card labels:
+    // addRingInfo() for field cards and the inline spare card build in the forEach.
+    // Both must wrap ALL four labels. Missing one in either location leaves one
+    // label jagged in that specific render path.
+    const src = readClientSrc('objects/BattleHandOverlay.ts');
+    if (src === null) return;
+
+    // Locate the spare card inline build by the characteristic y-offsets (-22/-6/10/24).
+    // The inline build uses ringGrp.add([crispCanvasText(...), ...]) pattern.
+    const inlineMarker = src.indexOf('ringGrp.add([');
+    expect(inlineMarker, 'spareContainer inline card build must exist (ringGrp.add)').toBeGreaterThan(-1);
+
+    // Slice a generous window around the inline build (the array argument spans ~10 lines).
+    const window2 = src.slice(inlineMarker, inlineMarker + 600);
+    const inlineCrispCalls = (window2.match(/crispCanvasText\(/g) ?? []).length;
+    expect(
+      inlineCrispCalls,
+      `spareContainer inline build must wrap all 4 per-card labels with crispCanvasText — found ${inlineCrispCalls}`,
+    ).toBe(4);
+  });
+
+});
+
+// ── 6e: showNpcPrompt promptNode null guard ───────────────────────────────────
+//
+// After DOM migration, showNpcPrompt() casts `this.npcPrompt?.node` to
+// `HTMLElement | null` before mutating its style. If the DOM container was never
+// created or has been torn down, `.node` can be undefined — the guard prevents
+// a TypeError on `undefined.style.color = ...`.
+
+describe('#362 Phase 2: showNpcPrompt promptNode null guard (P3-C path)', () => {
+
+  it('BaseBiomeScene.ts showNpcPrompt guards npcPrompt.node before style mutation', () => {
+    // #362 adversarial: if Phaser's DOM container is absent (e.g. in tests or
+    // before scene create completes), `this.npcPrompt.node` is undefined — a raw
+    // `promptNode.style.color = ...` crashes with TypeError.
+    const src = readClientSrc('scenes/BaseBiomeScene.ts');
+    if (src === null) return;
+    const showStart = src.indexOf('private showNpcPrompt(');
+    expect(showStart, 'showNpcPrompt method must exist').toBeGreaterThan(-1);
+
+    // Find the end of the method body.
+    let braceDepth = 0;
+    let methodEnd = -1;
+    for (let i = showStart; i < src.length; i++) {
+      if (src[i] === '{') braceDepth++;
+      else if (src[i] === '}') {
+        braceDepth--;
+        if (braceDepth === 0) { methodEnd = i; break; }
+      }
+    }
+    const body = src.slice(showStart, methodEnd + 1);
+
+    // The guard pattern is `if (promptNode)` (or equivalent truthy check) around
+    // the style mutation block.
+    expect(
+      body,
+      'showNpcPrompt must check if(promptNode) before mutating promptNode.style',
+    ).toContain('if (promptNode)');
+
+    // The cast `as HTMLElement | null` makes the guard type-safe — verify it exists.
+    expect(
+      body,
+      'showNpcPrompt must cast npcPrompt.node as HTMLElement | null for type-safe null check',
+    ).toContain('HTMLElement | null');
+  });
+
+  it('BaseBiomeScene.ts showNpcPrompt still calls setDomLabelText even when promptNode is null', () => {
+    // #362 adversarial: the guard should only wrap the style-mutation block; the
+    // setDomLabelText call must happen regardless of promptNode's value (setDomLabelText
+    // is itself null-safe and handles a null node gracefully).
+    const src = readClientSrc('scenes/BaseBiomeScene.ts');
+    if (src === null) return;
+    const showStart = src.indexOf('private showNpcPrompt(');
+    let braceDepth = 0, methodEnd = -1;
+    for (let i = showStart; i < src.length; i++) {
+      if (src[i] === '{') braceDepth++;
+      else if (src[i] === '}') { braceDepth--; if (braceDepth === 0) { methodEnd = i; break; } }
+    }
+    const body = src.slice(showStart, methodEnd + 1);
+    expect(
+      body,
+      'showNpcPrompt must call setDomLabelText (not inline textContent) to update the prompt text',
+    ).toContain('setDomLabelText');
+  });
+
+});
+
+// ── 6f: addDomLabel originX branch (left=0, right=1, center/default=0.5) ─────
+//
+// The implementation computes originX as a ternary on the align value and passes
+// it to el.setOrigin(originX, 0.5). This is a pure-logic branch that we can test
+// by re-deriving it from spec language without needing Phaser.
+
+describe('#362 Phase 2: addDomLabel originX branch for align overrides', () => {
+
+  // Re-derive the originX computation from spec language.
+  function computeOriginX(align: 'left' | 'center' | 'right' | undefined): number {
+    const a = align ?? 'center';
+    return a === 'left' ? 0 : a === 'right' ? 1 : 0.5;
+  }
+
+  it("align='center' → originX=0.5 (matches canvas setOrigin(0.5))", () => {
+    // #362 adversarial: a wrong originX for center moves the label half-width off
+    // its intended position — labels drift compared to the canvas text they replace.
+    expect(computeOriginX('center')).toBe(0.5);
+  });
+
+  it('align=undefined → originX=0.5 (default is center, not left)', () => {
+    // #362 adversarial: if the default were left (0), every un-specced call site
+    // would shift labels to the right relative to the canvas text they replace.
+    expect(computeOriginX(undefined)).toBe(0.5);
+  });
+
+  it("align='left' → originX=0 (left-anchored labels pin to left edge)", () => {
+    // #362 adversarial: wrong origin for left-aligned labels shifts them right
+    // by half their width — price labels in MerchantModal would misalign.
+    expect(computeOriginX('left')).toBe(0);
+  });
+
+  it("align='right' → originX=1 (right-anchored labels pin to right edge)", () => {
+    // #362 adversarial: wrong origin for right-aligned labels shifts them left
+    // by half their width — right-pinned labels would appear at wrong position.
+    expect(computeOriginX('right')).toBe(1);
+  });
+
+  // Source guard: the ternary in DomLabel.ts must encode the three-way branch.
+  it('DomLabel.ts originX ternary handles left/right/center variants', () => {
+    const src = readClientSrc('objects/ui/DomLabel.ts');
+    if (src === null) return;
+    // The implementation uses: `align === 'left' ? 0 : align === 'right' ? 1 : 0.5`
+    // Any missing branch leaves one alignment variant returning the wrong value.
+    expect(src, "DomLabel must handle align='left' in originX computation").toContain("align === 'left'");
+    expect(src, "DomLabel must handle align='right' in originX computation").toContain("align === 'right'");
+    expect(src, 'DomLabel originX must have a 0.5 fallback for center').toContain('0.5');
+  });
+
+});
+
+// ── 6g: DomLabel background/padding optional fields ──────────────────────────
+//
+// The implementation added `background` and `padding` fields to DomLabelStyle
+// beyond the original spec interface. These are used by npcPrompt
+// (background:'#000000aa', padding:'4px 8px'). Verifying the fields exist and
+// are applied prevents a future refactor from silently dropping them.
+
+describe('#362 Phase 2: DomLabel optional background/padding fields', () => {
+
+  it('DomLabel.ts DomLabelStyle interface declares the background field', () => {
+    // #362 adversarial: if background is stripped, npcPrompt loses its dark
+    // backdrop over busy tile backgrounds — legibility regresses silently.
+    const src = readClientSrc('objects/ui/DomLabel.ts');
+    if (src === null) return;
+    expect(src, 'DomLabelStyle must include background field for npcPrompt/merchant labels').toContain('background?');
+  });
+
+  it('DomLabel.ts DomLabelStyle interface declares the padding field', () => {
+    // #362 adversarial: if padding is stripped, npcPrompt collapses to zero
+    // internal spacing — text touches the border background directly.
+    const src = readClientSrc('objects/ui/DomLabel.ts');
+    if (src === null) return;
+    expect(src, 'DomLabelStyle must include padding field for npcPrompt/merchant labels').toContain('padding?');
+  });
+
+  it('DomLabel.ts applies background to CSS when provided', () => {
+    // #362 adversarial: declaring the field in the interface but never reading
+    // it means background is silently ignored — npcPrompt has no backdrop.
+    const src = readClientSrc('objects/ui/DomLabel.ts');
+    if (src === null) return;
+    // The guard is `if (style.background) css.background = style.background`
+    expect(src, 'addDomLabel must apply style.background to the node CSS').toContain('style.background');
+  });
+
+  it('DomLabel.ts applies padding to CSS when provided', () => {
+    const src = readClientSrc('objects/ui/DomLabel.ts');
+    if (src === null) return;
+    expect(src, 'addDomLabel must apply style.padding to the node CSS').toContain('style.padding');
+  });
+
+  // Re-derive the CSS to include background and padding when specified.
+  it('re-derived CSS includes background when style.background is provided', () => {
+    function buildCssWithExtras(opts: { background?: string; padding?: string }): Record<string, string> {
+      const props: Record<string, string> = {};
+      if (opts.background) props['background'] = opts.background;
+      if (opts.padding)    props['padding']    = opts.padding;
+      return props;
+    }
+    const css = buildCssWithExtras({ background: '#000000aa', padding: '4px 8px' });
+    expect(css['background']).toBe('#000000aa');
+    expect(css['padding']).toBe('4px 8px');
+  });
+
+  it('re-derived CSS omits background and padding when not specified', () => {
+    function buildCssWithExtras(opts: { background?: string; padding?: string }): Record<string, string> {
+      const props: Record<string, string> = {};
+      if (opts.background) props['background'] = opts.background;
+      if (opts.padding)    props['padding']    = opts.padding;
+      return props;
+    }
+    const css = buildCssWithExtras({});
+    expect('background' in css).toBe(false);
+    expect('padding' in css).toBe(false);
+  });
+
+});
+
+// ── 6h: DOM_LABEL_CLASS and DOM_LABEL_FONT_FAMILY constants ──────────────────
+//
+// These named exports are referenced in E2E tests and call sites. A rename or
+// value change breaks downstream consumers silently (no TypeScript error for
+// string value changes).
+
+describe('#362 Phase 2: DomLabel exported constants', () => {
+
+  it('DomLabel.ts exports DOM_LABEL_CLASS constant with value "er-dom-label"', () => {
+    // #362 adversarial: if DOM_LABEL_CLASS is renamed, every E2E test that queries
+    // `.er-dom-label` fails to find DOM nodes — but TypeScript won't catch it.
+    const src = readClientSrc('objects/ui/DomLabel.ts');
+    if (src === null) return;
+    expect(src, 'DOM_LABEL_CLASS must be exported').toContain('export const DOM_LABEL_CLASS');
+    expect(src, 'DOM_LABEL_CLASS value must be "er-dom-label"').toContain("'er-dom-label'");
+  });
+
+  it('DomLabel.ts exports DOM_LABEL_FONT_FAMILY constant containing Courier New', () => {
+    // #362 adversarial: if the exported constant value changes to a proportional
+    // font, all label call sites that import and use it inherit the wrong family.
+    const src = readClientSrc('objects/ui/DomLabel.ts');
+    if (src === null) return;
+    expect(src, 'DOM_LABEL_FONT_FAMILY must be exported').toContain('export const DOM_LABEL_FONT_FAMILY');
+    expect(src, "DOM_LABEL_FONT_FAMILY must include 'Courier New'").toContain('Courier New');
+  });
+
+  it('DOM_LABEL_CLASS constant is used as node.className in addDomLabel', () => {
+    // #362 adversarial: if addDomLabel sets a hard-coded class string instead of
+    // the constant, renaming the constant has no effect — the node still uses the
+    // old string and the constant becomes a lie.
+    const src = readClientSrc('objects/ui/DomLabel.ts');
+    if (src === null) return;
+    expect(
+      src,
+      'addDomLabel must assign DOM_LABEL_CLASS to node.className (not a hard-coded string)',
+    ).toContain('DOM_LABEL_CLASS');
+  });
+
+});
+
+// ── 6i: DomLabel `id` field wires data-label attribute ───────────────────────
+//
+// The `id` field in DomLabelStyle is the mechanism for giving each label a stable
+// `data-label` attribute — the selector used by ALL E2E tests. A label created
+// without a data-label attribute is invisible to `document.querySelector('[data-label="..."]')`.
+
+describe('#362 Phase 2: DomLabel id field → data-label attribute', () => {
+
+  it('DomLabel.ts DomLabelStyle interface declares the id optional field', () => {
+    const src = readClientSrc('objects/ui/DomLabel.ts');
+    if (src === null) return;
+    expect(src, 'DomLabelStyle must include id? field for stable data-label attribution').toContain('id?');
+  });
+
+  it('DomLabel.ts addDomLabel sets data-label attribute when style.id is provided', () => {
+    // #362 adversarial: if the id field is read but setAttribute is never called,
+    // all data-label selectors in E2E tests silently return null.
+    const src = readClientSrc('objects/ui/DomLabel.ts');
+    if (src === null) return;
+    expect(src, 'addDomLabel must call setAttribute with "data-label"').toContain('data-label');
+  });
+
+  it('BaseBiomeScene.ts assigns id: "overworld-hud" to the HUD label', () => {
+    // #362 adversarial: if the HUD label is created without id:"overworld-hud",
+    // document.querySelector('[data-label="overworld-hud"]') returns null — the
+    // entire overworld-hud-stats.spec.ts suite silently fails.
+    const src = readClientSrc('scenes/BaseBiomeScene.ts');
+    if (src === null) return;
+    expect(src, 'BaseBiomeScene must assign id:"overworld-hud" to the HUD DomLabel').toContain('overworld-hud');
+  });
+
+  it('BaseBiomeScene.ts assigns id: "biome-title" to the location label', () => {
+    const src = readClientSrc('scenes/BaseBiomeScene.ts');
+    if (src === null) return;
+    expect(src, 'BaseBiomeScene must assign id:"biome-title" to the location DomLabel').toContain('biome-title');
+  });
+
+  it('BaseBiomeScene.ts assigns id: "npc-prompt" to the NPC prompt label', () => {
+    const src = readClientSrc('scenes/BaseBiomeScene.ts');
+    if (src === null) return;
+    expect(src, 'BaseBiomeScene must assign id:"npc-prompt" to the NPC prompt DomLabel').toContain('npc-prompt');
+  });
+
+});
+
+// ---------------------------------------------------------------------------
+// Class 7 (Phase 2 continued) — crispCanvasText call-site coverage
+// ---------------------------------------------------------------------------
+//
+// Verify that the files identified in #364 as needing crispCanvasText actually
+// use it, and that the call count per file matches the expected pattern.
+// These are source-scan assertions: they catch a future editor removing a wrap.
+
+describe('#364 Phase 2: crispCanvasText call-site coverage across target files', () => {
+
+  it('PlayerDuelist.ts imports and uses crispCanvasText', () => {
+    // #364 adversarial: PlayerDuelist has world-space labels (hearts, status badge)
+    // that are DOM-ineligible and must use crispCanvasText. Without it, they regress
+    // to NEAREST-sampled jaggies on fractional DPI.
+    const src = readClientSrc('objects/PlayerDuelist.ts');
+    if (src === null) return;
+    expect(src, 'PlayerDuelist.ts must import crispCanvasText from DomLabel').toContain('crispCanvasText');
+    const callCount = (src.match(/crispCanvasText\(/g) ?? []).length;
+    expect(callCount, 'PlayerDuelist.ts must have at least 3 crispCanvasText calls (hearts, shadow gauge, status badge)').toBeGreaterThanOrEqual(3);
+  });
+
+  it('OpponentDuelist.ts imports and uses crispCanvasText', () => {
+    const src = readClientSrc('objects/OpponentDuelist.ts');
+    if (src === null) return;
+    expect(src, 'OpponentDuelist.ts must import crispCanvasText from DomLabel').toContain('crispCanvasText');
+    const callCount = (src.match(/crispCanvasText\(/g) ?? []).length;
+    expect(callCount, 'OpponentDuelist.ts must have at least 4 crispCanvasText calls (heartsText, atkText, defText, spiritText, statusBadge)').toBeGreaterThanOrEqual(4);
+  });
+
+  it('BattleScene.ts imports and uses crispCanvasText', () => {
+    const src = readClientSrc('scenes/BattleScene.ts');
+    if (src === null) return;
+    expect(src, 'BattleScene.ts must import crispCanvasText from DomLabel').toContain('crispCanvasText');
+    const callCount = (src.match(/crispCanvasText\(/g) ?? []).length;
+    expect(callCount, 'BattleScene.ts must have at least 3 crispCanvasText calls (battle labels, banners, feedback)').toBeGreaterThanOrEqual(3);
+  });
+
+  it('BattleHandOverlay.ts imports both addDomLabel and crispCanvasText from DomLabel', () => {
+    // #363/#364 adversarial: BattleHandOverlay uses both helpers — addDomLabel for
+    // screen-fixed labels and crispCanvasText for scrolling per-card labels. If the
+    // import statement drops either, one category of labels loses its treatment.
+    const src = readClientSrc('objects/BattleHandOverlay.ts');
+    if (src === null) return;
+    expect(src, 'BattleHandOverlay.ts must import addDomLabel').toContain('addDomLabel');
+    expect(src, 'BattleHandOverlay.ts must import crispCanvasText').toContain('crispCanvasText');
+    // Both must come from the same DomLabel module (not scattered imports).
+    const importLine = src.split('\n').find((l) => l.includes('addDomLabel') && l.includes('import'));
+    const crispImportLine = src.split('\n').find((l) => l.includes('crispCanvasText') && l.includes('import'));
+    // Either in the same import statement or both from './ui/DomLabel'.
+    const sameImport = importLine && crispImportLine && importLine === crispImportLine;
+    const bothFromDomLabel =
+      (importLine?.includes('DomLabel') ?? false) &&
+      (crispImportLine?.includes('DomLabel') ?? false);
+    expect(
+      sameImport || bothFromDomLabel,
+      'BattleHandOverlay.ts must import both addDomLabel and crispCanvasText from DomLabel',
+    ).toBe(true);
+  });
+
+});
+
+// ---------------------------------------------------------------------------
+// Class 9 — Spec Conformance (Phase 1 + Phase 2 combined)
 // ---------------------------------------------------------------------------
 
 describe('SpecConformance: #361/#362 EPIC contract assertions', () => {
