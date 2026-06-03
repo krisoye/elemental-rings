@@ -597,6 +597,18 @@ export class BattleRoom extends Room<{ state: BattleState }> {
         this.xpAccumulator.delete(sessionId);
         throw new ServerError(4000, 'No HP: equip and recharge your heart ring first');
       }
+      // #319/A1 — Reject the duel when the human has no ring staked to the thumb
+      // slot. A drained ring (current_uses = 0) is permitted; only a completely
+      // unassigned thumb slot (null) blocks. Unwind the partial seat before throwing
+      // so the rejected join leaves no stale player state behind.
+      if (ringIds.thumb === null) {
+        this.state.players.delete(sessionId);
+        this.sessionToPlayerId.delete(sessionId);
+        this.sessionToRingIds.delete(sessionId);
+        this.sessionToHeartRingId.delete(sessionId);
+        this.xpAccumulator.delete(sessionId);
+        throw new ServerError(4001, 'No staked ring: stake a ring before battling');
+      }
 
       // #171 — seed spareCapacity from the live Reliquary XP so the client HUD
       // reflects the correct carry headroom as soon as the battle room opens.
