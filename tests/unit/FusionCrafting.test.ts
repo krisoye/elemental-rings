@@ -4,7 +4,7 @@ import fs from 'fs';
 import { describe, test, expect, beforeAll } from 'vitest';
 import { ElementEnum } from '../../shared/types';
 import { fusionOf } from '../../server/src/game/Fusions';
-import { tierForXp, tierStartXp } from '../../server/src/game/Tiers';
+import { tierForXp, tierStartXp, naturalMaxUses } from '../../server/src/game/Tiers';
 
 const { FIRE, WATER, EARTH, WIND, WOOD, STEAM, DUST, MAGMA } = ElementEnum;
 
@@ -62,8 +62,9 @@ describe('fusionOf — element pair → fusion element', () => {
 //
 // Fusion rules (GDD §4.6): both parents must share the same XP-derived tier, that
 // tier must be ≥ 1 (≥ 500 XP), XP is additive, fused tier = tierForXp(sum), and fused
-// max_uses = max(1, min(parents) − 1). Tier is derived from XP, so tests seed XP
-// at/above the relevant tierStartXp threshold rather than the old hard caps.
+// max_uses = naturalMaxUses(fusedTier) = 3 + fusedTier — the same pure-XP rule every
+// natural ring obeys (no min(parents)−1 penalty). Tier is derived from XP, so tests
+// seed XP at/above the relevant tierStartXp threshold rather than the old hard caps.
 // ---------------------------------------------------------------------------
 
 // XP that lands a ring squarely in a given tier (start XP of that tier; §4.2).
@@ -121,9 +122,10 @@ describe('fuseRings — DB transaction (§4.6)', () => {
     db = (await import('../../server/src/persistence/db')).db;
   });
 
-  test('same-tier (Tier 2) parents → fused xp=sum, tier=tierForXp(sum), max_uses=min−1', () => {
+  test('same-tier (Tier 2) parents → fused xp=sum, tier=tierForXp(sum), max_uses=3+tier', () => {
     const p = makePlayer(db);
-    // Both Tier 2: max_uses 5 and 4 → fused uses = min(5,4)−1 = 3.
+    // Both Tier 2 (1500 XP each). Combined 3000 → Tier 3 → 3 + 3 = 6 uses.
+    // Parent max_uses (5, 4) are irrelevant now: max_uses is a pure function of XP.
     const fire = makeRing(db, p, FIRE, T2_XP, 5);
     const water = makeRing(db, p, WATER, T2_XP, 4);
 
@@ -134,8 +136,46 @@ describe('fuseRings — DB transaction (§4.6)', () => {
     expect(result!.element).toBe(STEAM);
     expect(result!.xp).toBe(T2_XP * 2); // 3000
     expect(result!.tier).toBe(tierForXp(T2_XP * 2)); // 3000 → Tier 3
-    expect(result!.max_uses).toBe(3); // min(5,4) − 1
-    expect(result!.current_uses).toBe(3);
+    expect(result!.max_uses).toBe(naturalMaxUses(tierForXp(T2_XP * 2))); // 3 + 3 = 6
+    expect(result!.max_uses).toBe(6);
+    expect(result!.current_uses).toBe(result!.max_uses);
+    // Universal invariant: max_uses == 3 + tierForXp(xp) for the fused result.
+    expect(result!.max_uses).toBe(3 + tierForXp(result!.xp));
+  });
+
+  test('equal-XP min-tier case: 500 (T1) + 500 (T1) → T1 → 4 uses', () => {
+    const p = makePlayer(db);
+    // 500 + 500 = 1000, still within Tier 1 → 3 + 1 = 4 uses (old min−1 gave 3).
+    const fire = makeRing(db, p, FIRE, T1_XP, 4);
+    const water = makeRing(db, p, WATER, T1_XP, 4);
+
+    const newId = repo.fuseRings(p, fire, water);
+    const result = repo.getRingsByOwner(p).find((r) => r.id === newId);
+
+    expect(result!.xp).toBe(1000);
+    expect(result!.tier).toBe(1);
+    expect(result!.max_uses).toBe(4); // 3 + 1
+    expect(result!.current_uses).toBe(4);
+    expect(result!.max_uses).toBe(3 + tierForXp(result!.xp));
+  });
+
+  test('tier-bump case: 1400 (T1) + 1400 (T1) → T2 → 5 uses', () => {
+    const p = makePlayer(db);
+    // Both Tier 1 (1400 < 1500). Combined 2800 crosses into Tier 2 → 3 + 2 = 5 uses.
+    // Result (5) exceeds either parent's 4 uses — intended: combined XP banked.
+    expect(tierForXp(1400)).toBe(1);
+    expect(tierForXp(2800)).toBe(2);
+    const fire = makeRing(db, p, FIRE, 1400, 4);
+    const water = makeRing(db, p, WATER, 1400, 4);
+
+    const newId = repo.fuseRings(p, fire, water);
+    const result = repo.getRingsByOwner(p).find((r) => r.id === newId);
+
+    expect(result!.xp).toBe(2800);
+    expect(result!.tier).toBe(2);
+    expect(result!.max_uses).toBe(5); // 3 + 2
+    expect(result!.current_uses).toBe(5);
+    expect(result!.max_uses).toBe(3 + tierForXp(result!.xp));
   });
 
   test('different-tier pair (Tier 2 + Tier 3) throws (rejected → 400)', () => {
@@ -186,20 +226,22 @@ describe('fuseRings — DB transaction (§4.6)', () => {
     expect(result!.element).toBe(STEAM);
     expect(result!.xp).toBe(T3_XP * 2); // 6000
     expect(result!.tier).toBe(tierForXp(T3_XP * 2)); // 6000 → Tier 4
-    expect(result!.max_uses).toBe(5); // min(6,6) − 1
+    expect(result!.max_uses).toBe(7); // 3 + 4
+    expect(result!.max_uses).toBe(3 + tierForXp(result!.xp));
   });
 
-  test('max_uses floors at 1 when a parent has max_uses=1 (min−1 would be 0)', () => {
+  test('parent max_uses is irrelevant: a 1-use parent does not lower the fused uses', () => {
     const p = makePlayer(db);
-    const fire = makeRing(db, p, FIRE, T2_XP, 1); // weaker parent: 1 use
+    const fire = makeRing(db, p, FIRE, T2_XP, 1); // weak parent: 1 use — no longer matters
     const water = makeRing(db, p, WATER, T2_XP, 5);
 
     const newId = repo.fuseRings(p, fire, water);
     const result = repo.getRingsByOwner(p).find((r) => r.id === newId);
 
-    // Math.max(1, min(1,5) − 1) = Math.max(1, 0) = 1.
-    expect(result!.max_uses).toBe(1);
-    expect(result!.current_uses).toBe(1);
+    // max_uses is a pure function of XP: 3000 → Tier 3 → 3 + 3 = 6 (parent uses ignored).
+    expect(result!.max_uses).toBe(6);
+    expect(result!.current_uses).toBe(6);
+    expect(result!.max_uses).toBe(3 + tierForXp(result!.xp));
   });
 
   test('ring not owned by the player throws', () => {
@@ -241,10 +283,9 @@ describe('fuseRings — DB transaction (§4.6)', () => {
     expect(rings.find((r) => r.id === earth)).toBeUndefined();
   });
 
-  test('max_uses = min(parents) - 1 when parents differ: max_uses 4 and 6 → result 3', () => {
-    // Spec (C7): max_uses = min(parents) − 1. min(4, 6) − 1 = 3.
-    // This catches an off-by-one if the implementation uses max() instead of min(),
-    // or subtracts from the wrong operand.
+  test('max_uses = 3 + tier(combined XP) regardless of parent max_uses (4 and 6)', () => {
+    // #339: max_uses is a pure function of XP, not min(parents)−1. The parent
+    // max_uses values (4, 6) must not affect the result. 3000 → Tier 3 → 6 uses.
     const p = makePlayer(db);
     const fire = makeRing(db, p, FIRE, T2_XP, 4);
     const water = makeRing(db, p, WATER, T2_XP, 6);
@@ -252,8 +293,10 @@ describe('fuseRings — DB transaction (§4.6)', () => {
     const newId = repo.fuseRings(p, fire, water);
     const result = repo.getRingsByOwner(p).find((r) => r.id === newId);
 
-    expect(result!.max_uses).toBe(3); // min(4, 6) − 1 = 3
-    expect(result!.current_uses).toBe(3);
+    expect(result!.max_uses).toBe(naturalMaxUses(tierForXp(T2_XP * 2))); // 3 + 3 = 6
+    expect(result!.max_uses).toBe(6);
+    expect(result!.current_uses).toBe(6);
+    expect(result!.max_uses).toBe(3 + tierForXp(result!.xp));
   });
 
   test('parent assigned to a loadout slot → slot nulled, fusion proceeds', () => {

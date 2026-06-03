@@ -1,8 +1,9 @@
 // Deterministic generator for the Forest region screens (GDD §10.17), 16px/3-layer
 // (EPIC #149 / #159).
 //
-// Reads the Forest screen manifest (FOREST_SCREENS, mirrored inline below from
-// shared/world/forest.ts — a Node .mjs cannot import the TS module) and writes one
+// Reads the Forest screen manifest (FOREST_SCREENS, imported directly from
+// shared/world/forest.ts — this script runs under `tsx` so the TS module loads
+// with no inline copy to keep in sync) and writes one
 // Tiled 1.10 JSON map per NON-HUB screen to
 // client/public/assets/maps/forest/<id>.json. The hand-authored hub
 // (forest_anchorage) is SKIPPED — it ships its own 6-tileset hub config and must
@@ -14,8 +15,8 @@
 // spurious diff (the only randomness — feature placement on open danger screens —
 // is seeded by a hash of the screen id).
 //
-// Run from the client/ directory:  node scripts/gen-forest-screens.mjs
-// (or `npm run gen:forest-screens`).
+// Run from the client/ directory:  npm run gen:forest-screens
+// (which invokes `tsx scripts/gen-forest-screens.mjs` so the `.ts` import resolves).
 
 import { writeFileSync, mkdirSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
@@ -40,6 +41,7 @@ import {
   GID_VOID,
 } from './lib/forest-gid-map.mjs';
 import { resolveAutotileVariant } from './lib/autotile-resolver.mjs';
+import { FOREST_SCREENS } from '../../shared/world/forest.ts';
 
 const TILE = 16; // 16px tiles (was 32)
 
@@ -48,59 +50,6 @@ const T_GRASS = 0;
 const T_DIRT = 1;
 const T_WATER = 2;
 const T_CLIFF = 3;
-
-// ── Inlined copy of shared/world/forest.ts FOREST_SCREENS (kept in sync; a Vitest
-// drift test guards the TS manifest's reciprocity + catalog parity). ────────────
-const FOREST_SCREENS = [
-  {
-    id: 'forest_anchorage',
-    size: [40, 30],
-    exits: { north: 'forest_north_road', east: 'forest_east_path', south: 'forest_south_path', west: 'forest_mossy_fen' },
-    coord: { x: 0, y: 0 },
-    safe: true,
-    anchorage: 'forest_entry',
-  },
-  { id: 'forest_north_road', size: [16, 32], exits: { south: 'forest_anchorage', north: 'forest_snow_gate' }, coord: { x: 0, y: 1 }, danger: 1 },
-  { id: 'forest_snow_gate', size: [32, 20], exits: { south: 'forest_north_road' }, coord: { x: 0, y: 2 }, danger: 2 },
-  { id: 'forest_mossy_fen', size: [32, 22], exits: { east: 'forest_anchorage', west: 'forest_deep_fen' }, coord: { x: -1, y: 0 }, danger: 1 },
-  { id: 'forest_east_path', size: [24, 12], exits: { west: 'forest_anchorage', east: 'forest_glade' }, coord: { x: 1, y: 0 }, danger: 1 },
-  { id: 'forest_glade', size: [36, 28], exits: { west: 'forest_east_path', north: 'forest_crossroads', east: 'forest_heath' }, coord: { x: 2, y: 0 }, danger: 1, anchorage: 'forest_glade' },
-  { id: 'forest_crossroads', size: [28, 22], exits: { south: 'forest_glade', north: 'forest_ridge', west: 'forest_briar_pass' }, coord: { x: 2, y: 1 }, danger: 1 },
-  { id: 'forest_south_path', size: [16, 28], exits: { north: 'forest_anchorage', south: 'forest_hollow' }, coord: { x: 0, y: -1 }, danger: 1 },
-  { id: 'forest_hollow', size: [36, 24], exits: { north: 'forest_south_path', west: 'forest_swamp_gate' }, coord: { x: 0, y: -2 }, danger: 2 },
-  {
-    id: 'forest_swamp_gate',
-    size: [28, 18],
-    exits: { east: 'forest_hollow' },
-    coord: { x: -1, y: -2 },
-    danger: 2,
-    biomeExit: { dir: 'south', target: 'SwampScene' },
-  },
-  { id: 'forest_briar_pass', size: [40, 16], exits: { east: 'forest_crossroads', north: 'forest_deepwood' }, coord: { x: 1, y: 1 }, danger: 2 },
-  { id: 'forest_ridge', size: [32, 22], exits: { south: 'forest_crossroads', north: 'forest_rocky_overlook', west: 'forest_deepwood' }, coord: { x: 2, y: 2 }, danger: 2 },
-  { id: 'forest_deepwood', size: [40, 30], exits: { south: 'forest_briar_pass', east: 'forest_ridge', north: 'forest_boss_clearing' }, coord: { x: 1, y: 2 }, danger: 3, anchorage: 'forest_depths' },
-  { id: 'forest_boss_clearing', size: [28, 22], exits: { south: 'forest_deepwood', north: 'forest_verdant_descent' }, coord: { x: 1, y: 3 }, danger: 3 },
-  {
-    id: 'forest_hidden_alcove',
-    size: [24, 18],
-    exits: {},
-    danger: 1,
-    anchorage: 'forest_hidden_anchor',
-  },
-  { id: 'forest_heath', size: [38, 26], exits: { west: 'forest_glade', east: 'forest_wind_shelf', north: 'forest_gale_lookout' }, coord: { x: 3, y: 0 }, danger: 2 },
-  { id: 'forest_gale_lookout', size: [26, 20], exits: { south: 'forest_heath' }, coord: { x: 3, y: 1 }, danger: 2 },
-  { id: 'forest_wind_shelf', size: [28, 28], exits: { west: 'forest_heath', east: 'forest_thornado_shrine' }, coord: { x: 4, y: 0 }, danger: 2 },
-  { id: 'forest_thornado_shrine', size: [40, 30], exits: { west: 'forest_wind_shelf' }, coord: { x: 5, y: 0 }, danger: 2 },
-  { id: 'forest_deep_fen', size: [34, 28], exits: { east: 'forest_mossy_fen', north: 'forest_fen_ridge' }, coord: { x: -2, y: 0 }, danger: 2 },
-  { id: 'forest_fen_ridge', size: [28, 22], exits: { south: 'forest_deep_fen' }, coord: { x: -2, y: 1 }, danger: 2 },
-  { id: 'forest_rocky_overlook', size: [28, 18], exits: { south: 'forest_ridge' }, coord: { x: 2, y: 3 }, danger: 2 },
-  { id: 'forest_verdant_descent', size: [18, 32], exits: { south: 'forest_boss_clearing', north: 'forest_ancient_grove' }, coord: { x: 1, y: 4 }, danger: 2 },
-  { id: 'forest_ancient_grove', size: [44, 34], exits: { south: 'forest_verdant_descent', west: 'forest_bloom_hollow', east: 'forest_root_tangle' }, coord: { x: 1, y: 5 }, danger: 3 },
-  { id: 'forest_bloom_hollow', size: [38, 30], exits: { east: 'forest_ancient_grove' }, coord: { x: 0, y: 5 }, danger: 2 },
-  { id: 'forest_root_tangle', size: [32, 24], exits: { west: 'forest_ancient_grove', east: 'forest_canopy_walk' }, coord: { x: 2, y: 5 }, danger: 3 },
-  { id: 'forest_canopy_walk', size: [22, 38], exits: { west: 'forest_root_tangle', east: 'forest_briar_thicket' }, coord: { x: 3, y: 5 }, danger: 3 },
-  { id: 'forest_briar_thicket', size: [30, 22], exits: { west: 'forest_canopy_walk' }, coord: { x: 4, y: 5 }, danger: 3 },
-];
 
 /** A short axis (< this many tiles) marks a corridor screen (tree-walled sides). */
 const CORRIDOR_THRESHOLD = 20;

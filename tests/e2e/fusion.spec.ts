@@ -10,12 +10,12 @@ const STEAM = 5;
 // Fusion requires both parents to reach at least Tier 1 (server/src/game/Tiers.ts:
 // tierForXp — T1 begins at 500 XP). A parent seeded to exactly 500 XP is the
 // lowest fusable tier; the summed fusion XP is 1000, which is still Tier 1
-// (T2 begins at 1500). Starter rings have max_uses 3, so the fusion ring's
-// max_uses = max(1, min(3,3) − 1) = 2 (PlayerRepo.fuseRings).
+// (T2 begins at 1500). max_uses is a pure function of XP (#339): the fusion ring's
+// max_uses = 3 + tierForXp(1000) = 3 + 1 = 4 (PlayerRepo.fuseRings).
 const TIER1_XP = 500;
 const FUSED_XP = TIER1_XP * 2; // 1000 — additive parent XP (still Tier 1)
 const FUSED_TIER = 1; // tierForXp(1000) — below the Tier-2 threshold (1500)
-const FUSED_MAX_USES = 2; // max(1, min(parent max_uses) − 1) for two starter rings
+const FUSED_MAX_USES = 4; // 3 + tierForXp(1000) — pure XP rule, parent uses irrelevant
 
 /** Register a fresh player and return its auth token. */
 async function registerPlayer(): Promise<string> {
