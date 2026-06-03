@@ -68,7 +68,7 @@ An alternative ring-progression model considered as a way to make three trade-of
 | Crossing 500 XP | Auto-promotes to Tier 1, grants +1 use | Nothing automatic — a ring can sit at Tier 0 with 2,000 XP |
 | Only way to gain uses / tier | XP accrual crosses thresholds | **Fusion only** |
 | Fused ring XP | Sum of both parents | Sum of both parents **minus 2 × 500** (shave the 500-XP eligibility toll off each parent) |
-| Fused ring uses | `max(1, min(parents) − 1)` | `min(parents) + 1` (tier-up grants a use) |
+| Fused ring uses | `3 + tier(parent1.xp + parent2.xp)` — the same pure-XP rule as natural rings | `min(parents) + 1` (tier-up grants a use) |
 | Same-element fusion | Not allowed (cross-element only) | Allowed — Fire+Fire → higher-tier Fire; cross-element still yields the §5.2 fusion |
 
 **Worked examples (alternative only):**

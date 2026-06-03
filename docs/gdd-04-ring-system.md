@@ -63,7 +63,7 @@ Tier thresholds follow a **triangular-number × 500** pattern. Each tier's XP ra
 | 4 | 7 |
 | n | 3 + n |
 
-"Naturally" means the ring's own battle XP pushed it through the threshold. Fusion can also land a ring at a tier (see §4.6), but that does not trigger the +1 use grant — the ring must earn *additional* XP in battle past the next threshold to collect it.
+**Max uses is a pure function of XP** — `max_uses = 3 + tier(xp)` — for *every* ring, natural or fused, with no exceptions. "Naturally" above just describes the common path (a ring's own battle XP carrying it across a threshold); a fused ring lands at the same `3 + tier` for its combined-XP tier (see §4.6), so the table holds for it too.
 
 ### 4.3 Ring Uses
 - Uses are consumed during battle (attacking and defending)
@@ -94,29 +94,36 @@ Fusion combines two rings of the **same tier** into a single compound-element ri
 - Both parent rings are consumed; they cease to exist
 - The fused ring's **XP = parent1.xp + parent2.xp** — the full investment of both parents is preserved
 - The fused ring's **tier is determined by its total XP** via the standard tier formula
-- The fused ring's **max uses = min(parent1.max\_uses, parent2.max\_uses) − 1**
+- The fused ring's **max uses = 3 + tier(parent1.xp + parent2.xp)** — the same pure-XP rule every natural ring obeys (§4.2), with no fusion exception
 
-**Uses penalty:** the −1 deduction reflects the energy cost of combining two rings. The fused ring is not weaker per se — it has a compound element that covers more match-ups — but it has fewer shots before depleting. It earns the next +1 use by crossing the following tier threshold naturally through battle.
+**Unified XP-only rule:** a fused ring is just a ring at its combined-XP tier. Its max uses follow `3 + tier` exactly like a natural ring, so the `max_uses = 3 + tier(xp)` invariant holds universally. Because XP is additive, two near-cap same-tier parents can push the combined XP into the *next* tier — in which case the child lands at that higher tier's full uses, which may exceed either parent. That is intended: the player banked the parents' combined investment.
 
-**Worked example — fusing two minimum Tier 1 rings:**
+**Worked example — fusing two minimum Tier 1 rings (stays in Tier 1):**
 
 | | Parent 1 | Parent 2 | Fused result |
 |---|---|---|---|
 | XP | 500 | 500 | 1 000 |
 | Tier | 1 | 1 | 1 (XP 1 000 is within Tier 1's range) |
-| Max uses | 4 | 4 | min(4,4) − 1 = **3** |
-| Next +1 use | — | — | Cross Tier 2 (1 500 XP) in battle |
+| Max uses | 4 | 4 | 3 + 1 = **4** |
 
-The fused ring starts at Tier 1 with 3 uses. A natural Tier 1 ring has 4 uses. The gap closes as the fused ring earns XP: +1 use at Tier 2, and so on.
+**Worked example — fusing two near-cap Tier 1 rings (crosses into Tier 2):**
+
+| | Parent 1 | Parent 2 | Fused result |
+|---|---|---|---|
+| XP | 1 400 | 1 400 | 2 800 |
+| Tier | 1 | 1 | 2 (XP 2 800 is within Tier 2's range) |
+| Max uses | 4 | 4 | 3 + 2 = **5** |
+
+The fused ring is a ring at its combined-XP tier — no penalty, no catch-up. Combining the full XP of both parents is what can carry it into a higher tier.
 
 **Two progression paths:**
 
 | Path | Mechanic | Reward | Cost |
 |---|---|---|---|
-| Natural ascension | Battle XP accumulates on one ring | +1 use per tier; ring retains its element | Time invested in a single ring |
-| Fusion | Two same-tier rings combined | Compound element — broader offensive coverage, no weakness | Both parent rings consumed; starts with fewer uses |
+| Natural ascension | Battle XP accumulates on one ring | Higher tier (and its `3 + tier` uses); ring retains its single element | Time invested in a single ring |
+| Fusion | Two same-tier rings combined | Compound element — broader offensive coverage, no weakness — at the combined-XP tier | Two rings (two elements) collapse into one compound body; the second ring's separate identity is gone |
 
-Players who invest deeply in one ring gain durability (more uses). Players who fuse gain element coverage (stronger match-up profile). Both paths lead to high-tier rings; neither is strictly superior.
+Players who invest deeply in one ring keep a focused single element; players who fuse trade two rings for one compound body with broader match-up coverage. Both paths reach high tiers and both follow the same `3 + tier` uses rule; neither is strictly superior.
 
 **Element count is separate from tier.** A fused ring's compound element is what it is regardless of how high a tier it reaches. A Steam ring at Tier 5 is still Steam — it does not become a three-element ring. Maximum fusion depth is **two elements**.
 

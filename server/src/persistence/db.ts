@@ -152,11 +152,10 @@ db.exec('UPDATE players SET spirit_current = MIN(spirit_current, spirit_max)');
 // values. Unlike the guarded one-time backfills below, there is no flag to gate —
 // the computation is its own fixed point.
 //
-// CAVEAT (fusion history): a fused ring's natural max_uses is min(parents)−1, not
-// 3+tier, and that history is not reconstructable from the persisted row. This
-// migration therefore recomputes EVERY ring as if natural (max_uses = 3+tier),
-// which can over-grant uses to a pre-existing fused ring. Accepted as pre-release
-// behaviour per the EPIC; A4 (#178) owns the fusion crafting path going forward.
+// max_uses is now a pure function of XP for ALL rings — natural and fused alike
+// (fusion sets max_uses = 3 + tier(combined XP), see fuseRings) — so this recompute
+// is exact for every ring, not a compromise: an old-rule fused ring self-corrects
+// to 3 + tierForXp(xp) on boot with no special handling.
 recomputeRingTiers();
 
 // #180 — retire the Sanctum Stone. Re-anchoring is now a natural ability
@@ -281,10 +280,9 @@ function backfillCarry(): void {
  * Idempotent: both targets are pure functions of the unchanged `xp` column, so a
  * second run produces identical values. Runs in a single transaction.
  *
- * Fusion caveat: every ring is recomputed as if natural (max_uses = 3+tier).
- * A pre-existing fused ring's true natural max (min(parents)−1) cannot be
- * reconstructed from its row, so it may be over-granted uses here — accepted as
- * pre-release behaviour (see the call site comment).
+ * max_uses is a pure function of XP for every ring — natural and fused alike
+ * (fusion sets max_uses = 3 + tier(combined XP)) — so this recompute is exact for
+ * all rings, including any old-rule fused ring, with no special handling.
  */
 export function recomputeRingTiers(): void {
   const rings = db.prepare('SELECT id, xp FROM rings').all() as Array<{

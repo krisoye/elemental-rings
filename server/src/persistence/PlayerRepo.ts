@@ -14,7 +14,7 @@ import {
 } from './ringRows';
 import { ElementEnum, DIFFICULTY_MULTIPLIERS, type DifficultyTier, type SlotKey } from '../../../shared/types';
 import { fusionOf, isFusion, componentsOf } from '../game/Fusions';
-import { tierForXp } from '../game/Tiers';
+import { tierForXp, naturalMaxUses } from '../game/Tiers';
 import { getTalisman } from '../../../shared/talismans';
 import {
   SPIRIT_PER_RING_USE,
@@ -797,12 +797,13 @@ function clearRingFromLoadout(playerId: string, ringId: string): void {
  *
  * Validates (in order): ownership of both distinct rings, that both parents sit
  * in the SAME tier (`tierForXp(r1.xp) === tierForXp(r2.xp)`), that the shared
- * tier is at least Tier 2, and that the two base elements form a valid fusion
+ * tier is at least Tier 1, and that the two base elements form a valid fusion
  * pair. On success it inserts the new fusion ring — element from `fusionOf`, XP
  * the sum of both parents, tier recomputed from that summed XP via {@link
- * tierForXp}, and `max_uses = max(1, min(parent uses) − 1)` (a fusion ring lands
- * one use shy of its weaker parent, floored at 1; `current_uses` starts full).
- * It then permanently deletes both parents, nulling each out of any loadout slot
+ * tierForXp}, and `max_uses = naturalMaxUses(fusedTier) = 3 + tier` — the same
+ * pure-XP rule every natural ring obeys, so a fused ring is no exception to the
+ * `max_uses === 3 + tierForXp(xp)` invariant (`current_uses` starts full). It
+ * then permanently deletes both parents, nulling each out of any loadout slot
  * first so the FK constraint holds. Runs in a single transaction, so any thrown
  * validation error leaves the inventory untouched.
  *
@@ -836,11 +837,13 @@ export const fuseRings = db.transaction(
       throw new Error('These two elements do not form a valid fusion');
     }
 
-    // §4.6 — XP additive; tier from the summed XP; uses = min(parents) − 1,
-    // floored at 1 so a fusion always has at least one use.
+    // §4.6 — XP additive; tier from the summed XP; max_uses = 3 + tier, the same
+    // pure-XP rule every natural ring follows. Combined XP can cross into the next
+    // tier, in which case the child lands at that higher tier's full uses (which
+    // may exceed either parent — intended).
     const fusedXp = r1.xp + r2.xp;
     const fusedTier = tierForXp(fusedXp);
-    const fusedMaxUses = Math.max(1, Math.min(r1.max_uses, r2.max_uses) - 1);
+    const fusedMaxUses = naturalMaxUses(fusedTier);
 
     // #263 — persist the dominant (higher-XP) parent element so the two-tone card
     // renders the parent the player leveled first (top/left). A STRICT higher-XP
