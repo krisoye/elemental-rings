@@ -39,6 +39,7 @@ const SOLO_SPECS = [
   'compass.spec.ts',
   'difficulty.spec.ts', // EPIC #279 (#280 + #283) — difficulty tier + PUT /api/difficulty
   'difficulty-modal.spec.ts', // EPIC #279 (#284) — CampScene Settings button + DifficultyModal UI
+  'dom-label-contract.spec.ts', // EPIC #361 — DomLabel DOM overlay contract + crisp UI text
   'forage.spec.ts',
   'forage-client.spec.ts',
   'frost-sentinel.spec.ts', // #269
