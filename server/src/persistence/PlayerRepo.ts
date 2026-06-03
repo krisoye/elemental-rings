@@ -573,30 +573,6 @@ export function grantRing(
 }
 
 /**
- * Grant a new ring directly into the player's CARRY (in_carry = 1) — used when a
- * win drops a ready-to-use ring rather than one that rests in the Reliquary. The
- * ring's element decides fusion-ness (isFusion(element)); no separate flag exists.
- * Mirrors {@link grantRing}'s defaults (full uses, no XP) and runs in a single
- * transaction so the insert + carry flag never desync. Returns the new ring id.
- *
- * #231 — the Thornado Shrine Guardian drops a Thornado (Wood+Wind) ring on defeat
- * via this path so the player can immediately carry it to the altar as the seal key.
- */
-export const grantRingToCarry = db.transaction(
-  (
-    ownerId: string,
-    element: number,
-    tier = STARTER_TIER,
-    maxUses = STARTER_MAX_USES,
-    xp = 0,
-  ): string => {
-    const ringId = grantRing(ownerId, element, tier, maxUses, xp);
-    setRingCarry(ringId, 1);
-    return ringId;
-  },
-);
-
-/**
  * Transfer ownership of a ring from one player to another. Nulls out any
  * loadout slots that referenced the ring on the losing player. The ring's XP
  * travels with it (GDD §9.1).

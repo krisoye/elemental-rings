@@ -143,9 +143,10 @@ export const NPC_SPAWNS: NpcSpawnDef[] = [
   // it to win the Thornado ring-key that unseals the altar. EPIC #256 gives it a
   // `boss` descriptor (sub tier, AGGRESSIVE) so it stakes the THORNADO fusion on
   // its thumb. `element=WOOD` (Thornado's triangle component) drives the overworld
-  // sprite. The Thornado ring-key drop stays a curated grant in
-  // BattleRoom.persistBattleResult (grantRingToCarry) — the generic won-ring grant
-  // is suppressed for fused-thumb bosses so the player never gets a free fusion.
+  // sprite. Defeating it grants the player a THORNADO ring via the standard §9.1
+  // won-ring path (the staked fused thumb transfers to the winner), which doubles
+  // as the altar seal-key; the won ring lands in the reliquary, so the player must
+  // carry it (via the post-duel carry prompt) before presenting it to the altar.
   // No foodDrop — shrine guardians reward a ring, not a food cache.
   { id: 'forest_thornado_shrine_guardian', biome: 'forest', screen: 'forest_thornado_shrine', personality: 'AGGRESSIVE', type: 'duelist', element: WOOD, spriteFrame: 4, tx: 20, ty: 15, respawnDays: 0, boss: { tier: 'sub', name: 'Thornado Guardian', fusedThumb: ElementEnum.THORNADO } },
 
@@ -156,10 +157,10 @@ export const NPC_SPAWNS: NpcSpawnDef[] = [
   // altar remains craftable whether or not the Guardian is defeated. EPIC #256
   // gives it a `boss` descriptor (sub tier, DEFENSIVE) so it stakes the BLOOM
   // fusion on its thumb. `element=WOOD` (Bloom's triangle component) drives the
-  // overworld sprite. No foodDrop and no ring grant — it is not an exit gate, and
-  // the generic won-ring grant is suppressed for fused-thumb bosses. If a curated
-  // BLOOM ring reward is added later, wire grantRingToCarry(BLOOM) in
-  // BattleRoom.persistBattleResult for 'forest_bloom_shrine_guardian'.
+  // overworld sprite. No foodDrop — defeating it grants the player a BLOOM ring
+  // via the standard §9.1 won-ring path (the staked fused thumb transfers to the
+  // winner). The Hollow's altar is always open, so this is a combat reward, not a
+  // seal-key.
   { id: 'forest_bloom_shrine_guardian', biome: 'forest', screen: 'forest_bloom_hollow', personality: 'DEFENSIVE', type: 'duelist', element: WOOD, spriteFrame: 4, tx: 20, ty: 15, respawnDays: 0, foodDrop: 0, boss: { tier: 'sub', name: 'Bloom Guardian', fusedThumb: ElementEnum.BLOOM } },
 
   // ── Forest: Frost Sentinel mini-boss (#269, GDD §10.15) ─────────────────────
