@@ -14,7 +14,7 @@
     "test:e2e": "E2E_FAST=1 npx playwright test"
   },
   "devDependencies": {
-    "@playwright/test": "^1.44.0",
+    "@playwright/test": "^1.60.0",
     "typescript": "^5.5.0"
   }
 }
