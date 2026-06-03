@@ -118,7 +118,13 @@ export function addDomLabel(
  * Update a DomLabel's text. Thin wrapper over `el.node.textContent`; supports
  * '\n' for two-row labels (the node uses `white-space: pre`).
  */
-export function setDomLabelText(el: Phaser.GameObjects.DOMElement, text: string): void {
+export function setDomLabelText(
+  el: Phaser.GameObjects.DOMElement | null,
+  text: string,
+): void {
+  // Defensive: a null element (scene torn down) or missing node is a no-op rather
+  // than a crash — this simplifies call-site guards.
+  if (!el || !el.node) return;
   el.node.textContent = text;
 }
 

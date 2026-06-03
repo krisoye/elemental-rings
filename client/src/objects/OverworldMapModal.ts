@@ -633,11 +633,14 @@ export class OverworldMapModal {
     }
 
     // Close hint — pinned to bottom-right of panel. #363 — screen-fixed → DOM.
+    // P2-A — stable data-label id for future E2E targeting. (The "World Map" panel
+    // title is a ModalShell canvas Text, not a DomLabel, so it has no id here.)
     this.domLabels.push(
       addDomLabel(s, PANEL_X + PANEL_W - 10, PANEL_Y + PANEL_H - 8, 'Press M to close', {
         fontPx: 9,
         color: '#445566',
         align: 'right',
+        id: 'world-map-close-hint',
       }).setOrigin(1, 1),
     );
 

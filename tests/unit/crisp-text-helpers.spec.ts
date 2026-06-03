@@ -32,9 +32,13 @@ import { describe, it, expect } from 'vitest';
 import * as fs from 'fs';
 import * as path from 'path';
 
-// Repo root resolved relative to this test file (server/vitest.config.ts
-// runs tests from the server/ workspace, so __dirname resolves correctly).
-const REPO_ROOT = path.resolve(__dirname, '../../..');
+// Repo root resolved relative to this test file. The spec lives at
+// tests/unit/crisp-text-helpers.spec.ts, so the repo root is two levels up
+// (../.. → <repo>). P3-B — the previous `../../..` pointed one directory ABOVE
+// the repo, so CLIENT_SRC did not exist and the file-scan tests passed vacuously
+// (existsSync guards / early returns masked it); the now-correct path makes the
+// proportional-font and setResolution scans real proxies for the source tree.
+const REPO_ROOT = path.resolve(__dirname, '../..');
 const CLIENT_SRC = path.join(REPO_ROOT, 'client/src');
 
 // ---------------------------------------------------------------------------
@@ -259,7 +263,9 @@ function buildExpectedCss(opts: {
     `user-select: none`,
   ];
   if (opts.lineHeight !== undefined) {
-    parts.push(`line-height: ${opts.lineHeight}`);
+    // P1-B — DomLabel.ts emits `line-height: ${lineHeight}px` (a pixel value), so
+    // the re-derivation must include the `px` suffix to be a true proxy.
+    parts.push(`line-height: ${opts.lineHeight}px`);
   }
   if (opts.shadow) {
     // Spec: optional text-shadow for legibility over busy backgrounds
@@ -333,8 +339,10 @@ describe('#362 DomLabel CSS contract: spec-required CSS properties', () => {
   it('re-derived CSS includes lineHeight when specified (two-row location label)', () => {
     // #362 adversarial: omitting line-height for the two-row location label collapses
     // the two lines into a cramped single block — legibility is lost.
-    const css = buildExpectedCss({ fontPx: 13, color: '#aabbcc', lineHeight: 1.4 });
-    expect(css).toContain('line-height: 1.4');
+    // P1-B — use a real pixel value matching the biome-title call site (lineHeight: 19)
+    // so the assertion cross-checks the `px`-suffixed output DomLabel.ts produces.
+    const css = buildExpectedCss({ fontPx: 14, color: '#ddeeff', lineHeight: 19 });
+    expect(css).toContain('line-height: 19px');
   });
 
   it('re-derived CSS has no lineHeight property when not specified', () => {
@@ -590,33 +598,20 @@ describe('SpecConformance: #361/#362 EPIC contract assertions', () => {
   });
 
   // Spec AC: "Typeface unchanged — monospace parity maintained throughout"
-  it('Spec AC #361: no fontFamily set to a proportional font anywhere in client/src', () => {
+  // P3-B — DomLabel.ts is the only file that constructs CSS font strings; scoping
+  // the scan there avoids false positives from incidental matches elsewhere (e.g. a
+  // comment that says "do NOT use sans-serif" in an unrelated file). The dedicated
+  // 'DomLabel.ts does not contain "sans-serif"' test above already guards the helper.
+  it('Spec AC #361: no proportional fontFamily constructed in DomLabel.ts (the only CSS-font source)', () => {
     const proportionalFonts = ['sans-serif', 'Arial', 'Helvetica', 'Georgia', 'Verdana', 'Tahoma'];
+    const domLabelPath = path.join(CLIENT_SRC, 'objects/ui/DomLabel.ts');
+    const src = fs.readFileSync(domLabelPath, 'utf8');
 
-    function walkTs(dir: string): string[] {
-      if (!fs.existsSync(dir)) return [];
-      return fs.readdirSync(dir, { withFileTypes: true }).flatMap((e) => {
-        const full = path.join(dir, e.name);
-        if (e.isDirectory()) return walkTs(full);
-        if (e.isFile() && e.name.endsWith('.ts')) return [full];
-        return [];
-      });
-    }
-
-    const violations: string[] = [];
-    for (const absPath of walkTs(CLIENT_SRC)) {
-      const src = fs.readFileSync(absPath, 'utf8');
-      for (const font of proportionalFonts) {
-        // Only flag occurrences in font-family CSS strings, not incidental matches
-        if (src.includes(`font-family`) && src.includes(font)) {
-          violations.push(`${path.relative(CLIENT_SRC, absPath)}: contains "${font}" in font-family context`);
-        }
-      }
-    }
+    const violations = proportionalFonts.filter((font) => src.includes(font));
 
     expect(
       violations,
-      'Spec parity: no proportional font families should be set in client/src',
+      'Spec parity: DomLabel.ts must not reference any proportional font family',
     ).toHaveLength(0);
   });
 

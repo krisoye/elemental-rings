@@ -410,6 +410,7 @@ export class BattleScene extends Phaser.Scene {
       window.__orbOutcomeLog = window.__orbOutcomeLog ?? [];
       window.__orbOutcomeLog.push({ orb: orbIndex, label: outcome.label });
     }
+    // crispCanvasText applied consistently to all canvas text — ephemeral labels included for policy uniformity; texture cost is acceptable for sub-second display
     // #364 — animated, transient combo-outcome label (tweens position + fades out)
     // → DOM-ineligible. crispCanvasText keeps it smooth on fractional DPI.
     const t = crispCanvasText(this.add.text(512, y, label, {

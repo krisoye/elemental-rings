@@ -466,17 +466,25 @@ test('dom-label #363 D1: DOM label count in #game-container is stable after clos
   await openBattleHand(page);
   await page.waitForTimeout(300);
 
-  // Count all DOM text nodes inside the game container after first open.
-  // Exclude canvas and input elements to focus on DomLabel-produced nodes.
-  const countAfterOpen1 = await page.evaluate(() => {
-    const root = document.querySelector('#game-container');
-    if (!root) return 0;
-    return Array.from(root.querySelectorAll('*'))
-      .filter((el) => {
-        if ((el as HTMLElement).tagName === 'CANVAS' || (el as HTMLElement).tagName === 'INPUT') return false;
-        return ((el as HTMLElement).innerText ?? '').trim().length > 0;
+  // P3-D — count only OVERLAY DomLabel nodes (class `er-dom-label`), excluding the
+  // persistent overworld labels (HUD, biome-title) and the lazy NPC prompt. Counting
+  // every text node in #game-container would fold in those persistent nodes and a
+  // lazily-created npcPrompt between cycles → a false-positive failure. Scoping to
+  // overlay-owned er-dom-label nodes makes the open/close lifecycle the only variable.
+  const PERSISTENT = ['overworld-hud', 'biome-title', 'npc-prompt'];
+  const countOverlayLabels = (): Promise<number> =>
+    page.evaluate((persistent) => {
+      const root = document.querySelector('#game-container');
+      if (!root) return 0;
+      return Array.from(root.querySelectorAll('.er-dom-label')).filter((el) => {
+        const id = (el as HTMLElement).getAttribute('data-label');
+        // A label is persistent if its data-label is in the exclude set; overlay
+        // chrome labels (title/HEADER/section labels) are unidentified or non-persistent.
+        return !(id && persistent.includes(id));
       }).length;
-  });
+    }, PERSISTENT);
+
+  const countAfterOpen1 = await countOverlayLabels();
 
   await closeBattleHand(page);
   await page.waitForTimeout(200);
@@ -485,15 +493,7 @@ test('dom-label #363 D1: DOM label count in #game-container is stable after clos
   await openBattleHand(page);
   await page.waitForTimeout(300);
 
-  const countAfterOpen2 = await page.evaluate(() => {
-    const root = document.querySelector('#game-container');
-    if (!root) return 0;
-    return Array.from(root.querySelectorAll('*'))
-      .filter((el) => {
-        if ((el as HTMLElement).tagName === 'CANVAS' || (el as HTMLElement).tagName === 'INPUT') return false;
-        return ((el as HTMLElement).innerText ?? '').trim().length > 0;
-      }).length;
-  });
+  const countAfterOpen2 = await countOverlayLabels();
 
   expect(
     countAfterOpen2,

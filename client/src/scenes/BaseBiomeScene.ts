@@ -1759,10 +1759,14 @@ export abstract class BaseBiomeScene extends DualCameraScene {
         id: 'npc-prompt',
       }).setOrigin(0.5, 0);
     }
-    // Reflect the boss vs normal palette directly on the DOM node's style.
-    const promptStyle = (this.npcPrompt.node as HTMLElement).style;
-    promptStyle.color = isBoss ? '#ff8844' : '#ffeeaa';
-    promptStyle.background = isBoss ? '#550000cc' : '#000000aa';
+    // Reflect the boss vs normal palette directly on the DOM node's style. Guard
+    // the cast: if the DOM container was never created or has been torn down,
+    // `.node` can be undefined — skip the style mutation rather than crash.
+    const promptNode = this.npcPrompt?.node as HTMLElement | null;
+    if (promptNode) {
+      promptNode.style.color = isBoss ? '#ff8844' : '#ffeeaa';
+      promptNode.style.background = isBoss ? '#550000cc' : '#000000aa';
+    }
     setDomLabelText(this.npcPrompt, text);
     this.npcPrompt.setVisible(true);
   }
@@ -1835,6 +1839,8 @@ export abstract class BaseBiomeScene extends DualCameraScene {
           battle_hand_avg_xp?: number;
         };
       } = await res.json();
+      // The scene may have shut down during the JSON parse; bail if the HUD is gone.
+      if (!this.hudText) return;
       const p = data.player;
       const spiritStr = `${p.spirit_current ?? 0}/${p.spirit_max ?? 0}`;
       const heart = p.heart_ring;

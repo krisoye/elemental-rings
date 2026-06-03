@@ -773,20 +773,26 @@ export class BattleHandOverlay {
     ring: RingData,
   ): void {
     const pips = usePips(ring.current_uses, ring.max_uses);
-    const nameLbl = this.scene.add
-      .text(cx, cy - 22, ELEMENT_NAMES[ring.element] ?? '?', { fontSize: '9px', color: '#000000' })
+    // #364 — these labels are container-bound (depth-interleaved with card rects)
+    // → DOM-ineligible. crispCanvasText keeps them smooth on fractional DPI.
+    const nameLbl = crispCanvasText(
+      this.scene.add.text(cx, cy - 22, ELEMENT_NAMES[ring.element] ?? '?', { fontSize: '9px', color: '#000000' }),
+    )
       .setScrollFactor(0)
       .setOrigin(0.5);
-    const pipsLbl = this.scene.add
-      .text(cx, cy - 6, pips, { fontSize: '10px', color: '#000000' })
+    const pipsLbl = crispCanvasText(
+      this.scene.add.text(cx, cy - 6, pips, { fontSize: '10px', color: '#000000' }),
+    )
       .setScrollFactor(0)
       .setOrigin(0.5);
-    const xpLbl = this.scene.add
-      .text(cx, cy + 10, `Xp: ${ring.xp}`, { fontSize: '9px', color: '#000000' })
+    const xpLbl = crispCanvasText(
+      this.scene.add.text(cx, cy + 10, `Xp: ${ring.xp}`, { fontSize: '9px', color: '#000000' }),
+    )
       .setScrollFactor(0)
       .setOrigin(0.5);
-    const tierLbl = this.scene.add
-      .text(cx, cy + 24, `T${ring.tier}`, { fontSize: '9px', color: '#000000' })
+    const tierLbl = crispCanvasText(
+      this.scene.add.text(cx, cy + 24, `T${ring.tier}`, { fontSize: '9px', color: '#000000' }),
+    )
       .setScrollFactor(0)
       .setOrigin(0.5);
     container.add([nameLbl, pipsLbl, xpLbl, tierLbl]);
