@@ -1781,8 +1781,13 @@ export abstract class BaseBiomeScene extends DualCameraScene {
 
   /** Per-frame: show the prompt for the nearest overlapping zone. */
   private updateActiveZone(): void {
-    const px = this.player.x;
-    const py = this.player.y;
+    // Use the physics body center rather than the game-object origin. The body
+    // is offset 18px below the sprite origin (feet-position hitbox), so at the
+    // top world boundary player.y goes negative while the body stays at y≥0.
+    // Using the origin caused the north biome_exit zone (y=0) to never fire.
+    const body = this.player.body as Phaser.Physics.Arcade.Body;
+    const px = body.center.x;
+    const py = body.center.y;
     const overlapping = this.zones.filter((z) => z.contains(px, py));
     // With SANCTUM_OFFSET=0 the sanctum_return door is co-located with its anchor
     // Anchorage zone; the return door is the actionable E target there, so it wins.
