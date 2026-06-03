@@ -459,6 +459,7 @@ export class OverworldMapModal {
             .text(x, y + NODE_H / 2 + 6, '✦ teleport', {
               fontSize: '8px', color: '#886600',
             })
+            .setResolution(window.devicePixelRatio)
             .setOrigin(0.5, 0)
             .setScrollFactor(0),
         );
@@ -473,6 +474,7 @@ export class OverworldMapModal {
             align: 'center',
             wordWrap: { width: NODE_W - 6 },
           })
+          .setResolution(window.devicePixelRatio)
           .setOrigin(0.5)
           .setScrollFactor(0),
       );
@@ -495,6 +497,7 @@ export class OverworldMapModal {
             .text(x - NODE_W / 2 + 4, y - NODE_H / 2 + 2, BOSS_GLYPH[spec.boss], {
               fontSize: '13px', color: BOSS_COLOR[spec.boss],
             })
+            .setResolution(window.devicePixelRatio)
             .setOrigin(0, 0)
             .setScrollFactor(0),
         );
@@ -520,6 +523,7 @@ export class OverworldMapModal {
 
     const resetBtn = s.add
       .text(ctrlRightEdge, ctrlY, '0 Reset', btnStyle)
+      .setResolution(window.devicePixelRatio)
       .setOrigin(1, 0)
       .setScrollFactor(0)
       .setInteractive({ useHandCursor: true })
@@ -528,6 +532,7 @@ export class OverworldMapModal {
 
     const minusBtn = s.add
       .text(ctrlRightEdge - resetBtn.width - 6, ctrlY, '−', btnStyle)
+      .setResolution(window.devicePixelRatio)
       .setOrigin(1, 0)
       .setScrollFactor(0)
       .setInteractive({ useHandCursor: true })
@@ -536,6 +541,7 @@ export class OverworldMapModal {
 
     const plusBtn = s.add
       .text(ctrlRightEdge - resetBtn.width - minusBtn.width - 12, ctrlY, '+', btnStyle)
+      .setResolution(window.devicePixelRatio)
       .setOrigin(1, 0)
       .setScrollFactor(0)
       .setInteractive({ useHandCursor: true })
@@ -564,6 +570,7 @@ export class OverworldMapModal {
       c.add(
         s.add
           .text(lx + 16, legendY, entry.label, { fontSize: '9px', color: '#7799aa' })
+          .setResolution(window.devicePixelRatio)
           .setScrollFactor(0),
       );
       lx += 48;
@@ -573,11 +580,11 @@ export class OverworldMapModal {
     // Anchorage legend
     legendGfx.fillStyle(DOT_ANCHOR_ATTUNED, 1);
     legendGfx.fillCircle(lx + 5, legendY + 6, 5);
-    c.add(s.add.text(lx + 12, legendY, 'Anchorage\n(attuned)', { fontSize: '8px', color: '#bbaa44', lineSpacing: 2 }).setScrollFactor(0));
+    c.add(s.add.text(lx + 12, legendY, 'Anchorage\n(attuned)', { fontSize: '8px', color: '#bbaa44', lineSpacing: 2 }).setResolution(window.devicePixelRatio).setScrollFactor(0));
     lx += 80;
     legendGfx.fillStyle(DOT_ANCHOR_UNATTUNED, 1);
     legendGfx.fillCircle(lx + 5, legendY + 6, 5);
-    c.add(s.add.text(lx + 12, legendY, 'Anchorage\n(unset)', { fontSize: '8px', color: '#666644', lineSpacing: 2 }).setScrollFactor(0));
+    c.add(s.add.text(lx + 12, legendY, 'Anchorage\n(unset)', { fontSize: '8px', color: '#666644', lineSpacing: 2 }).setResolution(window.devicePixelRatio).setScrollFactor(0));
     lx += 76;
 
     // Boss legend — glyph + colour per tier (see BossTier).
@@ -590,11 +597,13 @@ export class OverworldMapModal {
       c.add(
         s.add
           .text(lx, legendY - 2, BOSS_GLYPH[entry.tier], { fontSize: '12px', color: BOSS_COLOR[entry.tier] })
+          .setResolution(window.devicePixelRatio)
           .setScrollFactor(0),
       );
       c.add(
         s.add
           .text(lx + 13, legendY + 1, entry.label, { fontSize: '8px', color: '#7799aa' })
+          .setResolution(window.devicePixelRatio)
           .setScrollFactor(0),
       );
       lx += 46;
@@ -606,6 +615,7 @@ export class OverworldMapModal {
         .text(PANEL_X + PANEL_W - 10, PANEL_Y + PANEL_H - 8, 'Press M to close', {
           fontSize: '9px', color: '#445566',
         })
+        .setResolution(window.devicePixelRatio)
         .setOrigin(1, 1)
         .setScrollFactor(0),
     );

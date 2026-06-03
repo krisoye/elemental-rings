@@ -886,18 +886,20 @@ test('manage-battle-rings (#352 regression): header segments absent after close 
 });
 
 // ── Regression #5 — panel geometry boundary ──────────────────────────────────
-// Panel bottom is MODAL_TOP + PANEL_H = 44 + 495 = 539. No text object in the
-// modal (including recharge status text, spare label, and recharge buttons) may
-// have its y-centre beyond that boundary. A y > 539 means the element exits the
-// panel, overlapping whatever is rendered below it.
-test('manage-battle-rings (#352 regression): no text object y-centre exceeds the panel bottom (y=539)', async ({ browser }) => {
+// Panel bottom is MODAL_TOP + PANEL_H = 44 + 515 = 559 (#356). No text object in
+// the modal (including recharge status text, spare label, and recharge buttons)
+// may have its y-centre beyond that boundary. A y > 559 means the element exits
+// the panel, overlapping whatever is rendered below it.
+test('manage-battle-rings (#356 regression): no text object y-centre exceeds the panel bottom (y=559)', async ({ browser }) => {
   const ctx = await browser.newContext();
   await seedAuthToken(ctx);
   const page = await ctx.newPage();
   await loadForest(page);
   await openBattleHand(page);
 
-  const PANEL_BOTTOM = 44 + 495; // MODAL_TOP + PANEL_H = 539
+  const MODAL_TOP = 44;
+  const PANEL_H = 515; // #356: expanded from 495
+  const PANEL_BOTTOM = MODAL_TOP + PANEL_H; // 559
 
   const offenders = await page.evaluate((panelBottom) => {
     const scene = (window as any).__game?.scene?.getScene('ForestScene') as any;
