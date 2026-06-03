@@ -12,7 +12,7 @@
 | Constant | GID | Tile ID | Description |
 |----------|-----|---------|-------------|
 | `GID_GRASS_FILL` | 558 | 78 | Assorted medium green grass variant (r4,c14) |
-| `GID_VILLAGE_CANOPY` | 624 | 144 | Vertical white fence — middle section (r9,c0) |
+| `GID_VILLAGE_FENCE_MID` | 624 | 144 | Vertical white fence — middle section (r9,c0) |
 
 ---
 
@@ -149,7 +149,7 @@
 | Tile ID | Row, Col | Layer | Description |
 |---------|----------|-------|-------------|
 | 128 | r8,c0 | in-front | Vertical fence — top cap |
-| **144** | r9,c0 | in-front | Vertical fence — middle (**GID_VILLAGE_CANOPY**) |
+| **144** | r9,c0 | in-front | Vertical fence — middle (**GID_VILLAGE_FENCE_MID**) |
 | 160 | r10,c0 | in-front | Vertical fence — bottom cap |
 
 ### Horizontal fence + post — row 11

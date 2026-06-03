@@ -36,7 +36,7 @@ import {
   GID_PLAINS_CANOPY_B,
   GID_PLAINS_CANOPY_C,
   GID_PLAINS_CANOPY_D,
-  GID_VILLAGE_CANOPY,
+  GID_VILLAGE_FENCE_MID,
   GID_VOID,
 } from './lib/forest-gid-map.mjs';
 import { resolveAutotileVariant } from './lib/autotile-resolver.mjs';
@@ -401,7 +401,7 @@ const CANOPY_VARIANTS = [
   GID_PLAINS_CANOPY_B, // 424
   GID_PLAINS_CANOPY_C, // 422
   GID_PLAINS_CANOPY_D, // 439
-  GID_VILLAGE_CANOPY, // 624
+  GID_VILLAGE_FENCE_MID, // 624 — NOTE: fence tile in a canopy pick; see PR discussion
 ];
 
 /** Weighted pick: GID_PLAINS_CANOPY_A 40%, the other four 15% each. */
