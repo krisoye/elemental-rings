@@ -23,6 +23,21 @@ Of the carried rings, the player assigns **5 to the battle hand** before each en
 - Both players can see each other's element types and aggregate uses from detection range before committing
 - Once both players formally agree to duel, the battle begins
 
+### 6.2a Combat Entry Preconditions
+
+To initiate a duel, the player must meet **both** of the following conditions:
+
+1. **Heart ring equipped with remaining uses:** The heart slot must have a ring with `current_uses > 0`. A drained heart ring (0 uses) blocks duel entry.
+2. **Thumb (stake) ring assigned:** The thumb slot must have a ring assigned — any number of remaining uses is allowed, including zero. A player without an assigned thumb ring cannot enter a duel.
+
+A player who lacks either condition cannot initiate via the E-key or double-click override when encountering an NPC or monster. The overworld encounter prompt is replaced with a brief hint:
+- **"Equip & recharge a heart ring to fight"** — if the heart ring is missing or drained
+- **"Stake a ring to fight"** — if the thumb slot is empty or unassigned
+
+**Why this rule:** The heart ring represents the player's literal hitpoints; the thumb ring represents their stake (risk). This prevents duels without skin in the game and removes the silent fallback behavior of assigning a default fire ring when the thumb slot was null.
+
+**Note on drained stakes:** A drained stake ring (uses = 0 but assigned to the thumb slot) **does not block** battle entry — the ring remains at risk even though its passive will not fire.
+
 ### 6.3 Turn Structure (Active Timed Block)
 Combat is an **active, reaction-timed** exchange — not a hidden simultaneous selection. One player holds **initiative** at any moment; the other is the **reactor**.
 
@@ -49,6 +64,7 @@ The **initiative holder** chooses one of three actions:
 - The forfeiting player **loses their staked Thumb ring** and pays **25 gold** (`GOLD_FORFEIT_PENALTY` in constants.ts).
 - Forfeiting is only available during your own initiative phase — the reactor cannot flee mid-telegraph.
 - This is the escape valve when the duel cannot be won, but it costs more than just the stake.
+- Forfeiting preserves the heart ring — it is only destroyed if hearts reach 0 (§6.7).
 
 **Phase-locked input:** Attack buttons (A1/A2) only register during the **attack phase**. Defense buttons (D1/D2) only register during the **defense phase**. Wrong-phase presses are silently ignored — protective, not punishing. The phase transition is the most visually prominent UI moment in a battle.
 
@@ -180,6 +196,7 @@ Neutrals are pure attrition exchanges — safe on hearts, with the gauge and use
 - Hearts are lost when an attack lands uncontested (no-block or mistime), on a weak catch (block or parry with an element the attack beats), or via status effect damage
 - When all hearts are gone that player loses the duel
 - Hearts reset between duels
+- When a player's hearts reach 0 and the duel ends, their heart ring is permanently destroyed (broken)
 
 ### 6.8 Post-Battle Loadout Management
 
@@ -195,20 +212,19 @@ Neutrals are pure attrition exchanges — safe on hearts, with the gauge and use
 
 **After losing:**
 - The staked Thumb ring is forfeited — removed from carry and from the player's inventory
-- No additional penalty beyond the ring loss (monsters are an exception — see §6.9)
+- If the loss was by depletion (hearts reached 0), the heart ring is destroyed (§6.7) — a forfeit with hearts still > 0 preserves it
+- No additional penalty beyond the ring loss
 
 After losing a duel:
 1. The player's staked ring is forfeited to the opponent
-2. A monster opponent also steals one random ring from the player's full inventory (not just the loadout)
-3. An NPC opponent only takes the staked ring
+2. If hearts reached 0, the heart ring is permanently destroyed; a forfeit preserves it
 
 ### 6.9 Monster Encounters
 - Monsters always initiate encounters in the overworld
 - The player can **flee** before formally agreeing to duel — always free, no penalty
 - Once a duel is formally agreed, fleeing is not possible
-- If a monster wins it **steals a random ring from the player's full inventory** and flees
+- If a monster wins it takes the player's staked Thumb ring and flees — the same stake an NPC or human win claims
 - If a monster loses it **drops a ring as loot** and flees — outside the staking system
-- A monster that has stolen your ring is now carrying it in the world — it can be tracked down and won back
 - Monsters **respawn on a real-time or in-game day cycle**; named/boss monsters do not respawn
 
 ---

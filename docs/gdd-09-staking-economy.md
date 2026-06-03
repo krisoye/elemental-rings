@@ -7,6 +7,7 @@
 - **Loser forfeits their staked ring and all XP associated with it**
 - **Winner receives the staked ring and its full XP**
 - **Bosses and shrine guardians are no exception** — their stake is their thematic fused thumb, and defeating them transfers that fusion ring to the winner exactly like any duel. The only consequence-free duel is a **training / practice rematch** (re-fighting an already-beaten boss for practice): no stake changes hands.
+- **The thumb slot must be assigned to enter a duel:** A player cannot initiate a duel unless they have a ring staked to the thumb slot. A drained stake ring (zero uses remaining) still satisfies this requirement — the ring is present and at risk, though its passive will not fire.
 
 > **Design note (v4.2):** Earlier drafts allowed the staked ring to be any ring outside the battle loadout. The current design places the stake in the Thumb slot, making it part of the loadout and always visible to both players.
 

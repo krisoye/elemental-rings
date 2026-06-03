@@ -75,6 +75,10 @@ The Forest is a **multi-screen region** — a graph of discrete maps connected b
 
 **Region topology (28 screens):**
 
+The Forest is embedded on a coherent integer grid (`coord` in each `ScreenDef`):
+`N = +y`, `S = −y`, `E = +x`, `W = −x`. Every exit is a unit cardinal step to the
+room at the adjacent cell. The map below is drawn to that grid.
+
 *Main body + west wing + Thornado wing:*
 ```
             [snow_gate]
@@ -87,18 +91,33 @@ The Forest is a **multi-screen region** — a graph of discrete maps connected b
                                                       │ N/S                              │ N/S
                                                [hollow]─W/E─[swamp_gate]──→ SwampScene  [ridge]─N/S─[rocky_overlook]
                                                                                             │ E/W
-                                               [crossroads]─E/W─[briar_pass]─S/N─[boss_clearing]─W/E─[deepwood]
+                                                           [briar_pass]─E/W─[crossroads's column]
+                                                                 │ N/S
+                                                           [deepwood]─E/W─[ridge]
+                                                                 │ N/S
+                                                           [boss_clearing]
 ```
-*Deep forest loop (south of boss clearing):*
+The crossroads cluster forms a planar vertical chain. `briar_pass` sits **west** of
+`crossroads`; the spine runs `briar_pass(1,1) → deepwood(1,2) → boss_clearing(1,3)`
+with `ridge(2,2)` to the east of `deepwood` (and `crossroads(2,1)` south of `ridge`,
+`rocky_overlook(2,3)` north of it):
 ```
-[boss_clearing]─S/N─[verdant_descent]─S/N─[ancient_grove]─W/E─[bloom_hollow]
-     │ W/E                                       │ E/W
- [deepwood]─S/N─[root_tangle]─E/W─[canopy_walk]─E/W─[briar_thicket]
+[crossroads]──N/S──[ridge]──N/S──[rocky_overlook]
+     │ W/E            │ W/E
+[briar_pass]──N/S──[deepwood]
                      │ N/S
-             (loops back N to deepwood)
+                [boss_clearing]   (N boss-gated)
 ```
+*Deep forest (north of boss clearing — reachable only after the Warden falls):*
 ```
-[hidden_alcove]  ← teleport-only, no walking exits
+[boss_clearing]─N/S─[verdant_descent]─N/S─[ancient_grove]─W/E─[bloom_hollow]
+                                               │ E/W
+                                          [root_tangle]─E/W─[canopy_walk]─E/W─[briar_thicket]
+```
+The old `root_tangle → deepwood` backdoor is removed: the deep forest is now a
+dead-end wing entered exclusively through the boss gate.
+```
+[hidden_alcove]  ← teleport-only, no walking exits, no grid coord
 ```
 
 ---
@@ -158,9 +177,9 @@ The Forest is a **multi-screen region** — a graph of discrete maps connected b
 
 #### `forest_crossroads` — The Crossroads
 - **size:** 28×22
-- **exits:** south → `forest_glade`, east → `forest_briar_pass`, north → `forest_ridge`
+- **exits:** south → `forest_glade`, north → `forest_ridge`, west → `forest_briar_pass`
 - **danger:** 1
-- **content:** A three-way junction where the road forks into increasingly dangerous territory. Two to three mid-tier duelists patrol. The choice of east (Briar Pass loop) or north (Ridge descent) gives the player a meaningful direction decision.
+- **content:** A three-way junction where the road forks into increasingly dangerous territory. Two to three mid-tier duelists patrol. The choice of west (Briar Pass) or north (Ridge ascent) gives the player a meaningful direction decision.
 
 ---
 
@@ -191,32 +210,32 @@ The Forest is a **multi-screen region** — a graph of discrete maps connected b
 
 #### `forest_briar_pass` — Briar Pass
 - **size:** 40×16
-- **exits:** west → `forest_crossroads`, south → `forest_boss_clearing`
+- **exits:** east → `forest_crossroads`, north → `forest_deepwood`
 - **danger:** 2
-- **content:** A wide, low east-west corridor choked with thorns on both sides — the road is barely a lane. Danger 2 roamers feel more menacing because of the tight sightlines. The path south opens suddenly into the Boss Clearing.
+- **content:** A wide, low corridor choked with thorns on both sides — the road is barely a lane. Danger 2 roamers feel more menacing because of the tight sightlines. The east path returns to the Crossroads; the north path climbs into the Deepwood spine.
 
 ---
 
 #### `forest_ridge` — The Ridge
 - **size:** 32×22
-- **exits:** south → `forest_crossroads`, east → `forest_deepwood`, north → `forest_rocky_overlook`
+- **exits:** south → `forest_crossroads`, north → `forest_rocky_overlook`, west → `forest_deepwood`
 - **danger:** 2
-- **content:** Rocky elevated ground; implied hillside looking south over the canopy. Sparse trees, more open sky. Danger 2 duelists patrol the exposed rock. The eastern descent drops into the darkest part of the forest. A rocky path climbs north to an exposed overlook.
+- **content:** Rocky elevated ground; implied hillside looking south over the canopy. Sparse trees, more open sky. Danger 2 duelists patrol the exposed rock. The western descent drops into the darkest part of the forest. A rocky path climbs north to an exposed overlook.
 
 ---
 
 #### `forest_deepwood` — The Deepwood
 - **size:** 40×30
-- **exits:** west → `forest_ridge`, east → `forest_boss_clearing`, south → `forest_root_tangle`
+- **exits:** south → `forest_briar_pass`, east → `forest_ridge`, north → `forest_boss_clearing`
 - **anchorage:** `forest_depths`
 - **danger:** 3
-- **content:** The oldest, darkest part of the forest — ancient gnarled trees, almost no light reaching the floor. The forest_depths Anchorage sits in a rare clearing, a hard-earned rest point. Danger 3 duelists. The eastern path descends toward the Boss Clearing, creating a loop with Briar Pass. A southern exit drops into the Root Tangle, closing the deep-forest loop.
+- **content:** The oldest, darkest part of the forest — ancient gnarled trees, almost no light reaching the floor. The forest_depths Anchorage sits in a rare clearing, a hard-earned rest point. Danger 3 duelists. The Deepwood is the middle link of the crossroads-cluster spine: south returns to the Briar Pass, east climbs to the Ridge, and north opens into the Boss Clearing.
 
 ---
 
 #### `forest_boss_clearing` — The Boss Clearing
 - **size:** 28×22
-- **exits:** north → `forest_briar_pass`, west → `forest_deepwood`, south → `forest_verdant_descent` *(opens on boss defeat)*
+- **exits:** south → `forest_deepwood`, north → `forest_verdant_descent` *(opens on boss defeat)*
 - **danger:** 3
 
 **Boss: The Thornwood Warden**
@@ -232,10 +251,10 @@ A towering spirit of bark and howling wind, the oldest guardian the Forest has e
 **Defeat rewards:**
 1. **Reliquary Shard** — the first shard in the game. Expands the Reliquary from 20 to 30 ring slots (§4.1.1).
 2. **Large food cache** — biome boss food drop (§10.5).
-3. **South exit opens** — the Verdant Descent becomes accessible, unlocking the Bloom wing.
+3. **North exit opens** — the Verdant Descent becomes accessible, unlocking the Bloom wing.
 4. **Thornado ring** — the Warden's staked **Thornado** (Wood+Wind) fused thumb transfers to the winner, like any duel (§9.1).
 
-**Content:** A circular clearing of stamped earth ringed by ancient standing stones, unnaturally still and quiet. The Warden blocks the south passage; the clearing is reachable from two directions before the fight — Briar Pass from the north, Deepwood from the west — but there is no way south until the Warden is defeated.
+**Content:** A circular clearing of stamped earth ringed by ancient standing stones, unnaturally still and quiet. The Warden blocks the north passage; the clearing is reached from the south via the Deepwood, the southern terminus of the crossroads-cluster spine — but there is no way north into the deep forest until the Warden is defeated.
 
 ---
 
@@ -275,17 +294,17 @@ A towering spirit of bark and howling wind, the oldest guardian the Forest has e
 
 #### `forest_verdant_descent` — Verdant Descent
 - **size:** 18×32
-- **exits:** north → `forest_boss_clearing`, south → `forest_ancient_grove`
+- **exits:** south → `forest_boss_clearing`, north → `forest_ancient_grove`
 - **danger:** 2
-- **content:** A narrow root-lined passage south of the Boss Clearing, accessible only after the Thornwood Warden is defeated. The ground drops away; ancient tree roots form natural steps downward. The air shifts — warmer, earthier, rich with mulch and pollen. The oppressive stillness of the clearing gives way to something alive.
+- **content:** A narrow root-lined passage north of the Boss Clearing, accessible only after the Thornwood Warden is defeated. The ground rises through tangled roots; ancient tree roots form natural steps. The air shifts — warmer, earthier, rich with mulch and pollen. The oppressive stillness of the clearing gives way to something alive.
 
 ---
 
 #### `forest_ancient_grove` — The Ancient Grove
 - **size:** 44×34
-- **exits:** north → `forest_verdant_descent`, west → `forest_bloom_hollow`, east → `forest_root_tangle`
+- **exits:** south → `forest_verdant_descent`, west → `forest_bloom_hollow`, east → `forest_root_tangle`
 - **danger:** 3
-- **content:** The oldest living part of the Forest — oak trees with canopies so wide they block the sky entirely. The floor is carpeted with flowering moss, exposed root systems, and patches of deep earth. This is the hub of the post-boss region: north leads back up to the Boss Clearing via the Verdant Descent, west reaches the Bloom Hollow and its shrine, east descends into the Root Tangle. Danger 3 Earth-and-Wood duelists wander between the great trunks.
+- **content:** The oldest living part of the Forest — oak trees with canopies so wide they block the sky entirely. The floor is carpeted with flowering moss, exposed root systems, and patches of deep earth. This is the hub of the post-boss region: south leads back down to the Boss Clearing via the Verdant Descent, west reaches the Bloom Hollow and its shrine, east descends into the Root Tangle. Danger 3 Earth-and-Wood duelists wander between the great trunks.
 
 ---
 
@@ -300,9 +319,9 @@ A towering spirit of bark and howling wind, the oldest guardian the Forest has e
 
 #### `forest_root_tangle` — The Root Tangle
 - **size:** 32×24
-- **exits:** west → `forest_ancient_grove`, north → `forest_deepwood`, east → `forest_canopy_walk`
+- **exits:** west → `forest_ancient_grove`, east → `forest_canopy_walk`
 - **danger:** 3
-- **content:** Chaotic exposed root systems east of the Ancient Grove — root walls as tall as a person force a winding path through the screen. The northern exit emerges in the Deepwood, closing the deep-forest loop (Ancient Grove → Root Tangle → Deepwood → Boss Clearing → Verdant Descent → Ancient Grove). The eastern path climbs toward the Canopy Walk. Two or three of the toughest Forest-zone duelists roam here.
+- **content:** Chaotic exposed root systems east of the Ancient Grove — root walls as tall as a person force a winding path through the screen. The eastern path climbs toward the Canopy Walk; the western path returns to the Ancient Grove. The old northern backdoor to the Deepwood is gone — the deep forest is a sealed post-boss wing with no shortcut back to the crossroads cluster. Two or three of the toughest Forest-zone duelists roam here.
 
 ---
 
@@ -352,6 +371,10 @@ A towering spirit of bark and howling wind, the oldest guardian the Forest has e
 - **anchorage:** `forest_hidden_anchor`
 - **danger:** 1
 - **content:** A serene, impossibly still clearing accessible only by teleporting after attuning the Ironbark Rune in the Swamp. The Hidden Anchorage sits here. A secret reward — quiet and beautiful, a deliberate contrast to the boss route.
+
+---
+
+**§10.15 design-change note — planar Forest grid.** The Forest map was re-laid out onto a coherent integer grid (each screen carries a `{x, y}` `coord`; exits are unit cardinal steps). The Root Tangle→Deepwood backdoor has been removed — the deep forest is now exclusively accessible post-boss. The non-planar 5-cycle (crossroads–ridge–deepwood–boss_clearing–briar_pass) has been resolved: briar_pass is now west of crossroads, and the cluster forms a planar vertical chain. The Thornwood Warden now gates the **north** edge of the Boss Clearing into the deep forest (previously south).
 
 ---
 

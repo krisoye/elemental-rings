@@ -1203,6 +1203,21 @@ export const setHeartRing = db.transaction(
   },
 );
 
+/**
+ * #318 — permanently destroy a player's heart ring when it shatters on a 0-HP
+ * loss (GDD §6.7). Deletes the ring row and nulls players.heart_ring_id in a
+ * single transaction. The heart ring rests with in_carry = 0 and heart_slot = 1
+ * — it is never in a loadout slot — so no loadout-slot nulling is needed.
+ * spirit_max is unaffected: a heart ring is already excluded from the spirit sum
+ * (heart_slot = 1), so no recompute is required (mirrors discardRing's reasoning).
+ */
+export const destroyHeartRing = db.transaction(
+  (heartRingId: string, playerId: string): void => {
+    deleteRingOwned(heartRingId, playerId); // delete the ring row
+    updateHeartRingId.run(null, playerId); // null players.heart_ring_id
+  },
+);
+
 /** Total lifetime XP across ALL rings the player owns (no carry/heart filter). */
 export function getTotalRingXp(playerId: string): number {
   const row = selectTotalRingXp.get(playerId) as { xp_sum: number } | undefined;

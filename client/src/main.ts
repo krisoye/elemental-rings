@@ -280,7 +280,7 @@ declare global {
     __campState?: {
       player: any;
       rings: any[];
-      loadout: any;
+      loadout: { thumb?: string | null; [key: string]: unknown };
       // Carry pool separation for #40 assertions.
       atSanctum: any[];
       loadout_pool: any[];

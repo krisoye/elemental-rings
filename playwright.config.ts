@@ -84,6 +84,7 @@ const SOLO_SPECS = [
   'ai-double-attack-offense.spec.ts', // #268 — AI fusion-thumb double-attack offense
   'monster-overworld-sprite.spec.ts', // #192 — overworld marker frame crop
   'battle-feedback.spec.ts', // #313 — battleKey threading + AI spirit broadcast
+  'battle-entry-gating.spec.ts', // #319 — null-thumb 4001 guard + EncounterScene catch
 ];
 
 export default defineConfig({

@@ -81,6 +81,9 @@ An alternative ring-progression model considered as a way to make three trade-of
 
 ---
 
+*Document version 3.3 — Updated June 2026*
+*v3.3 changes: A loss by depletion (hearts reach 0) now permanently destroys the loser's heart ring (§6.3, §6.7, §6.8); a forfeit with hearts still > 0 preserves it. Retired the never-implemented §6.9 note that a monster win steals a random ring from the player's full inventory — a monster win now claims only the staked Thumb ring, like any opponent.*
+
 *Document version 3.2 — Updated May 2026*
 *v3.2 changes: Marked spirit gauge formula and starting spirit max as settled (see `SPIRIT_BASE` and `XP_SCALER` in `server/src/game/constants.ts`; §12.1). Noted carry-cap growth curve remains open and deferred to Phase 8.*
 

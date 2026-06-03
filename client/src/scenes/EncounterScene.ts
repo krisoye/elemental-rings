@@ -200,6 +200,8 @@ export class EncounterScene extends Phaser.Scene {
       this.scene.settings.data = {};
       this.npcDuel = null;
       // #87 Part C — a double-click NPC launch (ambush) pays for first strike.
+      // EPIC #319 (A2) — catch any server rejection (e.g. ServerError 4000/4001)
+      // so the player is returned to the overworld rather than seeing a dark screen.
       void this.startAIDuel(
         personality,
         undefined,
@@ -209,7 +211,30 @@ export class EncounterScene extends Phaser.Scene {
         spriteFrame,
         battleKey,
         thumbElement,
-      );
+      ).catch((err: unknown) => {
+        const code = (err as any)?.code as number | undefined;
+        const hint =
+          code === 4000 ? 'Equip & recharge a heart ring to fight' :
+          code === 4001 ? 'Stake a ring to fight' :
+          'Could not start battle — try again';
+        const origin = window.__duelOrigin;
+        if (origin) {
+          this.scene.start(origin.scene, {
+            returnX: origin.x,
+            returnY: origin.y,
+            screenId: origin.screenId,
+            hint,
+          });
+        } else {
+          // No origin: fall back to the EncounterScene hub (not CampScene — the hub
+          // is the logical parent of an NPC duel and is closer to what the player
+          // expects). Known limitation: the hint string cannot be shown here because
+          // statusText is only created on the hub path (after the npcDuel early-return)
+          // and scene.start() triggers a fresh create() cycle where the stale hint is
+          // no longer available. The player sees the hub without feedback in this case.
+          this.scene.start('EncounterScene', {});
+        }
+      });
       return;
     }
 

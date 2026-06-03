@@ -597,6 +597,18 @@ export class BattleRoom extends Room<{ state: BattleState }> {
         this.xpAccumulator.delete(sessionId);
         throw new ServerError(4000, 'No HP: equip and recharge your heart ring first');
       }
+      // #319/A1 — Reject the duel when the human has no ring staked to the thumb
+      // slot. A drained ring (current_uses = 0) is permitted; only a completely
+      // unassigned thumb slot (null) blocks. Unwind the partial seat before throwing
+      // so the rejected join leaves no stale player state behind.
+      if (ringIds.thumb === null) {
+        this.state.players.delete(sessionId);
+        this.sessionToPlayerId.delete(sessionId);
+        this.sessionToRingIds.delete(sessionId);
+        this.sessionToHeartRingId.delete(sessionId);
+        this.xpAccumulator.delete(sessionId);
+        throw new ServerError(4001, 'No staked ring: stake a ring before battling');
+      }
 
       // #171 — seed spareCapacity from the live Reliquary XP so the client HUD
       // reflects the correct carry headroom as soon as the battle room opens.
@@ -819,8 +831,16 @@ export class BattleRoom extends Room<{ state: BattleState }> {
         // is NOT a battle slot and earns NO XP from the duel; it is intentionally
         // absent from sessionToRingIds / xpAccumulator. Skipped when the heart slot
         // was empty (id null). Practice rematches never reach here (early return).
+        //
+        // #318 — a loss by depletion shatters the heart ring: ps.hearts === 0
+        // uniquely identifies the loser-by-depletion (a winner never finishes at 0,
+        // and a forfeit always ends with hearts > 0), so the ring is permanently
+        // destroyed. Otherwise the surviving HP is written back exactly as before.
         const heartRingId = this.sessionToHeartRingId.get(sessionId);
-        if (heartRingId) PlayerRepo.saveRingUses(heartRingId, ps.hearts);
+        if (heartRingId) {
+          if (ps.hearts === 0) PlayerRepo.destroyHeartRing(heartRingId, playerId);
+          else PlayerRepo.saveRingUses(heartRingId, ps.hearts);
+        }
 
         if (sessionId === winnerId) PlayerRepo.addGold(playerId, GOLD_PER_WIN);
       }
