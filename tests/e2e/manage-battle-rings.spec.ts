@@ -135,7 +135,7 @@ async function seedOneSpare(token: string, element = 'fire'): Promise<string> {
   return id;
 }
 
-// ── Scenario 1 — title, STATUS/HP cluster labels, header parity (#348) ────────
+// ── Scenario 1 — title, STATUS/HP cluster labels, header parity (#348/#352) ───
 test('manage-battle-rings: title renders and the STATUS/HP cluster labels show', async ({ browser }) => {
   const ctx = await browser.newContext();
   await seedAuthToken(ctx);
@@ -147,9 +147,10 @@ test('manage-battle-rings: title renders and the STATUS/HP cluster labels show',
   const texts = await modalTexts(page);
   expect(texts).toContain('Manage Battle Rings');
   expect(texts).not.toContain('Manage Battle Hand');
-  // #348 — slot labels match the Reliquary modal (#347): STATUS (thumb) and HP (heart).
+  // #348 — thumb slot reads STATUS.
   expect(texts).toContain('STATUS');
-  expect(texts).toContain('HP');
+  // #352 — HP card label is now "♥ cur/max" (not the plain "HP" string).
+  expect(texts.some((t) => t.startsWith('♥'))).toBe(true);
   expect(texts.some((t) => t.includes('HEART'))).toBe(false); // old ♥ HEART label gone
   // Combat slots keep their uppercase labels.
   for (const l of ['A1', 'A2', 'D1', 'D2']) expect(texts).toContain(l);
@@ -164,8 +165,8 @@ test('manage-battle-rings: title renders and the STATUS/HP cluster labels show',
   await ctx.close();
 });
 
-// ── Scenario 1b — three-part header (♥ HP | Total XP | Avg) parity with #347 ──
-test('manage-battle-rings: header shows ♥ HP, Total XP and Avg Battle XP from /api/me', async ({ browser }) => {
+// ── Scenario 1b — #352: no header row; panel top ≥ 44; HP card above STATUS ─────
+test('manage-battle-rings (#352): no header row, panel starts at y≥44, ♥ HP label above HP card', async ({ browser }) => {
   const ctx = await browser.newContext();
   await seedAuthToken(ctx);
   const page = await ctx.newPage();
@@ -180,10 +181,89 @@ test('manage-battle-rings: header shows ♥ HP, Total XP and Avg Battle XP from 
   const hp = heart ? `${heart.current_uses}/${heart.max_uses}` : '0/0';
 
   const texts = await modalTexts(page);
-  // ♥ cur/max matches the equipped heart ring, verbatim from the server.
+
+  // #352 §1 — header segments (Day/Gold/Food/Spirit/Total XP/Avg Battle XP) are
+  // absent from the modal (they now live only in the always-on overworld HUD).
+  expect(texts.some((t) => /Day:?\s*\d/.test(t))).toBe(false);
+  expect(texts.some((t) => /Gold:?\s*\d/.test(t))).toBe(false);
+  expect(texts.some((t) => /Food:?\s*\d/.test(t))).toBe(false);
+  expect(texts.some((t) => t.includes('Total XP:'))).toBe(false);
+  expect(texts.some((t) => t.includes('Avg Battle XP:'))).toBe(false);
+
+  // #352 §4 — ♥ cur/max label is present in the modal (above the HP card).
   expect(texts.some((t) => t === `♥ ${hp}`)).toBe(true);
-  // Total XP + Avg Battle XP segment present (same wording as the Reliquary header).
-  expect(texts.some((t) => t.includes('Total XP:') && t.includes('Avg Battle XP:'))).toBe(true);
+
+  // #352 §2 — panel top y ≥ 44 (clears the HUD).
+  const panelTopY = await page.evaluate(() => {
+    const scene = (window as any).__game?.scene?.getScene('ForestScene') as any;
+    const modal = scene?.battleHand?.manageModal;
+    if (!modal) return null;
+    const objs = (modal.getAll ? modal.getAll() : []) as any[];
+    for (const o of objs) {
+      if (o.width === 640 && typeof o.strokeColor !== 'undefined') {
+        return o.y - o.height / 2;
+      }
+    }
+    return null;
+  });
+  expect(panelTopY).not.toBeNull();
+  expect(panelTopY!).toBeGreaterThanOrEqual(44);
+
+  // #352 §3 — HP card (ROW0_Y) y < STATUS card (ROW1_Y) y: HP is on top row.
+  const rowYs = await page.evaluate(() => {
+    const scene = (window as any).__game?.scene?.getScene('ForestScene') as any;
+    const modal = scene?.battleHand?.manageModal;
+    let hpY: number | null = null;
+    let statusY: number | null = null;
+    const walk = (c: any): void => {
+      for (const o of c.getAll ? c.getAll() : []) {
+        // ♥ label is the HP card label (starts with ♥, no newline — excludes spare-ring pip rows).
+        if (typeof o.text === 'string' && o.text.startsWith('♥') && !o.text.includes('\n')) hpY = Math.round(o.y);
+        if (typeof o.text === 'string' && o.text === 'STATUS') statusY = Math.round(o.y);
+        if (o.getAll) walk(o);
+      }
+    };
+    walk(modal);
+    return { hpY, statusY };
+  });
+  expect(rowYs.hpY).not.toBeNull();
+  expect(rowYs.statusY).not.toBeNull();
+  // HP label y < STATUS label y: HP card is on the upper row.
+  expect(rowYs.hpY!).toBeLessThan(rowYs.statusY!);
+
+  // #352 §5 — every card label (STATUS, A1, A2, D1, D2, ♥, DISCARD) has a
+  // co-located dark rectangle (backing rect) immediately before it in the
+  // container list. Assert that for each of the 8 labels the object at
+  // container-index [labelIndex-1] is a Rectangle (has no text property).
+  const labelBackingResult = await page.evaluate(() => {
+    const scene = (window as any).__game?.scene?.getScene('ForestScene') as any;
+    const modal = scene?.battleHand?.manageModal;
+    if (!modal) return { checked: 0, allHaveBacking: false };
+    // Collect all objects in draw order from the top-level container (non-recursive
+    // for the backing-order check; sub-containers have their own list).
+    const all = modal.getAll ? modal.getAll() : [];
+    const labelPatterns = ['STATUS', 'A1', 'A2', 'D1', 'D2', 'DISCARD'];
+    let checked = 0;
+    let allHaveBacking = true;
+    for (let i = 1; i < all.length; i++) {
+      const o = all[i];
+      if (typeof o.text !== 'string') continue;
+      const isLabel =
+        labelPatterns.includes(o.text) ||
+        (o.text.startsWith('♥') && !o.text.includes('\n')) || // ♥ HP label
+        o.text === 'WON ◆';
+      if (!isLabel) continue;
+      // The object immediately before it should be a Rectangle (no text property).
+      const prev = all[i - 1];
+      if (typeof prev.text === 'string') {
+        allHaveBacking = false;
+      }
+      checked++;
+    }
+    return { checked, allHaveBacking };
+  });
+  expect(labelBackingResult.checked).toBeGreaterThanOrEqual(7); // guaranteed: STATUS + A1 + A2 + D1 + D2 + DISCARD + ♥
+  expect(labelBackingResult.allHaveBacking).toBe(true);
 
   await ctx.close();
 });
@@ -330,15 +410,20 @@ test('manage-battle-rings: three clusters render and the 5×2 spare grid shows b
   );
   await openBattleHand(page);
 
-  // STATUS (thumb) and HP (heart) cards share the group-2 column x (460 after #350
-  // rebalance), isolated by 65px gaps from group 1 (303) and group 3 (617/721).
+  // STATUS (thumb) and ♥ HP (heart) cards share the group-2 column x (460 after
+  // #350 rebalance), isolated by 65px gaps from group 1 (303) and group 3 (617/721).
+  // #352: HP label is now "♥ N/M" — match by startsWith('♥') rather than === 'HP'.
   const labelXs = await page.evaluate(() => {
     const scene = (window as any).__game?.scene?.getScene('ForestScene');
     const modal = scene?.battleHand?.manageModal;
     const out: Record<string, number> = {};
     const walk = (c: any): void => {
       for (const o of c.getAll ? c.getAll() : []) {
-        if (o.text === 'STATUS' || o.text === 'HP') out[o.text] = Math.round(o.x);
+        if (o.text === 'STATUS') out.STATUS = Math.round(o.x);
+        // #352 — HP label is "♥ N/M"; capture it under the 'HP' key for assertion.
+        if (typeof o.text === 'string' && o.text.startsWith('♥') && !o.text.includes('\n')) {
+          out.HP = Math.round(o.x);
+        }
         if (o.getAll) walk(o);
       }
     };
@@ -500,7 +585,10 @@ test('manage-battle-rings (#350): cluster X-centres are 303/460/617/721 with equ
     const walk = (c: any): void => {
       for (const o of c.getAll ? c.getAll() : []) {
         if (o.text === 'STATUS') result.STATUS = Math.round(o.x);
-        if (o.text === 'HP') result.HP = Math.round(o.x);
+        // #352 — HP label is now "♥ N/M"; capture it under the 'HP' key.
+        if (typeof o.text === 'string' && o.text.startsWith('♥') && !o.text.includes('\n')) {
+          result.HP = Math.round(o.x);
+        }
         if (o.text === 'A1') result.A1 = Math.round(o.x);
         if (o.text === 'A2') result.A2 = Math.round(o.x);
         if (o.text === 'D1') result.D1 = Math.round(o.x);

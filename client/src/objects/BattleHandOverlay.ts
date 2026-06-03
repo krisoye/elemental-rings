@@ -96,7 +96,7 @@ export class BattleHandOverlay {
   private manageLoadout: Record<string, string | null> = {};
   /** Full /api/me ring list (carried or not) — needed to show a pending won ring. */
   private allRings: RingData[] = [];
-  private managePlayer: { game_day?: number; gold?: number; food_units?: number; spirit_current?: number; spirit_max?: number; aggregate_xp?: number; carry_cap?: number; spareCapacity?: number; total_xp?: number; battle_hand_avg_xp?: number } | null = null;
+  private managePlayer: { game_day?: number; gold?: number; food_units?: number; spirit_current?: number; spirit_max?: number; aggregate_xp?: number; carry_cap?: number; spareCapacity?: number } | null = null;
   private manageStatusText: Phaser.GameObjects.Text | null = null;
   /**
    * #348 — the open discard-confirm modal container (mirrors BattleScene's
@@ -187,6 +187,39 @@ export class BattleHandOverlay {
     this.renderManageModal();
   }
 
+  /**
+   * #352 — add a card label with a contrasting dark backing rect behind the text
+   * so the label is legible over any ring-element colour. The backing rect is added
+   * to the container BEFORE the text so the text renders on top in draw order.
+   *
+   * @param container - the modal container that owns these objects
+   * @param x - horizontal centre of the label
+   * @param y - vertical centre of the label
+   * @param text - label string
+   * @param style - Phaser TextStyle overrides (fontSize, color, etc.)
+   */
+  private addCardLabel(
+    container: Phaser.GameObjects.Container,
+    x: number,
+    y: number,
+    text: string,
+    style: Phaser.Types.GameObjects.Text.TextStyle,
+  ): Phaser.GameObjects.Text {
+    // Create the text first to measure its bounds; then back it with a rect.
+    const lbl = this.scene.add
+      .text(x, y, text, style)
+      .setScrollFactor(0)
+      .setOrigin(0.5);
+    const tw = lbl.width;
+    const th = lbl.height;
+    const bg = this.scene.add
+      .rectangle(x, y, tw + 6, th + 2, 0x000000, 0.55)
+      .setScrollFactor(0)
+      .setOrigin(0.5);
+    container.add([bg, lbl]);
+    return lbl;
+  }
+
   /** Render (or re-render) the manage-battle-hand modal from cached state. */
   private renderManageModal(): void {
     if (this.spareWheelHandler) {
@@ -215,80 +248,51 @@ export class BattleHandOverlay {
       .rectangle(CANVAS_W / 2, CANVAS_H / 2, CANVAS_W, CANVAS_H, 0x000000, 0.75)
       .setScrollFactor(0)
       .setInteractive();
-    // #348 — panel grown to 560 tall (spans y 8–568 inside the 576 canvas) so the
-    // 5×2 spare grid + recharge row fit below the three card clusters. The old
-    // separate won-ring banner is folded into group-1 row-0, freeing that height.
+    // #352 — panel shrunk to 495 tall and shifted down so it clears the HUD
+    // (y ≥ 44). New centre: (512, 291.5). Panel spans y=44–539.
+    // MODAL_TOP is the panel's top y-edge; every y-constant below is derived from it.
+    const MODAL_TOP = 44;
+    const PANEL_H = 495;
+    const panelCenterY = MODAL_TOP + PANEL_H / 2; // 44 + 247.5 = 291.5
     const panel = this.scene.add
-      .rectangle(CANVAS_W / 2, CANVAS_H / 2, 640, 560, 0x222233)
+      .rectangle(CANVAS_W / 2, panelCenterY, 640, PANEL_H, 0x222233)
       .setScrollFactor(0)
       .setStrokeStyle(2, 0xffcc88);
+    // Title sits 16px below the panel top edge.
+    const titleY = MODAL_TOP + 16;
     const title = this.scene.add
-      .text(CANVAS_W / 2, CANVAS_H / 2 - 265, 'Manage Battle Rings', {
+      .text(CANVAS_W / 2, titleY, 'Manage Battle Rings', {
         fontSize: '18px',
         color: '#ffffff',
       })
       .setScrollFactor(0)
       .setOrigin(0.5);
     const close = this.scene.add
-      .text(CANVAS_W / 2 + 290, CANVAS_H / 2 - 265, CLOSE_GLYPH, { fontSize: '18px', color: '#ff8888' })
+      .text(CANVAS_W / 2 + 290, titleY, CLOSE_GLYPH, { fontSize: '18px', color: '#ff8888' })
       .setScrollFactor(0)
       .setOrigin(0.5)
       .setInteractive({ useHandCursor: true })
       .on('pointerdown', () => this.close());
     container.add([overlay, panel, title, close]);
 
-    // #348 — three-part stats header, parity with the Reliquary modal
-    // (CampScene.renderReliquaryHeader). Left keeps the field context (Day | Gold |
-    // Food | Spirit cur/max) since the overlay opens mid-overworld; centre adds the
-    // ♥ HP readout from the equipped heart ring; right adds Total/Avg battle XP. All
-    // values are read VERBATIM from /api/me — never computed client-side.
-    const p = this.managePlayer;
-    const heart = this.heartRing;
-    const hp = heart ? `${heart.current_uses}/${heart.max_uses}` : '0/0';
-    const headerY = CANVAS_H / 2 - 240;
-    const headerLeft = this.scene.add
-      .text(
-        CANVAS_W / 2 - 300,
-        headerY,
-        p
-          ? `Day: ${p.game_day ?? 0} | Gold: ${p.gold ?? 0} | Food: ${p.food_units ?? 0} | Spirit: ${p.spirit_current ?? 0}/${p.spirit_max ?? 0}`
-          : '',
-        { fontSize: '12px', color: '#ffdd66' },
-      )
-      .setScrollFactor(0)
-      .setOrigin(0, 0.5);
-    const headerCenter = this.scene.add
-      .text(CANVAS_W / 2, headerY, `♥ ${hp}`, { fontSize: '12px', color: '#ff8888' })
-      .setScrollFactor(0)
-      .setOrigin(0.5);
-    const totalXp = (p?.total_xp ?? p?.aggregate_xp ?? 0).toLocaleString();
-    const avgXp = Math.round(p?.battle_hand_avg_xp ?? 0).toLocaleString();
-    const headerRight = this.scene.add
-      .text(CANVAS_W / 2 + 300, headerY, `Total XP: ${totalXp}  |  Avg Battle XP: ${avgXp}`, {
-        fontSize: '11px',
-        color: '#aaccff',
-      })
-      .setScrollFactor(0)
-      .setOrigin(1, 0.5);
-    container.add([headerLeft, headerCenter, headerRight]);
-
-    // ── #348/#350 — three gap-separated 2-row clusters ────────────────────────
-    // Absolute card-centre coordinates (canvas 1024×576; modal centred 512,288).
+    // ── #348/#350/#352 — three gap-separated 2-row clusters ──────────────────
+    // Absolute card-centre coordinates (canvas 1024×576; modal top at y=44).
     // Cards are 92×80 (span ±46 / ±40). Clusters:
     //   Group 1 (Won / Discard), col x=303:   row0 = pending won ring or placeholder;
     //                                          row1 = DISCARD slot.
-    //   Group 2 (Status / HP), col x=460:      row0 = STATUS (thumb); row1 = HP (heart).
-    //                                          Isolated by gaps on BOTH sides (~65px each).
+    //   Group 2 (HP / Status), col x=460:      row0 = HP (heart); row1 = STATUS (thumb).
+    //                                          #352 swap: HP now on row 0. Isolated by
+    //                                          gaps on BOTH sides (~65px each).
     //   Group 3 (Combat), cols x=617/721:      row0 = A1,A2; row1 = D1,D2. Pair gap 12px.
-    // Rows: row0 y=150, row1 y=240. Labels sit at row_y − 34.
+    // Rows: row0 y=186, row1 y=276 (+36 shift from #352 panel move). Labels at row_y − 34.
     // Derivation (inner span [192,832], W=92, half=46, margins=gaps=65, pair=12):
     //   G1=192+65+46=303; G2=303+92+65=460; A1=460+92+65=617; A2=617+92+12=721;
-    //   right margin=832−(721+46)=65. Equal margins + equal STATUS/HP isolation. #350
+    //   right margin=832−(721+46)=65. Equal margins + equal HP/STATUS isolation. #350
     const GROUP1_X = 303;
     const GROUP2_X = 460;
     const GROUP3_X = [617, 721];
-    const ROW0_Y = 150;
-    const ROW1_Y = 240;
+    const ROW0_Y = 186;
+    const ROW1_Y = 276;
 
     // ── Group 1, row 0 — pending won ring, or a dim placeholder ───────────────
     // The won ring is not yet carried, so it lives in allRings (full /api/me list),
@@ -297,10 +301,6 @@ export class BattleHandOverlay {
     const pendingRing = pendingId ? this.allRings.find((r) => r.id === pendingId) : undefined;
     if (pendingRing) {
       const wonSelected = this.selRingId === pendingRing.id && this.selFromSlot === null;
-      const wonLbl = this.scene.add
-        .text(GROUP1_X, ROW0_Y - 34, 'WON ◆', { fontSize: '11px', color: '#ffcc44' })
-        .setScrollFactor(0)
-        .setOrigin(0.5);
       const wonRect = this.scene.add
         .rectangle(GROUP1_X, ROW0_Y, 92, 80, ELEMENT_COLORS[pendingRing.element] ?? 0x444444)
         .setScrollFactor(0)
@@ -313,8 +313,10 @@ export class BattleHandOverlay {
           else this.swap.select(pendingRing.id, 'spare');
           this.renderManageModal();
         });
+      container.add(wonRect);
       this.addRingInfo(container, GROUP1_X, ROW0_Y, pendingRing);
-      container.add([wonLbl, wonRect]);
+      // #352 — label with dark backing rect for legibility over element colour.
+      this.addCardLabel(container, GROUP1_X, ROW0_Y - 34, 'WON ◆', { fontSize: '11px', color: '#ffcc44' });
       if (window.__encounterState) {
         window.__encounterState.pendingWonRing = { ringId: pendingRing.id, element: pendingRing.element };
       }
@@ -332,11 +334,6 @@ export class BattleHandOverlay {
     // A card-shaped faint-red outline with a DISCARD label above it (#350). Clicking
     // it WITH a card selected opens the confirm modal; with nothing selected it is a
     // no-op. Named so E2E can locate it without a pixel read.
-    // #350 — DISCARD label, slot-label style, 11px, origin 0.5, ~34px above slot centre.
-    const discardLbl = this.scene.add
-      .text(GROUP1_X, ROW1_Y - 34, 'DISCARD', { fontSize: '11px', color: '#aa4444' })
-      .setScrollFactor(0)
-      .setOrigin(0.5);
     const discardRect = this.scene.add
       .rectangle(GROUP1_X, ROW1_Y, 92, 80, 0x331a1a, 0.4)
       .setScrollFactor(0)
@@ -344,15 +341,18 @@ export class BattleHandOverlay {
       .setName('discard-slot')
       .setInteractive({ useHandCursor: true })
       .on('pointerdown', () => this.onDiscardSlotClick());
-    container.add([discardLbl, discardRect]);
+    container.add(discardRect);
+    // #350/#352 — DISCARD label with dark backing rect for legibility.
+    this.addCardLabel(container, GROUP1_X, ROW1_Y - 34, 'DISCARD', { fontSize: '11px', color: '#aa4444' });
 
-    // ── Group 2 row 1 — HP (heart) card; element + HP pips, recharge/swap. ────
-    this.renderHeartCard(container, GROUP2_X, ROW1_Y);
+    // ── Group 2 row 0 — HP (heart) card; element + HP pips, recharge/swap. ────
+    // #352 swap: HP is now on row 0 (top), STATUS on row 1 (bottom).
+    this.renderHeartCard(container, GROUP2_X, ROW0_Y);
 
-    // ── Group 2 row 0 (thumb→STATUS) + Group 3 (a1/a2 row 0, d1/d2 row 1) ─────
+    // ── Group 2 row 1 (thumb→STATUS) + Group 3 (a1/a2 row 0, d1/d2 row 1) ─────
     // SLOT_KEYS = ['thumb','a1','a2','d1','d2']. Map each to its cluster position.
     const slotPos: Record<BattleSlot, { x: number; y: number }> = {
-      thumb: { x: GROUP2_X, y: ROW0_Y },
+      thumb: { x: GROUP2_X, y: ROW1_Y },
       a1: { x: GROUP3_X[0], y: ROW0_Y },
       a2: { x: GROUP3_X[1], y: ROW0_Y },
       d1: { x: GROUP3_X[0], y: ROW1_Y },
@@ -394,14 +394,11 @@ export class BattleHandOverlay {
             this.renderManageModal();
           }
         });
-      // #347/#348 — the thumb slot reads STATUS (cross-screen parity); a1/a2/d1/d2
-      // keep their uppercase labels.
+      container.add(slotRect);
+      // #347/#348/#352 — the thumb slot reads STATUS (cross-screen parity);
+      // a1/a2/d1/d2 keep their uppercase labels. All use addCardLabel (#352).
       const labelText = slot === 'thumb' ? 'STATUS' : slot.toUpperCase();
-      const slotLbl = this.scene.add
-        .text(sx, slotY - 34, labelText, { fontSize: '11px', color: '#cccccc' })
-        .setScrollFactor(0)
-        .setOrigin(0.5);
-      container.add([slotRect, slotLbl]);
+      this.addCardLabel(container, sx, slotY - 34, labelText, { fontSize: '11px', color: '#cccccc' });
       // #305 — the Thumb passive is a hover tooltip on the STATUS card.
       if (slot === 'thumb') {
         this.thumbTooltipDetach = attachTooltip(this.scene, slotRect, () => this.thumbPassiveText(), {
@@ -436,12 +433,16 @@ export class BattleHandOverlay {
     // there is no per-card × here.
     const SPARE_COLS = 5;
     const SPARE_COL_X = [332, 422, 512, 602, 692];
-    const SPARE_ROW_Y = [350, 430]; // row 0, row 1 — cards span 310–390 / 390–470
+    // #352 — spare rows shifted +36 (panel move) + 12 additional nudge for clearance
+    // from the "Spare: N/M" title. Final: [398, 478]. Panel bottom ≈539; row-1 cards
+    // span ≈478±40 → top=438, bottom=518 — 21px breathing room to the panel edge.
+    const SPARE_ROW_Y = [398, 478];
     const SPARE_ROW_H = 80;
     const spareLabelText = `Spare: ${usedSpares} / ${spareCapacity} — select to assign, or click two slots to swap`;
     const spareLabelColor = spareFull ? '#ff8888' : '#aaccff';
+    // #352 — spare label y derived from SPARE_ROW_Y[0] so it tracks the grid offset.
     const carriedLbl = this.scene.add
-      .text(CANVAS_W / 2, CANVAS_H / 2 + 12, spareLabelText, {
+      .text(CANVAS_W / 2, SPARE_ROW_Y[0] - 34, spareLabelText, {
         fontSize: '12px',
         color: spareLabelColor,
       })
@@ -576,9 +577,10 @@ export class BattleHandOverlay {
     }
 
     // ── Recharge controls (spirit-powered, mirrors Sanctum) ──────────────────
-    // #348 — y=508 sits below the 2nd spare row (cards end ≈470) and above the
-    // status echo (530), all inside the grown 560-tall panel (bottom edge 568).
-    const rechargeY = CANVAS_H / 2 + 220;
+    // #352 — rechargeY derived from SPARE_ROW_Y[1] so it tracks the grid offset.
+    // Panel bottom is MODAL_TOP+PANEL_H=539; spare row-1 cards end at ~518 (478+40).
+    // rechargeY at SPARE_ROW_Y[1]+40=518, status echo at +16=534 → 5px clearance.
+    const rechargeY = SPARE_ROW_Y[1] + 40;
     const rechargeBtn = this.scene.add
       .text(CANVAS_W / 2 - 100, rechargeY, '[Recharge]', { fontSize: '13px', color: '#ffcc44' })
       .setScrollFactor(0)
@@ -592,7 +594,7 @@ export class BattleHandOverlay {
       .setInteractive({ useHandCursor: true })
       .on('pointerdown', () => void this.doManageRechargeAll());
     this.manageStatusText = this.scene.add
-      .text(CANVAS_W / 2, rechargeY + 22, '', { fontSize: '11px', color: '#ff8888' })
+      .text(CANVAS_W / 2, rechargeY + 16, '', { fontSize: '11px', color: '#ff8888' })
       .setScrollFactor(0)
       .setOrigin(0.5);
     container.add([rechargeBtn, rechargeAllBtn, this.manageStatusText]);
@@ -645,13 +647,15 @@ export class BattleHandOverlay {
       .setAlpha(heart ? 1 : 0.5)
       .setInteractive({ useHandCursor: true })
       .on('pointerdown', () => this.onHeartCardClick());
-    // #347/#348 — the heart card reads HP (cross-screen parity). Discard now routes
-    // through the DISCARD slot's 3-step confirm, so there is no per-card × here.
-    const lbl = this.scene.add
-      .text(cx, cy - 34, 'HP', { fontSize: '11px', color: heart ? '#ff99aa' : '#777777' })
-      .setScrollFactor(0)
-      .setOrigin(0.5);
-    container.add([rect, lbl]);
+    // #347/#348/#352 — the heart card label shows ♥ cur/max (equipped) or ♥ 0/0
+    // (empty). Discard now routes through the DISCARD slot's 3-step confirm, so
+    // there is no per-card × here. Uses addCardLabel for dark backing rect (#352).
+    container.add(rect);
+    const hpText = heart ? `♥ ${heart.current_uses}/${heart.max_uses}` : '♥ 0/0';
+    this.addCardLabel(container, cx, cy - 34, hpText, {
+      fontSize: '11px',
+      color: heart ? '#ff99aa' : '#777777',
+    });
 
     if (heart) {
       this.addRingInfo(container, cx, cy, heart);

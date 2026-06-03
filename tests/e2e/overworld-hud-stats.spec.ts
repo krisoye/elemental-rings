@@ -108,33 +108,58 @@ test('overworld HUD (#353): shows ♥ 0/0 when heart slot is empty', async ({ br
     await fetch(`${API_URL}/api/me`, { headers: { Authorization: `Bearer ${tok}` } })
   ).json()) as { player: { heart_ring?: { id: string } | null } };
   const heartId = me.player.heart_ring?.id;
-  if (heartId) {
-    await fetch(`${API_URL}/api/rings/${heartId}`, {
-      method: 'DELETE',
-      headers: { Authorization: `Bearer ${tok}` },
-    });
+  try {
+    if (heartId) {
+      await fetch(`${API_URL}/api/rings/${heartId}`, {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${tok}` },
+      });
+    }
+
+    await enterForestScreen(page, 'forest_anchorage');
+    await page.waitForFunction(
+      () => typeof (window as any).__overworldToggleBattleHand === 'function',
+      { timeout: 8000 },
+    );
+
+    // Wait for HUD with empty heart (♥ 0/0).
+    await page.waitForFunction(
+      () => {
+        const scene = (window as any).__game?.scene?.getScene('ForestScene') as any;
+        const txt: string = scene?.hudText?.text ?? '';
+        return txt.includes('♥ 0/0');
+      },
+      { timeout: 6000 },
+    );
+
+    const hud = await getHudText(page);
+    expect(hud).toContain('♥ 0/0');
+  } finally {
+    // Restore the heart slot so this player's state is clean if auth tokens are
+    // ever reused. Seed a new ring into the reliquary, fetch it, then equip it.
+    if (heartId) {
+      await fetch(`${API_URL}/api/test/seed-resting-rings`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${tok}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ count: 1 }),
+      });
+      const restored = (await (
+        await fetch(`${API_URL}/api/me`, { headers: { Authorization: `Bearer ${tok}` } })
+      ).json()) as {
+        player: { heart_ring: null };
+        rings: { id: string; in_carry: number; heart_slot: number }[];
+      };
+      const spare = restored.rings.find((r) => r.in_carry === 0 && r.heart_slot === 0);
+      if (spare) {
+        await fetch(`${API_URL}/api/heart-slot`, {
+          method: 'PUT',
+          headers: { Authorization: `Bearer ${tok}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ ringId: spare.id }),
+        });
+      }
+    }
+    await ctx.close();
   }
-
-  await enterForestScreen(page, 'forest_anchorage');
-  await page.waitForFunction(
-    () => typeof (window as any).__overworldToggleBattleHand === 'function',
-    { timeout: 8000 },
-  );
-
-  // Wait for HUD with empty heart (♥ 0/0).
-  await page.waitForFunction(
-    () => {
-      const scene = (window as any).__game?.scene?.getScene('ForestScene') as any;
-      const txt: string = scene?.hudText?.text ?? '';
-      return txt.includes('♥ 0/0');
-    },
-    { timeout: 6000 },
-  );
-
-  const hud = await getHudText(page);
-  expect(hud).toContain('♥ 0/0');
-
-  await ctx.close();
 });
 
 // ── Scenario 3 — HUD visible while modal open; panel top ≥ 44 ────────────────

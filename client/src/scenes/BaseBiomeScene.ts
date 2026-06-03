@@ -1804,6 +1804,7 @@ export abstract class BaseBiomeScene extends DualCameraScene {
    * #112 — fetch the authoritative player state from GET /api/me and repaint the
    * persistent resource HUD (Day · Gold · Food · Spirit · XP). The server is the
    * source of truth; on any network/auth failure the HUD is left as-is.
+   * NOTE: called by name (`scene?.refreshHud?.()`) in tests/e2e/overworld-hud-stats.spec.ts — propagate any rename there.
    */
   private async refreshHud(): Promise<void> {
     if (!getToken() || !this.hudText) return;

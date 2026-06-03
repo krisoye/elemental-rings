@@ -48,7 +48,7 @@ Each segment reads directly from the server (`GET /api/me`) and is never compute
 - **Total: N** — total ring XP across the full collection (`total_xp`).
 - **Avg: N** — average XP earned per battle hand (`battle_hand_avg_xp`), rounded to the nearest integer.
 
-The purpose of this bar is **at-a-glance resource awareness without opening a menu** — the player can see their HP, food, spirit, and ring growth trajectory at a single glance while exploring. The heart HP segment is intentionally duplicated in the Manage Battle Rings modal (as the column label above the HP card) for readability at close range; the HUD serves the broader field-navigation context.
+The purpose of this bar is **at-a-glance resource awareness without opening a menu** — the player can see their HP, food, spirit, and ring growth trajectory at a single glance while exploring. The HP readout also appears directly in the Manage Battle Rings overlay for readability at close range, so the player does not need to close the modal to check their HP; the HUD serves the broader field-navigation context.
 
 ### 11.7 Passive Trigger Visual (Phase 6+)
 When a Thumb passive triggers mid-battle (Wellspring block refund, Deep Roots heart guard, Tailwind attack refund), a brief elemental pulse effect plays on the Thumb ring — color matching the element. Both players see this, signaling that the passive fired and the Thumb ring lost a use. *Visual not yet implemented; flagged for Phase 6.*
