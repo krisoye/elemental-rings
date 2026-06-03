@@ -443,7 +443,7 @@ test('manage-battle-rings: three clusters render and the 5×2 spare grid shows b
 
 // ── Scenario 6 — safe 3-step discard: select → DISCARD slot → Cancel/Confirm ──
 // #348 Scenario 2. Drives REAL Phaser pointer events: select a spare, click the
-// DISCARD slot (group-1 row-1, x=303 y=240 after #350 rebalance) → __discardConfirmOpen true, no ring
+// DISCARD slot (group-1 row-1, x=303 y=268=ROW1_Y) → __discardConfirmOpen true, no ring
 // gone; Cancel → ring still present; reselect + Discard → /api/me shows it removed.
 test('manage-battle-rings: discarding a spare requires select → DISCARD slot → confirm', async ({ browser }) => {
   const ctx = await browser.newContext();

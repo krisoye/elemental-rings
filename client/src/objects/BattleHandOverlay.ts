@@ -287,15 +287,15 @@ export class BattleHandOverlay {
     //                                          #352 swap: HP now on row 0. Isolated by
     //                                          gaps on BOTH sides (~65px each).
     //   Group 3 (Combat), cols x=617/721:      row0 = A1,A2; row1 = D1,D2. Pair gap 12px.
-    // Rows: row0 y=186, row1 y=276 (+36 shift from #352 panel move). Labels at row_y − 34.
+    // Rows: row0 y=178, row1 y=268 (top cluster shifted up 8px for spare-grid buffer). Labels at row_y − 34.
     // Derivation (inner span [192,832], W=92, half=46, margins=gaps=65, pair=12):
     //   G1=192+65+46=303; G2=303+92+65=460; A1=460+92+65=617; A2=617+92+12=721;
     //   right margin=832−(721+46)=65. Equal margins + equal HP/STATUS isolation. #350
     const GROUP1_X = 303;
     const GROUP2_X = 460;
     const GROUP3_X = [617, 721];
-    const ROW0_Y = 186;
-    const ROW1_Y = 276;
+    const ROW0_Y = 178;
+    const ROW1_Y = 268;
 
     // ── Group 1, row 0 — pending won ring, or a dim placeholder ───────────────
     // The won ring is not yet carried, so it lives in allRings (full /api/me list),
@@ -437,16 +437,18 @@ export class BattleHandOverlay {
     // there is no per-card × here.
     const SPARE_COLS = 5;
     const SPARE_COL_X = [332, 422, 512, 602, 692];
-    // #356 — spare rows shifted up to [390, 470] (from [398, 478]) to create clearance
-    // for the spare label and recharge section. Panel bottom now at y=559 (PANEL_H=515).
-    // With label at 334 (390−56) and recharge at 526 (470+56), the geometry clears:
-    // spare label bottom (348) → row-0 card top (350): 2px; row-1 card bottom (510) →
-    // recharge top (526): 16px; status echo bottom (542) → panel bottom (559): 17px.
-    const SPARE_ROW_Y = [390, 470];
+    // Spare rows at [382, 470] — the TOP row is shifted up 8px (from 390) to open an
+    // 8px buffer between the two visible grid rows; the BOTTOM row is unchanged (470).
+    // Top row spans 342–422, bottom row spans 430–510 → an 8px gap (422→430).
+    // The whole top cluster (carried-ring rows, spare header) shifts up 8px with it;
+    // the bottom row, recharge section, and panel bottom (y=559, PANEL_H=515) stay fixed.
+    // With label at 326 (382−56) and recharge at 526 (470+56): spare label bottom (340)
+    // → row-0 card top (342): 2px; row-1 card bottom (510) → recharge top (526): 16px.
+    const SPARE_ROW_Y = [382, 470];
     const SPARE_ROW_H = 80;
     const spareLabelText = `Spare: ${usedSpares} / ${spareCapacity} — select to assign, or click two slots to swap`;
     const spareLabelColor = spareFull ? '#ff8888' : '#aaccff';
-    // #356 — spare label y=334 (SPARE_ROW_Y[0]−56); 12px font → half-height≈14px → bottom≈348; card-0 top=350; clearance≈2px.
+    // Spare label y=326 (SPARE_ROW_Y[0]−56); 12px font → half-height≈14px → bottom≈340; card-0 top=342; clearance≈2px.
     const carriedLbl = this.scene.add
       .text(CANVAS_W / 2, SPARE_ROW_Y[0] - 56, spareLabelText, {
         fontSize: '12px',
