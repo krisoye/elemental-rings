@@ -516,7 +516,7 @@ export abstract class BaseBiomeScene extends DualCameraScene {
     const biomeName = this.scene.key === 'SwampScene' ? 'Swamp' : this.scene.key === 'SnowScene' ? 'Snow' : 'Forest';
     const areaName = this.screenDef?.name;
     const biomeTitle = this.add
-      .text(16, 16, areaName ? `${biomeName}  –  ${areaName}` : biomeName, {
+      .text(16, 16, areaName ? `${biomeName}\n${areaName}` : biomeName, {
         fontSize: '14px',
         color: '#ddeeff',
         backgroundColor: '#00000099',
@@ -1802,7 +1802,7 @@ export abstract class BaseBiomeScene extends DualCameraScene {
 
   /**
    * #112 — fetch the authoritative player state from GET /api/me and repaint the
-   * persistent resource HUD (Day · Gold · Food · Spirit · XP). The server is the
+   * persistent resource HUD (Day · Gold · Food · Spirit · ♥ · XP · Avg XP). The server is the
    * source of truth; on any network/auth failure the HUD is left as-is.
    * NOTE: called by name (`scene?.refreshHud?.()`) in tests/e2e/overworld-hud-stats.spec.ts — propagate any rename there.
    */
@@ -1819,14 +1819,12 @@ export abstract class BaseBiomeScene extends DualCameraScene {
           food_units?: number;
           spirit_current?: number;
           spirit_max?: number;
-          aggregate_xp?: number;
           heart_ring?: { current_uses: number; max_uses: number } | null;
           total_xp?: number;
           battle_hand_avg_xp?: number;
         };
       } = await res.json();
       const p = data.player;
-      const xpStr = (p.aggregate_xp ?? 0).toLocaleString();
       const spiritStr = `${p.spirit_current ?? 0}/${p.spirit_max ?? 0}`;
       const heart = p.heart_ring;
       const heartStr = heart ? `${heart.current_uses}/${heart.max_uses}` : '0/0';
@@ -1834,8 +1832,8 @@ export abstract class BaseBiomeScene extends DualCameraScene {
       const avgXpStr = Math.round(p.battle_hand_avg_xp ?? 0).toLocaleString();
       this.hudText.setText(
         `Day ${p.game_day ?? 1}  ·  Gold ${p.gold ?? 0}  ·  Food ${p.food_units ?? 0}` +
-          `  ·  Spirit ${spiritStr}  ·  ♥ ${heartStr}  ·  XP ${xpStr}` +
-          `  ·  Total: ${totalXpStr}  ·  Avg: ${avgXpStr}`,
+          `  ·  Spirit ${spiritStr}  ·  ♥ ${heartStr}  ·  XP ${totalXpStr}` +
+          `  ·  Avg XP ${avgXpStr}`,
       );
     } catch {
       // Network failure — leave the HUD showing its last good value.

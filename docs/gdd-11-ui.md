@@ -34,7 +34,7 @@ Active status effects are shown in the battle HUD alongside the affected player'
 While in any biome (Forest, Swamp, Snow, etc.) the player always sees a compact stat bar pinned to the top-right corner of the screen:
 
 ```
-Day N · Gold N · Food N · Spirit N/N · ♥ N/N · XP N · Total: N · Avg: N
+Day N · Gold N · Food N · Spirit N/N · ♥ N/N · XP N · Avg XP N
 ```
 
 Each segment reads directly from the server (`GET /api/me`) and is never computed client-side:
@@ -44,9 +44,8 @@ Each segment reads directly from the server (`GET /api/me`) and is never compute
 - **Food** — food units remaining.
 - **Spirit N/N** — spirit gauge (current / max).
 - **♥ N/N** — equipped heart ring HP (current uses / max uses); shows `♥ 0/0` when the heart slot is empty.
-- **XP N** — aggregate XP across all carried rings (the `aggregate_xp` field).
-- **Total: N** — total ring XP across the full collection (`total_xp`).
-- **Avg: N** — average XP earned per battle hand (`battle_hand_avg_xp`), rounded to the nearest integer.
+- **XP N** — total ring XP across the full collection (both carried and uncarried rings; the `total_xp` field).
+- **Avg XP N** — average XP earned per battle hand (`battle_hand_avg_xp`), rounded to the nearest integer.
 
 The purpose of this bar is **at-a-glance resource awareness without opening a menu** — the player can see their HP, food, spirit, and ring growth trajectory at a single glance while exploring. The HP readout also appears directly in the Manage Battle Rings overlay for readability at close range, so the player does not need to close the modal to check their HP; the HUD serves the broader field-navigation context.
 
