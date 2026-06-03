@@ -1565,7 +1565,16 @@ export abstract class BaseBiomeScene extends DualCameraScene {
     const campState = window.__campState;
     const heartOk = !!(campState?.heart_ring) && (campState.heart_ring.current_uses ?? 0) > 0;
     const thumbOk = campState?.loadout?.thumb != null;
-    if (!heartOk || !thumbOk) return;
+    if (!heartOk || !thumbOk) {
+      // Show the same hint that checkNpcDetection() would display for the current
+      // blocking condition, so double-clicking a gated NPC gives visible feedback.
+      if (!heartOk) {
+        this.showNpcPrompt('Equip & recharge a heart ring to fight');
+      } else {
+        this.showNpcPrompt('Stake a ring to fight');
+      }
+      return;
+    }
     const now = this.time.now;
     const prev = this.npcLastClick.get(npc.id) ?? -Infinity;
     this.npcLastClick.set(npc.id, now);

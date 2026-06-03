@@ -226,7 +226,13 @@ export class EncounterScene extends Phaser.Scene {
             hint,
           });
         } else {
-          this.scene.start('CampScene');
+          // No origin: fall back to the EncounterScene hub (not CampScene — the hub
+          // is the logical parent of an NPC duel and is closer to what the player
+          // expects). Known limitation: the hint string cannot be shown here because
+          // statusText is only created on the hub path (after the npcDuel early-return)
+          // and scene.start() triggers a fresh create() cycle where the stale hint is
+          // no longer available. The player sees the hub without feedback in this case.
+          this.scene.start('EncounterScene', {});
         }
       });
       return;

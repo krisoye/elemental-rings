@@ -70,7 +70,7 @@ function setHeartUses(playerId: string, currentUses: number, maxUses: number): v
 // ---------------------------------------------------------------------------
 
 describe('4001 thumb-ring guard — null thumb blocks entry (#319/A1)', () => {
-  test('human with loadout.thumb = null → ServerError(4001) thrown', async () => {
+  test('human with loadout.thumb = null → ServerError(4001) thrown AND session maps unwound', async () => {
     const { playerId, token } = makePlayer();
     // Clear the thumb slot in the loadout table.
     db.prepare(`UPDATE loadout SET thumb = NULL WHERE player_id = ?`).run(playerId);
@@ -79,23 +79,38 @@ describe('4001 thumb-ring guard — null thumb blocks entry (#319/A1)', () => {
     await expect(colyseus.connectTo(room, { token })).rejects.toThrow(
       /No staked ring: stake a ring before battling/,
     );
+    // rooms created without vsAI, so no AI seat is pre-populated.
     // All session maps unwound — no stale PlayerState row left behind.
     expect(room.state.players.size).toBe(0);
     await room.disconnect();
   });
 
-  test('human with loadout.thumb = null → state.players is empty (maps unwound)', async () => {
+  test('human with loadout.thumb = null AND hearts = 0 → ServerError(4000) (heart guard fires first, before thumb guard)', async () => {
     const { playerId, token } = makePlayer();
+    // Drain heart ring to 0 uses AND clear the thumb slot: both guards would fire.
+    setHeartUses(playerId, 0, 5);
     db.prepare(`UPDATE loadout SET thumb = NULL WHERE player_id = ?`).run(playerId);
 
     const room = await colyseus.createRoom<any>('battle', {});
-    try {
-      await colyseus.connectTo(room, { token });
-    } catch {
-      // expected rejection
-    }
-    // Rejection must leave the room's public player map empty.
+    // The heart guard fires first (4000) — thumb guard is never reached.
+    await expect(colyseus.connectTo(room, { token })).rejects.toThrow(/No HP/);
+    // rooms created without vsAI, so no AI seat is pre-populated.
     expect(room.state.players.size).toBe(0);
+    await room.disconnect();
+  });
+
+  test('vsAI room: human with loadout.thumb = null → ServerError(4001), AI seat survives', async () => {
+    const { playerId, token } = makePlayer();
+    // Clear the thumb slot — human join will be rejected by the 4001 guard.
+    db.prepare(`UPDATE loadout SET thumb = NULL WHERE player_id = ?`).run(playerId);
+
+    // vsAI room pre-populates the AI seat in onCreate before any human joins.
+    const room = await colyseus.createRoom<any>('battle', { vsAI: true });
+    await expect(colyseus.connectTo(room, { token })).rejects.toThrow(
+      /No staked ring: stake a ring before battling/,
+    );
+    // AI seat survives (it was created in onCreate); only the rejected human seat is unwound.
+    expect(room.state.players.size).toBe(1);
     await room.disconnect();
   });
 
@@ -131,6 +146,7 @@ describe('4000 heart/HP guard — preserved unchanged (#304, regression)', () =>
 
     const room = await colyseus.createRoom<any>('battle', {});
     await expect(colyseus.connectTo(room, { token })).rejects.toThrow(/No HP/);
+    // rooms created without vsAI, so no AI seat is pre-populated.
     expect(room.state.players.size).toBe(0);
     await room.disconnect();
   });
@@ -141,7 +157,28 @@ describe('4000 heart/HP guard — preserved unchanged (#304, regression)', () =>
 
     const room = await colyseus.createRoom<any>('battle', {});
     await expect(colyseus.connectTo(room, { token })).rejects.toThrow(/No HP/);
+    // rooms created without vsAI, so no AI seat is pre-populated.
     expect(room.state.players.size).toBe(0);
+    await room.disconnect();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// No-token (E2E path) — no auth token skips both guards (#319/A1)
+// ---------------------------------------------------------------------------
+
+describe('no-token path — join succeeds without a token (E2E / backward-compat)', () => {
+  test('connect with no token → join succeeds, seat is added', async () => {
+    // The no-token else-branch in onJoin seats with a default loadout and
+    // bypasses the heart/thumb guards entirely (no payload → no DB read).
+    const room = await colyseus.createRoom<any>('battle', {});
+    const client = await colyseus.connectTo(room, {}); // no token supplied
+    await room.waitForNextPatch();
+
+    // The no-token seat is accepted — at least the one we just connected.
+    expect(room.state.players.size).toBeGreaterThanOrEqual(1);
+    expect(room.state.players.get(client.sessionId)).toBeDefined();
+
     await room.disconnect();
   });
 });
