@@ -1,6 +1,7 @@
 import Phaser from 'phaser';
 import { CANVAS_W, CANVAS_H } from '../Constants';
 import { createOverlay } from './ui/ModalShell';
+import { addDomLabel } from './ui/DomLabel';
 import { FOREST_SCREENS } from '../../../shared/world/forest';
 import { FOREST_SCREEN_META, type BossTier } from './world/forestMeta';
 
@@ -329,6 +330,14 @@ export class OverworldMapModal {
   // the overlay container, so container.destroy() would otherwise leak it).
   private clipGfx: Phaser.GameObjects.Graphics | null = null;
 
+  /**
+   * #363 — screen-fixed, non-scaled HUD-strip labels (legend text + close hint)
+   * migrated to crisp DOM. They are NOT children of the overlay container, so
+   * hide() destroys them explicitly to avoid duplicate nodes on reopen. The map
+   * node labels stay on canvas (they live inside the scaled, masked mapContainer).
+   */
+  private domLabels: Phaser.GameObjects.DOMElement[] = [];
+
   constructor(scene: Phaser.Scene, onClose: () => void) {
     this.scene = scene;
     this.onClose = onClose;
@@ -561,10 +570,14 @@ export class OverworldMapModal {
       legendGfx.fillRect(lx, legendY, 14, 12);
       legendGfx.lineStyle(1, 0x445566, 1);
       legendGfx.strokeRect(lx, legendY, 14, 12);
-      c.add(
-        s.add
-          .text(lx + 16, legendY, entry.label, { fontSize: '9px', color: '#7799aa' })
-          .setScrollFactor(0),
+      // #363 — legend text is screen-fixed, non-interactive, NOT inside the scaled
+      // map container → DOM (crisp). Tracked in this.domLabels for explicit cleanup.
+      this.domLabels.push(
+        addDomLabel(s, lx + 16, legendY, entry.label, {
+          fontPx: 9,
+          color: '#7799aa',
+          align: 'left',
+        }).setOrigin(0, 0),
       );
       lx += 48;
     }
@@ -573,11 +586,27 @@ export class OverworldMapModal {
     // Anchorage legend
     legendGfx.fillStyle(DOT_ANCHOR_ATTUNED, 1);
     legendGfx.fillCircle(lx + 5, legendY + 6, 5);
-    c.add(s.add.text(lx + 12, legendY, 'Anchorage\n(attuned)', { fontSize: '8px', color: '#bbaa44', lineSpacing: 2 }).setScrollFactor(0));
+    // #363 — two-row anchorage legend labels → DOM; lineHeight mirrors the prior
+    // lineSpacing:2 over an 8px font (≈10px line box).
+    this.domLabels.push(
+      addDomLabel(s, lx + 12, legendY, 'Anchorage\n(attuned)', {
+        fontPx: 8,
+        color: '#bbaa44',
+        align: 'left',
+        lineHeight: 10,
+      }).setOrigin(0, 0),
+    );
     lx += 80;
     legendGfx.fillStyle(DOT_ANCHOR_UNATTUNED, 1);
     legendGfx.fillCircle(lx + 5, legendY + 6, 5);
-    c.add(s.add.text(lx + 12, legendY, 'Anchorage\n(unset)', { fontSize: '8px', color: '#666644', lineSpacing: 2 }).setScrollFactor(0));
+    this.domLabels.push(
+      addDomLabel(s, lx + 12, legendY, 'Anchorage\n(unset)', {
+        fontPx: 8,
+        color: '#666644',
+        align: 'left',
+        lineHeight: 10,
+      }).setOrigin(0, 0),
+    );
     lx += 76;
 
     // Boss legend — glyph + colour per tier (see BossTier).
@@ -587,27 +616,29 @@ export class OverworldMapModal {
       { tier: 'guardian', label: 'Shrine' },
     ];
     for (const entry of bossLegend) {
-      c.add(
-        s.add
-          .text(lx, legendY - 2, BOSS_GLYPH[entry.tier], { fontSize: '12px', color: BOSS_COLOR[entry.tier] })
-          .setScrollFactor(0),
-      );
-      c.add(
-        s.add
-          .text(lx + 13, legendY + 1, entry.label, { fontSize: '8px', color: '#7799aa' })
-          .setScrollFactor(0),
+      // #363 — boss glyph + label are screen-fixed HUD-strip labels → DOM.
+      this.domLabels.push(
+        addDomLabel(s, lx, legendY - 2, BOSS_GLYPH[entry.tier], {
+          fontPx: 12,
+          color: BOSS_COLOR[entry.tier],
+          align: 'left',
+        }).setOrigin(0, 0),
+        addDomLabel(s, lx + 13, legendY + 1, entry.label, {
+          fontPx: 8,
+          color: '#7799aa',
+          align: 'left',
+        }).setOrigin(0, 0),
       );
       lx += 46;
     }
 
-    // Close hint — pinned to bottom-right of panel
-    c.add(
-      s.add
-        .text(PANEL_X + PANEL_W - 10, PANEL_Y + PANEL_H - 8, 'Press M to close', {
-          fontSize: '9px', color: '#445566',
-        })
-        .setOrigin(1, 1)
-        .setScrollFactor(0),
+    // Close hint — pinned to bottom-right of panel. #363 — screen-fixed → DOM.
+    this.domLabels.push(
+      addDomLabel(s, PANEL_X + PANEL_W - 10, PANEL_Y + PANEL_H - 8, 'Press M to close', {
+        fontPx: 9,
+        color: '#445566',
+        align: 'right',
+      }).setOrigin(1, 1),
     );
 
     // ── Keyboard zoom/pan ────────────────────────────────────────────────────
@@ -725,6 +756,10 @@ export class OverworldMapModal {
     // Destroy the mask graphics — it lives outside the overlay container, so
     // container.destroy() does not reach it.
     if (this.clipGfx) { this.clipGfx.destroy(); this.clipGfx = null; }
+    // #363 — DOM labels are not container children; destroy them explicitly so a
+    // reopen does not leave duplicate legend/close-hint nodes behind.
+    this.domLabels.forEach((l) => l.destroy());
+    this.domLabels = [];
     this.container.destroy();
     this.container = null;
     this.onClose();

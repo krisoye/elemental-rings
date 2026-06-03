@@ -2,6 +2,7 @@ import Phaser from 'phaser';
 import { CANVAS_W, CANVAS_H, ELEMENT_NAMES } from '../Constants';
 import { API_BASE, apiFetch, fetchMe, getToken } from '../net/api';
 import { createOverlay } from './ui/ModalShell';
+import { addDomLabel, setDomLabelText } from './ui/DomLabel';
 
 type Tab = 'buy' | 'sell';
 
@@ -65,7 +66,14 @@ export class MerchantModal {
   private loadout: Record<string, string | null> = {};
   private gold = 0;
   private food = 0;
-  private goldText: Phaser.GameObjects.Text | null = null;
+  /**
+   * #363 — gold readout is a DOM label (crisp HiDPI). DOM elements are NOT
+   * children of the modal Container, so they are tracked here and destroyed
+   * explicitly in close() to avoid duplicate nodes on reopen.
+   */
+  private goldText: Phaser.GameObjects.DOMElement | null = null;
+  /** #363 — screen-fixed DOM labels (title + gold) tracked for explicit cleanup. */
+  private domLabels: Phaser.GameObjects.DOMElement[] = [];
   private statusText: Phaser.GameObjects.Text | null = null;
   private scrollY = 0;
   private wheelHandler: ((p: unknown, g: unknown, dx: number, dy: number) => void) | null = null;
@@ -105,6 +113,10 @@ export class MerchantModal {
     this.scrollY = 0;
     this.container.destroy(true);
     this.container = null;
+    // #363 — DOM labels are not container children; destroy them explicitly so a
+    // reopen does not leave a duplicate node behind.
+    this.domLabels.forEach((l) => l.destroy());
+    this.domLabels = [];
     this.goldText = null;
     this.statusText = null;
     window.__merchantModalOpen = false;
@@ -135,6 +147,10 @@ export class MerchantModal {
 
   private render(): void {
     if (this.container) this.container.destroy(true);
+    // #363 — clear any prior DOM labels before a rebuild (defensive: render() is
+    // called once per open, but this guarantees no node leak if that changes).
+    this.domLabels.forEach((l) => l.destroy());
+    this.domLabels = [];
 
     // Shared modal scaffold (backdrop + panel + canonical ✕). The merchant header
     // is custom (left-aligned "MERCHANT" + a centered gold readout), so the shell
@@ -149,27 +165,39 @@ export class MerchantModal {
     });
 
     // Header: "MERCHANT" + current gold (the shell provides the close-X).
-    const title = this.scene.add
-      .text(CANVAS_W / 2 - 200, 60, 'MERCHANT', { fontSize: '20px', color: '#ffffff' })
-      .setScrollFactor(0);
-    this.goldText = this.scene.add
-      .text(CANVAS_W / 2 + 60, 60, `Gold: ${this.gold}`, { fontSize: '16px', color: '#f5e070' })
-      .setScrollFactor(0);
+    // #363 — these are static, screen-fixed, non-interactive labels → DOM (crisp).
+    // DOM labels are NOT container children; they are tracked in this.domLabels and
+    // destroyed in close(). align:'left' + origin (0,0) preserves the prior layout.
+    const title = addDomLabel(this.scene, CANVAS_W / 2 - 200, 60, 'MERCHANT', {
+      fontPx: 20,
+      color: '#ffffff',
+      align: 'left',
+      id: 'merchant-title',
+    }).setOrigin(0, 0);
+    this.goldText = addDomLabel(this.scene, CANVAS_W / 2 + 60, 60, `Gold: ${this.gold}`, {
+      fontPx: 16,
+      color: '#f5e070',
+      align: 'left',
+      id: 'merchant-gold',
+    }).setOrigin(0, 0);
+    this.domLabels.push(title, this.goldText);
 
-    // Tab buttons.
+    // Tab buttons (interactive → must stay canvas: DOM labels are pointer-events:none).
     const buyTabBtn = this.makeTabBtn('Buy', CANVAS_W / 2 - 80, 96, () => this.switchTab('buy'));
     const sellTabBtn = this.makeTabBtn('Sell', CANVAS_W / 2 + 80, 96, () => this.switchTab('sell'));
 
-    // Status text (error / success toasts inside the modal).
+    // Status text (error / success toasts inside the modal). Stays canvas: it uses
+    // setColor + an alpha fade tween that is simpler to drive on a Phaser Text.
     this.statusText = this.scene.add
       .text(CANVAS_W / 2, 130, '', { fontSize: '13px', color: '#ff8888' })
       .setOrigin(0.5, 0)
       .setScrollFactor(0);
 
     // The shell already added backdrop + panel + (empty) title + close-X (4 fixed
-    // children); these five header objects bring the fixed header to 9 — the count
-    // renderTabContent() preserves when it strips tab content.
-    c.add([title, this.goldText, buyTabBtn, sellTabBtn, this.statusText]);
+    // children); these three canvas header objects bring the fixed header to 7 —
+    // the count renderTabContent() preserves when it strips tab content. (#363: the
+    // MERCHANT title + gold readout moved to DOM, dropping the count from 9 to 7.)
+    c.add([buyTabBtn, sellTabBtn, this.statusText]);
     this.container = c;
     // #137 — let a zoomed dual-camera host route this container to its UI camera
     // (cameras.main.ignore) so the shop renders at 1:1. Ignoring a container
@@ -192,9 +220,9 @@ export class MerchantModal {
       this.scene.input.off('wheel', this.wheelHandler);
       this.wheelHandler = null;
     }
-    // Remove any tab-content objects above the 9 fixed header children (shell's
-    // backdrop/panel/title/close-X + MERCHANT title/gold/two tabs/status).
-    while (this.container.length > 9) {
+    // Remove any tab-content objects above the 7 fixed header children (shell's
+    // backdrop/panel/title/close-X + two tabs/status; MERCHANT title + gold are DOM).
+    while (this.container.length > 7) {
       const last = this.container.getAt(this.container.length - 1) as Phaser.GameObjects.GameObject;
       this.container.remove(last, true);
     }
@@ -366,7 +394,7 @@ export class MerchantModal {
       if (!res.ok) { this.status(body.error ?? 'Purchase failed', '#ff8888'); return; }
       this.gold = body.gold ?? this.gold;
       this.food = body.food_units ?? this.food;
-      this.goldText?.setText(`Gold: ${this.gold}`);
+      if (this.goldText) setDomLabelText(this.goldText, `Gold: ${this.gold}`);
       this.status(`+${qty} food`, '#aaffaa');
       this.onHudRefresh();
       this.renderTabContent();
@@ -387,7 +415,7 @@ export class MerchantModal {
       if (!res.ok) { this.status(body.error ?? 'Purchase failed', '#ff8888'); return; }
       this.gold = body.gold ?? this.gold;
       if (body.ring) this.allRings.push(body.ring);
-      this.goldText?.setText(`Gold: ${this.gold}`);
+      if (this.goldText) setDomLabelText(this.goldText, `Gold: ${this.gold}`);
       this.status(`Bought ${ELEMENT_NAMES[elementIndex] ?? element} Ring`, '#aaffaa');
       this.onHudRefresh();
       this.renderTabContent();
@@ -405,7 +433,7 @@ export class MerchantModal {
       if (!res.ok) { this.status(body.error ?? 'Sale failed', '#ff8888'); return; }
       this.gold = body.gold ?? this.gold;
       this.food = body.food_units ?? this.food;
-      this.goldText?.setText(`Gold: ${this.gold}`);
+      if (this.goldText) setDomLabelText(this.goldText, `Gold: ${this.gold}`);
       this.status(`Sold ${qty} food +${qty} GP`, '#aaffaa');
       this.onHudRefresh();
       this.renderTabContent();
@@ -423,7 +451,7 @@ export class MerchantModal {
       if (!res.ok) { this.status(body.error ?? 'Sale failed', '#ff8888'); return; }
       this.gold = body.gold ?? this.gold;
       this.allRings = this.allRings.filter((r) => r.id !== ringId);
-      this.goldText?.setText(`Gold: ${this.gold}`);
+      if (this.goldText) setDomLabelText(this.goldText, `Gold: ${this.gold}`);
       this.status('Ring sold', '#aaffaa');
       this.onHudRefresh();
       this.renderTabContent();

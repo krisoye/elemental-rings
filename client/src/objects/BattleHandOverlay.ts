@@ -7,6 +7,7 @@ import { CLOSE_GLYPH } from './ui/ModalShell';
 import { attachTooltip } from './ui/Tooltip';
 import { SlotSwapManager, type SwapSlot } from './ui/SlotSwapManager';
 import { apiFetch, fetchMe, getToken } from '../net/api';
+import { addDomLabel } from './ui/DomLabel';
 
 /**
  * EPIC #302 / #305 — sentinel slot identifier for the dedicated Heart slot. It
@@ -68,6 +69,14 @@ export class BattleHandOverlay {
   private onCloseCb?: () => void;
 
   private manageModal: Phaser.GameObjects.Container | null = null;
+  /**
+   * #363 — screen-fixed, static modal chrome labels migrated to crisp DOM (overlay
+   * title, spare-section HEADER, and the WON/DISCARD/slot section labels). DOM
+   * elements are NOT children of the modal Container, so they are tracked here and
+   * destroyed on every rebuild + on close to prevent duplicate nodes. The per-card
+   * labels inside the scrolling spareContainer stay on canvas (handled in #364).
+   */
+  private domLabels: Phaser.GameObjects.DOMElement[] = [];
   private spareScrollRow = 0;
   private spareWheelHandler: ((p: unknown, g: unknown, dx: number, dy: number) => void) | null = null;
   /**
@@ -220,6 +229,36 @@ export class BattleHandOverlay {
     return lbl;
   }
 
+  /**
+   * #363 — DOM equivalent of {@link addCardLabel} for the static screen-fixed
+   * section labels (WON / DISCARD / slot headers). Renders crisp DOM text with a
+   * dark backing replicated in CSS (the canvas helper used a 0x000000@0.55 rect
+   * with +6/+2 padding around the text bounds). The node is centered (origin 0.5)
+   * to match the canvas label and tracked in this.domLabels for explicit cleanup.
+   */
+  private addCardDomLabel(
+    x: number,
+    y: number,
+    text: string,
+    fontPx: number,
+    color: string,
+  ): void {
+    const el = addDomLabel(this.scene, x, y, text, {
+      fontPx,
+      color,
+      align: 'center',
+      background: 'rgba(0,0,0,0.55)',
+      padding: '1px 3px',
+    });
+    this.domLabels.push(el);
+  }
+
+  /** #363 — destroy all tracked DOM chrome labels (called on rebuild + close). */
+  private clearDomLabels(): void {
+    this.domLabels.forEach((l) => l.destroy());
+    this.domLabels = [];
+  }
+
   /** Render (or re-render) the manage-battle-hand modal from cached state. */
   private renderManageModal(): void {
     if (this.spareWheelHandler) {
@@ -239,6 +278,9 @@ export class BattleHandOverlay {
       this.manageModal.destroy(true);
       this.manageModal = null;
     }
+    // #363 — DOM chrome labels are not container children; destroy any prior set
+    // so a rebuild/close never leaves duplicate nodes behind.
+    this.clearDomLabels();
 
     // #212 — host-agnostic open flag (EncounterScene or a biome). E2E reads it to
     // assert which post-duel route opened the overlay.
@@ -259,21 +301,24 @@ export class BattleHandOverlay {
       .setScrollFactor(0)
       .setStrokeStyle(2, 0xffcc88);
     // Title sits 16px below the panel top edge.
+    // #363 — the title is a static, screen-fixed, non-interactive label → DOM (crisp).
+    // It is NOT a container child; it is tracked in this.domLabels for cleanup.
     const titleY = MODAL_TOP + 16;
-    const title = this.scene.add
-      .text(CANVAS_W / 2, titleY, 'Manage Battle Rings', {
-        fontSize: '18px',
+    this.domLabels.push(
+      addDomLabel(this.scene, CANVAS_W / 2, titleY, 'Manage Battle Rings', {
+        fontPx: 18,
         color: '#ffffff',
-      })
-      .setScrollFactor(0)
-      .setOrigin(0.5);
+        align: 'center',
+      }),
+    );
+    // The close glyph is interactive → stays canvas (DOM labels are pointer-events:none).
     const close = this.scene.add
       .text(CANVAS_W / 2 + 290, titleY, CLOSE_GLYPH, { fontSize: '18px', color: '#ff8888' })
       .setScrollFactor(0)
       .setOrigin(0.5)
       .setInteractive({ useHandCursor: true })
       .on('pointerdown', () => this.close());
-    container.add([overlay, panel, title, close]);
+    container.add([overlay, panel, close]);
 
     // ── #348/#350/#352 — three gap-separated 2-row clusters ──────────────────
     // Absolute card-centre coordinates (canvas 1024×576; modal top at y=44).
@@ -316,7 +361,7 @@ export class BattleHandOverlay {
       container.add(wonRect);
       this.addRingInfo(container, GROUP1_X, ROW0_Y, pendingRing);
       // #352 — label with dark backing rect for legibility over element colour.
-      this.addCardLabel(container, GROUP1_X, ROW0_Y - 34, 'WON ◆', { fontSize: '11px', color: '#ffcc44' });
+      this.addCardDomLabel(GROUP1_X, ROW0_Y - 34, 'WON ◆', 11, '#ffcc44'); // #363
       if (window.__encounterState) {
         window.__encounterState.pendingWonRing = { ringId: pendingRing.id, element: pendingRing.element };
       }
@@ -342,8 +387,8 @@ export class BattleHandOverlay {
       .setInteractive({ useHandCursor: true })
       .on('pointerdown', () => this.onDiscardSlotClick());
     container.add(discardRect);
-    // #350/#352 — DISCARD label with dark backing rect for legibility.
-    this.addCardLabel(container, GROUP1_X, ROW1_Y - 34, 'DISCARD', { fontSize: '11px', color: '#aa4444' });
+    // #350/#352 — DISCARD label with dark backing rect for legibility. #363 — DOM.
+    this.addCardDomLabel(GROUP1_X, ROW1_Y - 34, 'DISCARD', 11, '#aa4444');
 
     // ── Group 2 row 0 — HP (heart) card; element + HP pips, recharge/swap. ────
     // #352 swap: HP is now on row 0 (top), STATUS on row 1 (bottom).
@@ -396,9 +441,9 @@ export class BattleHandOverlay {
         });
       container.add(slotRect);
       // #347/#348/#352 — the thumb slot reads STATUS (cross-screen parity);
-      // a1/a2/d1/d2 keep their uppercase labels. All use addCardLabel (#352).
+      // a1/a2/d1/d2 keep their uppercase labels. #363 — static slot headers → DOM.
       const labelText = slot === 'thumb' ? 'STATUS' : slot.toUpperCase();
-      this.addCardLabel(container, sx, slotY - 34, labelText, { fontSize: '11px', color: '#cccccc' });
+      this.addCardDomLabel(sx, slotY - 34, labelText, 11, '#cccccc');
       // #305 — the Thumb passive is a hover tooltip on the STATUS card.
       if (slot === 'thumb') {
         this.thumbTooltipDetach = attachTooltip(this.scene, slotRect, () => this.thumbPassiveText(), {
@@ -445,14 +490,15 @@ export class BattleHandOverlay {
     const spareLabelText = `Spare: ${usedSpares} / ${spareCapacity} — select to assign, or click two slots to swap`;
     const spareLabelColor = spareFull ? '#ff8888' : '#aaccff';
     // Spare label y=326 (SPARE_ROW_Y[0]−56); 12px font → half-height≈14px → bottom≈340; card-0 top=342; clearance≈2px.
-    const carriedLbl = this.scene.add
-      .text(CANVAS_W / 2, SPARE_ROW_Y[0] - 56, spareLabelText, {
-        fontSize: '12px',
+    // #363 — the spare-section HEADER is a static, screen-fixed, non-interactive
+    // label → DOM (crisp). Tracked in this.domLabels for cleanup; not a container child.
+    this.domLabels.push(
+      addDomLabel(this.scene, CANVAS_W / 2, SPARE_ROW_Y[0] - 56, spareLabelText, {
+        fontPx: 12,
         color: spareLabelColor,
-      })
-      .setScrollFactor(0)
-      .setOrigin(0.5);
-    container.add(carriedLbl);
+        align: 'center',
+      }),
+    );
 
     // Spare cards sub-container — visibility-windowed (kept for the >10 fallback).
     const spareContainer = this.scene.add.container(0, 0);
@@ -1186,6 +1232,9 @@ export class BattleHandOverlay {
       this.manageModal.destroy(true);
       this.manageModal = null;
     }
+    // #363 — DOM chrome labels are not container children; destroy any prior set
+    // so a rebuild/close never leaves duplicate nodes behind.
+    this.clearDomLabels();
     this.swap.clear();
     this.manageStatusText = null;
     window.__battleHandOpen = false; // #212
@@ -1356,6 +1405,9 @@ export class BattleHandOverlay {
       this.manageModal.destroy(true);
       this.manageModal = null;
     }
+    // #363 — DOM chrome labels are not container children; destroy any prior set
+    // so a rebuild/close never leaves duplicate nodes behind.
+    this.clearDomLabels();
     this.manageStatusText = null;
     this.onCloseCb = undefined;
     setHeartCardState(undefined); // #305
