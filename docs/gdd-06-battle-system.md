@@ -23,6 +23,21 @@ Of the carried rings, the player assigns **5 to the battle hand** before each en
 - Both players can see each other's element types and aggregate uses from detection range before committing
 - Once both players formally agree to duel, the battle begins
 
+### 6.2a Combat Entry Preconditions
+
+To initiate a duel, the player must meet **both** of the following conditions:
+
+1. **Heart ring equipped with remaining uses:** The heart slot must have a ring with `current_uses > 0`. A drained heart ring (0 uses) blocks duel entry.
+2. **Thumb (stake) ring assigned:** The thumb slot must have a ring assigned — any number of remaining uses is allowed, including zero. A player without an assigned thumb ring cannot enter a duel.
+
+A player who lacks either condition cannot initiate via the E-key or double-click override when encountering an NPC or monster. The overworld encounter prompt is replaced with a brief hint:
+- **"Equip & recharge a heart ring to fight"** — if the heart ring is missing or drained
+- **"Stake a ring to fight"** — if the thumb slot is empty or unassigned
+
+**Why this rule:** The heart ring represents the player's literal hitpoints; the thumb ring represents their stake (risk). This prevents duels without skin in the game and removes the silent fallback behavior of assigning a default fire ring when the thumb slot was null.
+
+**Note on drained stakes:** A drained stake ring (uses = 0 but assigned to the thumb slot) **does not block** battle entry — the ring remains at risk even though its passive will not fire.
+
 ### 6.3 Turn Structure (Active Timed Block)
 Combat is an **active, reaction-timed** exchange — not a hidden simultaneous selection. One player holds **initiative** at any moment; the other is the **reactor**.
 

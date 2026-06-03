@@ -6,6 +6,7 @@
 - The Thumb ring grants a **passive ability** during battle (see §9.3) but is **never pressed in combat**
 - **Loser forfeits their staked ring and all XP associated with it**
 - **Winner receives the staked ring and its full XP**
+- **The thumb slot must be assigned to enter a duel:** A player cannot initiate a duel unless they have a ring staked to the thumb slot. A drained stake ring (zero uses remaining) still satisfies this requirement — the ring is present and at risk, though its passive will not fire.
 
 > **Design note (v4.2):** Earlier drafts allowed the staked ring to be any ring outside the battle loadout. The current design places the stake in the Thumb slot, making it part of the loadout and always visible to both players.
 
