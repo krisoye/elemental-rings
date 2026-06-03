@@ -15,6 +15,10 @@ const NODE_H = 52;   // node rectangle height
 // rows −5..3 (9 tall). MIN_COL/MIN_ROW are computed dynamically below so the
 // layout follows the screen manifest with no manual sync.
 const _coords = FOREST_SCREENS.filter((s) => s.coord).map((s) => s.coord!);
+if (_coords.length === 0)
+  throw new Error(
+    'OverworldMapModal: FOREST_SCREENS has no coordinated screens — cannot compute grid bounds',
+  );
 const MIN_COL = Math.min(..._coords.map((c) => c.x));
 const MIN_ROW = Math.min(..._coords.map((c) => -c.y));
 
@@ -38,7 +42,7 @@ const SWAMP_NODE = {
 // grid content is 990×648px; margins for title + padding bring the panel to
 // ~1110×760, centered in the 1280×720 canvas (PANEL_Y clamped ≥10).
 const PANEL_W = 1110;
-const PANEL_H = 700;
+const PANEL_H = 730;
 const PANEL_X = Math.max(10, Math.round((CANVAS_W - PANEL_W) / 2));
 const PANEL_Y = Math.max(10, Math.round((CANVAS_H - PANEL_H) / 2));
 
@@ -140,10 +144,10 @@ const DERIVED_EDGES: Array<{ a: string; b: string; type?: EdgeType }> = [];
   const seenEdges = new Set<string>();
   for (const screen of FOREST_SCREENS) {
     for (const neighborId of Object.values(screen.exits)) {
-      const key = [screen.id, neighborId as string].sort().join('|');
+      const key = [screen.id, neighborId].sort().join('|');
       if (seenEdges.has(key)) continue;
       seenEdges.add(key);
-      DERIVED_EDGES.push({ a: screen.id, b: neighborId as string });
+      DERIVED_EDGES.push({ a: screen.id, b: neighborId });
     }
   }
   DERIVED_EDGES.push({ a: 'forest_swamp_gate', b: 'swamp_entry', type: 'biome' });

@@ -201,7 +201,7 @@ describe('FOREST_SCREENS drift', () => {
 // FOREST_SCREENS grid consistency — no coord collision, unit-step exits
 // ---------------------------------------------------------------------------
 
-const DELTA: Record<string, { dx: number; dy: number }> = {
+const DELTA: Record<'north' | 'south' | 'east' | 'west', { dx: number; dy: number }> = {
   north: { dx: 0, dy: 1 },
   south: { dx: 0, dy: -1 },
   east: { dx: 1, dy: 0 },
@@ -227,7 +227,9 @@ describe('FOREST_SCREENS grid consistency', () => {
     for (const screen of FOREST_SCREENS) {
       if (!screen.coord) continue;
       for (const [dir, neighborId] of Object.entries(screen.exits)) {
-        const { dx, dy } = DELTA[dir];
+        const delta = DELTA[dir as 'north' | 'south' | 'east' | 'west'];
+        expect(delta, `Unknown direction '${dir}' in ${screen.id}.exits`).toBeDefined();
+        const { dx, dy } = delta!;
         const expectedKey = `${screen.coord.x + dx},${screen.coord.y + dy}`;
         const actual = byCoord.get(expectedKey);
         expect(
