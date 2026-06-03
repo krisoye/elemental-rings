@@ -85,6 +85,7 @@ const SOLO_SPECS = [
   'monster-overworld-sprite.spec.ts', // #192 — overworld marker frame crop
   'battle-feedback.spec.ts', // #313 — battleKey threading + AI spirit broadcast
   'battle-entry-gating.spec.ts', // #319 — null-thumb 4001 guard + EncounterScene catch
+  'snow-biome.spec.ts', // #335 — Snow biome v1: Frost Sentinel gate + SnowScene transitions + World Map node
 ];
 
 export default defineConfig({

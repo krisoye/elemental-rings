@@ -30,6 +30,8 @@ export const WAYSTONES: WaystoneDef[] = [
   // Swamp biome — distant, higher cost.
   { id: 'swamp_anchor_1',       name: 'Mire Anchorage',     biome: 'swamp',  spiritCost: 8  },
   { id: 'swamp_anchor_2',       name: 'Deepmuck Anchorage', biome: 'swamp',  spiritCost: 10 },
+  // Snow biome — reached north through Snow Gate; mid-tier spirit cost.
+  { id: 'snow_anchor_1',        name: 'Snow Fields',        biome: 'snow',   spiritCost: 9  },
 ];
 
 /** Look up an anchorage by id, or undefined if unknown. */

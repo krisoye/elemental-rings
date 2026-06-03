@@ -4,6 +4,7 @@ import { describe, test, it, expect } from 'vitest';
 import { WAYSTONES, getWaystone, canTeleport } from '../../shared/waystones';
 import { FOREST_SCREENS, type ScreenDef } from '../../shared/world/forest';
 import { SWAMP_SCREENS } from '../../shared/world/swamp';
+import { SNOW_SCREENS } from '../../shared/world/snow';
 
 // ---------------------------------------------------------------------------
 // getWaystone — catalog lookup
@@ -89,14 +90,18 @@ function loadObjectLayerAt(absMapPath: string): MapObject[] {
   return objectLayer?.objects ?? [];
 }
 
-/** Every biome map file: the Forest per-screen maps + the Swamp map. */
+/** Every biome map file: the Forest per-screen maps + the Swamp map + the Snow map. */
 function biomeMapPaths(): string[] {
   const forestDir = path.join(MAPS_DIR, 'forest');
   const forestMaps = fs
     .readdirSync(forestDir)
     .filter((f) => f.endsWith('.json'))
     .map((f) => path.join(forestDir, f));
-  return [...forestMaps, path.join(MAPS_DIR, 'swamp', 'swamp_entry.json')];
+  return [
+    ...forestMaps,
+    path.join(MAPS_DIR, 'swamp', 'swamp_entry.json'),
+    path.join(MAPS_DIR, 'snow', 'snow_entry.json'),
+  ];
 }
 
 /** Collect every `waystoneId` from anchorage objects across all maps. */
@@ -120,10 +125,10 @@ describe('anchorage catalog ↔ map drift', () => {
     expect([...mapIds].sort()).toEqual([...catalogIds].sort());
   });
 
-  test('catalog contains exactly 6 anchorages (4 Forest + 2 Swamp)', () => {
-    // 4 Forest (entry, glade, depths, hidden) + 2 Swamp. Bump when a biome is added.
-    expect(WAYSTONES.length).toBe(6);
-    expect(collectMapAnchorageIds().size).toBe(6);
+  test('catalog contains exactly 7 anchorages (4 Forest + 2 Swamp + 1 Snow)', () => {
+    // 4 Forest (entry, glade, depths, hidden) + 2 Swamp + 1 Snow. Bump when a biome is added.
+    expect(WAYSTONES.length).toBe(7);
+    expect(collectMapAnchorageIds().size).toBe(7);
   });
 
   test('no waystone objects remain in any biome map', () => {
@@ -177,7 +182,7 @@ describe('FOREST_SCREENS drift', () => {
 
   it('all anchorage ids exist in the catalog', () => {
     const catalogIds = new Set(WAYSTONES.map((w) => w.id));
-    for (const screen of [...FOREST_SCREENS, ...SWAMP_SCREENS]) {
+    for (const screen of [...FOREST_SCREENS, ...SWAMP_SCREENS, ...SNOW_SCREENS]) {
       if (screen.anchorage) {
         expect(
           catalogIds.has(screen.anchorage),
@@ -188,7 +193,7 @@ describe('FOREST_SCREENS drift', () => {
   });
 
   it('no screen carries a waystone field', () => {
-    for (const screen of [...FOREST_SCREENS, ...SWAMP_SCREENS]) {
+    for (const screen of [...FOREST_SCREENS, ...SWAMP_SCREENS, ...SNOW_SCREENS]) {
       expect(
         'waystone' in screen,
         `${screen.id} should not have a waystone field`,
