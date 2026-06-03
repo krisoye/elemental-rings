@@ -91,6 +91,7 @@ const SOLO_SPECS = [
   'snow-biome.spec.ts', // #335 — Snow biome v1: Frost Sentinel gate + SnowScene transitions + World Map node
   'snow-gate-boss-gate.spec.ts', // #344 — roster-authoritative boss gate, no-bypass, swamp regression
   'world-map-modal.spec.ts',    // #334 — fit-to-viewport + zoom/pan E2E
+  'dom-label-contract.spec.ts', // #361 / #366 — DomLabel CSS contract + overflow regression guard
 ];
 
 export default defineConfig({
