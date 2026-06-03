@@ -165,3 +165,9 @@ The GDD (`docs/`) describes the **intended game** — its rules, systems, world,
 - **The GDD's changelog is a design-change log** — what the game *became* and why — not a list of PRs. Git holds the line-level history.
 
 Before designing or implementing any system, read the relevant GDD section (see the table above) for intent, then verify the current mechanic against the code.
+
+---
+
+## Changelog Fragments
+
+User-visible PRs should include a changelog fragment in `docs/changelog.d/<issue>.md` or `docs/changelog.d/<issue>-<pr>.md`. Do **not** edit `docs/CHANGELOG.md` directly — it is managed by `scripts/compile_changelog.sh`. Read `docs/changelog.d/README.md` for the fragment format and naming convention. During `/pm sweep`, the compile script consolidates all fragments into CHANGELOG.md and deletes the processed fragment files.
