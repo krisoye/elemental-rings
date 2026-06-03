@@ -874,7 +874,10 @@ export class BattleScene extends Phaser.Scene {
     // origin returns to that biome scene; anything else returns to the hub.
     const origin = window.__duelOrigin;
     const toBiome =
-      origin && (origin.scene === 'ForestScene' || origin.scene === 'SwampScene')
+      origin &&
+      (origin.scene === 'ForestScene' ||
+        origin.scene === 'SwampScene' ||
+        origin.scene === 'SnowScene')
         ? origin.scene
         : null;
     this.endDestination = { toBiome, screenId: origin?.screenId };

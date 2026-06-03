@@ -54,7 +54,8 @@ async function walkToZone(page: Page, p: { x: number; y: number }, zone: string)
  * default spawn at y=296 (the south EDGE band at mapH-EDGE=296 on a 320px map)
  * does not immediately trigger a south edge transition before loadWaystones
  * completes. Going through CampScene first ensures __campState is populated
- * (the heart_ring + loadout.thumb gate in checkNpcDetection).
+ * (heart_ring + loadout.thumb); CampScene.shutdown() no longer clears it, so
+ * it persists into ForestScene for checkNpcDetection's battle-entry gate.
  *
  * Implementation: starts ForestScene with screenId + suppressEdge=true so the
  * edge-check is suppressed until loadWaystones repositions the player; then the
@@ -232,25 +233,10 @@ test(
     await seedAuthToken(ctx);
     const page = await ctx.newPage();
     await enterSnowGate(page);
-
-    // __campState is cleared by CampScene's shutdown handler when enterSnowGate
-    // stops CampScene. Inject a minimal valid __campState so checkNpcDetection's
-    // battle-entry gate (heartOk + thumbOk) lets detection through. We read the
-    // real player state from the server to guarantee the values are accurate for
-    // this fresh player (heart_ring.current_uses = 3, loadout.thumb != null).
-    await page.evaluate(async ([api]) => {
-      const token = localStorage.getItem('er_token');
-      const res = await fetch(`${api}/api/me`, { headers: { Authorization: `Bearer ${token}` } });
-      if (!res.ok) return;
-      const data = await res.json();
-      const p = data.player;
-      const loadout = data.loadout ?? {};
-      // Inject the minimal __campState fields checkNpcDetection reads.
-      (window as any).__campState = {
-        heart_ring: p.heart_ring ?? { current_uses: 3, max_uses: 3 },
-        loadout: { thumb: loadout.thumb ?? 'seed-thumb' },
-      };
-    }, [API_URL] as const);
+    // enterSnowGate waits for __campState to be fully populated in CampScene
+    // (heart_ring charged + thumb staked) before entering the forest, and
+    // CampScene.shutdown() no longer clears __campState, so it persists into
+    // ForestScene. No manual injection needed here.
 
     // Place player at the Sentinel's world position (tx:16, ty:8).
     await page.evaluate(([x, y]) => (window as any).__player.setPosition(x, y), [
