@@ -21,6 +21,8 @@ if (_coords.length === 0)
   );
 const MIN_COL = Math.min(..._coords.map((c) => c.x));
 const MIN_ROW = Math.min(..._coords.map((c) => -c.y));
+const MAX_COL = Math.max(..._coords.map((c) => c.x));
+const MAX_ROW = Math.max(..._coords.map((c) => -c.y));
 
 // The hidden alcove is teleport-only (no coord, exits {}). It is the ONLY
 // node with a hardcoded grid position — placed isolated at the east edge.
@@ -49,17 +51,53 @@ const SNOW_NODE = {
   biome: 'snow' as const,
 };
 
-// New layout is 9 cols (−2..6) × 9 rows (−5..3). At CELL_W=110 / CELL_H=72 the
-// grid content is 990×648px; margins for title + padding bring the panel to
-// ~1110×760, centered in the 1280×720 canvas (PANEL_Y clamped ≥10).
-const PANEL_W = 1110;
-const PANEL_H = 730;
-const PANEL_X = Math.max(10, Math.round((CANVAS_W - PANEL_W) / 2));
-const PANEL_Y = Math.max(10, Math.round((CANVAS_H - PANEL_H) / 2));
+// ── Panel + grid layout (computed at show() time from CANVAS_W/CANVAS_H) ──
+// PANEL_MARGIN: gap between canvas edge and panel edge (both sides).
+const PANEL_MARGIN = 12;
+// Derived panel dimensions fill the viewport minus the margin.
+const PANEL_W = CANVAS_W - PANEL_MARGIN * 2;
+const PANEL_H = CANVAS_H - PANEL_MARGIN * 2;
+const PANEL_X = PANEL_MARGIN;                    // panel top-left X
+const PANEL_Y = PANEL_MARGIN;                    // panel top-left Y
 
-// Top-left of the grid drawing area (inside the panel)
-const GRID_LEFT = PANEL_X + 30;
-const GRID_TOP  = PANEL_Y + 46;
+// Top-left of the grid drawing area (inside the panel), relative to the
+// panel origin (0,0 in panel-local coords = panel top-left on screen).
+const TITLE_STRIP_H = 38;   // height reserved for the panel title bar
+const LEGEND_STRIP_H = 32;  // height reserved for the legend + close-hint strip
+const CTRL_STRIP_H   = 22;  // height reserved for zoom control buttons
+
+// The raw content size for the map graph. Cols span MIN_COL..max(ALCOVE_COL, MAX_COL),
+// rows span MIN_ROW..max(SWAMP_NODE.row, MAX_ROW).
+const _maxCol = Math.max(ALCOVE_COL, MAX_COL);
+const _maxRow = Math.max(SWAMP_NODE.row, MAX_ROW);
+const GRID_COLS = _maxCol - MIN_COL + 1;
+const GRID_ROWS = _maxRow - MIN_ROW + 1;
+// Content bounding box in unscaled space (origin at top-left = first cell origin)
+const CONTENT_W = GRID_COLS * CELL_W;
+const CONTENT_H = GRID_ROWS * CELL_H;
+
+// Available area for the zoomable map layer (inside the panel, below title+ctrl, above legend)
+const MAP_AREA_W = PANEL_W - 4;
+const MAP_AREA_H = PANEL_H - TITLE_STRIP_H - CTRL_STRIP_H - LEGEND_STRIP_H - 4;
+
+// Fit scale: scale so content fits exactly within the map area with a small inner margin
+const MAP_INNER_PAD = 8;
+const FIT_SCALE = Math.min(
+  (MAP_AREA_W - MAP_INNER_PAD * 2) / CONTENT_W,
+  (MAP_AREA_H - MAP_INNER_PAD * 2) / CONTENT_H,
+);
+
+// The map area top-left (in screen space), inside the panel
+// Panel center in ModalShell is PANEL_X + PANEL_W/2, PANEL_Y + PANEL_H/2.
+// The panel's local-space origin is at its center, so map-area in screen
+// coords = PANEL_X + 2 (stroke gap), below the title + ctrl strips.
+const MAP_AREA_SCREEN_X = PANEL_X + 2;
+const MAP_AREA_SCREEN_Y = PANEL_Y + TITLE_STRIP_H + CTRL_STRIP_H;
+
+// Zoom limits
+const ZOOM_MIN = FIT_SCALE;           // can never zoom below fit
+const ZOOM_MAX = FIT_SCALE * 3;       // max 3× from fit
+const ZOOM_STEP = 0.10;               // 10% per step (relative to FIT_SCALE)
 
 // ── Node color palette ──────────────────────────────────────────────────────
 
@@ -169,10 +207,15 @@ const DERIVED_EDGES: Array<{ a: string; b: string; type?: EdgeType }> = [];
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
+/**
+ * Node center in unscaled content-local coordinates (origin = top-left of the
+ * grid drawing area). The `mapContainer` is positioned so its (0,0) maps to the
+ * grid's top-left in screen space; scaling is applied via the container's scale.
+ */
 function nodeCenter(col: number, row: number): { x: number; y: number } {
   return {
-    x: GRID_LEFT + (col - MIN_COL) * CELL_W + CELL_W / 2,
-    y: GRID_TOP  + (row - MIN_ROW) * CELL_H + CELL_H / 2,
+    x: (col - MIN_COL) * CELL_W + CELL_W / 2,
+    y: (row - MIN_ROW) * CELL_H + CELL_H / 2,
   };
 }
 
@@ -188,6 +231,57 @@ function nodeBgColor(spec: RenderNode): number {
   }
 }
 
+/**
+ * Clamp `panOffset` so that the scaled content never shows an empty gap at
+ * any canvas edge within the map area.
+ *
+ * The `mapContainer` has its origin at its (0,0) = top-left of the content.
+ * In screen space the container's top-left is at:
+ *   (MAP_AREA_SCREEN_X + panOffset.x, MAP_AREA_SCREEN_Y + panOffset.y)
+ * The container's bottom-right in screen space is:
+ *   (MAP_AREA_SCREEN_X + panOffset.x + CONTENT_W * scale, ...)
+ *
+ * We want:
+ *   left edge  ≤ MAP_AREA_SCREEN_X          → panOffset.x ≤ 0
+ *   right edge ≥ MAP_AREA_SCREEN_X + MAP_AREA_W → panOffset.x ≥ MAP_AREA_W - CONTENT_W * scale
+ *   top edge   ≤ MAP_AREA_SCREEN_Y           → panOffset.y ≤ 0
+ *   bottom edge ≥ MAP_AREA_SCREEN_Y + MAP_AREA_H → panOffset.y ≥ MAP_AREA_H - CONTENT_H * scale
+ *
+ * When the content is smaller than the map area (fit scale), center it and
+ * disallow any pan.
+ */
+function clampPan(
+  panX: number, panY: number, scale: number,
+): { x: number; y: number } {
+  const scaledW = CONTENT_W * scale;
+  const scaledH = CONTENT_H * scale;
+
+  let minX: number, maxX: number, minY: number, maxY: number;
+
+  if (scaledW <= MAP_AREA_W) {
+    // Content is narrower than viewport — center it, no pan allowed.
+    const cx = (MAP_AREA_W - scaledW) / 2;
+    minX = cx; maxX = cx;
+  } else {
+    maxX = 0;
+    minX = MAP_AREA_W - scaledW;
+  }
+
+  if (scaledH <= MAP_AREA_H) {
+    // Content is shorter than viewport — center it, no pan allowed.
+    const cy = (MAP_AREA_H - scaledH) / 2;
+    minY = cy; maxY = cy;
+  } else {
+    maxY = 0;
+    minY = MAP_AREA_H - scaledH;
+  }
+
+  return {
+    x: Math.max(minX, Math.min(maxX, panX)),
+    y: Math.max(minY, Math.min(maxY, panY)),
+  };
+}
+
 // ── Modal class ─────────────────────────────────────────────────────────────
 
 /**
@@ -195,11 +289,45 @@ function nodeBgColor(spec: RenderNode): number {
  * connections as lines, discovered anchorages as gold dots (bright = attuned),
  * discovery waystones as cyan dots, and the player's current screen with a
  * white border + "you are here" arrow. Triggered by the M key.
+ *
+ * On open the graph is fit-scaled so the entire node graph, legend, and
+ * close-hint are visible within the 1024×576 canvas with no clipping.
+ * Optional zoom (+ / - keys or on-panel buttons) and pointer-drag pan (with
+ * content-bounds clamping) allow inspection of detail. Press 0 or the Reset
+ * button to return to fit zoom. The legend and close-hint are rendered in a
+ * separate non-zoomed HUD layer so they remain readable at all zoom levels.
  */
 export class OverworldMapModal {
   private container: Phaser.GameObjects.Container | null = null;
   private readonly scene: Phaser.Scene;
   private readonly onClose: () => void;
+
+  // ── Zoom / pan state ───────────────────────────────────────────────────────
+  private currentScale = FIT_SCALE;
+  private panX = 0;
+  private panY = 0;
+
+  // Input handles — registered in show(), removed in hide()
+  private keyPlus: Phaser.Input.Keyboard.Key | null = null;
+  private keyMinus: Phaser.Input.Keyboard.Key | null = null;
+  private keyReset: Phaser.Input.Keyboard.Key | null = null;
+  private keyNumpadAdd: Phaser.Input.Keyboard.Key | null = null;
+  private keyNumpadSub: Phaser.Input.Keyboard.Key | null = null;
+  private isDragging = false;
+  private dragStartX = 0;
+  private dragStartY = 0;
+  private dragPanStartX = 0;
+  private dragPanStartY = 0;
+
+  // The zoomable map layer (edges + nodes). Separate from the outer `container`
+  // so the legend/HUD container stays unscaled.
+  private mapContainer: Phaser.GameObjects.Container | null = null;
+
+  // Graphics object backing the geometry mask that clips `mapContainer` to the
+  // map area — without it, zoomed content bleeds visually behind the legend/hint
+  // strip. Stored so hide() can destroy it (the mask graphics is not a child of
+  // the overlay container, so container.destroy() would otherwise leak it).
+  private clipGfx: Phaser.GameObjects.Graphics | null = null;
 
   constructor(scene: Phaser.Scene, onClose: () => void) {
     this.scene = scene;
@@ -218,32 +346,59 @@ export class OverworldMapModal {
     ignoreMain: (c: Phaser.GameObjects.Container) => void,
   ): void {
     if (this.container) return;
+
+    // Reset zoom/pan state each time so reopening starts at fit.
+    this.currentScale = FIT_SCALE;
+    const clamped = clampPan(0, 0, FIT_SCALE);
+    this.panX = clamped.x;
+    this.panY = clamped.y;
+
     const s = this.scene;
 
-    // Shared modal scaffold (backdrop + panel + title + canonical ✕), anchored to
-    // the computed map-panel rect rather than the canvas center.
+    // Panel center for ModalShell.
     const panelCx = PANEL_X + PANEL_W / 2;
     const panelCy = PANEL_Y + PANEL_H / 2;
+
+    // Shared modal scaffold (backdrop + panel + title + canonical ✕).
     const { container: c } = createOverlay(s, {
-      width: PANEL_W,
-      height: PANEL_H,
-      title: 'World Map',
-      onClose: () => this.hide(),
-      depth: 1200,
+      width:        PANEL_W,
+      height:       PANEL_H,
+      title:        'World Map',
+      onClose:      () => this.hide(),
+      depth:        1200,
       backdropAlpha: 0.78,
-      panelColor: 0x0d1523,
-      strokeColor: 0x3d5577,
-      strokeWidth: 1,
-      titleColor: '#99bbdd',
-      titleSize: '15px',
-      centered: false,
-      panelX: panelCx,
-      panelY: panelCy,
+      panelColor:   0x0d1523,
+      strokeColor:  0x3d5577,
+      strokeWidth:  1,
+      titleColor:   '#99bbdd',
+      titleSize:    '15px',
+      centered:     false,
+      panelX:       panelCx,
+      panelY:       panelCy,
     });
 
-    // ── Graphics layer (edges + node fills) ─────────────────────────────────
+    // ── Zoomable map container ───────────────────────────────────────────────
+    // Origin at (MAP_AREA_SCREEN_X, MAP_AREA_SCREEN_Y) in screen space.
+    // The container's (0,0) is the top-left of the grid content.
+    const mc = s.add.container(
+      MAP_AREA_SCREEN_X + this.panX,
+      MAP_AREA_SCREEN_Y + this.panY,
+    ).setScrollFactor(0);
+    mc.setScale(this.currentScale);
+    c.add(mc);
+    this.mapContainer = mc;
+
+    // Clip the map layer to the map area so zoomed content cannot bleed into the
+    // legend/hint strip below it. The mask graphics is a free-standing object
+    // (not a child of `c`), so hide() destroys it explicitly to avoid a leak.
+    const clipGfx = s.add.graphics().setScrollFactor(0);
+    clipGfx.fillRect(MAP_AREA_SCREEN_X, MAP_AREA_SCREEN_Y, MAP_AREA_W, MAP_AREA_H);
+    mc.setMask(clipGfx.createGeometryMask());
+    this.clipGfx = clipGfx;
+
+    // ── Graphics layer (edges + node fills) — drawn in content-local coords ─
     const gfx = s.add.graphics().setScrollFactor(0);
-    c.add(gfx);
+    mc.add(gfx);
 
     // Build lookup for node positions
     const byId = new Map(RENDER_NODES.map((n) => [n.id, n]));
@@ -299,7 +454,7 @@ export class OverworldMapModal {
 
       // "Teleport only" text badge for hidden alcove
       if (spec.isolated) {
-        c.add(
+        mc.add(
           s.add
             .text(x, y + NODE_H / 2 + 6, '✦ teleport', {
               fontSize: '8px', color: '#886600',
@@ -310,7 +465,7 @@ export class OverworldMapModal {
       }
 
       // Node label
-      c.add(
+      mc.add(
         s.add
           .text(x, y, spec.label, {
             fontSize: '10px',
@@ -333,10 +488,9 @@ export class OverworldMapModal {
         gfx.strokeCircle(dotX, dotY, 5);
       }
 
-
       // Boss marker (top-left corner of node) — glyph + colour by tier.
       if (spec.boss) {
-        c.add(
+        mc.add(
           s.add
             .text(x - NODE_W / 2 + 4, y - NODE_H / 2 + 2, BOSS_GLYPH[spec.boss], {
               fontSize: '13px', color: BOSS_COLOR[spec.boss],
@@ -355,8 +509,44 @@ export class OverworldMapModal {
       }
     }
 
-    // ── Legend ───────────────────────────────────────────────────────────────
-    const legendY = PANEL_Y + PANEL_H - 30;
+    // ── HUD layer (legend + close-hint + zoom controls) — NOT scaled by zoom ─
+    // Pinned directly to the outer container `c` in screen space.
+
+    // Zoom control buttons — just below the title bar
+    const ctrlY = PANEL_Y + TITLE_STRIP_H + 4;
+    const ctrlRightEdge = PANEL_X + PANEL_W - 14;
+
+    const btnStyle = { fontSize: '11px', color: '#99bbdd', backgroundColor: '#1a2d47', padding: { x: 5, y: 2 } };
+
+    const resetBtn = s.add
+      .text(ctrlRightEdge, ctrlY, '0 Reset', btnStyle)
+      .setOrigin(1, 0)
+      .setScrollFactor(0)
+      .setInteractive({ useHandCursor: true })
+      .on('pointerdown', () => this.applyZoom(FIT_SCALE));
+    c.add(resetBtn);
+
+    const minusBtn = s.add
+      .text(ctrlRightEdge - resetBtn.width - 6, ctrlY, '−', btnStyle)
+      .setOrigin(1, 0)
+      .setScrollFactor(0)
+      .setInteractive({ useHandCursor: true })
+      .on('pointerdown', () => this.applyZoom(this.currentScale - FIT_SCALE * ZOOM_STEP));
+    c.add(minusBtn);
+
+    const plusBtn = s.add
+      .text(ctrlRightEdge - resetBtn.width - minusBtn.width - 12, ctrlY, '+', btnStyle)
+      .setOrigin(1, 0)
+      .setScrollFactor(0)
+      .setInteractive({ useHandCursor: true })
+      .on('pointerdown', () => this.applyZoom(this.currentScale + FIT_SCALE * ZOOM_STEP));
+    c.add(plusBtn);
+
+    // Legend — pinned to the bottom of the panel
+    const legendY = PANEL_Y + PANEL_H - LEGEND_STRIP_H + 4;
+    const legendGfx = s.add.graphics().setScrollFactor(0);
+    c.add(legendGfx);
+
     const legendEntries: Array<{ color: number; label: string }> = [
       { color: COLOR_SAFE,  label: 'Safe' },
       { color: COLOR_D1,    label: 'D1' },
@@ -367,10 +557,10 @@ export class OverworldMapModal {
     ];
     let lx = PANEL_X + 14;
     for (const entry of legendEntries) {
-      gfx.fillStyle(entry.color, 1);
-      gfx.fillRect(lx, legendY, 14, 12);
-      gfx.lineStyle(1, 0x445566, 1);
-      gfx.strokeRect(lx, legendY, 14, 12);
+      legendGfx.fillStyle(entry.color, 1);
+      legendGfx.fillRect(lx, legendY, 14, 12);
+      legendGfx.lineStyle(1, 0x445566, 1);
+      legendGfx.strokeRect(lx, legendY, 14, 12);
       c.add(
         s.add
           .text(lx + 16, legendY, entry.label, { fontSize: '9px', color: '#7799aa' })
@@ -381,12 +571,12 @@ export class OverworldMapModal {
     // Separator
     lx += 10;
     // Anchorage legend
-    gfx.fillStyle(DOT_ANCHOR_ATTUNED, 1);
-    gfx.fillCircle(lx + 5, legendY + 6, 5);
+    legendGfx.fillStyle(DOT_ANCHOR_ATTUNED, 1);
+    legendGfx.fillCircle(lx + 5, legendY + 6, 5);
     c.add(s.add.text(lx + 12, legendY, 'Anchorage\n(attuned)', { fontSize: '8px', color: '#bbaa44', lineSpacing: 2 }).setScrollFactor(0));
     lx += 80;
-    gfx.fillStyle(DOT_ANCHOR_UNATTUNED, 1);
-    gfx.fillCircle(lx + 5, legendY + 6, 5);
+    legendGfx.fillStyle(DOT_ANCHOR_UNATTUNED, 1);
+    legendGfx.fillCircle(lx + 5, legendY + 6, 5);
     c.add(s.add.text(lx + 12, legendY, 'Anchorage\n(unset)', { fontSize: '8px', color: '#666644', lineSpacing: 2 }).setScrollFactor(0));
     lx += 76;
 
@@ -410,22 +600,131 @@ export class OverworldMapModal {
       lx += 46;
     }
 
-    // Hint
+    // Close hint — pinned to bottom-right of panel
     c.add(
       s.add
-        .text(PANEL_X + PANEL_W - 10, PANEL_Y + PANEL_H - 10, 'Press M to close', {
+        .text(PANEL_X + PANEL_W - 10, PANEL_Y + PANEL_H - 8, 'Press M to close', {
           fontSize: '9px', color: '#445566',
         })
         .setOrigin(1, 1)
         .setScrollFactor(0),
     );
 
+    // ── Keyboard zoom/pan ────────────────────────────────────────────────────
+    // PLUS (187) fires on both = and +; NUMPAD_ADD covers numpad users.
+    // MINUS (189) / NUMPAD_SUBTRACT are the matching zoom-out pair.
+    const kb = s.input.keyboard!;
+    this.keyPlus      = kb.addKey(Phaser.Input.Keyboard.KeyCodes.PLUS);
+    this.keyMinus     = kb.addKey(Phaser.Input.Keyboard.KeyCodes.MINUS);
+    this.keyReset     = kb.addKey(Phaser.Input.Keyboard.KeyCodes.ZERO);
+    this.keyNumpadAdd = kb.addKey(Phaser.Input.Keyboard.KeyCodes.NUMPAD_ADD);
+    this.keyNumpadSub = kb.addKey(Phaser.Input.Keyboard.KeyCodes.NUMPAD_SUBTRACT);
+
+    const zoomIn  = (): void => this.applyZoom(this.currentScale + FIT_SCALE * ZOOM_STEP);
+    const zoomOut = (): void => this.applyZoom(this.currentScale - FIT_SCALE * ZOOM_STEP);
+    this.keyPlus.on('down',      zoomIn);
+    this.keyNumpadAdd.on('down', zoomIn);
+    this.keyMinus.on('down',     zoomOut);
+    this.keyNumpadSub.on('down', zoomOut);
+    this.keyReset.on('down', () => this.applyZoom(FIT_SCALE));
+
+    // ── Pointer drag-to-pan ──────────────────────────────────────────────────
+    s.input.on('pointerdown', this.onPointerDown, this);
+    s.input.on('pointermove', this.onPointerMove, this);
+    s.input.on('pointerup',   this.onPointerUp,   this);
+
     ignoreMain(c);
     this.container = c;
   }
 
+  // ── Zoom / pan helpers ─────────────────────────────────────────────────────
+
+  /**
+   * Apply a new zoom scale, clamping to [ZOOM_MIN, ZOOM_MAX], and re-clamp the
+   * pan offset. When resetting to fit, also zero the pan so the map re-centers.
+   */
+  private applyZoom(newScale: number): void {
+    const prevScale = this.currentScale;
+    this.currentScale = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, newScale));
+
+    // When returning to fit, also zero pan before clamping (which will center it).
+    if (this.currentScale === ZOOM_MIN && prevScale !== ZOOM_MIN) {
+      this.panX = 0;
+      this.panY = 0;
+    }
+
+    const clamped = clampPan(this.panX, this.panY, this.currentScale);
+    this.panX = clamped.x;
+    this.panY = clamped.y;
+
+    this.applyTransform();
+  }
+
+  /** Write currentScale and panX/Y into the mapContainer transform. */
+  private applyTransform(): void {
+    if (!this.mapContainer) return;
+    this.mapContainer.setScale(this.currentScale);
+    this.mapContainer.setPosition(
+      MAP_AREA_SCREEN_X + this.panX,
+      MAP_AREA_SCREEN_Y + this.panY,
+    );
+  }
+
+  // ── Pointer event handlers ─────────────────────────────────────────────────
+
+  private onPointerDown(ptr: Phaser.Input.Pointer): void {
+    if (!this.container) return;
+    // Only start a drag when zoomed beyond fit (no pan needed at fit scale).
+    if (this.currentScale <= ZOOM_MIN + 0.001) return;
+    this.isDragging = true;
+    this.dragStartX = ptr.x;
+    this.dragStartY = ptr.y;
+    this.dragPanStartX = this.panX;
+    this.dragPanStartY = this.panY;
+  }
+
+  private onPointerMove(ptr: Phaser.Input.Pointer): void {
+    if (!this.isDragging || !this.container) return;
+    const dx = ptr.x - this.dragStartX;
+    const dy = ptr.y - this.dragStartY;
+    const clamped = clampPan(
+      this.dragPanStartX + dx,
+      this.dragPanStartY + dy,
+      this.currentScale,
+    );
+    this.panX = clamped.x;
+    this.panY = clamped.y;
+    this.applyTransform();
+  }
+
+  private onPointerUp(): void {
+    this.isDragging = false;
+  }
+
+  // ── Lifecycle ──────────────────────────────────────────────────────────────
+
   hide(): void {
     if (!this.container) return;
+
+    // Remove pointer listeners
+    this.scene.input.off('pointerdown', this.onPointerDown, this);
+    this.scene.input.off('pointermove', this.onPointerMove, this);
+    this.scene.input.off('pointerup',   this.onPointerUp,   this);
+
+    // Remove keyboard keys. removeKey(key, true) destroys the key, which clears
+    // its listeners and unregisters it from the plugin in one call.
+    const kb = this.scene.input.keyboard!;
+    if (this.keyPlus)      { kb.removeKey(this.keyPlus, true);      this.keyPlus      = null; }
+    if (this.keyMinus)     { kb.removeKey(this.keyMinus, true);     this.keyMinus     = null; }
+    if (this.keyReset)     { kb.removeKey(this.keyReset, true);     this.keyReset     = null; }
+    if (this.keyNumpadAdd) { kb.removeKey(this.keyNumpadAdd, true); this.keyNumpadAdd = null; }
+    if (this.keyNumpadSub) { kb.removeKey(this.keyNumpadSub, true); this.keyNumpadSub = null; }
+
+    this.isDragging = false;
+    this.mapContainer = null;
+    // Destroy the mask graphics — it lives outside the overlay container, so
+    // container.destroy() does not reach it.
+    if (this.clipGfx) { this.clipGfx.destroy(); this.clipGfx = null; }
     this.container.destroy();
     this.container = null;
     this.onClose();
