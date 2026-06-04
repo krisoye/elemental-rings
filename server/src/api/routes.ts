@@ -70,6 +70,7 @@ import {
   consumeAndUnlockShrine,
 } from '../persistence/PlayerRepo';
 import { ElementEnum } from '../../../shared/types';
+import { insertRing as insertRingRow, makeRing } from '../persistence/ringRows';
 import { NPC_SPAWNS, hashNpcId } from '../persistence/NpcSpawns';
 import {
   FOOD_PER_SLEEP,
@@ -211,8 +212,6 @@ function buildMePlayerBlock(playerId: string): Record<string, unknown> | null {
     // EPIC #378 — spare-grid cap (per-player) and pending WON ring identifier.
     spare_ring_max: getSpareRingMax(playerId),
     pending_ring_id: getPendingRingId(playerId),
-    // Deprecated alias kept for Sub-1 backwards compatibility; removed in Sub-2.
-    spareCapacity: getSpareRingMax(playerId),
     // EPIC #302 — heart slot.
     heart_ring: getHeartRing(playerId),
     total_xp: getTotalRingXp(playerId),
@@ -1282,6 +1281,20 @@ if (process.env.E2E_TEST_ROUTES === '1') {
   });
 
   /**
+   * POST /api/test/grant-ring — mint a WON ring (in_carry=1, pending=1) for the
+   * authenticated player, as if they had just won a battle. Used by Sub-2 E2E
+   * specs to seed the pending WON ring state without running a full duel. Body:
+   * { element?: number } (default 0 = FIRE). Returns the player block from
+   * /api/me (with pending_ring_id set). Test-only.
+   */
+  apiRouter.post('/api/test/grant-ring', requireAuth, requirePlayer, (req: Request, res: Response): void => {
+    const playerId = req.playerId as string;
+    const element = typeof req.body?.element === 'number' ? req.body.element : 0;
+    grantRing(playerId, element);
+    res.status(200).json({ player: buildMePlayerBlock(playerId) });
+  });
+
+  /**
    * POST /api/test/set-aggregate-xp — grant the authenticated player a single
    * Reliquary ring carrying `xp` XP, so their aggregate_xp (= SUM(xp) WHERE
    * in_carry = 0) reaches at least `xp` for the #196 NPC-XP-scaling specs. A fresh
@@ -1296,9 +1309,11 @@ if (process.env.E2E_TEST_ROUTES === '1') {
       fail(res, 400, 'xp (non-negative integer) is required');
       return;
     }
-    // A Reliquary ring (in_carry = 0) counts toward aggregate_xp; element/tier are
-    // irrelevant to the XP sum, so a Fire ring with the requested XP suffices.
-    grantRing(playerId, 0, 0, 3, xp);
+    // Insert a Reliquary ring (in_carry=0, pending=0) directly so aggregate_xp
+    // (SUM(xp) WHERE in_carry=0) reflects the requested XP immediately. We bypass
+    // grantRing because that function now sets in_carry=1, pending=1 (WON-ring
+    // overflow path), which would add to carry rather than the Reliquary.
+    insertRingRow(playerId, makeRing({ element: 0, tier: 0, xp, maxUses: 3, currentUses: 3, escrowed: 0, inCarry: 0, pending: 0 }));
     res.status(200).json({ ok: true, aggregateXp: getSpiritStats(playerId).aggregateXp });
   });
 }

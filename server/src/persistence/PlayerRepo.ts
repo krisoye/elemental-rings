@@ -480,6 +480,18 @@ export const saveLoadout = db.transaction(
       d2: slots.d2,
     });
 
+    // EPIC #378 — pending lifecycle: clear the pending flag when the WON ring is
+    // assigned to any loadout slot (the overflow is resolved by slotting the ring).
+    const pendingId = getPendingRingId(playerId);
+    if (pendingId) {
+      for (const key of ['thumb', 'a1', 'a2', 'd1', 'd2'] as const) {
+        if (slots[key] === pendingId) {
+          clearPendingFlag(pendingId);
+          break;
+        }
+      }
+    }
+
     return selectLoadout.get(playerId) as LoadoutRow;
   },
 );
@@ -575,6 +587,11 @@ export function setEscrowed(ringId: string, escrowed: boolean): void {
  * Grant a new ring (tier 1, full uses) to a player. Used when the human
  * player beats the AI — the AI has no DB ring to transfer, so we create one
  * matching the AI's thumb element (GDD §9.1: winner receives the staked ring).
+ *
+ * EPIC #378 — WON ring overflow model: the ring enters carry immediately with
+ * `in_carry=1, pending=1`. The spare count may reach spare_ring_max+1 (exactly
+ * one overflow slot). This path intentionally bypasses `assertSpareWithinMax`
+ * — the overflow is by design and requires the player to resolve it.
  */
 export function grantRing(
   ownerId: string,
@@ -592,14 +609,21 @@ export function grantRing(
       maxUses,
       currentUses: maxUses,
       escrowed: 0,
+      inCarry: 1,
+      pending: 1,
     }),
   );
 }
 
 /**
- * Transfer ownership of a ring from one player to another. Nulls out any
- * loadout slots that referenced the ring on the losing player. The ring's XP
- * travels with it (GDD §9.1).
+ * Transfer ownership of a staked ring from one player to another. Nulls out
+ * any loadout slots that referenced the ring on the losing player. The ring's
+ * XP travels with it (GDD §9.1).
+ *
+ * EPIC #378 — WON ring overflow model: after ownership changes the ring enters
+ * the winner's carry with `in_carry=1, pending=1`. The spare count may reach
+ * spare_ring_max+1 (one overflow slot). This path intentionally bypasses
+ * `assertSpareWithinMax` — the overflow is by design.
  */
 export const transferRing = db.transaction(
   (ringId: string, fromPlayerId: string, toPlayerId: string): string => {
@@ -630,7 +654,12 @@ export const transferRing = db.transaction(
         });
       }
     }
+    // updateRingOwner resets escrowed=0, in_carry=0. After ownership changes we
+    // set in_carry=1 and pending=1 to place the ring in the winner's carry as
+    // overflow (WON ring — one slot beyond spare_ring_max, by design).
     updateRingOwner.run(toPlayerId, ringId, fromPlayerId);
+    setRingCarry(ringId, 1);
+    db.prepare('UPDATE rings SET pending = 1 WHERE id = ?').run(ringId);
     return ringId;
   },
 );
@@ -776,6 +805,10 @@ export const discardRing = db.transaction(
     if (getHeartRingId(playerId) === ringId) {
       updateHeartRingId.run(null, playerId);
     }
+    // EPIC #378 — pending lifecycle: clear the pending flag before deletion so it
+    // is never left dangling (the row will not exist after deleteRingOwned, but
+    // clearing beforehand is the safe, explicit contract).
+    clearPendingFlag(ringId);
     const info = deleteRingOwned(ringId, playerId);
     return { ok: info.changes > 0 };
   },
@@ -1354,6 +1387,14 @@ export const setHeartRing = db.transaction(
 
       // Equip the new ring (if any) into the heart slot.
       if (ringId) {
+        // EPIC #378 — pending lifecycle: clear the pending flag when the WON ring
+        // is equipped to the Heart slot (overflow resolved by heart assignment).
+        // NOTE: do NOT change the incomingIsCarried guard above — it is correct and
+        // intentional for the spare-cap net-zero accounting.
+        const incomingRing = getRingById(ringId);
+        if (incomingRing?.pending === 1) {
+          clearPendingFlag(ringId);
+        }
         setRingCarry(ringId, 0);
         setRingHeartSlot(ringId, 1);
         updateHeartRingId.run(ringId, playerId);

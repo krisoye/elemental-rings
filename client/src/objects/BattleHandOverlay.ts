@@ -105,7 +105,14 @@ export class BattleHandOverlay {
   private manageLoadout: Record<string, string | null> = {};
   /** Full /api/me ring list (carried or not) — needed to show a pending won ring. */
   private allRings: RingData[] = [];
-  private managePlayer: { game_day?: number; gold?: number; food_units?: number; spirit_current?: number; spirit_max?: number; aggregate_xp?: number; carry_cap?: number; spareCapacity?: number } | null = null;
+  /**
+   * EPIC #378 — the pending WON ring id from `/api/me` (`pending_ring_id`), or
+   * null when no WON ring awaits resolution. Server-authoritative: replaces the
+   * fragile `er_pending_ring` localStorage key. Set in `open()` and
+   * `refreshManageData()`.
+   */
+  private pendingRingId: string | null = null;
+  private managePlayer: { game_day?: number; gold?: number; food_units?: number; spirit_current?: number; spirit_max?: number; aggregate_xp?: number; carry_cap?: number; spare_ring_max?: number } | null = null;
   private manageStatusText: Phaser.GameObjects.Text | null = null;
   /**
    * #348 — the open discard-confirm modal container (mirrors BattleScene's
@@ -177,7 +184,7 @@ export class BattleHandOverlay {
 
     try {
       const data = await fetchMe<{
-        player: (BattleHandOverlay['managePlayer'] & { heart_ring?: RingData | null }) | null;
+        player: (BattleHandOverlay['managePlayer'] & { heart_ring?: RingData | null; pending_ring_id?: string | null }) | null;
         rings: RingData[];
         loadout: Record<string, string | null>;
       }>();
@@ -186,13 +193,13 @@ export class BattleHandOverlay {
       this.manageRings = data.rings.filter((r) => r.in_carry === 1);
       this.heartRing = data.player?.heart_ring ?? null;
       this.manageLoadout = data.loadout ?? {};
+      // EPIC #378 — pending WON ring id is now server-authoritative (pending_ring_id
+      // from /api/me). The WON ring is already in_carry=1, so no auto-carry needed.
+      this.pendingRingId = data.player?.pending_ring_id ?? null;
     } catch {
       return;
     }
-    // Auto-carry the pending won ring if carry has room — avoids showing the
-    // "discard a carried ring to keep it" prompt when space is available.
-    await this.tryAutoCarryPending();
-    if (this.manageModal) return; // closed during async auto-carry
+    if (this.manageModal) return;
     this.renderManageModal();
   }
 
@@ -340,9 +347,10 @@ export class BattleHandOverlay {
     const ROW1_Y = 268;
 
     // ── Group 1, row 0 — pending won ring, or a dim placeholder ───────────────
-    // The won ring is not yet carried, so it lives in allRings (full /api/me list),
-    // not manageRings. Selecting it then clicking the DISCARD slot discards it.
-    const pendingId = localStorage.getItem('er_pending_ring');
+    // EPIC #378 — the WON ring is now in_carry=1 (it appears in manageRings /
+    // allRings). pendingRingId comes from /api/me (server-authoritative), not
+    // localStorage. Selecting it then clicking DISCARD discards it.
+    const pendingId = this.pendingRingId;
     const pendingRing = pendingId ? this.allRings.find((r) => r.id === pendingId) : undefined;
     if (pendingRing) {
       const wonSelected = this.selRingId === pendingRing.id && this.selFromSlot === null;
@@ -465,10 +473,11 @@ export class BattleHandOverlay {
     // the player only sees spare carried rings available for assignment.
     const slottedIds = new Set(Object.values(this.manageLoadout).filter(Boolean) as string[]);
     const availableRings = this.manageRings.filter((r) => !slottedIds.has(r.id));
-    // #171 — spare capacity from the API response (server-computed, no client
-    // arithmetic). When full, the spare row is greyed-out and non-interactive;
-    // the server enforces the cap with 400 too.
-    const spareCapacity = this.managePlayer?.spareCapacity ?? 0;
+    // EPIC #378 — spare_ring_max from /api/me (per-player, server-computed). When
+    // at/above max, the spare row is greyed-out and non-interactive; the server
+    // enforces the cap with 400 too. A WON ring in overflow means usedSpares can
+    // equal spare_ring_max+1 — the grid still renders but shows full.
+    const spareCapacity = this.managePlayer?.spare_ring_max ?? 0;
     const usedSpares = availableRings.length;
     const spareFull = usedSpares >= spareCapacity && spareCapacity >= 0;
 
@@ -507,19 +516,18 @@ export class BattleHandOverlay {
     // spareCapacity > 10 forces more than the 2 always-visible rows).
     const spareRowGroups: Map<number, Phaser.GameObjects.Container[]> = new Map();
     // #350 — pre-compute whether an empty spare placeholder should be interactive.
-    // A pending won ring (in allRings but NOT in manageRings) is identified by its
-    // localStorage id. Battle-slot and heart selections are identified by selFromSlot.
+    // EPIC #378 — the WON ring is now in_carry=1 (in manageRings). A pending ring
+    // is identified by this.pendingRingId (server-authoritative). Battle-slot and
+    // heart selections are identified by selFromSlot.
     // Spare-selected or nothing-selected → no-op (isActionable = false).
-    const _pendingIdForSpare = localStorage.getItem('er_pending_ring');
     const _emptySelId = this.selRingId;
     const _emptySelSlot = this.selFromSlot;
     // isHoldingPending: selection source is 'spare' (selFromSlot===null) AND the id
-    // matches the pending won ring (which is not yet carried, so NOT in manageRings).
+    // matches the pending WON ring (which IS in manageRings since it is in_carry=1).
     const _isHoldingPending =
       _emptySelId !== null &&
       _emptySelSlot === null &&
-      _emptySelId === _pendingIdForSpare &&
-      !this.manageRings.some((r) => r.id === _emptySelId);
+      _emptySelId === this.pendingRingId;
     const _isBattleSlotSel = _emptySelId !== null && _emptySelSlot !== null && _emptySelSlot !== HEART_SLOT;
     const _isHeartSel = _emptySelSlot === HEART_SLOT;
     const emptySpareActionable = _isBattleSlotSel || _isHeartSel || _isHoldingPending;
@@ -557,6 +565,13 @@ export class BattleHandOverlay {
               void this.equipHeartFromSpare(ring.id);
             } else if (selSlot !== null && selId !== null) {
               void this.swapSlotWithSpare(selSlot, selId, ring.id);
+            } else if (selId !== null && selSlot === null && selId === this.pendingRingId) {
+              // EPIC #378 — WON ring selected, then a filled spare card clicked.
+              // Both are spare rings already — no positional swap is needed (the
+              // spare grid has no fixed positions). The WON ring is in_carry=1 and
+              // pending; clicking another spare card is a no-op. Deselect.
+              this.swap.clear();
+              this.renderManageModal();
             } else {
               if (selected) { this.swap.clear(); } else { this.swap.select(ring.id, 'spare'); }
               this.renderManageModal();
@@ -966,14 +981,16 @@ export class BattleHandOverlay {
   }
 
   /**
-   * #350 — dispatch a "move held ring to the spare pool" action routed by the
+   * EPIC #378 — dispatch a "move held ring to the spare pool" action routed by the
    * selection's source slot:
    *  - battle slot (a1/a2/d1/d2 or thumb) → PUT /api/loadout { [slot]: null }
    *    unstakes the ring (it remains carried; the slot just becomes empty).
    *  - heart → PUT /api/heart-slot { releaseTo: 'spare' } (no ringId);
    *    heart slot empties → 0 HP.
-   *  - pending won ring (selFromSlot===null, not in manageRings) → carry as spare
-   *    via the existing PUT /api/carry path (cap-checked; 400 → "Free a slot first").
+   *  - pending WON ring (selFromSlot===null, ringId===pendingRingId) → accept as
+   *    regular spare via PUT /api/rings/:id/accept (Sub-1 endpoint). Valid only
+   *    when spare ≤ spare_ring_max; 400 'spare grid still full' → "Free a slot
+   *    first" message.
    *  - spare or nothing → no-op (callers guard against this case already).
    */
   private async moveHeldRingToSpare(
@@ -989,47 +1006,32 @@ export class BattleHandOverlay {
       await this.unstakeBattleSlotToSpare(fromSlot);
       return;
     }
-    // fromSlot === null: pending won ring (not yet carried). Carry it as a spare
-    // reusing the same tryAutoCarryPending path: set the localStorage flag and call it.
+    // fromSlot === null: pending WON ring (in_carry=1 with pending=1).
+    // Accept it as a regular spare via PUT /api/rings/:id/accept.
+    // Only succeeds when spare count has dropped to ≤ spare_ring_max (i.e. the
+    // player has freed a slot since winning the ring).
     if (!getToken()) return;
-    const alreadyPending = localStorage.getItem('er_pending_ring');
-    if (!alreadyPending) {
-      // The ring was already auto-carried or discarded elsewhere.
+    if (!ringId) {
       this.swap.clear();
       await this.refreshManageData();
       return;
     }
-    let rings: { id: string; in_carry: number }[];
-    let carryCap: number;
     try {
-      const data = await fetchMe<{ player: { carry_cap?: number }; rings: { id: string; in_carry: number }[] }>();
-      rings = data.rings;
-      carryCap = data.player.carry_cap ?? 10;
-    } catch {
-      return;
-    }
-    const carriedCount = rings.filter((r) => r.in_carry === 1).length;
-    if (carriedCount >= carryCap) {
-      this.setManageStatus('Free a slot first');
-      return;
-    }
-    const carried = new Set(rings.filter((r) => r.in_carry === 1).map((r) => r.id));
-    carried.add(ringId);
-    try {
-      const res = await apiFetch('/api/carry', { method: 'PUT', json: { ringIds: Array.from(carried) } });
+      const res = await apiFetch(`/api/rings/${ringId}/accept`, { method: 'PUT' });
       if (res.status === 400) {
-        this.setManageStatus('Free a slot first');
+        const body = await res.json().catch(() => ({})) as { error?: string };
+        const msg = body?.error ?? 'Free a slot first';
+        this.setManageStatus(msg.includes('spare grid still full') ? 'Free a slot first' : msg);
         return;
       }
       if (!res.ok) {
-        this.setManageStatus(`Carry failed (${res.status})`);
+        this.setManageStatus(`Accept failed (${res.status})`);
         return;
       }
     } catch {
-      this.setManageStatus('Network error during carry update');
+      this.setManageStatus('Network error during accept');
       return;
     }
-    localStorage.removeItem('er_pending_ring');
     if (window.__encounterState) window.__encounterState.pendingWonRing = null;
     this.swap.clear();
     await this.refreshManageData();
@@ -1125,9 +1127,9 @@ export class BattleHandOverlay {
     if (this.discardConfirm) return;
 
     // Resolve the held ring + its source for the routing + the prompt label.
+    // EPIC #378 — pending ring is identified by this.pendingRingId (server-authoritative).
     const selSlot = this.selFromSlot;
-    const pendingId = localStorage.getItem('er_pending_ring');
-    const isPendingWon = selSlot === null && ringId === pendingId;
+    const isPendingWon = selSlot === null && ringId === this.pendingRingId;
     const ring =
       selSlot === HEART_SLOT
         ? this.heartRing
@@ -1308,7 +1310,7 @@ export class BattleHandOverlay {
     if (!getToken()) return;
     try {
       const data = await fetchMe<{
-        player: (BattleHandOverlay['managePlayer'] & { heart_ring?: RingData | null }) | null;
+        player: (BattleHandOverlay['managePlayer'] & { heart_ring?: RingData | null; pending_ring_id?: string | null }) | null;
         rings: RingData[];
         loadout: Record<string, string | null>;
       }>();
@@ -1317,6 +1319,8 @@ export class BattleHandOverlay {
       this.manageRings = data.rings.filter((r) => r.in_carry === 1);
       this.heartRing = data.player?.heart_ring ?? null;
       this.manageLoadout = data.loadout ?? {};
+      // EPIC #378 — keep pendingRingId in sync with the server after every mutation.
+      this.pendingRingId = data.player?.pending_ring_id ?? null;
     } catch {
       return;
     }
@@ -1329,8 +1333,8 @@ export class BattleHandOverlay {
 
   /**
    * Permanently discard a carried ring (DELETE /api/rings/:id), then reload the
-   * modal data. If a won ring is pending, discarding frees a carry slot, so try to
-   * auto-carry it afterward.
+   * modal data. EPIC #378 — the WON ring is already in_carry=1, so no auto-carry
+   * step is needed after discarding another ring.
    */
   private async discardCarriedRing(ringId: string): Promise<void> {
     try {
@@ -1340,61 +1344,20 @@ export class BattleHandOverlay {
       return;
     }
     await this.refreshManageData();
-    await this.tryAutoCarryPending();
   }
 
-  /** DELETE the pending won ring and clear its localStorage flag + window state. */
+  /**
+   * DELETE the pending WON ring (EPIC #378 — server clears pending=0 via
+   * discardRing; the server is authoritative). Clears window state and refreshes.
+   */
   private async discardPendingWonRing(): Promise<void> {
-    const ringId = localStorage.getItem('er_pending_ring');
+    const ringId = this.pendingRingId;
     if (!ringId) return;
     try {
       await apiFetch(`/api/rings/${ringId}`, { method: 'DELETE' });
     } catch {
       this.status('Network error during discard');
     }
-    localStorage.removeItem('er_pending_ring');
-    if (window.__encounterState) window.__encounterState.pendingWonRing = null;
-    await this.refreshManageData();
-  }
-
-  /**
-   * If a won ring is pending and carry now has room, carry it: PUT /api/carry with
-   * the current carried set plus the pending ring, clear er_pending_ring, and
-   * re-render the modal so the ring shows as carried.
-   */
-  private async tryAutoCarryPending(): Promise<void> {
-    const pendingId = localStorage.getItem('er_pending_ring');
-    if (!pendingId) return;
-    if (!getToken()) return;
-
-    let rings: RingData[];
-    let carryCap: number;
-    try {
-      const data = await fetchMe<{ player: { carry_cap?: number }; rings: RingData[] }>();
-      rings = data.rings;
-      carryCap = data.player.carry_cap ?? 10;
-    } catch {
-      return;
-    }
-
-    if (!rings.some((r) => r.id === pendingId)) {
-      localStorage.removeItem('er_pending_ring');
-      return;
-    }
-
-    const carriedCount = rings.filter((r) => r.in_carry === 1).length;
-    if (carriedCount >= carryCap) return; // still full — wait for another discard
-
-    const carried = new Set(rings.filter((r) => r.in_carry === 1).map((r) => r.id));
-    carried.add(pendingId);
-    try {
-      await apiFetch('/api/carry', { method: 'PUT', json: { ringIds: Array.from(carried) } });
-    } catch {
-      this.status('Network error during carry update');
-      return;
-    }
-
-    localStorage.removeItem('er_pending_ring');
     if (window.__encounterState) window.__encounterState.pendingWonRing = null;
     await this.refreshManageData();
   }

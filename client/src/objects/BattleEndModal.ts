@@ -25,9 +25,10 @@ export type BattleEndChoice = 'managehand' | 'overworld';
  * collapses the modal to a frozen final board with a small reopen pill (click or
  * SPACE/ESC re-shows it) — the modal is the ONLY way to leave the ENDED scene.
  *
- * Pure presentation: it adds no game logic. Both routes preserve the won-ring
- * carry prompt (the er_pending_ring localStorage key is untouched here — it is
- * surfaced later by EncounterScene/biome on arrival). The scene owns routing.
+ * Pure presentation: it adds no game logic. Both routes leave pending-ring
+ * state untouched (EPIC #378: server owns pending_ring_id; no localStorage
+ * key is used). The scene owns routing; EncounterScene/biome surfaces the
+ * won-ring prompt on arrival via /api/me pending_ring_id.
  */
 export class BattleEndModal {
   private readonly scene: Phaser.Scene;

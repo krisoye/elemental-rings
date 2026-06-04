@@ -16,8 +16,13 @@ import type { RingRow } from './PlayerRepo';
 /**
  * The mutable, insert-time shape of a ring: just the gameplay columns a caller
  * supplies when minting a ring. `id` and `owner_id` are supplied separately at
- * insert time; `parent_dominant` (fusion two-tone metadata) and `in_carry` are
- * handled by their own dedicated paths, so they are not part of this base shape.
+ * insert time; `parent_dominant` (fusion two-tone metadata) is handled by its
+ * own dedicated path.
+ *
+ * EPIC #378 — `inCarry` and `pending` are optional (default 0) to stay
+ * backward-compatible with starter / merchant ring paths that do not need them.
+ * `grantRing` and `transferRing` pass both as 1 to mint a WON ring directly
+ * into the carry with the pending flag set.
  */
 export interface RingRowInput {
   element: number;
@@ -26,23 +31,30 @@ export interface RingRowInput {
   maxUses: number;
   currentUses: number;
   escrowed: 0 | 1;
+  /** EPIC #378 — 1 to place this ring immediately in carry on insert. Default 0. */
+  inCarry?: 0 | 1;
+  /** EPIC #378 — 1 to mark this ring as the pending WON ring on insert. Default 0. */
+  pending?: 0 | 1;
 }
 
 /**
  * Factory for a ring-row literal. Returns a fresh copy so callers never share a
  * mutable object. Replaces the `{ element, tier, ... }` literals previously
  * spelled out verbatim at the starter-ring, grant, and merchant-buy sites.
+ *
+ * EPIC #378 — extended to accept `inCarry` and `pending` so `grantRing` and
+ * `transferRing` can mint WON rings directly into carry with the pending flag.
  */
 export function makeRing(input: RingRowInput): RingRowInput {
   return { ...input };
 }
 
-// Ring INSERT. Mirrors the columns the schema accepts for a base ring; escrowed
-// is written explicitly so the factory's value is honoured (the column DEFAULT
-// is 0, which RingRowInput defaults to at the call sites).
+// Ring INSERT. Mirrors the columns the schema accepts for a base ring; escrowed,
+// in_carry, and pending are written explicitly so the factory's values are
+// honoured (all columns DEFAULT to 0, which matches the call sites that omit them).
 const insertRingStmt = db.prepare(
-  `INSERT INTO rings (id, owner_id, element, tier, max_uses, current_uses, xp, escrowed)
-   VALUES (@id, @owner_id, @element, @tier, @max_uses, @current_uses, @xp, @escrowed)`,
+  `INSERT INTO rings (id, owner_id, element, tier, max_uses, current_uses, xp, escrowed, in_carry, pending)
+   VALUES (@id, @owner_id, @element, @tier, @max_uses, @current_uses, @xp, @escrowed, @in_carry, @pending)`,
 );
 
 // Single-ring read by id (no ownership filter — callers validate owner_id).
@@ -83,6 +95,8 @@ export function insertRing(playerId: string, ring: RingRowInput): string {
     current_uses: ring.currentUses,
     xp: ring.xp,
     escrowed: ring.escrowed,
+    in_carry: ring.inCarry ?? 0,
+    pending: ring.pending ?? 0,
   });
   return ringId;
 }

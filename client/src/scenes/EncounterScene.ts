@@ -103,8 +103,9 @@ export class EncounterScene extends Phaser.Scene {
   // Post-battle won-ring prompt (#40). Now fires here (not CampScene) because the
   // post-battle flow returns to EncounterScene — the player must resolve the won
   // ring before selecting another encounter.
+  // EPIC #378 — wonRingModal is kept for modal open/dismiss; wonRings is removed
+  // (the WON ring is now in carry already; we no longer build a dedicated modal).
   private wonRingModal: Phaser.GameObjects.Container | null = null;
-  private wonRings: RingData[] = [];
   // #244 — the player's battle-hand weighted-average ring XP, resolved from the
   // preview response (server-authoritative). Threaded into each vsAI room join so
   // the AI loadout scales to the rings the player brings. 0 until the preview
@@ -381,7 +382,8 @@ export class EncounterScene extends Phaser.Scene {
 
     // Post-battle won-ring prompt: if the just-finished duel granted a ring,
     // resolve it here before the player can pick another encounter (#40).
-    if (localStorage.getItem('er_pending_ring')) void this.checkPendingWonRing();
+    // EPIC #378 — pending state is now server-authoritative; always check /api/me.
+    void this.checkPendingWonRing();
 
     // After returning from a battle, automatically open the battle-hand manager
     // so the player can reassign slots before their next encounter (GDD §6.8).
@@ -664,177 +666,121 @@ export class EncounterScene extends Phaser.Scene {
   // ── Post-battle won-ring prompt (#40) ───────────────────────────────────────
 
   /**
-   * Fetch fresh inventory and open the won-ring prompt for the id stashed in
-   * er_pending_ring (set by connectToRoom on the server's `wonRing` message).
-   * If the ring is no longer in inventory (edge case), clear the flag and bail.
+   * EPIC #378 — Fetch fresh inventory and open the won-ring prompt if
+   * `pending_ring_id` is set on the server. The WON ring is already `in_carry=1`
+   * (spare overflow) — no explicit carry step is needed. The Manage Battle Hand
+   * overlay resolves the overflow (assign to slot, accept as spare, or discard).
+   *
+   * Old flow: read `er_pending_ring` localStorage key (fragile).
+   * New flow: read `pending_ring_id` from `/api/me` (server-authoritative).
    */
   private async checkPendingWonRing(): Promise<void> {
-    const ringId = localStorage.getItem('er_pending_ring');
-    if (!ringId || this.wonRingModal || this.battleHand.isOpen()) return;
+    if (this.wonRingModal || this.battleHand.isOpen()) return;
     if (!getToken()) return;
 
     let rings: RingData[];
-    let carryCap: number;
+    let pendingRingId: string | null;
+    let spareRingMax: number;
+    let spareCount: number;
     try {
-      const data = await fetchMe<{ player: { carry_cap?: number }; rings: RingData[] }>();
+      const data = await fetchMe<{
+        player: { carry_cap?: number; spare_ring_max?: number; pending_ring_id?: string | null };
+        rings: RingData[];
+      }>();
       rings = data.rings;
-      carryCap = data.player.carry_cap ?? 10;
+      pendingRingId = data.player.pending_ring_id ?? null;
+      spareRingMax = data.player.spare_ring_max ?? 9;
+      // Spare count: in_carry=1 rings not in any loadout slot. Use the full ring
+      // list since we do not fetch the loadout here — approximate with carried count.
+      // The Manage Hand overlay fetches its own fresh /api/me, so the exact count
+      // is irrelevant for the banner message here.
+      spareCount = rings.filter((r) => r.in_carry === 1).length;
     } catch {
       return;
     }
 
+    if (!pendingRingId) return; // no pending WON ring
+
+    const ringId = pendingRingId;
     if (!rings.some((r) => r.id === ringId)) {
-      // Ring not in our inventory (shouldn't happen) — clear and bail.
-      localStorage.removeItem('er_pending_ring');
+      // Ring not in our inventory (edge case: already resolved). No-op.
       return;
     }
 
-    const carriedCount = rings.filter((r) => r.in_carry === 1).length;
-    if (carriedCount >= carryCap) {
-      // Carry is full — skip the modal and route straight to Manage Battle Hand,
-      // which renders the pending won ring and lets the player discard a carried
-      // ring to make room (then auto-carries the pending ring). #110 — the jump
-      // to the Manage screen is otherwise unexplained, so flash a banner naming
-      // the reason (carry full) and the required action (discard to make room).
-      const wonRing = rings.find((r) => r.id === ringId);
-      const wonRingEl = wonRing ? (ELEMENT_NAMES[wonRing.element] ?? '?') : 'won';
-      const notice = this.add
-        .text(
-          CANVAS_W / 2,
-          80,
-          `Carry full (${carriedCount}/${carryCap}) — discard a ring to make room for your ${wonRingEl} ring`,
-          {
-            fontSize: '15px',
-            color: '#ffcc44',
-            backgroundColor: '#000000bb',
-            padding: { x: 10, y: 6 },
-            align: 'center',
-            wordWrap: { width: CANVAS_W - 40 },
-          },
-        )
-        .setOrigin(0.5)
-        .setScrollFactor(0)
-        .setDepth(3000);
-      this.tweens.add({
-        targets: notice,
-        alpha: 0,
-        delay: 3000,
-        duration: 500,
-        onComplete: () => notice.destroy(),
-      });
-      void this.openManageBattleHand();
-      return;
-    }
-
-    // Carry has room — simple Carry / Discard modal.
-    this.showWonRingModal(ringId, rings);
-  }
-
-  /**
-   * Render the won-ring modal (room case only). Carry is known to have room when
-   * this is called — the full-carry path routes to Manage Battle Hand instead.
-   * Options: "Carry it" (add to loadout) or "Discard".
-   */
-  private showWonRingModal(ringId: string, rings: RingData[]): void {
-    const ring = rings.find((r) => r.id === ringId);
-    if (!ring) {
-      localStorage.removeItem('er_pending_ring');
-      return;
-    }
-    this.wonRings = rings;
-
-    const elementName = ELEMENT_NAMES[ring.element] ?? '?';
-
-    const container = this.add.container(0, 0).setDepth(2000);
-    const overlay = this.add
-      .rectangle(CANVAS_W / 2, 288, CANVAS_W, 576, 0x000000, 0.7)
-      .setInteractive();
-    const panel = this.add
-      .rectangle(CANVAS_W / 2, 288, 460, 200, 0x222233)
-      .setStrokeStyle(2, 0xffcc44);
-    const title = this.add
-      .text(CANVAS_W / 2, 230, `You won a ${elementName} ring!`, {
-        fontSize: '18px',
-        color: '#ffffff',
-      })
-      .setOrigin(0.5);
-    container.add([overlay, panel, title]);
-
-    container.add(
-      this.wonModalButton(CANVAS_W / 2, 290, '[Carry it]', '#aaffaa', () =>
-        void this.resolveWonRing('carry'),
-      ),
-    );
-    container.add(
-      this.wonModalButton(CANVAS_W / 2, 330, '[Discard]', '#ff8888', () =>
-        void this.resolveWonRing('discard'),
-      ),
-    );
-
-    this.wonRingModal = container;
-    if (window.__encounterState) {
-      window.__encounterState.pendingWonRing = { ringId, element: ring.element };
-    }
-  }
-
-  private wonModalButton(
-    x: number,
-    y: number,
-    label: string,
-    color: string,
-    onClick: () => void,
-  ): Phaser.GameObjects.Text {
-    return this.add
-      .text(x, y, label, { fontSize: '14px', color })
+    // EPIC #378 — the WON ring is already in_carry=1 (spare overflow). The Manage
+    // Battle Hand overlay is the resolution surface. Route there with a banner
+    // naming the won ring and instructing the player to resolve the overflow.
+    const wonRing = rings.find((r) => r.id === ringId);
+    const wonRingEl = wonRing ? (ELEMENT_NAMES[wonRing.element] ?? '?') : 'won';
+    const notice = this.add
+      .text(
+        CANVAS_W / 2,
+        80,
+        spareCount > spareRingMax
+          ? `You won a ${wonRingEl} ring! Spare grid full — discard a ring to make room`
+          : `You won a ${wonRingEl} ring! Manage your rings to resolve it`,
+        {
+          fontSize: '15px',
+          color: '#ffcc44',
+          backgroundColor: '#000000bb',
+          padding: { x: 10, y: 6 },
+          align: 'center',
+          wordWrap: { width: CANVAS_W - 40 },
+        },
+      )
       .setOrigin(0.5)
-      .setInteractive({ useHandCursor: true })
-      .on('pointerdown', onClick);
+      .setScrollFactor(0)
+      .setDepth(3000);
+    this.tweens.add({
+      targets: notice,
+      alpha: 0,
+      delay: 3000,
+      duration: 500,
+      onComplete: () => notice.destroy(),
+    });
+    if (window.__encounterState) {
+      window.__encounterState.pendingWonRing = { ringId, element: wonRing?.element ?? 0 };
+    }
+    void this.openManageBattleHand();
   }
 
   /**
-   * Resolve the won-ring prompt. Always clears er_pending_ring afterward.
-   *   - carry:   add the won ring to the carried loadout.
-   *   - discard: permanently delete the won ring.
+   * EPIC #378 — resolve the won-ring prompt via the server-authoritative pending
+   * ring id. The WON ring is already `in_carry=1`:
+   *  - 'carry' (accept as spare): PUT /api/rings/:id/accept — clears `pending` on
+   *    the server. Only succeeds when spare ≤ spare_ring_max.
+   *  - 'discard': DELETE /api/rings/:id — server clears `pending` via discardRing.
+   *
+   * Exposed on `window.__encounterResolveWonRing` for E2E tests.
    */
   private async resolveWonRing(choice: 'carry' | 'discard'): Promise<void> {
-    const ringId = localStorage.getItem('er_pending_ring');
+    if (!getToken()) return;
+    let ringId: string | null;
+    try {
+      const data = await fetchMe<{ player: { pending_ring_id?: string | null } }>();
+      ringId = data.player.pending_ring_id ?? null;
+    } catch {
+      return;
+    }
     if (!ringId) {
       this.dismissWonModal();
       return;
     }
 
-    if (choice === 'discard') {
-      await this.discardWonRing(ringId);
-    } else {
-      // carry: add the won ring to the current carried set.
-      const carried = new Set(this.wonRings.filter((r) => r.in_carry === 1).map((r) => r.id));
-      carried.add(ringId);
-      await this.putCarry(Array.from(carried));
+    try {
+      if (choice === 'discard') {
+        await apiFetch(`/api/rings/${ringId}`, { method: 'DELETE' });
+      } else {
+        // 'carry': accept the WON ring as a regular spare (clears pending server-side).
+        await apiFetch(`/api/rings/${ringId}/accept`, { method: 'PUT' });
+      }
+    } catch {
+      this.statusText.setText('Network error during ring resolution');
+      return;
     }
 
-    localStorage.removeItem('er_pending_ring');
     if (window.__encounterState) window.__encounterState.pendingWonRing = null;
     this.dismissWonModal();
-  }
-
-  /** PUT /api/carry with the full carried set. */
-  private async putCarry(ringIds: string[]): Promise<void> {
-    if (!getToken()) return;
-    try {
-      await apiFetch('/api/carry', { method: 'PUT', json: { ringIds } });
-    } catch {
-      this.statusText.setText('Network error during carry update');
-    }
-  }
-
-  /** DELETE /api/rings/:id — permanently discard a won ring. */
-  private async discardWonRing(ringId: string): Promise<void> {
-    if (!getToken()) return;
-    try {
-      await apiFetch(`/api/rings/${ringId}`, { method: 'DELETE' });
-    } catch {
-      this.statusText.setText('Network error during discard');
-    }
   }
 
   private dismissWonModal(): void {

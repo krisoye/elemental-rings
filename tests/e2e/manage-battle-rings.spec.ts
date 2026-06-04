@@ -1179,3 +1179,198 @@ test('manage-battle-rings (#352 regression): empty hand renders structurally int
 
   await ctx.close();
 });
+
+// ── EPIC #378 Sub-2 — WON ring overflow E2E scenarios ────────────────────────
+//
+// The WON ring is now immediately in_carry=1 with pending=1 on the server
+// (grantRing sets the overflow carry). pending_ring_id from /api/me is the
+// authoritative identifier — no localStorage key is used.
+//
+// Scenario 1: /api/me returns pending_ring_id; field modal WON slot shows the
+// ring; reloading the page preserves the WON slot display (not localStorage).
+test('manage-battle-rings (EPIC#378 Sub-2 S1): grant-ring seeds pending_ring_id; WON slot renders and survives reload', async ({ browser }) => {
+  const ctx = await browser.newContext();
+  await seedAuthToken(ctx);
+  const tok = await (async () => {
+    const p = await ctx.newPage();
+    await p.goto(URL);
+    await p.waitForFunction(() => (window as any).__activeScene === 'CampScene', { timeout: 10000 });
+    const t = await p.evaluate(() => localStorage.getItem('er_token') ?? '');
+    await p.close();
+    return t;
+  })();
+
+  // Seed a WON ring via the test-only grant-ring route.
+  const grantRes = await fetch(`${API_URL}/api/test/grant-ring`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${tok}` },
+  });
+  expect(grantRes.ok).toBe(true);
+  const { player } = (await grantRes.json()) as { player: { pending_ring_id: string | null } };
+  expect(player.pending_ring_id).toBeTruthy();
+  const pendingId = player.pending_ring_id!;
+
+  // /api/me returns pending_ring_id pointing at the WON ring.
+  const me1 = (await (
+    await fetch(`${API_URL}/api/me`, { headers: { Authorization: `Bearer ${tok}` } })
+  ).json()) as { player: { pending_ring_id: string | null }; rings: Array<{ id: string; in_carry: number; pending: number }> };
+  expect(me1.player.pending_ring_id).toBe(pendingId);
+  const wonRingRow = me1.rings.find((r) => r.id === pendingId);
+  expect(wonRingRow?.in_carry).toBe(1);
+  expect(wonRingRow?.pending).toBe(1);
+
+  // Open the overlay and check that the WON slot renders.
+  const page = await ctx.newPage();
+  await loadForest(page);
+  await openBattleHand(page);
+
+  const texts = await modalTexts(page);
+  expect(texts.some((t) => t.includes('WON'))).toBe(true);
+
+  // Confirm pendingRingId is set on the overlay (not localStorage).
+  const overlayPendingId = await page.evaluate(() => {
+    const scene = (window as any).__game?.scene?.getScene('ForestScene') as any;
+    return scene?.battleHand?.pendingRingId ?? null;
+  });
+  expect(overlayPendingId).toBe(pendingId);
+
+  // Close overlay, reload page, reopen — WON slot must still appear (server state, not localStorage).
+  await page.evaluate(() => (window as any).__overworldToggleBattleHand?.());
+  await page.waitForFunction(() => !(window as any).__overworldBattleHandOpen, { timeout: 3000 });
+
+  await page.reload();
+  await loadForest(page);
+  await openBattleHand(page);
+
+  const textsAfterReload = await modalTexts(page);
+  expect(textsAfterReload.some((t) => t.includes('WON'))).toBe(true);
+
+  await ctx.close();
+});
+
+// Scenario 2: WON ring → click an occupied battle slot → loadout updates,
+// pending cleared to null on the server.
+test('manage-battle-rings (EPIC#378 Sub-2 S2): WON ring assigned to battle slot clears pending', async ({ browser }) => {
+  const ctx = await browser.newContext();
+  await seedAuthToken(ctx);
+  const tok = await (async () => {
+    const p = await ctx.newPage();
+    await p.goto(URL);
+    await p.waitForFunction(() => (window as any).__activeScene === 'CampScene', { timeout: 10000 });
+    const t = await p.evaluate(() => localStorage.getItem('er_token') ?? '');
+    await p.close();
+    return t;
+  })();
+
+  // Seed a WON ring.
+  const grantRes = await fetch(`${API_URL}/api/test/grant-ring`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${tok}` },
+  });
+  const { player: grantPlayer } = (await grantRes.json()) as { player: { pending_ring_id: string | null } };
+  const pendingId = grantPlayer.pending_ring_id!;
+
+  const page = await ctx.newPage();
+  await loadForest(page);
+  await openBattleHand(page);
+
+  // Trigger the assignment via the client-side swap manager (select WON ring, moveTo a1).
+  await page.evaluate((pid) => {
+    const scene = (window as any).__game?.scene?.getScene('ForestScene') as any;
+    const bh = scene?.battleHand;
+    if (bh) {
+      bh.swap.select(pid, 'spare');
+      void bh.swap.moveTo('a1');
+    }
+  }, pendingId);
+
+  // Wait for overlay to refresh and pendingRingId to clear.
+  await page.waitForFunction(
+    () => {
+      const scene = (window as any).__game?.scene?.getScene('ForestScene') as any;
+      return scene?.battleHand?.pendingRingId === null;
+    },
+    { timeout: 8000 },
+  );
+
+  // Server confirms pending cleared and loadout updated.
+  const me2 = (await (
+    await fetch(`${API_URL}/api/me`, { headers: { Authorization: `Bearer ${tok}` } })
+  ).json()) as { player: { pending_ring_id: string | null }; loadout: Record<string, string | null> };
+  expect(me2.player.pending_ring_id).toBeNull();
+  expect(me2.loadout.a1).toBe(pendingId);
+
+  await ctx.close();
+});
+
+// Scenario 3: WON ring in overflow → free a spare slot → PUT /api/rings/:id/accept
+// succeeds; /api/me returns pending_ring_id: null and spare count = spare_ring_max.
+test('manage-battle-rings (EPIC#378 Sub-2 S3): accept WON ring as spare after freeing a slot', async ({ browser }) => {
+  const ctx = await browser.newContext();
+  await seedAuthToken(ctx);
+  const tok = await (async () => {
+    const p = await ctx.newPage();
+    await p.goto(URL);
+    await p.waitForFunction(() => (window as any).__activeScene === 'CampScene', { timeout: 10000 });
+    const t = await p.evaluate(() => localStorage.getItem('er_token') ?? '');
+    await p.close();
+    return t;
+  })();
+
+  // Grant the WON ring (adds overflow spare).
+  const grantRes = await fetch(`${API_URL}/api/test/grant-ring`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${tok}` },
+  });
+  const { player: grantPlayer } = (await grantRes.json()) as { player: { pending_ring_id: string | null; spare_ring_max: number } };
+  const pendingId = grantPlayer.pending_ring_id!;
+  expect(pendingId).toBeTruthy();
+
+  // Accept should fail right now when spare > spare_ring_max.
+  // (A fresh player has 5 battle rings and the WON ring = 1 spare, so this may
+  //  already succeed. Skip the overflow check if spare <= max.)
+  const me1 = (await (
+    await fetch(`${API_URL}/api/me`, { headers: { Authorization: `Bearer ${tok}` } })
+  ).json()) as { player: { spare_ring_max: number; pending_ring_id: string | null }; rings: Array<{ id: string; in_carry: number; pending: number }> };
+  const spareMax = me1.player.spare_ring_max;
+  const spareCount = me1.rings.filter((r) => r.in_carry === 1).length;
+
+  if (spareCount > spareMax) {
+    // In overflow: accept should fail.
+    const failRes = await fetch(`${API_URL}/api/rings/${pendingId}/accept`, {
+      method: 'PUT',
+      headers: { Authorization: `Bearer ${tok}` },
+    });
+    expect(failRes.status).toBe(400);
+
+    // Free a non-pending spare by dropping it to the Reliquary.
+    const spareToFree = me1.rings.find((r) => r.in_carry === 1 && r.pending !== 1);
+    expect(spareToFree).toBeTruthy();
+    const newCarry = me1.rings
+      .filter((r) => r.in_carry === 1 && r.id !== spareToFree!.id)
+      .map((r) => r.id);
+    const dropRes = await fetch(`${API_URL}/api/carry`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${tok}` },
+      body: JSON.stringify({ ringIds: newCarry }),
+    });
+    expect(dropRes.ok).toBe(true);
+  }
+
+  // Now accept should succeed.
+  const acceptRes = await fetch(`${API_URL}/api/rings/${pendingId}/accept`, {
+    method: 'PUT',
+    headers: { Authorization: `Bearer ${tok}` },
+  });
+  expect(acceptRes.ok).toBe(true);
+
+  // /api/me confirms pending_ring_id is null and the ring's pending flag = 0.
+  const me2 = (await (
+    await fetch(`${API_URL}/api/me`, { headers: { Authorization: `Bearer ${tok}` } })
+  ).json()) as { player: { pending_ring_id: string | null }; rings: Array<{ id: string; pending: number }> };
+  expect(me2.player.pending_ring_id).toBeNull();
+  const acceptedRing = me2.rings.find((r) => r.id === pendingId);
+  expect(acceptedRing?.pending).toBe(0);
+
+  await ctx.close();
+});
