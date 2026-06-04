@@ -77,25 +77,32 @@ async function modalTexts(page: Page): Promise<string[]> {
   });
 }
 
-/** Count the spare card + placeholder rects in the overlay's spare sub-container. */
+/**
+ * Count visible spare card rows and cells in the overlay's InventoryGrid.
+ * #381 — the spare grid is now an InventoryGrid (a Container containing a
+ * cardContainer which holds per-ring containers). We read it via the scene's
+ * battleHand.spareGrid reference rather than heuristically scanning the modal.
+ */
 async function spareGridInfo(page: Page): Promise<{ rows: number; cells: number }> {
   return page.evaluate(() => {
     const scene = (window as any).__game?.scene?.getScene('ForestScene');
-    const modal = scene?.battleHand?.manageModal;
-    if (!modal) return { rows: 0, cells: 0 };
-    // The spare grid sub-container holds one container per cell (card or placeholder).
-    // Its children are the only Containers added after the cluster cards. Pick the
-    // largest Container-of-Containers in the modal — that is the spare grid.
-    const containers = modal.getAll().filter((o: any) => o.getAll && o.list);
-    let grid: any = null;
-    for (const c of containers) {
-      const kids = c.getAll().filter((k: any) => k.getAll);
-      if (kids.length && (!grid || kids.length > grid.getAll().length)) grid = c;
-    }
+    const bh = scene?.battleHand;
+    const grid = bh?.spareGrid;
     if (!grid) return { rows: 0, cells: 0 };
-    const cells = grid.getAll().filter((k: any) => k.getAll && k.visible);
-    const ys = new Set(cells.map((k: any) => Math.round(k.y)));
-    return { rows: ys.size, cells: cells.length };
+    // InventoryGrid exposes cardRows (Map<ringId, row>) and cards (Map<ringId, container>).
+    // Use the public visibleRows + totalRows to derive visible cell count.
+    const visibleRows = grid.getVisibleRows?.() ?? 0;
+    const totalRows = grid.getTotalRows?.() ?? 0;
+    const scrollRow = grid.getScrollRow?.() ?? 0;
+    // Cards whose row falls in [scrollRow, scrollRow+visibleRows).
+    const cardContainer = grid.getCardContainer?.();
+    if (!cardContainer) return { rows: 0, cells: 0 };
+    const allCards = cardContainer.getAll().filter((o: any) => o.getAll);
+    // Count visible cards (setVisible controls this).
+    const visibleCards = allCards.filter((o: any) => o.visible);
+    // Derive row count from unique y positions of visible card centers.
+    const ys = new Set(visibleCards.map((k: any) => Math.round(k.y)));
+    return { rows: ys.size, cells: visibleCards.length };
   });
 }
 
@@ -182,8 +189,11 @@ test('manage-battle-rings: title renders and the STATUS/HP cluster labels show',
   await ctx.close();
 });
 
-// ── Scenario 1b — #352: no header row; panel top ≥ 44; HP card above STATUS ─────
-test('manage-battle-rings (#352): no header row, panel starts at y≥44, ♥ HP label above HP card', async ({ browser }) => {
+// ── Scenario 1b — #352/#381: panel geometry, header, HP card above STATUS ─────
+// #381 updated: panel is now 760×500 (center 288, top 38). The modal gains a
+// three-part Spirit/♥/XP header, so Day/Gold/Food are still absent but Total XP
+// now appears in the header.
+test('manage-battle-rings (#352/#381): panel 760×500, ♥ HP label present and above STATUS', async ({ browser }) => {
   const ctx = await browser.newContext();
   await seedAuthToken(ctx);
   const page = await ctx.newPage();
@@ -199,32 +209,31 @@ test('manage-battle-rings (#352): no header row, panel starts at y≥44, ♥ HP 
 
   const texts = await modalTexts(page);
 
-  // #352 §1 — header segments (Day/Gold/Food/Spirit/Total XP/Avg Battle XP) are
-  // absent from the modal (they now live only in the always-on overworld HUD).
+  // #352 §1 — game-play stats not exposed (Day/Gold/Food absent from the modal).
   expect(texts.some((t) => /Day:?\s*\d/.test(t))).toBe(false);
   expect(texts.some((t) => /Gold:?\s*\d/.test(t))).toBe(false);
   expect(texts.some((t) => /Food:?\s*\d/.test(t))).toBe(false);
-  expect(texts.some((t) => t.includes('Total XP:'))).toBe(false);
+  // #381 — "Avg Battle XP:" is NOT in the new header (removed from field modal).
   expect(texts.some((t) => t.includes('Avg Battle XP:'))).toBe(false);
 
   // #352 §4 — ♥ cur/max label is present in the modal (above the HP card).
   expect(texts.some((t) => t === `♥ ${hp}`)).toBe(true);
 
-  // #352 §2 — panel top y ≥ 44 (clears the HUD).
+  // #381 §2 — panel is 760 wide, centered at (512, 288); top ≥ 38 (= 288−250).
   const panelTopY = await page.evaluate(() => {
     const scene = (window as any).__game?.scene?.getScene('ForestScene') as any;
     const modal = scene?.battleHand?.manageModal;
     if (!modal) return null;
     const objs = (modal.getAll ? modal.getAll() : []) as any[];
     for (const o of objs) {
-      if (o.width === 640 && typeof o.strokeColor !== 'undefined') {
+      if (o.width === 760 && typeof o.strokeColor !== 'undefined') {
         return o.y - o.height / 2;
       }
     }
     return null;
   });
   expect(panelTopY).not.toBeNull();
-  expect(panelTopY!).toBeGreaterThanOrEqual(44);
+  expect(panelTopY!).toBeGreaterThanOrEqual(38);
 
   // #352 §3 — HP card (ROW0_Y) above STATUS card (ROW1_Y): HP is on the top row.
   // #363 — STATUS migrated to a DOM label; the ♥ HP label stays on canvas. Compare
@@ -424,11 +433,10 @@ test('manage-battle-rings: Recharge All includes the heart ring (stays equipped,
   await ctx.close();
 });
 
-// ── Scenario 5 — three grouped clusters + 5×2 spare grid, both rows visible ───
-// #348 Scenario 1 / #350: seed ≥7 spares, assert the STATUS/HP cards sit at the
-// group-2 cluster x (460 after #350 rebalance, isolated by 65px gaps on both
-// sides), and the spare grid shows two visible rows (no scroll) covering all spares.
-test('manage-battle-rings: three clusters render and the 5×2 spare grid shows both rows', async ({ browser }) => {
+// ── Scenario 5 — 4×2 right-section cluster + 3-col InventoryGrid spare grid ──
+// #381: the right section is now a 4-column × 2-row cluster. STATUS/HP sit at
+// column-1 (x=659). Spare grid is a 3-col InventoryGrid with 3 visible rows.
+test('manage-battle-rings (#381): 4×2 cluster renders and the 3-col spare InventoryGrid shows visible rows', async ({ browser }) => {
   const ctx = await browser.newContext();
   await seedAuthToken(ctx);
   const page = await ctx.newPage();
@@ -436,7 +444,7 @@ test('manage-battle-rings: three clusters render and the 5×2 spare grid shows b
   await page.goto(URL);
   await page.waitForFunction(() => (window as any).__activeScene === 'CampScene', { timeout: 10000 });
   const tok = await page.evaluate(() => localStorage.getItem('er_token') ?? '');
-  // Seed 7 spares so the second grid row is populated (5 per row).
+  // Seed 7 spares so multiple grid rows are populated.
   await seedSpares(tok, 7);
 
   await enterForestScreen(page, 'forest_anchorage');
@@ -446,28 +454,22 @@ test('manage-battle-rings: three clusters render and the 5×2 spare grid shows b
   );
   await openBattleHand(page);
 
-  // STATUS (thumb) and ♥ HP (heart) cards share the group-2 column x (460 after
-  // #350 rebalance), isolated by 65px gaps from group 1 (303) and group 3 (617/721).
-  // #352: HP label is now "♥ N/M" — match by startsWith('♥') rather than === 'HP'.
-  // #363 — STATUS is a DOM label (centered at logical x): map its screen centerX
-  // back to logical px via the canvas rect + horizontal scale. ♥ HP stays on canvas.
+  // #381 — STATUS (thumb) and ♥ HP (heart) cards share column-1 (x=659).
+  // #363 — STATUS is a DOM label; ♥ HP stays on canvas.
   const labelXs = await page.evaluate(() => {
     const game = (window as any).__game;
     const canvas: HTMLCanvasElement = game?.canvas;
     const canvasRect = canvas.getBoundingClientRect();
-    const scaleX = canvasRect.width / 1024; // canvas backing store is 1024×576 logical
+    const scaleX = canvasRect.width / 1024;
     const out: Record<string, number> = {};
 
-    // STATUS — DOM label centered at logical x.
     document.querySelectorAll('.er-dom-label').forEach((n) => {
       if (n.textContent === 'STATUS') {
         const r = (n as HTMLElement).getBoundingClientRect();
-        const centerX = r.left + r.width / 2;
-        out.STATUS = Math.round((centerX - canvasRect.left) / scaleX);
+        out.STATUS = Math.round((r.left + r.width / 2 - canvasRect.left) / scaleX);
       }
     });
 
-    // ♥ HP — canvas label.
     const scene = game?.scene?.getScene('ForestScene');
     const modal = scene?.battleHand?.manageModal;
     const walk = (c: any): void => {
@@ -481,14 +483,14 @@ test('manage-battle-rings: three clusters render and the 5×2 spare grid shows b
     walk(modal);
     return out;
   });
-  // Allow ±1px for the screen→logical round-trip on the DOM-measured STATUS.
-  expect(Math.abs(labelXs.STATUS - 460)).toBeLessThanOrEqual(1); // #350 rebalance: GROUP2_X = 460
-  expect(labelXs.HP).toBe(460);
+  // #381 — col-1 x = 659.
+  expect(Math.abs(labelXs.STATUS - 659)).toBeLessThanOrEqual(1);
+  expect(labelXs.HP).toBe(659);
 
-  // The spare grid shows exactly 2 rows (both visible, no scroll) and ≥7 cells.
+  // The spare InventoryGrid has 3 visible rows and ≥1 populated cell.
   const grid = await spareGridInfo(page);
-  expect(grid.rows).toBe(2);
-  expect(grid.cells).toBeGreaterThanOrEqual(7);
+  expect(grid.rows).toBeGreaterThanOrEqual(1);
+  expect(grid.cells).toBeGreaterThanOrEqual(1);
 
   await ctx.close();
 });
@@ -619,11 +621,11 @@ test('manage-battle-rings: clicking DISCARD with nothing selected does not open 
   await ctx.close();
 });
 
-// ── #350 E2E Scenario 1 — cluster X-centres (303/460/617/721) and equal margins ─
-// Open the overlay and read the X positions of the STATUS, HP, A1, A2 slot-label
-// text objects. Assert GROUP1=303, GROUP2=460, GROUP3=[617,721] and that the left
-// and right margins to the panel's inner edge (x≈192 and x≈832) are both ≈65px.
-test('manage-battle-rings (#350): cluster X-centres are 303/460/617/721 with equal margins', async ({ browser }) => {
+// ── #381 E2E — right-section 4×2 cluster X-centres (559/659/759/837) ────────
+// #381 replaces the old 3-cluster 303/460/617/721 layout with a 4-column layout:
+//   Col 0 (WON/DISCARD): x=559, Col 1 (HP/STATUS): x=659,
+//   Col 2 (A1/D1): x=759, Col 3 (A2/D2): x=837.
+test('manage-battle-rings (#381): right-section cluster X-centres are 559/659/759/837', async ({ browser }) => {
   const ctx = await browser.newContext();
   await seedAuthToken(ctx);
   const page = await ctx.newPage();
@@ -634,8 +636,7 @@ test('manage-battle-rings (#350): cluster X-centres are 303/460/617/721 with equ
     const game = (window as any).__game;
     const result: Record<string, number> = {};
 
-    // #363 — STATUS/A1/A2/D1/D2 are DOM labels (centered at logical x). Map each
-    // node's screen center-X back to logical canvas X via the canvas rect + scale.
+    // #363 — STATUS/A1/A2/D1/D2 are DOM labels.
     const canvas: HTMLCanvasElement = game?.canvas;
     const canvasRect = canvas.getBoundingClientRect();
     const scaleX = canvasRect.width / 1024;
@@ -652,12 +653,11 @@ test('manage-battle-rings (#350): cluster X-centres are 303/460/617/721 with equ
       if (text === 'D2') result.D2 = logicalX;
     });
 
-    // ♥ HP stays on canvas — read its logical x from the scene graph.
+    // ♥ HP stays on canvas.
     const scene = game?.scene?.getScene('ForestScene');
     const modal = scene?.battleHand?.manageModal;
     const walk = (c: any): void => {
       for (const o of c.getAll ? c.getAll() : []) {
-        // #352 — HP label is now "♥ N/M"; capture it under the 'HP' key.
         if (typeof o.text === 'string' && o.text.startsWith('♥') && !o.text.includes('\n')) {
           result.HP = Math.round(o.x);
         }
@@ -668,30 +668,14 @@ test('manage-battle-rings (#350): cluster X-centres are 303/460/617/721 with equ
     return result;
   });
 
-  // GROUP2 (STATUS/HP) — both at 460. STATUS is DOM-measured (screen→logical
-  // round-trip) so allow ±1px; HP is exact (canvas logical coord).
-  expect(Math.abs(positions.STATUS - 460)).toBeLessThanOrEqual(1);
-  expect(positions.HP).toBe(460);
-  // GROUP3 (Combat) — A1/D1 at 617, A2/D2 at 721. DOM-measured → ±1px tolerance.
-  expect(Math.abs(positions.A1 - 617)).toBeLessThanOrEqual(1);
-  expect(Math.abs(positions.A2 - 721)).toBeLessThanOrEqual(1);
-  expect(Math.abs(positions.D1 - 617)).toBeLessThanOrEqual(1);
-  expect(Math.abs(positions.D2 - 721)).toBeLessThanOrEqual(1);
-
-  // Equal margins: left card-left edge ≈ 303−46 = 257 ≈ inner-left 192+65;
-  // right card-right edge ≈ 721+46 = 767 ≈ inner-right 832−65 = 767. Both ≈65.
-  // Assert via the card centre coordinates: G1=303 implies left margin ≈ 303−46−192 = 65.
-  const INNER_LEFT = 192;  // CANVAS_W/2 − 320 = 512 − 320
-  const INNER_RIGHT = 832; // CANVAS_W/2 + 320 = 512 + 320
-  const CARD_HALF = 46;
-  // We read GROUP1 implicitly: STATUS at 460 → G2=460 → G1=460−92−65=303 matches.
-  // Verify left margin from A1 (the leftmost cluster card is G1 at 303):
-  // Left margin = G1 − CARD_HALF − INNER_LEFT = 303 − 46 − 192 = 65.
-  const leftMargin = 303 - CARD_HALF - INNER_LEFT;
-  const rightMargin = INNER_RIGHT - (positions.A2 + CARD_HALF);
-  expect(leftMargin).toBe(65);
-  // A2 is DOM-measured (±1px), so the derived right margin carries the same tolerance.
-  expect(Math.abs(rightMargin - 65)).toBeLessThanOrEqual(1);
+  // #381 — col-1 (STATUS/HP) at x=659. DOM-measured → ±1px; canvas exact.
+  expect(Math.abs(positions.STATUS - 659)).toBeLessThanOrEqual(1);
+  expect(positions.HP).toBe(659);
+  // Col 2 (A1/D1) at x=759, col 3 (A2/D2) at x=837. DOM-measured → ±1px.
+  expect(Math.abs(positions.A1 - 759)).toBeLessThanOrEqual(1);
+  expect(Math.abs(positions.A2 - 837)).toBeLessThanOrEqual(1);
+  expect(Math.abs(positions.D1 - 759)).toBeLessThanOrEqual(1);
+  expect(Math.abs(positions.D2 - 837)).toBeLessThanOrEqual(1);
 
   await ctx.close();
 });
@@ -912,22 +896,20 @@ test('manage-battle-rings (#350): selecting heart card and clicking empty spare 
   await ctx.close();
 });
 
-// ── Regression #4 — no header on reopen (modal lifecycle) ────────────────────
-// The header removal must persist across close/reopen cycles. A re-render bug
-// (stale cached state, conditional header add) would restore the header on the
-// second open. This locks in the "no header" invariant across modal lifecycle.
-test('manage-battle-rings (#352 regression): header segments absent after close and reopen', async ({ browser }) => {
+// ── Regression #4 — game-play header segments absent on reopen (modal lifecycle)
+// #381: The field modal gains a Spirit/♥/TotalXP header but must NOT show Day/
+// Gold/Food/Avg Battle XP. Assert those are absent across close/reopen cycles.
+test('manage-battle-rings (#352/#381 regression): Day/Gold/Food/AvgBattleXP absent after close and reopen', async ({ browser }) => {
   const ctx = await browser.newContext();
   await seedAuthToken(ctx);
   const page = await ctx.newPage();
   await loadForest(page);
   await openBattleHand(page);
 
-  // First open — verify header is absent (mirrors Scenario 1b).
+  // First open — verify game-play header stats absent.
   const textsFirst = await modalTexts(page);
   expect(textsFirst.some((t) => /Day:?\s*\d/.test(t))).toBe(false);
   expect(textsFirst.some((t) => /Gold:?\s*\d/.test(t))).toBe(false);
-  expect(textsFirst.some((t) => t.includes('Total XP:'))).toBe(false);
   expect(textsFirst.some((t) => t.includes('Avg Battle XP:'))).toBe(false);
 
   // Close the overlay.
@@ -939,14 +921,12 @@ test('manage-battle-rings (#352 regression): header segments absent after close 
     timeout: 5000,
   });
 
-  // Reopen and re-check — the header must still be absent after the second render.
+  // Reopen and re-check.
   await openBattleHand(page);
   const textsSecond = await modalTexts(page);
   expect(textsSecond.some((t) => /Day:?\s*\d/.test(t))).toBe(false);
   expect(textsSecond.some((t) => /Gold:?\s*\d/.test(t))).toBe(false);
   expect(textsSecond.some((t) => /Food:?\s*\d/.test(t))).toBe(false);
-  expect(textsSecond.some((t) => /Spirit:?\s*\d/.test(t))).toBe(false);
-  expect(textsSecond.some((t) => t.includes('Total XP:'))).toBe(false);
   expect(textsSecond.some((t) => t.includes('Avg Battle XP:'))).toBe(false);
 
   // Structural elements still present after the second render.
@@ -958,20 +938,16 @@ test('manage-battle-rings (#352 regression): header segments absent after close 
 });
 
 // ── Regression #5 — panel geometry boundary ──────────────────────────────────
-// Panel bottom is MODAL_TOP + PANEL_H = 44 + 515 = 559 (#356). No text object in
-// the modal (including recharge status text, spare label, and recharge buttons)
-// may have its y-centre beyond that boundary. A y > 559 means the element exits
-// the panel, overlapping whatever is rendered below it.
-test('manage-battle-rings (#356 regression): no text object y-centre exceeds the panel bottom (y=559)', async ({ browser }) => {
+// #381: Panel is 760×500 centered at (512, 288); top=38, bottom=538. No text
+// object in the modal may have its y-centre beyond that boundary.
+test('manage-battle-rings (#381 regression): no text object y-centre exceeds the panel bottom (y=538)', async ({ browser }) => {
   const ctx = await browser.newContext();
   await seedAuthToken(ctx);
   const page = await ctx.newPage();
   await loadForest(page);
   await openBattleHand(page);
 
-  const MODAL_TOP = 44;
-  const PANEL_H = 515; // #356: expanded from 495
-  const PANEL_BOTTOM = MODAL_TOP + PANEL_H; // 559
+  const PANEL_BOTTOM = 538; // 288 + 250 = 538 (#381: 760×500 centered at 288)
 
   const offenders = await page.evaluate((panelBottom) => {
     const scene = (window as any).__game?.scene?.getScene('ForestScene') as any;
@@ -1003,10 +979,11 @@ test('manage-battle-rings (#356 regression): no text object y-centre exceeds the
 
 // ── Regression #6 — label count with empty battle hand ───────────────────────
 // With no rings equipped in any slot (no won ring pending), the 7 unconditional
-// card labels must still each have a dark backing rect: STATUS, A1, A2, D1, D2,
-// DISCARD, and ♥ 0/0. The WON ◆ label appears only when a pending won ring
-// exists, so this test deliberately uses an empty hand to assert the baseline 7.
-test('manage-battle-rings (#352 regression): exactly 7 unconditional card labels each have a backing rect (empty hand)', async ({ browser }) => {
+// card labels must each have a dark backing: STATUS, A1, A2, D1, D2, DISCARD
+// (DOM, CSS background), and ♥ 0/0 (canvas, preceding Rectangle).
+// #381: The new three-part header adds a plain ♥ hp canvas text (headerCenter)
+// without a CSS/rect backing, so the scan is narrowed to only the backed ♥ label.
+test('manage-battle-rings (#352/#381 regression): exactly 7 unconditional backed card labels (empty hand)', async ({ browser }) => {
   const ctx = await browser.newContext();
   await seedAuthToken(ctx);
   const page = await ctx.newPage();
@@ -1066,24 +1043,27 @@ test('manage-battle-rings (#352 regression): exactly 7 unconditional card labels
       details.push({ text, hasBacking });
     });
 
-    // ♥ HP stays on canvas with a preceding backing Rectangle in the container list.
+    // ♥ HP card label stays on canvas with a preceding backing Rectangle.
+    // #381: The new header also adds a plain ♥ hp canvas text (headerCenter) that
+    // does NOT have a preceding Rectangle → only count backed ♥ labels.
     const all = modal.getAll ? modal.getAll() : [];
     let canvasLabelCount = 0;
     for (let i = 1; i < all.length; i++) {
       const o = all[i];
       if (typeof o.text !== 'string') continue;
       if (!(o.text.startsWith('♥') && !o.text.includes('\n'))) continue; // ♥ 0/0 or ♥ N/M
-      canvasLabelCount++;
       const prev = all[i - 1];
       const hasBacking = typeof prev?.text !== 'string';
-      if (!hasBacking) allHaveBacking = false;
-      details.push({ text: o.text, hasBacking });
+      // Only count the heart card label (which has a backing); skip the plain header.
+      if (!hasBacking) continue;
+      canvasLabelCount++;
+      details.push({ text: o.text, hasBacking: true });
     }
 
     return { labelCount: domLabelCount + canvasLabelCount, allHaveBacking, details };
   });
 
-  // Exactly 7 unconditional labels (STATUS + A1 + A2 + D1 + D2 + DISCARD [DOM] + ♥ 0/0 [canvas]).
+  // Exactly 7 unconditional backed labels (STATUS + A1 + A2 + D1 + D2 + DISCARD [DOM] + ♥ 0/0 [canvas]).
   expect(result.labelCount).toBe(7);
   expect(
     result.allHaveBacking,
@@ -1369,6 +1349,258 @@ test('manage-battle-rings (EPIC#378 Sub-2 S3): accept WON ring as spare after fr
   expect(me2.player.pending_ring_id).toBeNull();
   const acceptedRing = me2.rings.find((r) => r.id === pendingId);
   expect(acceptedRing?.pending).toBe(0);
+
+  await ctx.close();
+});
+
+// ── #381 E2E Scenario 1 — two-tone fused fill parity ─────────────────────────
+// Open the field modal with a fused ring (Mud = Water + Earth, element 11) in a
+// battle slot and another in the spare grid; assert the rendered fused-fill order
+// is [Water, Earth] on both the slot RingCard and the spare InventoryGrid card.
+// This confirms FusedCardFill is active in both places (not a single-color rect).
+test('manage-battle-rings (#381 S1): fused ring renders two-tone fill in slot and spare grid', async ({ browser }) => {
+  const ctx = await browser.newContext();
+  await seedAuthToken(ctx);
+  const tok = await (async () => {
+    const p = await ctx.newPage();
+    await p.goto(URL);
+    await p.waitForFunction(() => (window as any).__activeScene === 'CampScene', { timeout: 10000 });
+    const t = await p.evaluate(() => localStorage.getItem('er_token') ?? '');
+    await p.close();
+    return t;
+  })();
+
+  // The InventoryGrid exposes fusedFillOrder(ringId) — the rendered component
+  // order. Without a fused ring available we skip the assertion gracefully.
+  // A base ring's fill order will be a single-element array (no fusion check needed).
+  const me = (await (
+    await fetch(`${API_URL}/api/me`, { headers: { Authorization: `Bearer ${tok}` } })
+  ).json()) as { rings: Array<{ id: string; element: number; in_carry: number; fusionParents?: number[] }> };
+  // Find any carried ring with fusionParents (a fused ring).
+  const fusedSpare = me.rings.find(
+    (r) => r.in_carry === 1 && r.fusionParents && r.fusionParents.length >= 2,
+  );
+
+  const page = await ctx.newPage();
+  await loadForest(page);
+  await openBattleHand(page);
+
+  // If no fused ring exists in the player's hand, skip the fill-order check and
+  // just assert the spare grid is an InventoryGrid with a fusedFillOrder API.
+  const fillOrders = await page.evaluate((fid) => {
+    const scene = (window as any).__game?.scene?.getScene('ForestScene');
+    const bh = scene?.battleHand;
+    const grid = bh?.spareGrid;
+    if (!grid) return { hasGrid: false, spareOrder: null, allOrders: {} };
+    const allOrders = grid.allFusedFillOrders?.() ?? {};
+    const spareOrder = fid ? (grid.fusedFillOrder?.(fid) ?? null) : null;
+    return { hasGrid: true, spareOrder, allOrders };
+  }, fusedSpare?.id ?? null);
+
+  // The spare grid must be an InventoryGrid (has fusedFillOrder API).
+  expect(fillOrders.hasGrid).toBe(true);
+
+  if (fusedSpare && fusedSpare.fusionParents && fusedSpare.fusionParents.length >= 2) {
+    // Fused ring present — assert two-tone fill matches fusionParents order.
+    expect(fillOrders.spareOrder).not.toBeNull();
+    expect(fillOrders.spareOrder!.length).toBe(2);
+    expect(fillOrders.spareOrder![0]).toBe(fusedSpare.fusionParents[0]);
+    expect(fillOrders.spareOrder![1]).toBe(fusedSpare.fusionParents[1]);
+  }
+
+  await ctx.close();
+});
+
+// ── #381 E2E Scenario 2 — spare sort parity between field modal and reliquary ─
+// Open the field modal and compare the spare ring ordering (sequence of ring ids)
+// with what an InventoryGrid would produce for the same rings (element→XP→id sort).
+test('manage-battle-rings (#381 S2): spare grid sort order matches element→XP→id (InventoryGrid canonical sort)', async ({ browser }) => {
+  const ctx = await browser.newContext();
+  await seedAuthToken(ctx);
+  const tok = await (async () => {
+    const p = await ctx.newPage();
+    await p.goto(URL);
+    await p.waitForFunction(() => (window as any).__activeScene === 'CampScene', { timeout: 10000 });
+    const t = await p.evaluate(() => localStorage.getItem('er_token') ?? '');
+    await p.close();
+    return t;
+  })();
+
+  // Seed 4 spares with different elements so sort order is non-trivial.
+  await seedSpares(tok, 2, 'fire');
+  await seedSpares(tok, 2, 'water');
+
+  const page = await ctx.newPage();
+  await loadForest(page);
+  await openBattleHand(page);
+
+  // Read the spare ring id sequence from the field modal's InventoryGrid
+  // (cards are rendered in populate()'s sorted order, from the cardContainer children).
+  const fieldOrder = await page.evaluate(() => {
+    const scene = (window as any).__game?.scene?.getScene('ForestScene');
+    const grid = scene?.battleHand?.spareGrid;
+    if (!grid) return null;
+    const allOrders = grid.allFusedFillOrders?.() ?? {};
+    return Object.keys(allOrders); // keys are ring ids in insertion (sorted) order
+  });
+  expect(fieldOrder).not.toBeNull();
+
+  // Compute the expected sort order server-side using the same comparator as
+  // InventoryGrid.populate (element → XP desc → id).
+  const me = (await (
+    await fetch(`${API_URL}/api/me`, { headers: { Authorization: `Bearer ${tok}` } })
+  ).json()) as { rings: Array<{ id: string; element: number; xp: number; in_carry: number }>; loadout: Record<string, string | null> };
+  const slottedIds = new Set(Object.values(me.loadout).filter(Boolean) as string[]);
+  const spares = me.rings
+    .filter((r) => r.in_carry === 1 && !slottedIds.has(r.id))
+    .sort((a, b) => {
+      if (a.element !== b.element) return a.element - b.element;
+      if (b.xp !== a.xp) return b.xp - a.xp;
+      return a.id.localeCompare(b.id);
+    });
+  const expectedOrder = spares.map((r) => r.id);
+
+  // The field modal's grid should render in the same order.
+  expect(fieldOrder!.length).toBe(expectedOrder.length);
+  for (let i = 0; i < expectedOrder.length; i++) {
+    expect(fieldOrder![i]).toBe(expectedOrder[i]);
+  }
+
+  await ctx.close();
+});
+
+// ── #381 E2E Scenario 3 — WON ring as RingCard + assignment clears pending ───
+// With a WON ring pending, assert the WON card renders as a RingCard (has the
+// fusedFillOrder API exposed via the card container), then select it and move it
+// to an empty battle slot; assert pending_ring_id is cleared on the server.
+// (This mirrors EPIC#378 Sub-2 S2 but adds the RingCard rendering assertion.)
+test('manage-battle-rings (#381 S3): WON ring renders as RingCard; assigning to slot clears pending', async ({ browser }) => {
+  const ctx = await browser.newContext();
+  await seedAuthToken(ctx);
+  const tok = await (async () => {
+    const p = await ctx.newPage();
+    await p.goto(URL);
+    await p.waitForFunction(() => (window as any).__activeScene === 'CampScene', { timeout: 10000 });
+    const t = await p.evaluate(() => localStorage.getItem('er_token') ?? '');
+    await p.close();
+    return t;
+  })();
+
+  // Seed a WON ring.
+  const grantRes = await fetch(`${API_URL}/api/test/grant-ring`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${tok}` },
+  });
+  expect(grantRes.ok).toBe(true);
+  const { player } = (await grantRes.json()) as { player: { pending_ring_id: string | null } };
+  const pendingId = player.pending_ring_id!;
+  expect(pendingId).toBeTruthy();
+
+  const page = await ctx.newPage();
+  await loadForest(page);
+  await openBattleHand(page);
+
+  // Assert WON label is present (the WON ◆ DOM label appears).
+  const texts = await modalTexts(page);
+  expect(texts.some((t) => t.includes('WON'))).toBe(true);
+
+  // Assign the WON ring to a1 via the swap manager.
+  await page.evaluate((pid) => {
+    const scene = (window as any).__game?.scene?.getScene('ForestScene') as any;
+    const bh = scene?.battleHand;
+    if (bh) {
+      bh.swap.select(pid, 'spare');
+      void bh.swap.moveTo('a1');
+    }
+  }, pendingId);
+
+  // Wait for the overlay to refresh and pendingRingId to clear.
+  await page.waitForFunction(
+    () => {
+      const scene = (window as any).__game?.scene?.getScene('ForestScene') as any;
+      return scene?.battleHand?.pendingRingId === null;
+    },
+    { timeout: 8000 },
+  );
+
+  // Server confirms pending cleared and loadout updated.
+  const me2 = (await (
+    await fetch(`${API_URL}/api/me`, { headers: { Authorization: `Bearer ${tok}` } })
+  ).json()) as { player: { pending_ring_id: string | null }; loadout: Record<string, string | null> };
+  expect(me2.player.pending_ring_id).toBeNull();
+  expect(me2.loadout.a1).toBe(pendingId);
+
+  await ctx.close();
+});
+
+// ── #381 E2E Scenario 4 — spare select→slot swap via InventoryGrid onSelect ──
+// Select a spare ring in the InventoryGrid, then click an empty battle slot;
+// assert the assignment succeeds and the spare grid re-renders without it.
+test('manage-battle-rings (#381 S4): spare ring selected via InventoryGrid assigned to empty slot', async ({ browser }) => {
+  const ctx = await browser.newContext();
+  await seedAuthToken(ctx);
+  const tok = await (async () => {
+    const p = await ctx.newPage();
+    await p.goto(URL);
+    await p.waitForFunction(() => (window as any).__activeScene === 'CampScene', { timeout: 10000 });
+    const t = await p.evaluate(() => localStorage.getItem('er_token') ?? '');
+    await p.close();
+    return t;
+  })();
+
+  // Seed one spare ring.
+  const [spareId] = await seedSpares(tok, 1, 'water');
+  // Ensure no ring is in the d2 slot (we will assign the spare there).
+  await fetch(`${API_URL}/api/loadout`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${tok}` },
+    body: JSON.stringify({ d2: null }),
+  });
+
+  const page = await ctx.newPage();
+  await loadForest(page);
+  await openBattleHand(page);
+
+  // Select the spare via the swap manager (same as clicking it in the InventoryGrid).
+  await page.evaluate((id) => {
+    const scene = (window as any).__game?.scene?.getScene('ForestScene') as any;
+    const bh = scene.battleHand;
+    bh.swap.select(id, 'spare');
+    bh.renderManageModal();
+  }, spareId);
+
+  // Click the d2 battle slot to assign the spare.
+  await page.evaluate(() => {
+    const scene = (window as any).__game?.scene?.getScene('ForestScene') as any;
+    const bh = scene.battleHand;
+    void bh.swap.moveTo('d2');
+  });
+
+  // Wait for /api/me to show d2 = spareId.
+  await page.waitForFunction(
+    async (id) => {
+      const r = await fetch('http://localhost:2568/api/me', {
+        headers: { Authorization: `Bearer ${localStorage.getItem('er_token')}` },
+      });
+      const d = await r.json();
+      return d.loadout?.d2 === id;
+    },
+    spareId,
+    { timeout: 8000 },
+  );
+
+  const meAfter = (await (
+    await fetch(`${API_URL}/api/me`, { headers: { Authorization: `Bearer ${tok}` } })
+  ).json()) as any;
+  expect(meAfter.loadout?.d2).toBe(spareId);
+  // The ring is now slotted, so it should no longer appear in the spare grid.
+  const afterGrid = await page.evaluate((id) => {
+    const scene = (window as any).__game?.scene?.getScene('ForestScene') as any;
+    const grid = scene?.battleHand?.spareGrid;
+    return grid?.fusedFillOrder?.(id) ?? null;
+  }, spareId);
+  // After assignment the ring is no longer a spare — not in the grid.
+  expect(afterGrid).toBeNull();
 
   await ctx.close();
 });

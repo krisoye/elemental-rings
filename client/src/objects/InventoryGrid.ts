@@ -2,6 +2,7 @@ import Phaser from 'phaser';
 import { ELEMENT_NAMES } from '../Constants';
 import { FusedCardFill } from './fusedFill';
 import { usePips } from './ui/RingCard';
+import { crispCanvasText } from './ui/DomLabel';
 
 export interface RingData {
   id: string;
@@ -169,22 +170,30 @@ export class InventoryGrid extends Phaser.GameObjects.Container {
       const fill = new FusedCardFill(this.scene, container, 0, 0, CARD_W, CARD_H, 0);
       this.cardFillOrder.set(ring.id, fill.paint(ring.element, ring.fusionParents));
 
-      const nameText = this.scene.add
-        .text(0, -32, ELEMENT_NAMES[ring.element] ?? '?', { fontSize: '9px', color: '#000000' })
-        .setOrigin(0.5);
+      const nameText = crispCanvasText(
+        this.scene.add
+          .text(0, -32, ELEMENT_NAMES[ring.element] ?? '?', { fontSize: '9px', color: '#000000' })
+          .setOrigin(0.5),
+      );
 
       const pips = usePips(ring.current_uses, ring.max_uses);
-      const pipsText = this.scene.add
-        .text(0, -10, pips, { fontSize: '10px', color: '#000000' })
-        .setOrigin(0.5);
+      const pipsText = crispCanvasText(
+        this.scene.add
+          .text(0, -10, pips, { fontSize: '10px', color: '#000000' })
+          .setOrigin(0.5),
+      );
 
-      const xpText = this.scene.add
-        .text(0, 10, `Xp: ${ring.xp}`, { fontSize: '9px', color: '#000000' })
-        .setOrigin(0.5);
+      const xpText = crispCanvasText(
+        this.scene.add
+          .text(0, 10, `Xp: ${ring.xp}`, { fontSize: '9px', color: '#000000' })
+          .setOrigin(0.5),
+      );
 
-      const tierText = this.scene.add
-        .text(0, 26, `T${ring.tier}`, { fontSize: '9px', color: '#000000' })
-        .setOrigin(0.5);
+      const tierText = crispCanvasText(
+        this.scene.add
+          .text(0, 26, `T${ring.tier}`, { fontSize: '9px', color: '#000000' })
+          .setOrigin(0.5),
+      );
 
       container.add([nameText, pipsText, xpText, tierText]);
 
