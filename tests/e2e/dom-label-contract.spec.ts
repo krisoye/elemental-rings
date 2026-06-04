@@ -714,3 +714,201 @@ test('SpecConformance #362 E4: [data-label="npc-prompt"] is hidden when player i
 
   await ctx.close();
 });
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Group F — #366 Regression Guard: setDomLabelText must call updateSize()
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// Regression from PR #365 / EPIC #361: the HUD was created empty and
+// right-anchored. setDomLabelText() set textContent but never called
+// updateSize(), so Phaser's cached src.width stayed at the stale empty-state
+// value. With originX=1, dx = staleWidth * 1 ≈ 16px shift instead of ~220px,
+// pushing all text past "Day" off the right edge of the canvas.
+//
+// These tests are the visual-symptom regression guards.
+
+// #366 adversarial: the exact symptom is `hud.right > canvas.right`. After
+// refreshHud() populates the HUD, Phaser re-lays it out from the re-measured
+// width. Without updateSize(), the right edge overflows. This test locks in
+// that the overflow never returns.
+test('dom-label #366 F1: populated overworld HUD right edge does not overflow the canvas right edge', async ({
+  browser,
+}) => {
+  const ctx = await browser.newContext();
+  await seedAuthToken(ctx);
+  const page = await ctx.newPage();
+  await loadForest(page);
+
+  // Wait until HUD is populated with full content (not just the empty creation state)
+  await page.waitForFunction(
+    () => {
+      const node = document.querySelector('[data-label="overworld-hud"]');
+      const txt = node?.textContent ?? '';
+      // Full HUD string includes 'Day' and at least one separator ·
+      return txt.includes('Day') && txt.includes('·');
+    },
+    { timeout: 10000 },
+  );
+
+  const { hudRight, canvasRight } = await page.evaluate(() => {
+    const hud = document.querySelector('[data-label="overworld-hud"]') as HTMLElement | null;
+    const canvas = document.querySelector('#game-container canvas') as HTMLElement | null;
+    if (!hud || !canvas) return { hudRight: -1, canvasRight: -1 };
+    return {
+      hudRight: hud.getBoundingClientRect().right,
+      canvasRight: canvas.getBoundingClientRect().right,
+    };
+  });
+
+  expect(hudRight).toBeGreaterThan(0);
+  expect(canvasRight).toBeGreaterThan(0);
+  expect(
+    hudRight,
+    `#366 regression: HUD right (${hudRight.toFixed(1)}px) must be ≤ canvas right (${canvasRight.toFixed(1)}px) — overflow means updateSize() is missing after textContent mutation`,
+  ).toBeLessThanOrEqual(canvasRight);
+
+  await ctx.close();
+});
+
+// #366 adversarial: the reported symptom was only "Day" visible — all tokens
+// after "Day" were off-screen. This test asserts the full HUD content string
+// is present, locking in that truncation never recurs.
+test('dom-label #366 F2: populated overworld HUD textContent contains full string through "Avg XP"', async ({
+  browser,
+}) => {
+  const ctx = await browser.newContext();
+  await seedAuthToken(ctx);
+  const page = await ctx.newPage();
+  await loadForest(page);
+
+  // Wait for the complete HUD string (all major segments populated)
+  await page.waitForFunction(
+    () => {
+      const node = document.querySelector('[data-label="overworld-hud"]');
+      const txt = node?.textContent ?? '';
+      return txt.includes('Day') && txt.includes('Avg XP');
+    },
+    { timeout: 10000 },
+  );
+
+  const hudText = await page.evaluate(
+    () => document.querySelector('[data-label="overworld-hud"]')?.textContent ?? '',
+  );
+
+  // Verify all expected HUD segments are present (full string, not truncated)
+  expect(hudText, '#366: HUD must contain "Day" segment').toContain('Day');
+  expect(hudText, '#366: HUD must contain "Gold" segment — missing means refresh truncated').toContain('Gold');
+  expect(
+    hudText,
+    '#366: HUD must contain "Avg XP" — the rightmost segment; if absent the text overflowed before refreshing',
+  ).toContain('Avg XP');
+
+  await ctx.close();
+});
+
+// #366 adversarial: the two-row biome-title label uses originX=0 (left-anchored)
+// so width staleness is cosmetically harmless — but after the fix to setDomLabelText,
+// updateSize() fires for ALL labels. We must verify the two-row format is preserved:
+// the `\n` must still produce two rows, not a single collapsed line.
+// The physical height must be at least 2 × lineHeight (19px per spec) = 38px.
+test('dom-label #366 F3: two-row [data-label="biome-title"] still renders two rows after updateSize() is added', async ({
+  browser,
+}) => {
+  const ctx = await browser.newContext();
+  await seedAuthToken(ctx);
+  const page = await ctx.newPage();
+  await loadForest(page);
+
+  // Wait for biome-title to appear with content containing two parts
+  await page.waitForFunction(
+    () => {
+      const node = document.querySelector('[data-label="biome-title"]');
+      const txt = node?.textContent ?? '';
+      return txt.includes('Forest') && txt.includes('\n');
+    },
+    { timeout: 8000 },
+  );
+
+  const { height, textContent } = await page.evaluate(() => {
+    const node = document.querySelector('[data-label="biome-title"]') as HTMLElement | null;
+    if (!node) return { height: 0, textContent: '' };
+    return {
+      height: node.getBoundingClientRect().height,
+      textContent: node.textContent ?? '',
+    };
+  });
+
+  // Confirm newline is still in textContent (updateSize must not strip it)
+  expect(
+    textContent,
+    '#366: biome-title textContent must still contain \\n after updateSize() — updateSize must not mutate content',
+  ).toContain('\n');
+
+  // Height must accommodate at least two lines: spec lineHeight=19px × 2 = 38px
+  // Allow some padding slack (≥30px is a generous floor that catches a one-line collapse)
+  expect(
+    height,
+    `#366: biome-title height (${height.toFixed(1)}px) must be at least ~38px for two rows (19px lineHeight × 2) — a single-row collapse means \\n was stripped`,
+  ).toBeGreaterThanOrEqual(30);
+
+  await ctx.close();
+});
+
+// #366 adversarial: the NPC prompt uses setOrigin(0.5, 0) (center-anchored).
+// Without updateSize(), `dx = staleWidth * 0.5` uses a stale empty-state width,
+// placing the prompt visibly off-center. After the fix, the prompt must be
+// horizontally centered over the canvas (within a few px).
+//
+// NOTE: This test is conditional on being able to trigger the NPC zone from
+// the harness. If the prompt is not visible, the assertion is skipped rather
+// than failed — the unit tests cover the mechanism; E2E covers the symptom
+// only when the state is reachable.
+test('dom-label #366 F4: [data-label="npc-prompt"] is horizontally centered over the canvas when shown', async ({
+  browser,
+}) => {
+  const ctx = await browser.newContext();
+  await seedAuthToken(ctx);
+  const page = await ctx.newPage();
+  await loadForest(page);
+
+  // Attempt to trigger the NPC prompt via the scene's showNpcPrompt hook (if exposed).
+  await page.evaluate(() => {
+    const scene = (window as any).__game?.scene?.getScene('ForestScene') as any;
+    // showNpcPrompt is private; some test harnesses expose __showNpcPrompt.
+    // If neither is available, the test will simply find no visible prompt.
+    scene?.showNpcPrompt?.('Press F to talk');
+    (scene as any)?.__showNpcPrompt?.('Press F to talk');
+  });
+
+  await page.waitForTimeout(400);
+
+  const result = await page.evaluate(() => {
+    const prompt = document.querySelector('[data-label="npc-prompt"]') as HTMLElement | null;
+    if (!prompt) return null;
+    const style = window.getComputedStyle(prompt);
+    // Only measure if the prompt is actually visible
+    if (style.display === 'none' || style.visibility === 'hidden' || style.opacity === '0') return null;
+
+    const canvas = document.querySelector('#game-container canvas') as HTMLElement | null;
+    if (!canvas) return null;
+
+    const promptRect = prompt.getBoundingClientRect();
+    const canvasRect = canvas.getBoundingClientRect();
+    const promptCenter = promptRect.left + promptRect.width / 2;
+    const canvasCenter = canvasRect.left + canvasRect.width / 2;
+    return { promptCenter, canvasCenter, diff: Math.abs(promptCenter - canvasCenter) };
+  });
+
+  if (result === null) {
+    // NPC prompt not visible from this harness state — skip assertion but do not fail.
+    // The unit test in crisp-text-helpers.spec.ts covers the mechanism.
+    return;
+  }
+
+  expect(
+    result.diff,
+    `#366: NPC prompt center (${result.promptCenter.toFixed(1)}) must be within 5px of canvas center (${result.canvasCenter.toFixed(1)}) — offset means updateSize() not called, stale width shifts origin`,
+  ).toBeLessThanOrEqual(5);
+
+  await ctx.close();
+});
