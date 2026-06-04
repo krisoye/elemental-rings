@@ -1,6 +1,7 @@
 import Phaser from 'phaser';
 import { WorldInteractable } from './WorldInteractable';
 import { CHARSET_KEY, CHARSET_IDLE_COL, charsetFrame } from './charset';
+import { crispCanvasText } from '../ui/DomLabel';
 
 /** Charset character indices used for merchant NPCs (cycled per merchant on a screen). */
 const MERCHANT_CHARS = [4, 6];
@@ -55,15 +56,18 @@ export class MerchantNpc extends WorldInteractable {
       .setName(`merchant-${x}-${y}`);
 
     // Floating "Merchant" label above the sprite's head.
-    this.label = scene.add
-      .text(this.center.x, this.center.y - h / 2 - 6, 'Merchant', {
-        fontSize: '11px',
-        color: '#f5e070',
-        backgroundColor: '#000000bb',
-        padding: { x: 4, y: 2 },
-      })
-      .setOrigin(0.5, 1)
-      .setDepth(6);
+    // #382 — world-space label (scrolls with the world camera) → crispCanvasText.
+    this.label = crispCanvasText(
+      scene.add
+        .text(this.center.x, this.center.y - h / 2 - 6, 'Merchant', {
+          fontSize: '11px',
+          color: '#f5e070',
+          backgroundColor: '#000000bb',
+          padding: { x: 4, y: 2 },
+        })
+        .setOrigin(0.5, 1)
+        .setDepth(6),
+    );
   }
 
   /**

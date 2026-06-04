@@ -1,7 +1,7 @@
 import Phaser from 'phaser';
 import { CANVAS_W, CANVAS_H } from '../Constants';
 import { createOverlay } from './ui/ModalShell';
-import { addDomLabel } from './ui/DomLabel';
+import { addDomLabel, crispCanvasText } from './ui/DomLabel';
 import { FOREST_SCREENS } from '../../../shared/world/forest';
 import { FOREST_SCREEN_META, type BossTier } from './world/forestMeta';
 
@@ -462,28 +462,33 @@ export class OverworldMapModal {
       gfx.strokeRect(x - NODE_W / 2, y - NODE_H / 2, NODE_W, NODE_H);
 
       // "Teleport only" text badge for hidden alcove
+      // #382 — Container (mc) children → crispCanvasText.
       if (spec.isolated) {
         mc.add(
-          s.add
-            .text(x, y + NODE_H / 2 + 6, '✦ teleport', {
-              fontSize: '8px', color: '#886600',
-            })
-            .setOrigin(0.5, 0)
-            .setScrollFactor(0),
+          crispCanvasText(
+            s.add
+              .text(x, y + NODE_H / 2 + 6, '✦ teleport', {
+                fontSize: '8px', color: '#886600',
+              })
+              .setOrigin(0.5, 0)
+              .setScrollFactor(0),
+          ),
         );
       }
 
       // Node label
       mc.add(
-        s.add
-          .text(x, y, spec.label, {
-            fontSize: '10px',
-            color: isCurrent ? '#ffffff' : '#99bbcc',
-            align: 'center',
-            wordWrap: { width: NODE_W - 6 },
-          })
-          .setOrigin(0.5)
-          .setScrollFactor(0),
+        crispCanvasText(
+          s.add
+            .text(x, y, spec.label, {
+              fontSize: '10px',
+              color: isCurrent ? '#ffffff' : '#99bbcc',
+              align: 'center',
+              wordWrap: { width: NODE_W - 6 },
+            })
+            .setOrigin(0.5)
+            .setScrollFactor(0),
+        ),
       );
 
       // Anchorage dot (top-right corner of node)

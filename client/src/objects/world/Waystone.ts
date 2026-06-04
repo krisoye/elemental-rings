@@ -1,5 +1,6 @@
 import Phaser from 'phaser';
 import { WorldInteractable } from './WorldInteractable';
+import { crispCanvasText } from '../ui/DomLabel';
 
 // Standing-stone silhouette dimensions (px, measured from the stone center).
 const STONE_H = 34;
@@ -83,13 +84,16 @@ export class Waystone extends WorldInteractable {
       .setName(`waystone-${waystoneId}`);
 
     // Floating name label above the stone.
-    this.label = scene.add
-      .text(this.center.x, this.center.y - STONE_H - 8, name, {
-        fontSize: '11px',
-        color: '#cfe3ff',
-      })
-      .setOrigin(0.5, 1)
-      .setDepth(6);
+    // #382 — world-space label (scrolls with the world camera) → crispCanvasText.
+    this.label = crispCanvasText(
+      scene.add
+        .text(this.center.x, this.center.y - STONE_H - 8, name, {
+          fontSize: '11px',
+          color: '#cfe3ff',
+        })
+        .setOrigin(0.5, 1)
+        .setDepth(6),
+    );
 
     this.setAttuned(attuned);
   }

@@ -2,7 +2,7 @@ import Phaser from 'phaser';
 import { CANVAS_W, CANVAS_H, ELEMENT_NAMES } from '../Constants';
 import { API_BASE, apiFetch, fetchMe, getToken } from '../net/api';
 import { createOverlay } from './ui/ModalShell';
-import { addDomLabel, setDomLabelText } from './ui/DomLabel';
+import { addDomLabel, setDomLabelText, crispCanvasText } from './ui/DomLabel';
 
 type Tab = 'buy' | 'sell';
 
@@ -186,12 +186,14 @@ export class MerchantModal {
     const buyTabBtn = this.makeTabBtn('Buy', CANVAS_W / 2 - 80, 96, () => this.switchTab('buy'));
     const sellTabBtn = this.makeTabBtn('Sell', CANVAS_W / 2 + 80, 96, () => this.switchTab('sell'));
 
-    // Status text (error / success toasts inside the modal). Stays canvas: it uses
-    // setColor + an alpha fade tween that is simpler to drive on a Phaser Text.
-    this.statusText = this.scene.add
-      .text(CANVAS_W / 2, 130, '', { fontSize: '13px', color: '#ff8888' })
-      .setOrigin(0.5, 0)
-      .setScrollFactor(0);
+    // Status text (error / success toasts inside the modal). Canvas: it uses
+    // setColor + alpha tween. Container child → crispCanvasText.
+    this.statusText = crispCanvasText(
+      this.scene.add
+        .text(CANVAS_W / 2, 130, '', { fontSize: '13px', color: '#ff8888' })
+        .setOrigin(0.5, 0)
+        .setScrollFactor(0),
+    );
 
     // The shell already added backdrop + panel + (empty) title + close-X (4 fixed
     // children); these three canvas header objects bring the fixed header to 7 —
@@ -249,11 +251,15 @@ export class MerchantModal {
     const rowGroups: Phaser.GameObjects.Container[] = [];
 
     // Food row at relative y=0.
+    // #382 — catalog rows are children of a scrollContainer (a Container) →
+    // crispCanvasText is the correct call for all row labels.
     const foodGroup = this.scene.add.container(0, 0);
     foodGroup.add([
-      this.scene.add.text(col1, 0, `Food  ${this.catalog.food.buyPrice} GP/unit  (have: ${this.food})`, {
-        fontSize: '14px', color: '#e8e0d0',
-      }).setScrollFactor(0),
+      crispCanvasText(
+        this.scene.add.text(col1, 0, `Food  ${this.catalog.food.buyPrice} GP/unit  (have: ${this.food})`, {
+          fontSize: '14px', color: '#e8e0d0',
+        }).setScrollFactor(0),
+      ),
       this.makeActionBtn('[×1]', col2a, 0, async () => { await this.executeBuyFood(1); }),
       this.makeActionBtn('[×25]', col2b, 0, async () => { await this.executeBuyFood(25); }),
     ]);
@@ -266,9 +272,11 @@ export class MerchantModal {
       const ownedCount = this.allRings.filter((r) => r.element === entry.elementIndex).length;
       const rowGroup = this.scene.add.container(0, yOff);
       rowGroup.add([
-        this.scene.add.text(col1, 0, `${name} Ring T${entry.tier}  ${entry.buyPrice} GP  (own: ${ownedCount})`, {
-          fontSize: '14px', color: '#e8e0d0',
-        }).setScrollFactor(0),
+        crispCanvasText(
+          this.scene.add.text(col1, 0, `${name} Ring T${entry.tier}  ${entry.buyPrice} GP  (own: ${ownedCount})`, {
+            fontSize: '14px', color: '#e8e0d0',
+          }).setScrollFactor(0),
+        ),
         this.makeActionBtn('Buy', col3, 0, async () => { await this.executeBuyRing(entry.elementIndex); }),
       ]);
       scrollContainer.add(rowGroup);
@@ -289,10 +297,13 @@ export class MerchantModal {
     updateVisibility();
 
     if (maxScroll > 0) {
+      // #382 — container child → crispCanvasText.
       this.container.add(
-        this.scene.add.text(CANVAS_W / 2, CONTENT_TOP + VISIBLE_H + 2, '▼ scroll', {
-          fontSize: '11px', color: '#556677',
-        }).setScrollFactor(0).setOrigin(0.5, 0),
+        crispCanvasText(
+          this.scene.add.text(CANVAS_W / 2, CONTENT_TOP + VISIBLE_H + 2, '▼ scroll', {
+            fontSize: '11px', color: '#556677',
+          }).setScrollFactor(0).setOrigin(0.5, 0),
+        ),
       );
     }
 
@@ -319,11 +330,15 @@ export class MerchantModal {
     const rowGroups: Phaser.GameObjects.Container[] = [];
 
     // Food sell row at relative y=0.
+    // #382 — catalog rows are children of a scrollContainer (a Container) →
+    // crispCanvasText is the correct call for all row labels.
     const foodGroup = this.scene.add.container(0, 0);
     foodGroup.add([
-      this.scene.add.text(col1, 0, `Food  ${this.catalog.food.sellPrice} GP/unit  (have: ${this.food})`, {
-        fontSize: '14px', color: '#e8e0d0',
-      }).setScrollFactor(0),
+      crispCanvasText(
+        this.scene.add.text(col1, 0, `Food  ${this.catalog.food.sellPrice} GP/unit  (have: ${this.food})`, {
+          fontSize: '14px', color: '#e8e0d0',
+        }).setScrollFactor(0),
+      ),
       this.makeActionBtn('[×1]', col2a, 0, async () => { await this.executeSellFood(1); }),
       this.makeActionBtn('[×25]', col2b, 0, async () => { await this.executeSellFood(25); }),
     ]);
@@ -344,9 +359,11 @@ export class MerchantModal {
       const name = ELEMENT_NAMES[ring.element] ?? `Element ${ring.element}`;
       const rowGroup = this.scene.add.container(0, yOff);
       rowGroup.add([
-        this.scene.add.text(col1, 0, `${name} Ring T${ring.tier}  ${price} GP  (${ring.current_uses}/${ring.max_uses} uses, xp ${ring.xp})`, {
-          fontSize: '14px', color: '#e8e0d0',
-        }).setScrollFactor(0),
+        crispCanvasText(
+          this.scene.add.text(col1, 0, `${name} Ring T${ring.tier}  ${price} GP  (${ring.current_uses}/${ring.max_uses} uses, xp ${ring.xp})`, {
+            fontSize: '14px', color: '#e8e0d0',
+          }).setScrollFactor(0),
+        ),
         this.makeActionBtn('Sell', col3, 0, async () => { await this.executeSellRing(ring.id); }),
       ]);
       scrollContainer.add(rowGroup);
@@ -367,10 +384,13 @@ export class MerchantModal {
     updateVisibility();
 
     if (maxScroll > 0) {
+      // #382 — container child → crispCanvasText.
       this.container.add(
-        this.scene.add.text(CANVAS_W / 2, CONTENT_TOP + VISIBLE_H + 2, '▼ scroll', {
-          fontSize: '11px', color: '#556677',
-        }).setScrollFactor(0).setOrigin(0.5, 0),
+        crispCanvasText(
+          this.scene.add.text(CANVAS_W / 2, CONTENT_TOP + VISIBLE_H + 2, '▼ scroll', {
+            fontSize: '11px', color: '#556677',
+          }).setScrollFactor(0).setOrigin(0.5, 0),
+        ),
       );
     }
 
@@ -466,11 +486,14 @@ export class MerchantModal {
     y: number,
     onClick: () => Promise<void>,
   ): Phaser.GameObjects.Text {
-    return this.scene.add
-      .text(x, y, `[${label}]`, { fontSize: '13px', color: '#88ddff' })
-      .setScrollFactor(0)
-      .setInteractive({ useHandCursor: true })
-      .on('pointerdown', () => void onClick());
+    // #382 — always added to a row Container → crispCanvasText.
+    return crispCanvasText(
+      this.scene.add
+        .text(x, y, `[${label}]`, { fontSize: '13px', color: '#88ddff' })
+        .setScrollFactor(0)
+        .setInteractive({ useHandCursor: true })
+        .on('pointerdown', () => void onClick()),
+    );
   }
 
   private makeTabBtn(
@@ -479,12 +502,15 @@ export class MerchantModal {
     y: number,
     onClick: () => void,
   ): Phaser.GameObjects.Text {
-    return this.scene.add
-      .text(x, y, label, { fontSize: '15px', color: '#ccddff' })
-      .setOrigin(0.5, 0)
-      .setScrollFactor(0)
-      .setInteractive({ useHandCursor: true })
-      .on('pointerdown', onClick);
+    // #382 — added to the modal Container → crispCanvasText.
+    return crispCanvasText(
+      this.scene.add
+        .text(x, y, label, { fontSize: '15px', color: '#ccddff' })
+        .setOrigin(0.5, 0)
+        .setScrollFactor(0)
+        .setInteractive({ useHandCursor: true })
+        .on('pointerdown', onClick),
+    );
   }
 
   private status(msg: string, color = '#ff8888'): void {

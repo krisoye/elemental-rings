@@ -1,5 +1,6 @@
 import Phaser from 'phaser';
 import { CANVAS_W, CANVAS_H } from '../Constants';
+import { crispCanvasText } from './ui/DomLabel';
 import {
   DIFFICULTY_MULTIPLIERS,
   type DifficultyTier,
@@ -110,20 +111,27 @@ export class DifficultyModal {
     const panel = this.scene.add
       .rectangle(CANVAS_W / 2, CANVAS_H / 2, 560, 360, 0x161622)
       .setStrokeStyle(2, 0x6082aa);
-    const title = this.scene.add
-      .text(CANVAS_W / 2, 90, 'DIFFICULTY', { fontSize: '20px', color: '#ffffff' })
-      .setOrigin(0.5);
-    const subtitle = this.scene.add
-      .text(CANVAS_W / 2, 118, 'Spirit scarcity scales with your chosen tier', {
-        fontSize: '12px',
-        color: '#aaaaaa',
-      })
-      .setOrigin(0.5);
-    const closeBtn = this.scene.add
-      .text(CANVAS_W / 2 + 260, 84, '[×]', { fontSize: '16px', color: '#ff8888' })
-      .setOrigin(0.5)
-      .setInteractive({ useHandCursor: true })
-      .on('pointerdown', () => this.close());
+    // #382 — all these labels are Container children → crispCanvasText.
+    const title = crispCanvasText(
+      this.scene.add
+        .text(CANVAS_W / 2, 90, 'DIFFICULTY', { fontSize: '20px', color: '#ffffff' })
+        .setOrigin(0.5),
+    );
+    const subtitle = crispCanvasText(
+      this.scene.add
+        .text(CANVAS_W / 2, 118, 'Spirit scarcity scales with your chosen tier', {
+          fontSize: '12px',
+          color: '#aaaaaa',
+        })
+        .setOrigin(0.5),
+    );
+    const closeBtn = crispCanvasText(
+      this.scene.add
+        .text(CANVAS_W / 2 + 260, 84, '[×]', { fontSize: '16px', color: '#ff8888' })
+        .setOrigin(0.5)
+        .setInteractive({ useHandCursor: true })
+        .on('pointerdown', () => this.close()),
+    );
 
     container.add([backdrop, panel, title, subtitle, closeBtn]);
 
@@ -173,23 +181,28 @@ export class DifficultyModal {
     container.add(card);
 
     const multiplier = DIFFICULTY_MULTIPLIERS[row.tier];
-    const heading = this.scene.add
-      .text(
-        CANVAS_W / 2 - cardW / 2 + 16,
-        y + 12,
-        `${row.label}  ×${multiplier}${isCurrent ? '   (current)' : ''}`,
-        { fontSize: '16px', color: isCurrent ? '#ffdd66' : '#ffffff' },
-      )
-      .setName(`difficulty-label-${row.tier}`);
+    // #382 — tier-row labels are Container children → crispCanvasText.
+    const heading = crispCanvasText(
+      this.scene.add
+        .text(
+          CANVAS_W / 2 - cardW / 2 + 16,
+          y + 12,
+          `${row.label}  ×${multiplier}${isCurrent ? '   (current)' : ''}`,
+          { fontSize: '16px', color: isCurrent ? '#ffdd66' : '#ffffff' },
+        )
+        .setName(`difficulty-label-${row.tier}`),
+    );
     container.add(heading);
 
-    const desc = this.scene.add
-      .text(CANVAS_W / 2 - cardW / 2 + 16, y + 40, row.description, {
-        fontSize: '12px',
-        color: '#bbbbbb',
-        wordWrap: { width: cardW - 32 },
-      })
-      .setName(`difficulty-desc-${row.tier}`);
+    const desc = crispCanvasText(
+      this.scene.add
+        .text(CANVAS_W / 2 - cardW / 2 + 16, y + 40, row.description, {
+          fontSize: '12px',
+          color: '#bbbbbb',
+          wordWrap: { width: cardW - 32 },
+        })
+        .setName(`difficulty-desc-${row.tier}`),
+    );
     container.add(desc);
   }
 

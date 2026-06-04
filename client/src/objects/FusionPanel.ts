@@ -4,6 +4,7 @@ import { ElementEnum } from '../../../shared/types';
 import { isFusion, componentsOf } from '../../../shared/fusions';
 import type { RingData } from './InventoryGrid';
 import { createOverlay } from './ui/ModalShell';
+import { crispCanvasText } from './ui/DomLabel';
 
 /** A single previewable fusion: its two base-element parents and its result. */
 interface FusionRecipe {
@@ -111,12 +112,15 @@ export class FusionPanel {
       panelColor: 0x1d1d2e,
       strokeColor: 0xcc88ff,
     });
-    const subtitle = this.scene.add
-      .text(CANVAS_W / 2, 76, 'Both rings must be the same tier and reach Tier 2', {
-        fontSize: '12px',
-        color: '#aaaaaa',
-      })
-      .setOrigin(0.5);
+    // #382 — Container child → crispCanvasText.
+    const subtitle = crispCanvasText(
+      this.scene.add
+        .text(CANVAS_W / 2, 76, 'Both rings must be the same tier and reach Tier 2', {
+          fontSize: '12px',
+          color: '#aaaaaa',
+        })
+        .setOrigin(0.5),
+    );
 
     container.add([subtitle]);
 
@@ -139,10 +143,13 @@ export class FusionPanel {
     });
 
     // Status line for inline error / success feedback.
-    const status = this.scene.add
-      .text(CANVAS_W / 2, CANVAS_H / 2 + 230, '', { fontSize: '13px', color: '#ff8888' })
-      .setOrigin(0.5)
-      .setName('fusion-status');
+    // #382 — Container child → crispCanvasText.
+    const status = crispCanvasText(
+      this.scene.add
+        .text(CANVAS_W / 2, CANVAS_H / 2 + 230, '', { fontSize: '13px', color: '#ff8888' })
+        .setOrigin(0.5)
+        .setName('fusion-status'),
+    );
     container.add(status);
 
     this.container = container;
@@ -210,29 +217,36 @@ export class FusionPanel {
     avail: RecipeAvailability,
   ): void {
     const [ea, eb] = avail.recipe.parents;
+    // #382 — all recipe-row labels are Container children → crispCanvasText.
     const label = `${ELEMENT_NAMES[ea]}+${ELEMENT_NAMES[eb]} → ${ELEMENT_NAMES[avail.recipe.result]}`;
     const labelColor = avail.ready ? '#ffffff' : '#888888';
-    const labelText = this.scene.add.text(x, y, label, { fontSize: '13px', color: labelColor });
+    const labelText = crispCanvasText(
+      this.scene.add.text(x, y, label, { fontSize: '13px', color: labelColor }),
+    );
     container.add(labelText);
 
     if (avail.ready && avail.parentA && avail.parentB) {
       const a = avail.parentA;
       const b = avail.parentB;
-      const fuseBtn = this.scene.add
-        .text(x + 250, y, '[Fuse]', { fontSize: '13px', color: '#aaffaa' })
-        .setName(`fuse-btn-${avail.recipe.result}`)
-        .setInteractive({ useHandCursor: true })
-        .on('pointerdown', () => void this.handleFuse(a.id, b.id));
+      const fuseBtn = crispCanvasText(
+        this.scene.add
+          .text(x + 250, y, '[Fuse]', { fontSize: '13px', color: '#aaffaa' })
+          .setName(`fuse-btn-${avail.recipe.result}`)
+          .setInteractive({ useHandCursor: true })
+          .on('pointerdown', () => void this.handleFuse(a.id, b.id)),
+      );
       container.add(fuseBtn);
     } else {
       // Show which parent(s) are missing / not maxed.
       const missing: string[] = [];
       if (!avail.parentA) missing.push(ELEMENT_NAMES[ea]);
       if (!avail.parentB) missing.push(ELEMENT_NAMES[eb]);
-      const hint = this.scene.add.text(x + 250, y, `need ${missing.join(' & ')}`, {
-        fontSize: '11px',
-        color: '#aa6666',
-      });
+      const hint = crispCanvasText(
+        this.scene.add.text(x + 250, y, `need ${missing.join(' & ')}`, {
+          fontSize: '11px',
+          color: '#aa6666',
+        }),
+      );
       container.add(hint);
     }
   }

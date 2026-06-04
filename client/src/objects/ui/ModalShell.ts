@@ -1,5 +1,6 @@
 import Phaser from 'phaser';
 import { CANVAS_W, CANVAS_H } from '../../Constants';
+import { crispCanvasText } from './DomLabel';
 
 /**
  * Shared modal shell (EPIC #291 / WS D — DRY remediation). Five simple modals
@@ -96,32 +97,40 @@ export function createOverlay(scene: Phaser.Scene, opts: ModalShellOpts): ModalS
     .setStrokeStyle(opts.strokeWidth ?? 2, opts.strokeColor ?? 0x6082aa)
     .setScrollFactor(0);
 
-  const title = scene.add
-    .text(px, py - opts.height / 2 + 18, opts.title, {
-      fontSize: opts.titleSize ?? '20px',
-      color: opts.titleColor ?? '#ffffff',
-    })
-    .setOrigin(0.5, 0)
-    .setScrollFactor(0);
+  // #382 — title and close-X are Container children → crispCanvasText.
+  const title = crispCanvasText(
+    scene.add
+      .text(px, py - opts.height / 2 + 18, opts.title, {
+        fontSize: opts.titleSize ?? '20px',
+        color: opts.titleColor ?? '#ffffff',
+      })
+      .setOrigin(0.5, 0)
+      .setScrollFactor(0),
+  );
 
-  const closeBtn = scene.add
-    .text(px + opts.width / 2 - 18, py - opts.height / 2 + 16, CLOSE_GLYPH, {
-      fontSize: '16px',
-      color: '#ff8888',
-    })
-    .setOrigin(0.5)
-    .setScrollFactor(0)
-    .setInteractive({ useHandCursor: true })
-    .on('pointerdown', opts.onClose);
+  const closeBtn = crispCanvasText(
+    scene.add
+      .text(px + opts.width / 2 - 18, py - opts.height / 2 + 16, CLOSE_GLYPH, {
+        fontSize: '16px',
+        color: '#ff8888',
+      })
+      .setOrigin(0.5)
+      .setScrollFactor(0)
+      .setInteractive({ useHandCursor: true })
+      .on('pointerdown', opts.onClose),
+  );
 
   container.add([backdrop, panel, title, closeBtn]);
 
   let statusText: Phaser.GameObjects.Text | null = null;
   if (opts.withStatus) {
-    statusText = scene.add
-      .text(px, py + opts.height / 2 - 24, '', { fontSize: '13px', color: '#ff8888' })
-      .setOrigin(0.5)
-      .setScrollFactor(0);
+    // #382 — Container child → crispCanvasText.
+    statusText = crispCanvasText(
+      scene.add
+        .text(px, py + opts.height / 2 - 24, '', { fontSize: '13px', color: '#ff8888' })
+        .setOrigin(0.5)
+        .setScrollFactor(0),
+    );
     container.add(statusText);
   }
 
