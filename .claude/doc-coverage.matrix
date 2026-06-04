@@ -1,0 +1,6 @@
+# elemental-rings doc-coverage matrix — enforced by ~/.claude/hooks/check-doc-coverage.sh (dev-tools #118)
+# <source pattern (ERE vs `git diff --name-only`)> ; <doc file that must also be in the diff>
+^server/src/api/routes\.ts$            ; docs/api-reference.md
+^server/src/game/.*\.ts$               ; docs/function-reference.md
+^shared/.*\.ts$                        ; docs/function-reference.md
+^client/src/objects/ui/DomLabel\.ts$   ; docs/architecture-overview.md
