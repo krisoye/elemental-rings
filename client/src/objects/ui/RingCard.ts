@@ -14,13 +14,20 @@ import { crispCanvasText } from './DomLabel';
  * label) and composes a RingCard for the shared visuals.
  *
  * Display-only: the server is authoritative on every ring stat shown here.
+ *
+ * #389 — the Tier row (`T{n}`) was dropped from every card surface; only the
+ * element name, use pips, and XP rows remain, re-centred in the freed space.
  */
 
 /** A minimal ring view the card renders. Both the REST RingData and the schema
  * Ring satisfy it (callers pass current/max uses explicitly). */
 export interface RingCardData {
   element: number;
-  tier: number;
+  /**
+   * #389 — retained on the data shape (callers pass the server's tier) but no
+   * longer rendered: the Tier row was removed from the card body.
+   */
+  tier?: number;
   xp: number;
   currentUses: number;
   maxUses: number;
@@ -56,6 +63,11 @@ export interface RingCardOpts {
   elementY?: number;
   pipsY?: number;
   xpY?: number;
+  /**
+   * #389 — accepted for source compatibility with callers that still pass a Tier
+   * offset, but ignored: the Tier row is no longer rendered.
+   * @deprecated the Tier row was removed; this option has no effect.
+   */
   tierY?: number;
   /** XP row prefix (some panels show 'XP:', others 'Xp: '). */
   xpPrefix?: string;
@@ -82,13 +94,12 @@ export class RingCard extends Phaser.GameObjects.Container {
   private readonly elementLabel: Phaser.GameObjects.Text;
   private readonly pipsLabel: Phaser.GameObjects.Text;
   private readonly xpLabel: Phaser.GameObjects.Text;
-  private readonly tierLabel: Phaser.GameObjects.Text;
   private readonly o: Required<
     Pick<
       RingCardOpts,
       | 'cx' | 'cy' | 'scrollFactor' | 'bgColor' | 'strokeColor' | 'strokeWidth'
       | 'textColor' | 'pipsColor' | 'fontSize' | 'pipsFontSize' | 'elementY' | 'pipsY'
-      | 'xpY' | 'tierY' | 'xpPrefix'
+      | 'xpY' | 'xpPrefix'
     >
   > & { width: number; height: number };
 
@@ -108,10 +119,11 @@ export class RingCard extends Phaser.GameObjects.Container {
       pipsColor: opts.pipsColor ?? opts.textColor ?? '#000000',
       fontSize,
       pipsFontSize: opts.pipsFontSize ?? fontSize,
-      elementY: opts.elementY ?? -20,
-      pipsY: opts.pipsY ?? -4,
-      xpY: opts.xpY ?? 10,
-      tierY: opts.tierY ?? 26,
+      // #389 — three rows (element / pips / XP) re-centred in the space freed by
+      // dropping the Tier row, so the card body still reads as a balanced stack.
+      elementY: opts.elementY ?? -16,
+      pipsY: opts.pipsY ?? 2,
+      xpY: opts.xpY ?? 20,
       xpPrefix: opts.xpPrefix ?? 'Xp: ',
     };
     const { cx, cy } = this.o;
@@ -141,12 +153,7 @@ export class RingCard extends Phaser.GameObjects.Container {
         .text(cx, cy + this.o.xpY, '', { fontSize: this.o.fontSize, color: this.o.textColor })
         .setOrigin(0.5),
     );
-    this.tierLabel = crispCanvasText(
-      scene.add
-        .text(cx, cy + this.o.tierY, '', { fontSize: this.o.fontSize, color: this.o.textColor })
-        .setOrigin(0.5),
-    );
-    this.add([this.elementLabel, this.pipsLabel, this.xpLabel, this.tierLabel]);
+    this.add([this.elementLabel, this.pipsLabel, this.xpLabel]);
   }
 
   /** Paint the card from a ring view. Returns the rendered fused-fill order. */
@@ -157,7 +164,6 @@ export class RingCard extends Phaser.GameObjects.Container {
     this.elementLabel.setText(ELEMENT_NAMES[ring.element] ?? '?');
     this.pipsLabel.setText(usePips(ring.currentUses, ring.maxUses));
     this.xpLabel.setText(`${this.o.xpPrefix}${ring.xp}`);
-    this.tierLabel.setText(`T${ring.tier}`);
     return order;
   }
 
@@ -167,7 +173,6 @@ export class RingCard extends Phaser.GameObjects.Container {
     this.elementLabel.setText(emptyElementLabel);
     this.pipsLabel.setText('');
     this.xpLabel.setText('');
-    this.tierLabel.setText('');
   }
 
   /** Override the element-row text/color (Blinded `?`, dim em-dash, etc.). */
@@ -191,7 +196,6 @@ export class RingCard extends Phaser.GameObjects.Container {
     this.elementLabel.setColor(color);
     this.pipsLabel.setColor(color);
     this.xpLabel.setColor(color);
-    this.tierLabel.setColor(color);
   }
 
   /** Set the selection / active border. */

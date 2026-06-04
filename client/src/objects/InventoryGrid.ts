@@ -1,8 +1,5 @@
 import Phaser from 'phaser';
-import { ELEMENT_NAMES } from '../Constants';
-import { FusedCardFill } from './fusedFill';
-import { usePips } from './ui/RingCard';
-import { crispCanvasText } from './ui/DomLabel';
+import { RingCard } from './ui/RingCard';
 
 export interface RingData {
   id: string;
@@ -154,51 +151,39 @@ export class InventoryGrid extends Phaser.GameObjects.Container {
       const cx = col * COL_GAP + CARD_W / 2;
       const cy = row * ROW_GAP + CARD_H / 2;
 
-      const container = this.scene.add.container(cx, cy);
-
-      const bg = this.scene.add.rectangle(0, 0, CARD_W, CARD_H, 0x444444);
-      // The ring-storage overlay is camera-pinned (scrollFactor 0). The leaf bg's
-      // own scrollFactor must match, or Phaser's hit-test offsets the hit area by
-      // the camera scroll amount (card renders right, clicks land off — #78 ①).
-      bg.setScrollFactor(0);
-      bg.setStrokeStyle(2, DESELECTED_STROKE);
-      container.add(bg);
-
-      // #263 — two-tone fill above bg (which keeps stroke/hit), below the labels.
-      // scrollFactor 0 matches the camera-pinned overlay. Reads the ring's
-      // dominant-first fusionParents; base rings render a single fill.
-      const fill = new FusedCardFill(this.scene, container, 0, 0, CARD_W, CARD_H, 0);
-      this.cardFillOrder.set(ring.id, fill.paint(ring.element, ring.fusionParents));
-
-      const nameText = crispCanvasText(
-        this.scene.add
-          .text(0, -32, ELEMENT_NAMES[ring.element] ?? '?', { fontSize: '9px', color: '#000000' })
-          .setOrigin(0.5),
+      // #389 — each grid cell is now a shared RingCard (bg + two-tone fused fill +
+      // element/pips/XP rows, no Tier row), replacing the former hand-rolled body.
+      // The overlay is camera-pinned, so scrollFactor 0 keeps each card's hit area
+      // aligned with its render position under camera scroll (#78 ①). The dark-on-
+      // fill text + 0x444444 bg reproduce the legacy grid look.
+      const card = new RingCard(this.scene, cx, cy, {
+        width: CARD_W,
+        height: CARD_H,
+        scrollFactor: 0,
+        bgColor: 0x444444,
+        strokeColor: DESELECTED_STROKE,
+        strokeWidth: 2,
+        textColor: '#000000',
+        fontSize: '9px',
+        pipsFontSize: '10px',
+      });
+      // #263 — record the rendered two-tone fill order (returned by setRing) so an
+      // E2E test can assert which component colour leads without sampling pixels.
+      this.cardFillOrder.set(
+        ring.id,
+        card.setRing({
+          element: ring.element,
+          tier: ring.tier,
+          xp: ring.xp,
+          currentUses: ring.current_uses,
+          maxUses: ring.max_uses,
+          fusionParents: ring.fusionParents,
+        }),
       );
 
-      const pips = usePips(ring.current_uses, ring.max_uses);
-      const pipsText = crispCanvasText(
-        this.scene.add
-          .text(0, -10, pips, { fontSize: '10px', color: '#000000' })
-          .setOrigin(0.5),
-      );
-
-      const xpText = crispCanvasText(
-        this.scene.add
-          .text(0, 10, `Xp: ${ring.xp}`, { fontSize: '9px', color: '#000000' })
-          .setOrigin(0.5),
-      );
-
-      const tierText = crispCanvasText(
-        this.scene.add
-          .text(0, 26, `T${ring.tier}`, { fontSize: '9px', color: '#000000' })
-          .setOrigin(0.5),
-      );
-
-      container.add([nameText, pipsText, xpText, tierText]);
-
+      const bg = card.bg;
       if (ring.escrowed) {
-        container.setAlpha(0.4);
+        card.setAlpha(0.4);
       } else {
         bg.setInteractive({ useHandCursor: true });
         bg.on('pointerdown', () => this.handleClick(ring, bg));
@@ -206,8 +191,8 @@ export class InventoryGrid extends Phaser.GameObjects.Container {
 
       // Cards go into the scrolled inner container, not directly on the grid, so
       // setScrollRow can offset them while the arrows stay put (#85 Fix 2A).
-      this.cardContainer.add(container);
-      this.cards.set(ring.id, container);
+      this.cardContainer.add(card);
+      this.cards.set(ring.id, card);
       this.cardBgs.set(ring.id, bg);
       this.cardRows.set(ring.id, row);
     });
