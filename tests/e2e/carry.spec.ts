@@ -288,20 +288,25 @@ test('carry: full-carry win → discard in Manage Battle Hand auto-carries the w
 
   // With cap=14 and 14 rings already carried, the player is AT the cap.
   // The win prompt should route DIRECTLY to Manage Battle Hand (full-carry case),
-  // not the room-case modal. The won ring stays uncarried as a pending ring.
-  const { rings } = await me(token);
+  // not the room-case modal. EPIC #378: the won ring enters carry immediately
+  // (in_carry=1, pending=1), so spare overflows to spare_ring_max+1.
+  const { rings, loadout: slots } = await me(token);
   expect(rings.length).toBe(15); // 14 owned + 1 won
 
   const currentlyCarried = rings.filter((r) => r.in_carry === 1);
-  expect(currentlyCarried.length).toBe(14); // exactly at cap
+  expect(currentlyCarried.length).toBe(15); // won ring is already in_carry=1 (pending=1)
 
-  const discardId = currentlyCarried[0].id; // one carried ring to discard
+  // Pick a SPARE (non-slotted, non-WON) ring to discard — discarding a battle-slot
+  // ring does not reduce spare count, so accept would still return 400.
+  const slottedIds = new Set(Object.values(slots || {}).filter(Boolean) as string[]);
+  const discardId = currentlyCarried.find((r) => r.id !== wonRingId && !slottedIds.has(r.id))?.id;
+  expect(discardId).toBeTruthy();
 
   // EPIC #378 — pending state is owned by the server (rings.pending column).
   // The duel win already set rings.pending=1 on wonRingId. No localStorage re-arm
   // is needed: after reload the client reads /api/me which returns pending_ring_id.
-  // Because carry is full (14/14), checkPendingWonRing routes to Manage Battle Hand
-  // rather than the room-case modal.
+  // Because carry is full (spare overflow), checkPendingWonRing routes to Manage
+  // Battle Hand rather than the room-case modal.
   await page.reload();
   await page.waitForFunction(() => typeof (window as any).__campGoEncounter === 'function', {
     timeout: 8000,
@@ -316,13 +321,13 @@ test('carry: full-carry win → discard in Manage Battle Hand auto-carries the w
   // back to Node (it returns undefined), so checking typeof here is mandatory. The
   // programmatic hook is retained as a direct test affordance (#348).
   expect(await page.evaluate(() => typeof (window as any).__encounterDiscardRing)).toBe('function');
-  // Confirm the FULL case before the discard (real server state).
-  expect((await me(token)).rings.filter((r) => r.in_carry === 1).length).toBe(14);
+  // Confirm the FULL case before the discard (real server state): 15 in carry (14 + WON pending).
+  expect((await me(token)).rings.filter((r) => r.in_carry === 1).length).toBe(15);
 
   // #348 — drive the new safe 3-step discard UI (replaces the one-click ×): select
   // the carried ring → click the DISCARD slot (group-1 row-1, x=262 y=240) → confirm
-  // [Discard]. Freeing a slot triggers tryAutoCarryPending, which carries the won
-  // ring and clears er_pending_ring.
+  // [Discard]. After freeing a slot, the WON ring is still pending=1; we then call
+  // PUT /api/rings/:id/accept from Node.js context to clear pending (EPIC #378).
   await page.waitForFunction(
     () => (window as any).__game?.scene?.getScene('EncounterScene')?.battleHand?.isOpen?.() === true,
     { timeout: 8000 },
@@ -332,7 +337,7 @@ test('carry: full-carry win → discard in Manage Battle Hand auto-carries the w
     const bh = (window as any).__game.scene.getScene('EncounterScene').battleHand;
     bh.swap.select(id, 'spare');
     bh.renderManageModal();
-  }, discardId);
+  }, discardId as string);
   // Step 2 — click the DISCARD slot → confirm modal opens, nothing deleted yet.
   await page.evaluate(() => {
     const modal = (window as any).__game.scene.getScene('EncounterScene').battleHand.manageModal;
@@ -353,22 +358,35 @@ test('carry: full-carry win → discard in Manage Battle Hand auto-carries the w
     const yes = bh.discardConfirm?.getAll().find((o: any) => o.name === 'discard-confirm-yes');
     yes?.emit('pointerdown');
   });
-  // EPIC #378 — wait for the server to clear pending_ring_id after auto-carry. The
-  // discardCarriedRing path does not expose a browser-side window hook for this state
-  // transition, so we poll the API from Node.js context (avoids the relative-URL
-  // issue where fetch('/api/me') in a waitForFunction hits Vite at port 8090).
+  // EPIC #378 — wait for the discard to complete (carry drops from 15 to 14 after the
+  // DELETE). The WON ring is still in_carry=1,pending=1 at this point — tryAutoCarryPending
+  // was removed. Poll from Node.js context to avoid relative-URL issues with Vite at 8090.
+  await expect.poll(async () => {
+    const { rings: r } = await me(token);
+    return r.find((x: Ring) => x.id === discardId);
+  }, { timeout: 8000 }).toBeUndefined();
+
+  // EPIC #378 — explicitly accept the WON ring as a regular spare now that a slot was
+  // freed (spare count dropped to ≤ spare_ring_max). PUT /api/rings/:id/accept clears
+  // pending=1 on the WON ring, resolving the overflow state.
+  const acceptRes = await fetch(`${API_URL}/api/rings/${wonRingId}/accept`, {
+    method: 'PUT',
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  expect(acceptRes.status).toBe(200);
+
+  // Confirm pending_ring_id is cleared on the server.
   await expect.poll(async () => {
     const { player } = await me(token);
     return player?.pending_ring_id;
   }, { timeout: 8000 }).toBeNull();
 
   const { rings: final } = await me(token);
-  // Won ring is now carried (auto-carried by tryAutoCarryPending when the discard
-  // freed a slot).
+  // Won ring is still carried (it was in_carry=1 from the win; accept only clears pending).
   expect(final.find((r) => r.id === wonRingId)?.in_carry).toBe(1);
   // Discarded ring is permanently gone (deleted, not returned to the Sanctum).
   expect(final.find((r) => r.id === discardId)).toBeUndefined();
-  // Carry holds at the cap; total drops by the one discarded ring (15 → 14).
+  // Carry drops by the one discarded ring (15 → 14); WON ring stays in carry.
   expect(final.filter((r) => r.in_carry === 1).length).toBe(14);
   expect(final.length).toBe(14);
   await ctx.close();
