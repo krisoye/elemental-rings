@@ -55,7 +55,9 @@ export const GRID_ROW_GAP = ROW_GAP;
  */
 export class InventoryGrid extends Phaser.GameObjects.Container {
   private selected: RingData | null = null;
-  private readonly cards: Map<string, Phaser.GameObjects.Container> = new Map();
+  // #389 — cells are RingCard instances (the inline card body was migrated onto the
+  // shared RingCard). Typed precisely so callers get the RingCard API without casts.
+  private readonly cards: Map<string, RingCard> = new Map();
   // Background rectangle per ring id, used to toggle selection stroke without
   // relying on the card container's child ordering.
   private readonly cardBgs: Map<string, Phaser.GameObjects.Rectangle> = new Map();

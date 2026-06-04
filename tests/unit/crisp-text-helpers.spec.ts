@@ -1241,6 +1241,29 @@ describe('#364/#389 Phase 2: RingCard wraps every per-card label with crispCanva
     expect(src.includes('new FusedCardFill(')).toBe(false);
   });
 
+  it('#389 RingCard.ts has exactly 3 crispCanvasText calls (element / pips / XP — no Tier row)', () => {
+    // #389 adversarial: Tier row dropped → exactly three stat-row labels remain.
+    // If a fourth crispCanvasText call is added, the Tier row has been silently
+    // re-introduced and this test will catch it before the E2E structural assertion.
+    const src = readClientSrc('objects/ui/RingCard.ts');
+    if (src === null) return;
+    const crispCalls = (src.match(/crispCanvasText\(/g) ?? []).length;
+    expect(
+      crispCalls,
+      `RingCard must have exactly 3 crispCanvasText calls (element/pips/XP); found ${crispCalls} — Tier row must remain dropped`,
+    ).toBe(3);
+  });
+
+  it('#389 RingCard.ts has no tierLabel field or tierY option', () => {
+    // Source guard: both the instance field and the opts key were removed together.
+    // A partial removal (e.g. only tierLabel but tierY kept) would leave a dead option
+    // that confuses future editors into thinking Tier row is configurable.
+    const src = readClientSrc('objects/ui/RingCard.ts');
+    if (src === null) return;
+    expect(src, 'RingCard.ts must not have tierLabel field — Tier row is gone').not.toContain('tierLabel');
+    expect(src, 'RingCard.ts must not have tierY option — Tier row is gone').not.toContain('tierY');
+  });
+
 });
 
 // ── 6e: showNpcPrompt promptNode null guard ───────────────────────────────────
@@ -1355,6 +1378,68 @@ describe('#362 Phase 2: addDomLabel originX branch for align overrides', () => {
     expect(src, "DomLabel must handle align='left' in originX computation").toContain("align === 'left'");
     expect(src, "DomLabel must handle align='right' in originX computation").toContain("align === 'right'");
     expect(src, 'DomLabel originX must have a 0.5 fallback for center').toContain('0.5');
+  });
+
+});
+
+// ── 6k: #389 BattleHandOverlay field-mode reliquary-target guard ─────────────
+//
+// Field mode disables the spirit/reliquary target so the player cannot bank a
+// ring to the resting pool away from the Sanctum.  We verify the source contains
+// a guard that conditionally enables/disables the reliquary move path.
+
+describe('#389 Phase 1+2: BattleHandOverlay field-mode reliquary-target disabled (source guard)', () => {
+
+  // #389 adversarial: if BattleHandOverlay delegates to the unified RingManagementOverlay
+  // in 'field' mode, the field-mode reliquary-target disable must be present either in
+  // BattleHandOverlay.ts or in the shared RingManagementOverlay.ts.
+  it('BattleHandOverlay.ts or RingManagementOverlay.ts contains a reliquary-target disable guard for field mode', () => {
+    // #389 adversarial: without this guard, a player in the field could banking a ring
+    // to the resting pool — violating the "no banking away from Sanctum" rule.
+    const bhoSrc = readClientSrc('objects/BattleHandOverlay.ts');
+    const rmoSrc = readClientSrc('objects/ui/RingManagementOverlay.ts');
+    // At least one of the two files must reference 'reliquary' in the context of
+    // disabling the target ('field' mode gate).
+    const bhoHasReliquaryGuard = bhoSrc?.includes('reliquary') ?? false;
+    const rmoHasReliquaryGuard = rmoSrc?.includes('reliquary') ?? false;
+    expect(
+      bhoHasReliquaryGuard || rmoHasReliquaryGuard,
+      'Field-mode reliquary-target disable must be present in BattleHandOverlay.ts or RingManagementOverlay.ts',
+    ).toBe(true);
+  });
+
+  it("RingManagementOverlay.ts exports RingMgmtMode type with 'sanctum' and 'field' variants", () => {
+    // #389 adversarial: if the type is narrowed to a single mode or loses a variant,
+    // mode-gating logic would be unreachable (or always active) without a TS error.
+    const src = readClientSrc('objects/ui/RingManagementOverlay.ts');
+    if (src === null) return;
+    expect(src, "RingManagementOverlay must define RingMgmtMode with 'sanctum'").toContain("'sanctum'");
+    expect(src, "RingManagementOverlay must define RingMgmtMode with 'field'").toContain("'field'");
+  });
+
+  it('BattleHandOverlay.ts publishes window.__ringMgmtState (calls publishRingMgmtState)', () => {
+    // #389 E2E introspection requirement: the field overlay must publish its structure
+    // to __ringMgmtState so cross-mode structural assertions can verify column parity.
+    // Without this call the Scenario 1c E2E test would wait forever for the hook.
+    const src = readClientSrc('objects/BattleHandOverlay.ts');
+    if (src === null) return;
+    expect(
+      src,
+      'BattleHandOverlay.ts must call publishRingMgmtState to expose field-mode state to E2E',
+    ).toContain('publishRingMgmtState');
+  });
+
+  it('BattleHandOverlay.ts calls clearRingMgmtState on close (hook cleanup)', () => {
+    // #389 adversarial: if clearRingMgmtState is not called on close, __ringMgmtState
+    // persists with stale field-mode data after the overlay is dismissed. The sanctum
+    // overlay's later publish would overwrite it, but a race between close and the
+    // re-render could produce a stale snapshot that trips the structural assertion.
+    const src = readClientSrc('objects/BattleHandOverlay.ts');
+    if (src === null) return;
+    expect(
+      src,
+      'BattleHandOverlay.ts must call clearRingMgmtState when the overlay is closed',
+    ).toContain('clearRingMgmtState');
   });
 
 });

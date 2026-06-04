@@ -233,12 +233,17 @@ test('heart: moving a Reliquary (spirit) ring into the heart slot equips it', as
   );
 
   const after = await getMe(token);
-  // The new ring is the heart ring (heart_slot = 1, outside carry).
-  const eq = after.rings.find((r: any) => r.id === spiritId);
+  // The new ring is the heart ring. /api/me excludes heart_slot=1 rings from the
+  // `rings` array (EPIC #378) — the heart ring is surfaced exclusively via
+  // player.heart_ring, which returns the full ring row including heart_slot and
+  // in_carry. Assert against that object directly.
   expect(after.player.heart_ring.id).toBe(spiritId);
-  expect(eq.heart_slot).toBe(1);
-  expect(eq.in_carry).toBe(0);
-  // The previous heart ring was released back to the Reliquary (heart_slot cleared).
+  // player.heart_ring is the full RingRow (SELECT r.* JOIN players) — heart_slot
+  // and in_carry are available here without searching after.rings.
+  expect(after.player.heart_ring.heart_slot).toBe(1);
+  expect(after.player.heart_ring.in_carry).toBe(0);
+  // The previous heart ring was released back to the Reliquary (heart_slot cleared,
+  // appears in after.rings since it is no longer heart_slot=1).
   if (oldHeartId && oldHeartId !== spiritId) {
     const old = after.rings.find((r: any) => r.id === oldHeartId);
     expect(old.heart_slot).toBe(0);

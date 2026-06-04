@@ -1717,25 +1717,54 @@ test('manage-battle-rings (#381 adversarial): empty-spare placeholder absent whe
     return t;
   })();
 
-  // Fill the spare pool to capacity by seeding rings up to spare_ring_max.
+  // Fill the BENCH (spare grid) to capacity. The placeholder guard is
+  // `usedSpares < spareCapacity`, where usedSpares is the BENCH count: carried
+  // rings that are NOT battle-slotted, NOT the heart ring, and NOT the pending WON
+  // ring (EPIC #378's independent-pool model). Counting ALL carried rings (which
+  // includes the 5 battle-slot rings) under-seeds the bench and the placeholder
+  // correctly stays visible — so seed against the bench count, not total carry.
   const me = (await (
     await fetch(`${API_URL}/api/me`, { headers: { Authorization: `Bearer ${tok}` } })
-  ).json()) as { player: { spare_ring_max: number }; rings: Array<{ id: string; in_carry: number }> };
+  ).json()) as {
+    player: { spare_ring_max: number; heart_ring?: { id: string } | null; pending_ring_id?: string | null };
+    rings: Array<{ id: string; in_carry: number }>;
+    loadout: Record<string, string | null>;
+  };
   const spareMax = me.player.spare_ring_max;
-  const currentSpares = me.rings.filter((r) => r.in_carry === 1).length;
-  const needed = Math.max(0, spareMax - currentSpares);
+  const benchCount = (m: typeof me): number => {
+    const slotted = new Set(Object.values(m.loadout).filter(Boolean) as string[]);
+    if (m.player.heart_ring?.id) slotted.add(m.player.heart_ring.id);
+    if (m.player.pending_ring_id) slotted.add(m.player.pending_ring_id);
+    return m.rings.filter((r) => r.in_carry === 1 && !slotted.has(r.id)).length;
+  };
+  const needed = Math.max(0, spareMax - benchCount(me));
   if (needed > 0) {
-    await seedSpares(tok, needed);
+    // Seed resting rings directly (gold-free; merchant buys are gold-limited and
+    // can't reach the full bench cap), then carry them so they land on the bench.
+    await fetch(`${API_URL}/api/test/seed-resting-rings`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${tok}` },
+      body: JSON.stringify({ count: needed }),
+    });
+    const seeded = (await (
+      await fetch(`${API_URL}/api/me`, { headers: { Authorization: `Bearer ${tok}` } })
+    ).json()) as { rings: Array<{ id: string; in_carry: number }> };
+    // Carry the already-carried set PLUS the freshly-seeded resting rings so the new
+    // rings become bench (carried, not battle-slotted).
+    const carried = seeded.rings.filter((r) => r.in_carry === 1).map((r) => r.id);
+    const newResting = seeded.rings.filter((r) => r.in_carry === 0).map((r) => r.id).slice(0, needed);
+    await fetch(`${API_URL}/api/carry`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${tok}` },
+      body: JSON.stringify({ ringIds: Array.from(new Set([...carried, ...newResting])) }),
+    });
   }
 
-  // Re-check that we are now AT capacity.
+  // Re-check that the BENCH is now AT capacity (not merely total-carry at cap).
   const me2 = (await (
     await fetch(`${API_URL}/api/me`, { headers: { Authorization: `Bearer ${tok}` } })
-  ).json()) as { player: { spare_ring_max: number }; rings: Array<{ id: string; in_carry: number }> };
-  const actualSpares = me2.rings.filter((r) => r.in_carry === 1).length;
-  // We need at least as many spares as the cap to hit the "full" branch.
-  // If the cap was already exceeded before we seeded, actualSpares > spareMax is also full.
-  expect(actualSpares).toBeGreaterThanOrEqual(me2.player.spare_ring_max);
+  ).json()) as typeof me;
+  expect(benchCount(me2)).toBeGreaterThanOrEqual(me2.player.spare_ring_max);
 
   const page = await ctx.newPage();
   await loadForest(page);

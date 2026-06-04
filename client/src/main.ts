@@ -298,7 +298,9 @@ declare global {
     __campState?: {
       player: any;
       rings: any[];
-      loadout: { thumb?: string | null; [key: string]: unknown };
+      // #389 — slot → ringId map. Narrowed from `unknown` so benchSpareCount /
+      // applyReliquaryLockState read it without an unsafe cast.
+      loadout: Record<string, string | null>;
       // Carry pool separation for #40 assertions.
       atSanctum: any[];
       loadout_pool: any[];

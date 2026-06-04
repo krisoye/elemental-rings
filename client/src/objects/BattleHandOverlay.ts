@@ -707,9 +707,11 @@ export class BattleHandOverlay {
     // (LOOT | BENCH | HEALTH | COMBAT) and the Bench counter (usedSpares already
     // excludes battle-slotted, heart, and the pending WON ring — the same predicate
     // as benchSpareCount). No Spirit counter in the field (no resting pool access).
-    publishRingMgmtState('field', {
-      bench: { n: usedSpares, max: spareCapacity },
-    });
+    publishRingMgmtState(
+      'field',
+      { bench: { n: usedSpares, max: spareCapacity } },
+      container,
+    );
   }
 
   /**

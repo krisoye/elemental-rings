@@ -55,7 +55,7 @@ export interface RingCardOpts {
   textColor?: string;
   /** Color for the use-pips row when it differs from the other rows (default = textColor). */
   pipsColor?: string;
-  /** Font size for element/xp/tier rows (default '9px'). */
+  /** Font size for element/xp rows (default '9px'). */
   fontSize?: string;
   /** Font size for the use-pips row (default matches `fontSize`). */
   pipsFontSize?: string;
@@ -63,12 +63,6 @@ export interface RingCardOpts {
   elementY?: number;
   pipsY?: number;
   xpY?: number;
-  /**
-   * #389 — accepted for source compatibility with callers that still pass a Tier
-   * offset, but ignored: the Tier row is no longer rendered.
-   * @deprecated the Tier row was removed; this option has no effect.
-   */
-  tierY?: number;
   /** XP row prefix (some panels show 'XP:', others 'Xp: '). */
   xpPrefix?: string;
 }

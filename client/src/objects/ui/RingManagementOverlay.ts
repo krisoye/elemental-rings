@@ -82,22 +82,47 @@ export interface RingMgmtCounters {
   bench: { n: number; max: number };
 }
 
+/** A Tier-row glyph: an upper-case `T` immediately followed by a digit (T0, T1…). */
+const TIER_ROW_RE = /^T\d/;
+
+/**
+ * Recursively scan a Phaser display object (typically the open overlay container)
+ * for any text child whose content reads like a Tier row (`T0`/`T1`/…). #389
+ * permanently dropped the Tier row from every `RingCard` surface, so a genuine
+ * runtime scan — rather than a hardcoded `false` — gives the E2E layer real
+ * regression protection: if a future edit reintroduces a Tier label anywhere in
+ * the overlay, the reporter flips to `true` and the structural assertions fail.
+ */
+export function scanForTierRow(root: { getAll?: () => unknown[] } | null | undefined): boolean {
+  if (!root || typeof root.getAll !== 'function') return false;
+  for (const child of root.getAll()) {
+    const o = child as { text?: unknown; getAll?: () => unknown[] };
+    if (typeof o.text === 'string' && TIER_ROW_RE.test(o.text)) return true;
+    if (typeof o.getAll === 'function' && scanForTierRow(o)) return true;
+  }
+  return false;
+}
+
 /**
  * Publish the converged ring-management structure to `window.__ringMgmtState` so
  * the cross-mode E2E assertions can verify, per mode: the rendered column set,
- * the Spirit/Bench counter values (`n/max`), and that no card carries a Tier row
- * (always false post-#389 — the Tier row was removed from every `RingCard`
- * surface). Call once per render; pass the live counters for the open mode.
+ * the Spirit/Bench counter values (`n/max`), and — via a genuine runtime scan of
+ * the open overlay container — that no card carries a Tier row. Call once per
+ * render; pass the live counters and the overlay container for the open mode.
  */
-export function publishRingMgmtState(mode: RingMgmtMode, counters: RingMgmtCounters): void {
+export function publishRingMgmtState(
+  mode: RingMgmtMode,
+  counters: RingMgmtCounters,
+  overlayRoot?: { getAll?: () => unknown[] } | null,
+): void {
   window.__ringMgmtState = {
     mode,
     columns: [...COLUMN_LABELS[mode]],
     counters,
-    // #389 — the Tier row is gone from RingCard for every surface, so no card in
-    // either overlay can show one. Reported here so the E2E layer can assert it
-    // structurally rather than scanning every card's text.
-    anyCardHasTierRow: false,
+    // #389 — real scan (not a hardcoded constant): the Tier row was dropped from
+    // every RingCard surface, so this stays false unless a regression reintroduces
+    // a `T{n}` label somewhere in the overlay.
+    anyCardHasTierRow: scanForTierRow(overlayRoot),
   };
 }
 

@@ -38,9 +38,9 @@ export class RingSlot extends Phaser.GameObjects.Container {
 
   constructor(scene: Phaser.Scene, x: number, y: number, slotName: string) {
     super(scene, x, y);
-    // Shared card body. Rows mirror the legacy RingSlot layout: element (−20),
-    // tier (−6), xp (8), use pips (26, yellow). The slot label + dim overlay are
-    // added on top below.
+    // Shared card body. Rows: element (−20), xp (8), use pips (26, yellow). #389
+    // dropped the Tier row from RingCard. The slot label + dim overlay are added
+    // on top below.
     this.card = new RingCard(scene, 0, 0, {
       width: CARD_W,
       height: CARD_H,
@@ -48,7 +48,6 @@ export class RingSlot extends Phaser.GameObjects.Container {
       pipsColor: '#ffff88',
       pipsFontSize: '12px',
       elementY: -20,
-      tierY: -6,
       xpY: 8,
       pipsY: 26,
       xpPrefix: 'Xp: ',

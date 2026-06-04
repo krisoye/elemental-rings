@@ -981,7 +981,6 @@ export class CampScene extends DualCameraScene {
       elementY: -22,
       pipsY: -5,
       xpY: 12,
-      tierY: 27,
       xpPrefix: 'XP:',
     });
     // #347 — HP title above the card (was a bare ♥ glyph). The three-part header's
@@ -1056,10 +1055,13 @@ export class CampScene extends DualCameraScene {
         textColor: '#000000',
         fontSize: '9px',
       });
-      // Crisp slot label above each card (STATUS / A1 / A2 / D1 / D2).
+      // Crisp slot label above each card (STATUS / A1 / A2 / D1 / D2). The card is a
+      // Container positioned at (def.x, def.y) with its body drawn at the origin
+      // (cx/cy default 0), so child labels use LOCAL coordinates — (0, −36) renders
+      // 36px above the card center, not double-offset by (def.x, def.y).
       const lbl = crispCanvasText(
         this.add
-          .text(def.x, def.y - 36, def.label, { fontSize: '10px', color: def.slot === 'thumb' ? '#ffcc44' : '#aaaaaa' })
+          .text(0, -36, def.label, { fontSize: '10px', color: def.slot === 'thumb' ? '#ffcc44' : '#aaaaaa' })
           .setOrigin(0.5)
           .setScrollFactor(0)
           .setName(`combat-label-${def.slot}`),
@@ -1072,7 +1074,7 @@ export class CampScene extends DualCameraScene {
       if (def.slot === 'thumb') {
         this.statusLockLabel = crispCanvasText(
           this.add
-            .text(def.x, def.y + 41, '', { fontSize: '10px', color: '#ff6666' })
+            .text(0, 41, '', { fontSize: '10px', color: '#ff6666' })
             .setOrigin(0.5)
             .setScrollFactor(0)
             .setName('status-lock'),
@@ -1168,7 +1170,7 @@ export class CampScene extends DualCameraScene {
         s.rings.filter((r: RingData) => r.in_carry === 0 && !(r as { escrowed?: number }).escrowed && r.heart_slot !== 1).length;
       const reliquaryCap = s.reliquaryCap ?? 0;
       const pendingId = (s.player?.pending_ring_id as string | null | undefined) ?? null;
-      const benchN = benchSpareCount(s.rings as RingData[], s.loadout as Record<string, string | null>, pendingId);
+      const benchN = benchSpareCount(s.rings as RingData[], s.loadout, pendingId);
       const benchMax = s.spare_ring_max ?? 0;
       if (this.spiritCounter) {
         this.spiritCounter
@@ -1180,10 +1182,14 @@ export class CampScene extends DualCameraScene {
           .setText(`${benchN}/${benchMax}`)
           .setColor(benchN >= benchMax ? '#ff5555' : '#aaffaa');
       }
-      publishRingMgmtState('sanctum', {
-        spirit: { n: reliquaryCount, max: reliquaryCap },
-        bench: { n: benchN, max: benchMax },
-      });
+      publishRingMgmtState(
+        'sanctum',
+        {
+          spirit: { n: reliquaryCount, max: reliquaryCap },
+          bench: { n: benchN, max: benchMax },
+        },
+        this.overlay,
+      );
     }
   }
 
@@ -1201,23 +1207,21 @@ export class CampScene extends DualCameraScene {
   private applyReliquaryLockState(): void {
     const s = window.__campState;
     if (!s) return;
-    // Mirror the server `assertSpareWithinMax` counting semantics: spare rings are
-    // carried (in_carry=1), not occupying a battle-hand slot, and not the pending
-    // WON ring (its overflow slot is excluded). Reuse the SLOT_KEYS battle-slot
-    // pattern from refreshPools.
-    const battleHandIds = new Set(
-      (SLOT_KEYS as readonly string[]).map((k) => this.loadout[k]).filter(Boolean) as string[],
-    );
+    // #389 — the lock threshold and the BENCH counter MUST use identical spare
+    // semantics, so both go through the single canonical benchSpareCount predicate
+    // (carried, not battle-slotted, and not the pending WON ring — by id AND flag).
     const spareRingMax = s.spare_ring_max ?? 9;
-    const spareCount = s.rings.filter(
-      (r: RingData) =>
-        r.in_carry === 1 && !battleHandIds.has(r.id) && !(r as { pending?: number }).pending,
-    ).length;
+    const pendingId = (s.player?.pending_ring_id as string | null | undefined) ?? null;
+    const spareCount = benchSpareCount(s.rings as RingData[], this.loadout, pendingId);
     const locked = spareCount >= spareRingMax;
-    // #182 — track Reliquary-full state for the drop-label hint.
+    // #182 — track Reliquary-full state for the drop-label hint. The fallback
+    // mirrors renderReliquaryHeader: resting rings are in_carry=0, not escrowed,
+    // and NOT the equipped heart ring (heart_slot=1, which also rests at in_carry=0).
     const reliquaryCount: number =
       s.reliquaryCount ??
-      s.rings.filter((r: RingData) => r.in_carry === 0 && !(r as any).escrowed).length;
+      s.rings.filter(
+        (r: RingData) => r.in_carry === 0 && !(r as { escrowed?: number }).escrowed && r.heart_slot !== 1,
+      ).length;
     const reliquaryCap: number = s.reliquaryCap ?? 20;
     window.__reliquaryFull = reliquaryCount >= reliquaryCap;
     for (const ring of s.atSanctum as RingData[]) {
