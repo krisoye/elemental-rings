@@ -1198,9 +1198,11 @@ export const setHeartRing = db.transaction(
       if (oldHeartId && oldHeartId !== ringId) {
         setRingHeartSlot(oldHeartId, 0);
         if (releaseTo === 'spare') {
-          // Carry-cap guard: old heart joins the carry, incoming spare leaves it —
-          // a net-zero swap. assertCarryWithinCap accounts for both sides so the
-          // guard correctly passes when carry is exactly at cap.
+          // Carry-cap guard: old heart joins the carry, incoming ring leaves it.
+          // When ringId is a carried spare (in_carry=1), this is net-zero and the guard
+          // passes at cap. When ringId is a pending won ring (in_carry=0, not yet carried),
+          // the delete is a no-op and the guard counts it as +1 — correctly blocking the
+          // swap at full carry since the old heart ring would genuinely grow the carry.
           assertCarryWithinCap(playerId, { adding: [oldHeartId], removing: ringId ? [ringId] : [] });
           setRingCarry(oldHeartId, 1);
         } else {

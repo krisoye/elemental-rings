@@ -523,9 +523,6 @@ export class BattleHandOverlay {
     const _isBattleSlotSel = _emptySelId !== null && _emptySelSlot !== null && _emptySelSlot !== HEART_SLOT;
     const _isHeartSel = _emptySelSlot === HEART_SLOT;
     const emptySpareActionable = _isBattleSlotSel || _isHeartSel || _isHoldingPending;
-    // True whenever a swap-source ring is held — used both for empty-placeholder
-    // interactivity (above) and to keep filled spare cards full-alpha at carry cap.
-    const holdingSwapSource = emptySpareActionable;
     const emptySpareSelId = _emptySelId;
     const emptySpareSelSlot = _emptySelSlot;
 
@@ -544,13 +541,13 @@ export class BattleHandOverlay {
 
       if (ring) {
         const selected = this.selRingId === ring.id && this.selFromSlot === null;
-        const cardAlpha = (spareFull && !holdingSwapSource) ? 0.45 : 1;
+        const cardAlpha = (spareFull && !emptySpareActionable) ? 0.45 : 1;
         const rect = this.scene.add
           .rectangle(0, 0, 72, 80, ELEMENT_COLORS[ring.element] ?? 0x444444)
           .setScrollFactor(0)
           .setStrokeStyle(selected ? 3 : 2, selected ? 0xffff00 : 0x888888)
           .setAlpha(cardAlpha)
-          .setInteractive({ useHandCursor: !spareFull || holdingSwapSource })
+          .setInteractive({ useHandCursor: !spareFull || emptySpareActionable })
           .on('pointerdown', () => {
             const selSlot = this.selFromSlot;
             const selId = this.selRingId;

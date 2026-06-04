@@ -185,4 +185,21 @@ describe('assertCarryWithinCap', () => {
       repo.assertCarryWithinCap(p, { adding: [oldHeartPhantom], removing: [] }),
     ).toThrow(/carry cap exceeded/);
   });
+
+  test('pending won ring (in_carry=0) not in carry set → delete is no-op → net +1 → correctly blocked at cap', () => {
+    const p = makePlayer(dbInstance);
+    const cap = repo.getCarryCap(p);
+    // Fill carry to exactly the cap.
+    for (let i = 0; i < cap; i++) {
+      makeRing(dbInstance, p, { inCarry: 1 });
+    }
+    // phantomOldHeart simulates the old heart ring that would join the carry.
+    const phantomOldHeart = `oldheart_pending_${Math.random().toString(36).slice(2)}`;
+    // notInCarry simulates a pending won ring (in_carry=0): it is NOT in the carry
+    // set, so Set.delete is a no-op and the guard sees count = cap + 1.
+    const notInCarry = `pending_won_${Math.random().toString(36).slice(2)}`;
+    expect(() =>
+      repo.assertCarryWithinCap(p, { adding: [phantomOldHeart], removing: [notInCarry] }),
+    ).toThrow(/carry cap exceeded/);
+  });
 });
