@@ -1,6 +1,7 @@
 import Phaser from 'phaser';
 import { ELEMENT_NAMES } from '../../../../shared/elements';
 import { FusedCardFill } from '../fusedFill';
+import { crispCanvasText } from './DomLabel';
 
 /**
  * Shared ring-card widget (EPIC #291 / WS D — DRY remediation). RingSlot,
@@ -125,18 +126,26 @@ export class RingCard extends Phaser.GameObjects.Container {
     // BELOW the labels added next.
     this.fusedFill = new FusedCardFill(scene, this, cx, cy, this.o.width, this.o.height, this.o.scrollFactor);
 
-    this.elementLabel = scene.add
-      .text(cx, cy + this.o.elementY, '', { fontSize: this.o.fontSize, color: this.o.textColor })
-      .setOrigin(0.5);
-    this.pipsLabel = scene.add
-      .text(cx, cy + this.o.pipsY, '', { fontSize: this.o.pipsFontSize, color: this.o.pipsColor })
-      .setOrigin(0.5);
-    this.xpLabel = scene.add
-      .text(cx, cy + this.o.xpY, '', { fontSize: this.o.fontSize, color: this.o.textColor })
-      .setOrigin(0.5);
-    this.tierLabel = scene.add
-      .text(cx, cy + this.o.tierY, '', { fontSize: this.o.fontSize, color: this.o.textColor })
-      .setOrigin(0.5);
+    this.elementLabel = crispCanvasText(
+      scene.add
+        .text(cx, cy + this.o.elementY, '', { fontSize: this.o.fontSize, color: this.o.textColor })
+        .setOrigin(0.5),
+    );
+    this.pipsLabel = crispCanvasText(
+      scene.add
+        .text(cx, cy + this.o.pipsY, '', { fontSize: this.o.pipsFontSize, color: this.o.pipsColor })
+        .setOrigin(0.5),
+    );
+    this.xpLabel = crispCanvasText(
+      scene.add
+        .text(cx, cy + this.o.xpY, '', { fontSize: this.o.fontSize, color: this.o.textColor })
+        .setOrigin(0.5),
+    );
+    this.tierLabel = crispCanvasText(
+      scene.add
+        .text(cx, cy + this.o.tierY, '', { fontSize: this.o.fontSize, color: this.o.textColor })
+        .setOrigin(0.5),
+    );
     this.add([this.elementLabel, this.pipsLabel, this.xpLabel, this.tierLabel]);
   }
 
