@@ -109,8 +109,12 @@ function carriedCount(me: any): number {
   return me.rings.filter((r: any) => r.in_carry === 1).length;
 }
 
-// ── Scenario 1: Modal opens; header shows aggregate_xp, spirit_max, spirit ────
-test('reliquary: opens at the wall and renders the live stats header', async ({ browser }) => {
+// ── Scenario 1 (#389): converged columns, SPIRIT + BENCH counters, no LOADOUT ──
+// The reliquary modal now shares the unified RingManagementOverlay structure:
+// SPIRIT | BENCH | HEALTH | COMBAT columns. The old combined `loadout (N/cap)`
+// badge is gone, replaced by separate SPIRIT (reliquaryCount/reliquaryCap) and
+// BENCH (spareCount/spare_ring_max) counters. The live header still shows spirit.
+test('reliquary (#389): opens with converged columns and SPIRIT + BENCH counters (no loadout badge)', async ({ browser }) => {
   const token = await registerAndToken();
   const me = await getMe(token);
 
@@ -120,16 +124,44 @@ test('reliquary: opens at the wall and renders the live stats header', async ({ 
   await loadSanctum(page);
   await openReliquary(page);
 
-  // The header text reflects the authoritative /api/me snapshot — not a local
-  // computation. Assert each value appears verbatim.
-  const header = await campTextByName(page, 'reliquary-header');
-  expect(header).toBeTruthy();
-  expect(header).toContain(`XP: ${me.player.aggregate_xp}`);
-  expect(header).toContain(`Spirit: ${me.player.spirit_current} / ${me.player.spirit_max}`);
+  // #389 — the converged structure reporter announces sanctum mode + the four
+  // columns + the Spirit/Bench counter values, and confirms no card has a Tier row.
+  const state = await page.evaluate(() => (window as any).__ringMgmtState);
+  expect(state).toBeTruthy();
+  expect(state.mode).toBe('sanctum');
+  expect(state.columns).toEqual(['SPIRIT', 'BENCH', 'HEALTH', 'COMBAT']);
+  expect(state.anyCardHasTierRow).toBe(false);
 
-  // The LOADOUT badge shows carried / cap.
-  const badge = await campTextByName(page, 'loadout-badge');
-  expect(badge).toBe(`(${carriedCount(me)}/${me.player.carry_cap})`);
+  // SPIRIT counter = reliquaryCount / reliquaryCap (server-authoritative).
+  const reliquaryCount = me.player.reliquaryCount ??
+    me.rings.filter((r: any) => r.in_carry === 0 && !r.escrowed && r.heart_slot !== 1).length;
+  expect(state.counters.spirit.n).toBe(reliquaryCount);
+  expect(state.counters.spirit.max).toBe(me.player.reliquaryCap);
+
+  // BENCH counter = spareCount / spare_ring_max (pending excluded). A fresh player
+  // carries the 5 battle-slot rings (all slotted) → bench 0.
+  expect(state.counters.bench.max).toBe(me.player.spare_ring_max);
+  const battleIds = new Set(['thumb','a1','a2','d1','d2'].map((s) => (me.loadout as any)[s]).filter(Boolean));
+  const expectedBench = me.rings.filter(
+    (r: any) => r.in_carry === 1 && !battleIds.has(r.id) && r.id !== me.player.pending_ring_id && !r.pending,
+  ).length;
+  expect(state.counters.bench.n).toBe(expectedBench);
+
+  // The crisp counter labels are rendered (named scene texts).
+  expect(await campTextByName(page, 'spirit-counter')).toBe(`${reliquaryCount}/${me.player.reliquaryCap}`);
+  expect(await campTextByName(page, 'bench-counter')).toBe(`${expectedBench}/${me.player.spare_ring_max}`);
+
+  // The removed combined badge no longer exists.
+  expect(await campTextByName(page, 'loadout-badge')).toBeNull();
+
+  // The middle column header reads BENCH (not the old SPARES).
+  const benchLabel = await campTextByName(page, 'spare-label');
+  expect(benchLabel).toContain('BENCH');
+  expect(benchLabel).not.toContain('SPARES');
+
+  // The live header still surfaces the authoritative spirit reading.
+  const headerLeft = await campTextByName(page, 'reliquary-header-left');
+  expect(headerLeft).toContain(`Spirit: ${me.player.spirit_current} / ${me.player.spirit_max}`);
   await ctx.close();
 });
 
@@ -179,9 +211,9 @@ test('reliquary: moving a ring into Spare drops aggregate_xp and updates spirit_
   // can only reduce it; spirit_max is server-recomputed and never rises here.
   expect(after.player.aggregate_xp).toBeLessThanOrEqual(before.player.aggregate_xp);
   expect(after.player.spirit_max).toBeLessThanOrEqual(before.player.spirit_max);
-  // The header re-renders from the new authoritative state.
-  const header = await campTextByName(page, 'reliquary-header');
-  expect(header).toContain(`XP: ${after.player.aggregate_xp}`);
+  // The header re-renders from the new authoritative state (left segment = spirit).
+  const headerLeft = await campTextByName(page, 'reliquary-header-left');
+  expect(headerLeft).toContain(`Spirit: ${after.player.spirit_current} / ${after.player.spirit_max}`);
   await ctx.close();
 });
 

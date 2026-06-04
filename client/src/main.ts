@@ -155,6 +155,20 @@ declare global {
     // can assert which post-duel route opened the overlay. (Distinct from the
     // legacy __overworldBattleHandOpen, which is biome-scene-specific.)
     __battleHandOpen?: boolean;
+    // #389 — converged ring-management structure reporter. Published per render by
+    // whichever overlay is open (field BattleHandOverlay or Sanctum reliquary), so
+    // the cross-mode E2E assertions can verify the BENCH/HEALTH/COMBAT columns are
+    // the same structure in both modes, read the Spirit/Bench counters (n/max), and
+    // confirm no card carries a Tier row. Cleared (undefined) when both are closed.
+    __ringMgmtState?: {
+      mode: 'sanctum' | 'field';
+      columns: string[];
+      counters: {
+        spirit?: { n: number; max: number };
+        bench: { n: number; max: number };
+      };
+      anyCardHasTierRow: boolean;
+    };
     connectToRoom: (roomName: string, opts?: BattleRoomOptions) => Promise<void>;
     // Deterministic E2E hook: triggers the same code path as clicking an
     // EncounterScene marker. Set by EncounterScene.create(). 'PVP' starts the

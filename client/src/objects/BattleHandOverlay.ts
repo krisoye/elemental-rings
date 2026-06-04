@@ -8,6 +8,7 @@ import { attachTooltip } from './ui/Tooltip';
 import { SlotSwapManager, type SwapSlot } from './ui/SlotSwapManager';
 import { apiFetch, fetchMe, getToken } from '../net/api';
 import { addDomLabel } from './ui/DomLabel';
+import { publishRingMgmtState, clearRingMgmtState } from './ui/RingManagementOverlay';
 
 /**
  * EPIC #302 / #305 — sentinel slot identifier for the dedicated Heart slot. It
@@ -369,19 +370,24 @@ export class BattleHandOverlay {
       .setScrollFactor(0);
     container.add([headerLeft, headerCenter, headerRight, divider]);
 
-    // ── #381 — 4×2 right-section card cluster ────────────────────────────────
-    // Card size: 70×90 (RingCard). Card centers:
-    //   Row 0 (y=193): WON (x=559), HP/heart (x=659), A1 (x=759), A2 (x=837)
-    //   Row 1 (y=291): DISCARD (x=559), STATUS/thumb (x=659), D1 (x=759), D2 (x=837)
-    // Labels 34px above each card center: row-0 labels y=159, row-1 labels y=257.
+    // ── #389 — converged right-section cluster (matches the Sanctum reliquary) ─
+    // LOOT | HEALTH | COMBAT. COMBAT = STATUS thumb LEFT-ALIGNED above the 2×2
+    // A1/A2 · D1/D2 (so STATUS sits over the A1/D1 column, identical to sanctum).
+    // Card size 70×90 (RingCard). Card centers:
+    //   Row 0 (y=193): WON (x=559), HP/heart (x=659), STATUS/thumb (x=759)
+    //   Row 1 (y=291): DISCARD (x=559),               A1 (x=759), A2 (x=837)
+    //   Row 2 (y=389):                                D1 (x=759), D2 (x=837)
+    // Labels 34px above each card center.
     const COL0_X = 559; // WON / DISCARD
-    const COL1_X = 659; // HP / STATUS
-    const COL2_X = 759; // A1 / D1
-    const COL3_X = 837; // A2 / D2
-    const ROW0_Y = 193;
-    const ROW1_Y = 291;
+    const COL1_X = 659; // HP (HEALTH)
+    const COL2_X = 759; // STATUS / A1 / D1 (COMBAT left column)
+    const COL3_X = 837; // A2 / D2 (COMBAT right column)
+    const ROW0_Y = 193; // WON · HP · STATUS
+    const ROW1_Y = 291; // DISCARD · A1 · A2
+    const ROW2_Y = 389; // D1 · D2
     const LABEL_Y_ROW0 = ROW0_Y - 34; // 159
     const LABEL_Y_ROW1 = ROW1_Y - 34; // 257
+    const LABEL_Y_ROW2 = ROW2_Y - 34; // 355
     const CARD_W = 70;
     const CARD_H = 90;
 
@@ -444,12 +450,14 @@ export class BattleHandOverlay {
     this.renderHeartCard(container, COL1_X, ROW0_Y, CARD_W, CARD_H);
 
     // ── Battle slots (thumb/STATUS + a1/a2/d1/d2) — one RingCard each ────────
+    // #389 — STATUS is left-aligned (COL2_X) ABOVE the 2×2; A1/A2 on row 1, D1/D2
+    // on row 2. This matches the Sanctum COMBAT cluster exactly.
     const slotPos: Record<BattleSlot, { x: number; y: number; labelY: number; labelText: string }> = {
-      thumb: { x: COL1_X, y: ROW1_Y, labelY: LABEL_Y_ROW1, labelText: 'STATUS' },
-      a1:    { x: COL2_X, y: ROW0_Y, labelY: LABEL_Y_ROW0, labelText: 'A1' },
-      a2:    { x: COL3_X, y: ROW0_Y, labelY: LABEL_Y_ROW0, labelText: 'A2' },
-      d1:    { x: COL2_X, y: ROW1_Y, labelY: LABEL_Y_ROW1, labelText: 'D1' },
-      d2:    { x: COL3_X, y: ROW1_Y, labelY: LABEL_Y_ROW1, labelText: 'D2' },
+      thumb: { x: COL2_X, y: ROW0_Y, labelY: LABEL_Y_ROW0, labelText: 'STATUS' },
+      a1:    { x: COL2_X, y: ROW1_Y, labelY: LABEL_Y_ROW1, labelText: 'A1' },
+      a2:    { x: COL3_X, y: ROW1_Y, labelY: LABEL_Y_ROW1, labelText: 'A2' },
+      d1:    { x: COL2_X, y: ROW2_Y, labelY: LABEL_Y_ROW2, labelText: 'D1' },
+      d2:    { x: COL3_X, y: ROW2_Y, labelY: LABEL_Y_ROW2, labelText: 'D2' },
     };
     SLOT_KEYS.forEach((slot) => {
       const { x: sx, y: slotY, labelY: lblY, labelText } = slotPos[slot];
@@ -651,7 +659,8 @@ export class BattleHandOverlay {
     const RECHARGE_Y = SPARE_LABEL_Y + 19;  // ≈464
     const STATUS_Y = RECHARGE_Y + 20;       // ≈484
 
-    const spareLabelText = `Spare: ${usedSpares} / ${spareCapacity}`;
+    // #389 — player-facing "Bench" replaces "Spare" (the code keeps `spare_*`).
+    const spareLabelText = `Bench: ${usedSpares} / ${spareCapacity}`;
     const spareLabelColor = spareFull ? '#ff8888' : '#aaccff';
     this.domLabels.push(
       addDomLabel(this.scene, GRID_ORIGIN_X + 68, SPARE_LABEL_Y, spareLabelText, {
@@ -693,6 +702,14 @@ export class BattleHandOverlay {
     // modal published (tests/e2e/carry.spec.ts calls window.__encounterDiscardRing).
     // The lambda captures `this`, so it routes to this overlay's private discard.
     window.__encounterDiscardRing = (ringId: string): void => void this.discardCarriedRing(ringId);
+
+    // #389 — publish the converged structure reporter: the field overlay's columns
+    // (LOOT | BENCH | HEALTH | COMBAT) and the Bench counter (usedSpares already
+    // excludes battle-slotted, heart, and the pending WON ring — the same predicate
+    // as benchSpareCount). No Spirit counter in the field (no resting pool access).
+    publishRingMgmtState('field', {
+      bench: { n: usedSpares, max: spareCapacity },
+    });
   }
 
   /**
@@ -1234,6 +1251,7 @@ export class BattleHandOverlay {
     this.manageStatusText = null;
     window.__battleHandOpen = false; // #212
     setHeartCardState(undefined); // #305
+    clearRingMgmtState(); // #389
     delete window.__encounterDiscardRing;
     const cb = this.onCloseCb;
     this.onCloseCb = undefined;
@@ -1368,6 +1386,7 @@ export class BattleHandOverlay {
     this.manageStatusText = null;
     this.onCloseCb = undefined;
     setHeartCardState(undefined); // #305
+    clearRingMgmtState(); // #389
     delete window.__encounterDiscardRing;
   }
 }

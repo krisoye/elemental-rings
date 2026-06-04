@@ -189,6 +189,60 @@ test('manage-battle-rings: title renders and the STATUS/HP cluster labels show',
   await ctx.close();
 });
 
+// ── Scenario 1c (#389) — converged structure reporter (field mode) ────────────
+// The field overlay shares the unified RingManagementOverlay structure: the
+// columns are LOOT | BENCH | HEALTH | COMBAT, the Bench counter reads
+// usedSpares/spare_ring_max, and — post-#389 — no card carries a Tier row. The
+// player-facing "Bench" label replaces "Spares" (the code keeps `spare_*`).
+test('manage-battle-rings (#389): __ringMgmtState reports field columns, Bench counter, no Tier row', async ({ browser }) => {
+  const ctx = await browser.newContext();
+  await seedAuthToken(ctx);
+  const page = await ctx.newPage();
+  await loadForest(page);
+  await openBattleHand(page);
+
+  const state = await page.evaluate(() => (window as any).__ringMgmtState);
+  expect(state).toBeTruthy();
+  expect(state.mode).toBe('field');
+  // Field LEFT column is LOOT (WON + DISCARD); the three shared columns match sanctum.
+  expect(state.columns).toEqual(['LOOT', 'BENCH', 'HEALTH', 'COMBAT']);
+  // No Spirit counter in the field (no resting-pool access away from the Sanctum).
+  expect(state.counters.spirit).toBeUndefined();
+  // Bench counter is present with a numeric n/max.
+  expect(typeof state.counters.bench.n).toBe('number');
+  expect(typeof state.counters.bench.max).toBe('number');
+  // #389 — the Tier row was dropped from every RingCard surface.
+  expect(state.anyCardHasTierRow).toBe(false);
+
+  // Bench counter agrees with /api/me (battle-slotted + heart + pending excluded).
+  const tok = await page.evaluate(() => localStorage.getItem('er_token') ?? '');
+  const me = (await (
+    await fetch(`${API_URL}/api/me`, { headers: { Authorization: `Bearer ${tok}` } })
+  ).json()) as any;
+  const slotted = new Set(Object.values(me.loadout).filter(Boolean) as string[]);
+  if (me.player.heart_ring?.id) slotted.add(me.player.heart_ring.id);
+  if (me.player.pending_ring_id) slotted.add(me.player.pending_ring_id);
+  const expectedBench = me.rings.filter(
+    (r: any) => r.in_carry === 1 && !slotted.has(r.id),
+  ).length;
+  expect(state.counters.bench.n).toBe(expectedBench);
+  expect(state.counters.bench.max).toBe(me.player.spare_ring_max);
+
+  // The player-facing column label reads "Bench" (a DOM label), not "Spare(s)".
+  const benchLabel = await page.evaluate(() => {
+    let found: string | null = null;
+    document.querySelectorAll('.er-dom-label').forEach((n) => {
+      const txt = (n as HTMLElement).textContent ?? '';
+      if (txt.startsWith('Bench:')) found = txt;
+    });
+    return found;
+  });
+  expect(benchLabel).toBeTruthy();
+  expect(benchLabel!.startsWith('Bench:')).toBe(true);
+
+  await ctx.close();
+});
+
 // ── Scenario 1b — #352/#381: panel geometry, header, HP card above STATUS ─────
 // #381 updated: panel is now 760×500 (center 288, top 38). The modal gains a
 // three-part Spirit/♥/XP header, so Day/Gold/Food are still absent but Total XP
@@ -235,45 +289,23 @@ test('manage-battle-rings (#352/#381): panel 760×500, ♥ HP label present and 
   expect(panelTopY).not.toBeNull();
   expect(panelTopY!).toBeGreaterThanOrEqual(38);
 
-  // #352 §3 — HP card (ROW0_Y) above STATUS card (ROW1_Y): HP is on the top row.
-  // #363 — STATUS migrated to a DOM label; the ♥ HP label stays on canvas. Compare
-  // both in SCREEN space: the DOM node via getBoundingClientRect, the canvas label
-  // mapped through the game canvas rect + the 576-logical-px vertical scale.
+  // #389 — converged COMBAT cluster: STATUS is LEFT-ALIGNED ABOVE the 2×2, so the
+  // STATUS label sits above the A1 label on screen (STATUS row y=193, A1 row y=291).
+  // STATUS and A1 are both DOM labels; compare their screen tops directly.
   const rowOrder = await page.evaluate(() => {
-    const game = (window as any).__game;
-    const canvas: HTMLCanvasElement = game?.canvas;
-    const canvasRect = canvas.getBoundingClientRect();
-    const scaleY = canvasRect.height / 576; // canvas backing store is 1024×576 logical
-
-    // STATUS — DOM label: screen top straight from the node (trim to ignore whitespace).
     let statusTop: number | null = null;
+    let a1Top: number | null = null;
     document.querySelectorAll('.er-dom-label').forEach((n) => {
-      if ((n as HTMLElement).textContent?.trim() === 'STATUS') {
-        statusTop = (n as HTMLElement).getBoundingClientRect().top;
-      }
+      const t = (n as HTMLElement).textContent?.trim();
+      if (t === 'STATUS') statusTop = (n as HTMLElement).getBoundingClientRect().top;
+      if (t === 'A1') a1Top = (n as HTMLElement).getBoundingClientRect().top;
     });
-
-    // ♥ HP — canvas label: map its logical y to a screen top.
-    const scene = game?.scene?.getScene('ForestScene') as any;
-    const modal = scene?.battleHand?.manageModal;
-    let hpScreenTop: number | null = null;
-    const walk = (c: any): void => {
-      for (const o of c.getAll ? c.getAll() : []) {
-        if (typeof o.text === 'string' && o.text.startsWith('♥') && !o.text.includes('\n')) {
-          // Origin 0.5 → logical top = o.y - height/2.
-          const logicalTop = o.y - (o.height ?? 0) / 2;
-          hpScreenTop = canvasRect.top + logicalTop * scaleY;
-        }
-        if (o.getAll) walk(o);
-      }
-    };
-    walk(modal);
-    return { statusTop, hpScreenTop };
+    return { statusTop, a1Top };
   });
   expect(rowOrder.statusTop).not.toBeNull();
-  expect(rowOrder.hpScreenTop).not.toBeNull();
-  // HP card label sits above the STATUS label on screen.
-  expect(rowOrder.hpScreenTop!).toBeLessThan(rowOrder.statusTop!);
+  expect(rowOrder.a1Top).not.toBeNull();
+  // STATUS sits above the 2×2 (its A1 label) on screen.
+  expect(rowOrder.statusTop!).toBeLessThan(rowOrder.a1Top!);
 
   // #352 §5 / #363 — every card label has a dark backing. The ♥ HP label stays on
   // canvas with a preceding backing Rectangle; the migrated section labels (STATUS,
@@ -454,7 +486,8 @@ test('manage-battle-rings (#381): 4×2 cluster renders and the 3-col spare Inven
   );
   await openBattleHand(page);
 
-  // #381 — STATUS (thumb) and ♥ HP (heart) cards share column-1 (x=659).
+  // #389 — converged COMBAT cluster: STATUS is left-aligned above the 2×2 at the
+  // A1/D1 column (x=759); HEALTH (♥ HP) keeps its own column at x=659.
   // #363 — STATUS is a DOM label; ♥ HP stays on canvas.
   const labelXs = await page.evaluate(() => {
     const game = (window as any).__game;
@@ -483,8 +516,8 @@ test('manage-battle-rings (#381): 4×2 cluster renders and the 3-col spare Inven
     walk(modal);
     return out;
   });
-  // #381 — col-1 x = 659.
-  expect(Math.abs(labelXs.STATUS - 659)).toBeLessThanOrEqual(1);
+  // #389 — STATUS at the COMBAT left column x=759; HEALTH HP at x=659.
+  expect(Math.abs(labelXs.STATUS - 759)).toBeLessThanOrEqual(1);
   expect(labelXs.HP).toBe(659);
 
   // The spare InventoryGrid shows the seeded spares. After the M-1 fix the WON
@@ -672,10 +705,10 @@ test('manage-battle-rings (#381): right-section cluster X-centres are 559/659/75
     return result;
   });
 
-  // #381 — col-1 (STATUS/HP) at x=659. DOM-measured → ±1px; canvas exact.
-  expect(Math.abs(positions.STATUS - 659)).toBeLessThanOrEqual(1);
+  // #389 — HEALTH (HP) at x=659. DOM-measured → ±1px; canvas exact.
   expect(positions.HP).toBe(659);
-  // Col 2 (A1/D1) at x=759, col 3 (A2/D2) at x=837. DOM-measured → ±1px.
+  // #389 — COMBAT cluster: STATUS left-aligned above A1/D1 at x=759; A2/D2 at x=837.
+  expect(Math.abs(positions.STATUS - 759)).toBeLessThanOrEqual(1);
   expect(Math.abs(positions.A1 - 759)).toBeLessThanOrEqual(1);
   expect(Math.abs(positions.A2 - 837)).toBeLessThanOrEqual(1);
   expect(Math.abs(positions.D1 - 759)).toBeLessThanOrEqual(1);
@@ -1744,10 +1777,11 @@ test('manage-battle-rings (#381 adversarial): empty-spare placeholder absent whe
   await ctx.close();
 });
 
-// ── #381 QA Phase 1 — modal panel bounds: no card center exceeds x=855 or y=538
-// Adversarial: the 760×500 panel spans x=132–892, y=38–538. Card centers in the
-// 4×2 cluster sit at x∈{559,659,759,837} and y∈{193,291}. The rightmost cluster
-// col (A2/D2) is at x=837; any wider coordinate would overflow the panel.
+// ── #381/#389 QA — modal panel bounds: no card center exceeds x=855 or y=538
+// Adversarial: the 760×500 panel spans x=132–892, y=38–538. #389 converged cluster
+// card centers sit at x∈{559,659,759,837} and y∈{193,291,389} (STATUS above the
+// 2×2). The rightmost col (A2/D2) is at x=837; the bottom row (D1/D2) at y=389 →
+// bottom edge 434 < 538. Any wider/lower coordinate would overflow the panel.
 test('manage-battle-rings (#381 adversarial): no slot-card center x exceeds 855 or y exceeds 538', async ({ browser }) => {
   // #381 adversarial: cards placed beyond x=855 clip past the panel right edge
   // (panel right = 892, card half-width 35 → 892−35=857 is the hard limit).
@@ -1948,18 +1982,19 @@ test('manage-battle-rings (#381 impl): spare count label reflects post-exclusion
   if (pendingId) slottedSet.add(pendingId);
   const expectedUsed = me.rings.filter((r) => r.in_carry === 1 && !slottedSet.has(r.id)).length;
   const expectedMax = me.player.spare_ring_max;
-  const expectedLabel = `Spare: ${expectedUsed} / ${expectedMax}`;
+  // #389 — player-facing label is now "Bench:" (code/DB/API keep `spare_*`).
+  const expectedLabel = `Bench: ${expectedUsed} / ${expectedMax}`;
 
   const page = await ctx.newPage();
   await loadForest(page);
   await openBattleHand(page);
 
-  // The "Spare: N / max" label is a DOM label (not canvas text).
+  // The "Bench: N / max" label is a DOM label (not canvas text).
   const spareLabel = await page.evaluate(() => {
     let found: string | null = null;
     document.querySelectorAll('.er-dom-label').forEach((n) => {
       const txt = (n as HTMLElement).textContent ?? '';
-      if (txt.startsWith('Spare:')) found = txt;
+      if (txt.startsWith('Bench:')) found = txt;
     });
     return found;
   });
