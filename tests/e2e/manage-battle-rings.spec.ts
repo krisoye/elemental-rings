@@ -776,25 +776,18 @@ test('manage-battle-rings (#350): selecting a battle-slot ring and clicking empt
     bh.renderManageModal();
   }, ringId);
 
-  // Find and click an empty spare placeholder (a rectangle with no text children in
-  // the spare sub-container that is interactive (Phaser 4 maps useHandCursor:true → input.cursor==='pointer')).
+  // Find and click the empty spare placeholder. It is a bare Rectangle added
+  // directly to the modal container (not inside the InventoryGrid sub-container).
+  // Phaser maps useHandCursor:true → input.cursor === 'pointer'.
   const clicked = await page.evaluate(() => {
     const scene = (window as any).__game?.scene?.getScene('ForestScene');
     const modal = scene?.battleHand?.manageModal;
-    // Walk to the spare sub-container (largest Container-of-Containers).
-    const containers = modal.getAll().filter((o: any) => o.getAll && o.list);
-    let grid: any = null;
-    for (const c of containers) {
-      const kids = c.getAll().filter((k: any) => k.getAll);
-      if (kids.length && (!grid || kids.length > grid.getAll().length)) grid = c;
-    }
-    if (!grid) return false;
-    // Find an empty placeholder cell: a cell container whose only child is a Rectangle.
-    for (const cell of grid.getAll()) {
-      if (!cell.getAll) continue;
-      const children = cell.getAll();
-      if (children.length === 1 && children[0].input?.cursor === 'pointer') {
-        children[0].emit('pointerdown');
+    if (!modal) return false;
+    // Walk direct children of the modal container, looking for an interactive
+    // Rectangle (type === 'Rectangle') with pointer cursor.
+    for (const child of modal.getAll()) {
+      if (child.type === 'Rectangle' && child.input?.cursor === 'pointer') {
+        child.emit('pointerdown');
         return true;
       }
     }
@@ -855,22 +848,15 @@ test('manage-battle-rings (#350): selecting heart card and clicking empty spare 
     bh.renderManageModal();
   }, heartId);
 
-  // Click an empty spare placeholder (same walk as Scenario 3).
+  // Click the empty spare placeholder (same walk as Scenario 3: bare Rectangle
+  // in the modal container with pointer cursor).
   const clicked = await page.evaluate(() => {
     const scene = (window as any).__game?.scene?.getScene('ForestScene');
     const modal = scene?.battleHand?.manageModal;
-    const containers = modal.getAll().filter((o: any) => o.getAll && o.list);
-    let grid: any = null;
-    for (const c of containers) {
-      const kids = c.getAll().filter((k: any) => k.getAll);
-      if (kids.length && (!grid || kids.length > grid.getAll().length)) grid = c;
-    }
-    if (!grid) return false;
-    for (const cell of grid.getAll()) {
-      if (!cell.getAll) continue;
-      const children = cell.getAll();
-      if (children.length === 1 && children[0].input?.cursor === 'pointer') {
-        children[0].emit('pointerdown');
+    if (!modal) return false;
+    for (const child of modal.getAll()) {
+      if (child.type === 'Rectangle' && child.input?.cursor === 'pointer') {
+        child.emit('pointerdown');
         return true;
       }
     }

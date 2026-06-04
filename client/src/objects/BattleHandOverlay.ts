@@ -606,9 +606,10 @@ export class BattleHandOverlay {
       const GRID_ROW_GAP = 92; // from InventoryGrid constants
       const GRID_CARD_H = 88;
       const filledRows = Math.ceil(availableRings.length / 3);
-      // Place placeholder at y = content_top + filledRows * ROW_GAP + CARD_H/2,
-      // but only if within the visible window (within 3 visible rows).
-      if (filledRows < RINGWALL_VISIBLE_ROWS) {
+      // Place placeholder when spare pool has remaining capacity (usedSpares < spareCapacity).
+      // We do NOT gate on filledRows < RINGWALL_VISIBLE_ROWS — even a full 3-row grid
+      // (e.g. 9 rings in 9 slots) can have capacity when spare_ring_max > 9.
+      if (usedSpares < spareCapacity) {
         const phY = GRID_CONTENT_TOP_Y + filledRows * GRID_ROW_GAP + GRID_CARD_H / 2;
         const ph = this.scene.add
           .rectangle(GRID_ORIGIN_X + 32, phY, 64, GRID_CARD_H, 0x2a2a33)
