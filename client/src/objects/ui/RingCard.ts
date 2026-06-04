@@ -1,7 +1,18 @@
 import Phaser from 'phaser';
 import { ELEMENT_NAMES } from '../../../../shared/elements';
+import { isFusionEligibleParent } from '../../../../shared/fusions';
 import { FusedCardFill } from '../fusedFill';
 import { crispCanvasText } from './DomLabel';
+
+/**
+ * The per-ring fusion-eligibility gate (#390) is the shared
+ * {@link isFusionEligibleParent}: a ring can be a fusion parent once it
+ * independently clears the {@link MIN_FUSION_PARENT_XP} floor and is not itself a
+ * fusion. The card's fuse glyph is a presentation hint only — it does not assert a
+ * compatible second ring exists; the server stays authoritative on the fusion.
+ * Using the shared helper keeps the floor a single source of truth across the
+ * client preview (RingCard, FusionPanel) and the server gate.
+ */
 
 /**
  * Shared ring-card widget (EPIC #291 / WS D — DRY remediation). RingSlot,
@@ -88,6 +99,9 @@ export class RingCard extends Phaser.GameObjects.Container {
   private readonly elementLabel: Phaser.GameObjects.Text;
   private readonly pipsLabel: Phaser.GameObjects.Text;
   private readonly xpLabel: Phaser.GameObjects.Text;
+  /** #390 — fusion-eligible glyph (top-right), shown when this ring clears the
+   * per-ring fusion gate (≥ 500 XP and not itself a fusion). */
+  private readonly fuseGlyph: Phaser.GameObjects.Text;
   private readonly o: Required<
     Pick<
       RingCardOpts,
@@ -147,7 +161,22 @@ export class RingCard extends Phaser.GameObjects.Container {
         .text(cx, cy + this.o.xpY, '', { fontSize: this.o.fontSize, color: this.o.textColor })
         .setOrigin(0.5),
     );
-    this.add([this.elementLabel, this.pipsLabel, this.xpLabel]);
+    // #390 — fusion-eligible glyph in the top-right corner of the card body (in
+    // the space freed by dropping the Tier row). Unobtrusive ✦; hidden by default
+    // and revealed in setRing() only when the per-ring gate is met.
+    this.fuseGlyph = crispCanvasText(
+      scene.add
+        .text(
+          cx + this.o.width / 2 - 6,
+          cy - this.o.height / 2 + 6,
+          '✦',
+          { fontSize: this.o.fontSize, color: this.o.textColor },
+        )
+        .setOrigin(1, 0)
+        .setVisible(false),
+    );
+
+    this.add([this.elementLabel, this.pipsLabel, this.xpLabel, this.fuseGlyph]);
   }
 
   /** Paint the card from a ring view. Returns the rendered fused-fill order. */
@@ -158,6 +187,8 @@ export class RingCard extends Phaser.GameObjects.Container {
     this.elementLabel.setText(ELEMENT_NAMES[ring.element] ?? '?');
     this.pipsLabel.setText(usePips(ring.currentUses, ring.maxUses));
     this.xpLabel.setText(`${this.o.xpPrefix}${ring.xp}`);
+    // #390 — show the fusion-eligible glyph exactly when the shared per-ring gate holds.
+    this.fuseGlyph.setVisible(isFusionEligibleParent(ring.element, ring.xp));
     return order;
   }
 
@@ -167,6 +198,7 @@ export class RingCard extends Phaser.GameObjects.Container {
     this.elementLabel.setText(emptyElementLabel);
     this.pipsLabel.setText('');
     this.xpLabel.setText('');
+    this.fuseGlyph.setVisible(false);
   }
 
   /** Override the element-row text/color (Blinded `?`, dim em-dash, etc.). */

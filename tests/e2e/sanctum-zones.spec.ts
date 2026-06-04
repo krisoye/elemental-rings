@@ -150,14 +150,16 @@ test('zones: ring wall opens inventory overlay rendering __campState rings', asy
 
 // ── Scenario 4: Fusion from ring wall ────────────────────────────────────────
 //
-// Seed two maxed Tier-1 parents (Fire + Water) via the test-only set-ring-xp
+// Seed two fusion-eligible parents (Fire + Water) via the test-only set-ring-xp
 // route, then open the ring-wall overlay, surface the FusionPanel from its
 // [Fuse Rings] button, and fuse — the new Steam ring appears in __campState and
-// the two parents are consumed (net -1 ring).
+// the two parents are consumed (net -1 ring). #390 — a parent is fusable once it
+// independently reaches the Tier-1 floor (≥ 500 XP); tier matching is gone.
 const FIRE = 0;
 const WATER = 1;
 const STEAM = 5;
-const TIER1_XP_CAP = 100;
+// #390 — the per-parent fusion floor: Tier 1 begins at 500 XP (server Tiers.ts).
+const FUSION_PARENT_XP = 500;
 
 test('zones: ring-wall fusion consumes two parents and adds a fusion ring', async ({ browser }) => {
   // Register directly so we can seed maxed parents before the page loads.
@@ -179,7 +181,7 @@ test('zones: ring-wall fusion consumes two parents and adds a fusion ring', asyn
     await fetch(`${API_URL}/api/test/set-ring-xp`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-      body: JSON.stringify({ ringId: id, xp: TIER1_XP_CAP }),
+      body: JSON.stringify({ ringId: id, xp: FUSION_PARENT_XP }),
     });
   }
 
@@ -211,9 +213,13 @@ test('zones: ring-wall fusion consumes two parents and adds a fusion ring', asyn
   );
   expect(err).toBeNull();
 
+  // The Steam fusion ring appears in the inventory. #390/#339 — the fused tier is a
+  // pure function of the SUMMED parent XP: 500 + 500 = 1000 XP → tierForXp(1000) = 1
+  // (Tier 2 starts at 1500), so assert on the fused element only rather than a fixed
+  // tier (the consumed-parents count below confirms the fusion actually happened).
   await page.waitForFunction(
     (steamEl) =>
-      (window as any).__campState.rings.some((r: any) => r.element === steamEl && r.tier === 2),
+      (window as any).__campState.rings.some((r: any) => r.element === steamEl),
     STEAM,
     { timeout: 8000 },
   );
@@ -415,7 +421,9 @@ test('hitbox: alignment holds after inventory grid rebuild', async ({ browser })
 
 const FIRE_EL = 0;
 const WATER_EL = 1;
-const TIER1_XP_CAP_PASSIVE = 100;
+// #390 — fusion parents must each independently reach the Tier-1 floor (≥ 500 XP);
+// tier matching is gone. (Was 100 XP = Tier 0, which the server now rejects.)
+const FUSION_PARENT_XP_PASSIVE = 500;
 
 test('passive: base element stake shows passive name + effect', async ({ browser }) => {
   // Stake a FIRE ring (element 0) as Thumb before the page loads.
@@ -442,8 +450,9 @@ test('passive: base element stake shows passive name + effect', async ({ browser
 });
 
 test('passive: fusion stake shows no passive', async ({ browser }) => {
-  // Build a fusion ring: max two Tier-1 parents (Fire + Water), fuse → Steam (5),
-  // then stake it as Thumb. Fusions have no THUMB_PASSIVE_INFO entry.
+  // Build a fusion ring: bring two Fire + Water parents to the Tier-1 floor (≥ 500
+  // XP each, #390), fuse → Steam (5), then stake it as Thumb. Fusions have no
+  // THUMB_PASSIVE_INFO entry.
   const token = await registerAndToken();
   const { rings } = await getMe(token);
   const fire = rings.find((r: any) => r.element === FIRE_EL);
@@ -452,7 +461,7 @@ test('passive: fusion stake shows no passive', async ({ browser }) => {
     await fetch(`${API_URL}/api/test/set-ring-xp`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-      body: JSON.stringify({ ringId: id, xp: TIER1_XP_CAP_PASSIVE }),
+      body: JSON.stringify({ ringId: id, xp: FUSION_PARENT_XP_PASSIVE }),
     });
   }
   const fuseRes = await fetch(`${API_URL}/api/fusion/combine`, {

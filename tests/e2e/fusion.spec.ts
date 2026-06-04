@@ -6,9 +6,12 @@ const API_URL = 'http://localhost:2568';
 // Element indices (mirror shared/types ElementEnum).
 const FIRE = 0;
 const WATER = 1;
+const EARTH = 2;
+const WOOD = 4;
 const STEAM = 5;
 // Fusion requires both parents to reach at least Tier 1 (server/src/game/Tiers.ts:
-// tierForXp — T1 begins at 500 XP). A parent seeded to exactly 500 XP is the
+// tierForXp — T1 begins at 500 XP), checked independently per parent. The parents
+// do NOT have to share a tier (#390). A parent seeded to exactly 500 XP is the
 // lowest fusable tier; the summed fusion XP is 1000, which is still Tier 1
 // (T2 begins at 1500). max_uses is a pure function of XP (#339): the fusion ring's
 // max_uses = 3 + tierForXp(1000) = 3 + 1 = 4 (PlayerRepo.fuseRings).
@@ -55,6 +58,22 @@ function ringOfElement(rings: any[], element: number): any {
   return r;
 }
 
+/** Find the first `count` owned rings of a given base element. */
+function ringsOfElement(rings: any[], element: number, count: number): any[] {
+  const found = rings.filter((x) => x.element === element).slice(0, count);
+  if (found.length < count) throw new Error(`need ${count} rings of element ${element}`);
+  return found;
+}
+
+/** POST /api/fusion/combine and return the raw Response. */
+function combine(token: string, ringId1: string, ringId2: string): Promise<Response> {
+  return fetch(`${API_URL}/api/fusion/combine`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+    body: JSON.stringify({ ringId1, ringId2 }),
+  });
+}
+
 // ── Scenario 1: Fuse two Tier-1 Fire+Water rings → Steam ──────────────────────
 test('fusion: two Tier-1 Fire+Water rings fuse into a Steam ring', async () => {
   const token = await registerPlayer();
@@ -84,26 +103,99 @@ test('fusion: two Tier-1 Fire+Water rings fuse into a Steam ring', async () => {
   expect(steam.element).toBe(STEAM);
 });
 
-// ── Scenario 2: Below-Tier-1 parent is rejected ───────────────────────────────
-// fire is left at Tier 0 (50 XP) while water reaches Tier 1 (500 XP). Mismatched
-// tiers are rejected first (PlayerRepo.fuseRings validates tier-equality before
-// the ≥ Tier 1 floor), so the server returns "Rings must be the same tier".
-test('fusion: a below-Tier-1 parent → 400 tier mismatch', async () => {
+// ── Scenario 1b: Different-tier compatible rings fuse (#390) ───────────────────
+// 600 XP (Tier 1) + 3200 XP (Tier 3) — both clear the Tier-1 floor. #390 dropped
+// the same-tier requirement, so the pair fuses; combined 3800 XP → Tier 3.
+test('fusion: two different-tier (Tier 1 + Tier 3) compatible rings fuse (#390)', async () => {
   const token = await registerPlayer();
   const { rings } = await getMe(token);
   const fire = ringOfElement(rings, FIRE);
   const water = ringOfElement(rings, WATER);
-  await setRingXP(token, fire.id, 50); // Tier 0 — below the fusable floor
-  await setRingXP(token, water.id, TIER1_XP);
+  await setRingXP(token, fire.id, 600); // Tier 1
+  await setRingXP(token, water.id, 3200); // Tier 3
 
-  const res = await fetch(`${API_URL}/api/fusion/combine`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-    body: JSON.stringify({ ringId1: fire.id, ringId2: water.id }),
-  });
+  const res = await combine(token, fire.id, water.id);
+  expect(res.status).toBe(200);
+  const { ring } = await res.json();
+  expect(ring.element).toBe(STEAM);
+  expect(ring.xp).toBe(3800); // 600 + 3200 — additive parent XP
+
+  // Both parents removed from inventory.
+  const { rings: after } = await getMe(token);
+  expect(after.find((r: any) => r.id === fire.id)).toBeUndefined();
+  expect(after.find((r: any) => r.id === water.id)).toBeUndefined();
+});
+
+// ── Scenario 2: Below-Tier-1 parent is rejected (per-parent gate, #390) ────────
+// fire is left below 500 XP (400) while water reaches 600. Each parent must
+// independently clear the Tier-1 floor, so the sub-500 parent is rejected.
+test('fusion: a below-500-XP parent → 400 (per-parent Tier-1 gate)', async () => {
+  const token = await registerPlayer();
+  const { rings } = await getMe(token);
+  const fire = ringOfElement(rings, FIRE);
+  const water = ringOfElement(rings, WATER);
+  await setRingXP(token, fire.id, 400); // below the 500-XP / Tier-1 floor
+  await setRingXP(token, water.id, 600);
+
+  const res = await combine(token, fire.id, water.id);
   expect(res.status).toBe(400);
   const body = await res.json();
-  expect(body.error).toMatch(/same tier/i);
+  expect(body.error).toMatch(/Tier 1/i);
+
+  // Both parents intact.
+  const { rings: after } = await getMe(token);
+  expect(after.find((r: any) => r.id === fire.id)).toBeDefined();
+  expect(after.find((r: any) => r.id === water.id)).toBeDefined();
+});
+
+// ── Scenario 2b: A fusion ring cannot be fused again (#390) ────────────────────
+// Make a Steam fusion (Fire+Water), grant a fresh Wood ring at Tier 1, then try
+// to fuse the Steam with the Wood — rejected with a distinct "already a fusion"
+// message (the isFusion gate fires before the pair check).
+test('fusion: re-fusing a fusion ring → 400 with a distinct "already a fusion" message (#390)', async () => {
+  const token = await registerPlayer();
+  const { rings } = await getMe(token);
+  const fire = ringOfElement(rings, FIRE);
+  const water = ringOfElement(rings, WATER);
+  await setRingXP(token, fire.id, TIER1_XP);
+  await setRingXP(token, water.id, TIER1_XP);
+
+  const fuseRes = await combine(token, fire.id, water.id);
+  expect(fuseRes.status).toBe(200);
+  const { ring: steam } = await fuseRes.json();
+  expect(steam.element).toBe(STEAM);
+
+  // Grant a fresh Wood ring and lift it to Tier 1 so only the isFusion gate can
+  // block the fuse.
+  await fetch(`${API_URL}/api/test/grant-ring`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+    body: JSON.stringify({ element: WOOD }),
+  });
+  const { rings: withWood } = await getMe(token);
+  const wood = ringOfElement(withWood, WOOD);
+  await setRingXP(token, wood.id, TIER1_XP);
+
+  const res = await combine(token, steam.id, wood.id);
+  expect(res.status).toBe(400);
+  const body = await res.json();
+  expect(body.error).toMatch(/already a fusion/i);
+});
+
+// ── Scenario 2c: Invalid element pair is rejected regardless of XP (#390) ──────
+// Two Earth rings (the starter inventory holds several) form no valid fusion pair
+// even though both clear the Tier-1 floor.
+test('fusion: an invalid element pair (Earth+Earth) → 400 (no valid fusion)', async () => {
+  const token = await registerPlayer();
+  const { rings } = await getMe(token);
+  const [earth1, earth2] = ringsOfElement(rings, EARTH, 2);
+  await setRingXP(token, earth1.id, TIER1_XP);
+  await setRingXP(token, earth2.id, TIER1_XP);
+
+  const res = await combine(token, earth1.id, earth2.id);
+  expect(res.status).toBe(400);
+  const body = await res.json();
+  expect(body.error).toMatch(/do not form a valid fusion/i);
 });
 
 // ── Scenario 3: Both parents deleted after fusion ─────────────────────────────

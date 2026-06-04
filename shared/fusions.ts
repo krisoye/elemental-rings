@@ -8,6 +8,28 @@ export const TRIANGLE: ReadonlySet<number> = new Set([FIRE, WATER, WOOD]);
 export const NEUTRAL: ReadonlySet<number> = new Set([WIND, EARTH]);
 
 /**
+ * #390 — the per-parent fusion-eligibility XP floor. A ring can be a fusion parent
+ * once it independently reaches this XP (Tier 1 begins at 250·1·2 = 500 XP; see
+ * server/src/game/Tiers.ts:tierForXp). The same-tier requirement was dropped, so
+ * the two parents may sit at different tiers as long as each clears this floor.
+ *
+ * Single source of truth referenced by the client preview (FusionPanel, RingCard)
+ * and mirrored by the server gate (PlayerRepo.fuseRings, via tierForXp). Adjust
+ * here to retune the floor everywhere at once.
+ */
+export const MIN_FUSION_PARENT_XP = 500;
+
+/**
+ * #390 — whether a ring may serve as a fusion PARENT: it must independently clear
+ * the {@link MIN_FUSION_PARENT_XP} floor and must not already be a fusion (a fusion
+ * cannot be fused again). The server stays authoritative on the actual combine; the
+ * client uses this only to preview eligibility (the [Fuse] readiness + card glyph).
+ */
+export function isFusionEligibleParent(element: number, xp: number): boolean {
+  return xp >= MIN_FUSION_PARENT_XP && !isFusion(element);
+}
+
+/**
  * Component element pairs for each fusion. The FIRST element listed is the
  * deterministic tiebreak winner used by the auto-align rule (§3.4). Indexed by
  * ElementEnum value; base elements (0-4) map to null.

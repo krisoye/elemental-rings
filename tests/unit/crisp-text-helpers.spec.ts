@@ -1214,19 +1214,22 @@ describe('#364/#389 Phase 2: RingCard wraps every per-card label with crispCanva
   // #381 retired BattleHandOverlay.addRingInfo() and the inline spareContainer card
   // build (ringGrp.add); #389 migrated InventoryGrid's inline card loop onto the
   // shared RingCard too. So the single owner of per-card crisp labels is now
-  // RingCard — and after #389's Tier-row removal it renders exactly THREE labels
-  // (element / pips / XP), each wrapped in crispCanvasText.
-  it('RingCard.ts wraps all 3 per-card stat labels with crispCanvasText (Tier row dropped)', () => {
+  // RingCard — every per-card label is wrapped in crispCanvasText, and after #389's
+  // Tier-row removal no `tierLabel` / `T{n}` row remains. (#390 added one more crisp
+  // label, the fusion-eligible glyph, which is also wrapped.)
+  it('RingCard.ts wraps its per-card labels with crispCanvasText and has no Tier row', () => {
     const src = readClientSrc('objects/ui/RingCard.ts');
     if (src === null) return;
     expect(src, 'RingCard.ts must import crispCanvasText from DomLabel').toContain('crispCanvasText');
     const crispCalls = (src.match(/crispCanvasText\(/g) ?? []).length;
+    // element / pips / XP stat rows (3) + the #390 fusion-eligible glyph (1) = 4.
     expect(
       crispCalls,
-      `RingCard must wrap its 3 stat labels (element/pips/XP) with crispCanvasText — found ${crispCalls}`,
-    ).toBe(3);
-    // #389 — the Tier row is gone: no tierLabel field / T-row construction remains.
+      `RingCard must wrap element/pips/XP + the fuse glyph in crispCanvasText — found ${crispCalls}`,
+    ).toBe(4);
+    // #389 — the Tier row is gone: no tierLabel field nor any `T{n}` row construction.
     expect(src.includes('tierLabel')).toBe(false);
+    expect(/T\$\{[^}]*tier/.test(src), 'no `T${...tier}` Tier-row label may remain').toBe(false);
   });
 
   it('InventoryGrid.ts builds its cells from RingCard (no inline per-card label construction)', () => {
@@ -1241,17 +1244,16 @@ describe('#364/#389 Phase 2: RingCard wraps every per-card label with crispCanva
     expect(src.includes('new FusedCardFill(')).toBe(false);
   });
 
-  it('#389 RingCard.ts has exactly 3 crispCanvasText calls (element / pips / XP — no Tier row)', () => {
-    // #389 adversarial: Tier row dropped → exactly three stat-row labels remain.
-    // If a fourth crispCanvasText call is added, the Tier row has been silently
-    // re-introduced and this test will catch it before the E2E structural assertion.
+  it('#389/#390 RingCard.ts has no Tier-row label (element/pips/XP rows + fuse glyph only)', () => {
+    // #389 adversarial: the Tier row was dropped. The card's crisp labels are the
+    // three stat rows (element/pips/XP) plus the #390 fusion-eligible glyph — never
+    // a `T{n}` Tier row. Assert structurally (no tierLabel, no `T${...tier}`) rather
+    // than by a brittle call count, so the #390 glyph doesn't trip a Tier-row alarm.
     const src = readClientSrc('objects/ui/RingCard.ts');
     if (src === null) return;
-    const crispCalls = (src.match(/crispCanvasText\(/g) ?? []).length;
-    expect(
-      crispCalls,
-      `RingCard must have exactly 3 crispCanvasText calls (element/pips/XP); found ${crispCalls} — Tier row must remain dropped`,
-    ).toBe(3);
+    expect(src.includes('tierLabel'), 'no tierLabel field may remain').toBe(false);
+    expect(/T\$\{[^}]*tier/.test(src), 'no `T${...tier}` Tier-row label may remain').toBe(false);
+    expect(src.includes('this.tierLabel'), 'no tierLabel rendering may remain').toBe(false);
   });
 
   it('#389 RingCard.ts has no tierLabel field or tierY option', () => {

@@ -1,7 +1,7 @@
 import Phaser from 'phaser';
 import { CANVAS_W, CANVAS_H, ELEMENT_NAMES } from '../Constants';
 import { ElementEnum } from '../../../shared/types';
-import { isFusion, componentsOf } from '../../../shared/fusions';
+import { isFusion, componentsOf, isFusionEligibleParent, MIN_FUSION_PARENT_XP } from '../../../shared/fusions';
 import type { RingData } from './InventoryGrid';
 import { createOverlay } from './ui/ModalShell';
 import { crispCanvasText } from './ui/DomLabel';
@@ -29,22 +29,23 @@ const FUSION_RECIPES: ReadonlyArray<FusionRecipe> = Array.from(
 
 /**
  * A pair of fusion-eligible parent rings chosen for a recipe slot, paired with
- * whether the recipe can currently be fused (both parents owned, at least Tier 2,
- * and sharing the same tier per GDD §4.6). The server is the authority; this is a
- * display-only preview.
+ * whether the recipe can currently be fused: both parents owned, each independently
+ * ≥ 500 XP (Tier 1), and neither a fusion ring (#390 dropped the same-tier rule).
+ * The server is the authority; this is a display-only preview.
  */
 interface RecipeAvailability {
   recipe: FusionRecipe;
-  parentA: RingData | null; // a Tier ≥ 2 ring of parents[0], if owned
-  parentB: RingData | null; // a same-tier ring of parents[1], if owned
-  ready: boolean; // both parents present and same tier
+  parentA: RingData | null; // a ≥ 500-XP, non-fusion ring of parents[0], if owned
+  parentB: RingData | null; // a ≥ 500-XP, non-fusion ring of parents[1], if owned
+  ready: boolean; // both parents present and each ≥ 500 XP
 }
 
 /**
  * Modal overlay listing all 10 fusion recipes (GDD §4.6 / §5.2). For each it
- * shows which eligible parent rings (same tier, Tier 2 or higher) the player
- * owns; when both are available a [Fuse] button POSTs the pair via the supplied
- * callback. The server is the authority — this panel only previews availability.
+ * shows which eligible parent rings (each ≥ 500 XP / Tier 1, #390 — no same-tier
+ * requirement) the player owns; when both are available a [Fuse] button POSTs the
+ * pair via the supplied callback. The server is the authority — this panel only
+ * previews availability.
  *
  * Purely presentational: it never mutates rings itself. `onFuse(ringId1,
  * ringId2)` returns a result message that the panel surfaces inline; the owning
@@ -115,7 +116,7 @@ export class FusionPanel {
     // #382 — Container child → crispCanvasText.
     const subtitle = crispCanvasText(
       this.scene.add
-        .text(CANVAS_W / 2, 76, 'Both rings must be the same tier and reach Tier 2', {
+        .text(CANVAS_W / 2, 76, `Each ring must reach Tier 1 (${MIN_FUSION_PARENT_XP} XP)`, {
           fontSize: '12px',
           color: '#aaaaaa',
         })
@@ -169,42 +170,29 @@ export class FusionPanel {
   }
 
   /**
-   * For each recipe, pick a pair of fusion-eligible (Tier ≥ 2) parent rings — one
-   * of each parent element — that share the SAME tier (GDD §4.6). Eligible rings
-   * are grouped by element; for a recipe we pick the lowest shared tier for which
-   * both parent elements have an owned ring. The two parents are always distinct
-   * instances (all recipes are cross-element). The server is the authority; this
-   * only previews availability.
+   * #390 — for each recipe, pick one fusion-eligible parent ring of each parent
+   * element. A ring is eligible when it is NOT itself a fusion and independently
+   * clears the Tier-1 floor (xp ≥ 500). The same-tier requirement was dropped, so
+   * the two chosen parents may sit at different tiers. Among a parent element's
+   * eligible rings the highest-XP one is preferred (a stable, sensible default).
+   * Mirrors the server gate; the server (POST /api/fusion/combine) is authoritative.
    */
   private computeAvailability(rings: RingData[]): RecipeAvailability[] {
-    // Eligible rings grouped by element, then by tier, so a recipe can pick a
-    // same-tier pair across its two parent elements.
-    const byElement = new Map<number, Map<number, RingData[]>>();
+    // Eligible non-fusion rings grouped by base element, highest XP first so each
+    // recipe picks the most-leveled candidate of each parent element.
+    const byElement = new Map<number, RingData[]>();
     for (const r of rings) {
-      if (r.tier < 2) continue;
-      const byTier = byElement.get(r.element) ?? new Map<number, RingData[]>();
-      const list = byTier.get(r.tier) ?? [];
+      // #390 — shared per-parent gate: ≥ MIN_FUSION_PARENT_XP and not itself a fusion.
+      if (!isFusionEligibleParent(r.element, r.xp)) continue;
+      const list = byElement.get(r.element) ?? [];
       list.push(r);
-      byTier.set(r.tier, list);
-      byElement.set(r.element, byTier);
+      byElement.set(r.element, list);
     }
+    for (const list of byElement.values()) list.sort((a, b) => b.xp - a.xp);
     return FUSION_RECIPES.map((recipe) => {
       const [ea, eb] = recipe.parents;
-      const tiersA = byElement.get(ea);
-      const tiersB = byElement.get(eb);
-      let parentA: RingData | null = null;
-      let parentB: RingData | null = null;
-      if (tiersA && tiersB) {
-        // Pick the lowest tier both parent elements share an eligible ring at.
-        const sharedTiers = [...tiersA.keys()]
-          .filter((t) => tiersB.has(t))
-          .sort((x, y) => x - y);
-        const tier = sharedTiers[0];
-        if (tier !== undefined) {
-          parentA = tiersA.get(tier)![0];
-          parentB = tiersB.get(tier)![0];
-        }
-      }
+      const parentA = byElement.get(ea)?.[0] ?? null;
+      const parentB = byElement.get(eb)?.[0] ?? null;
       return { recipe, parentA, parentB, ready: parentA !== null && parentB !== null };
     });
   }

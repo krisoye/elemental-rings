@@ -60,11 +60,12 @@ describe('fusionOf — element pair → fusion element', () => {
 // import of any module that transitively imports db.ts, then dynamically import
 // the repo. better-sqlite3 is synchronous; the schema is applied on import.
 //
-// Fusion rules (GDD §4.6): both parents must share the same XP-derived tier, that
-// tier must be ≥ 1 (≥ 500 XP), XP is additive, fused tier = tierForXp(sum), and fused
-// max_uses = naturalMaxUses(fusedTier) = 3 + fusedTier — the same pure-XP rule every
-// natural ring obeys (no min(parents)−1 penalty). Tier is derived from XP, so tests
-// seed XP at/above the relevant tierStartXp threshold rather than the old hard caps.
+// Fusion rules (GDD §4.6, #390): each parent must independently reach Tier 1
+// (≥ 500 XP) — the parents need NOT share a tier — and neither parent may itself
+// be a fusion. XP is additive, fused tier = tierForXp(sum), and fused max_uses =
+// naturalMaxUses(fusedTier) = 3 + fusedTier — the same pure-XP rule every natural
+// ring obeys (no min(parents)−1 penalty). Tier is derived from XP, so tests seed
+// XP at/above the relevant tierStartXp threshold rather than the old hard caps.
 // ---------------------------------------------------------------------------
 
 // XP that lands a ring squarely in a given tier (start XP of that tier; §4.2).
@@ -178,15 +179,23 @@ describe('fuseRings — DB transaction (§4.6)', () => {
     expect(result!.max_uses).toBe(3 + tierForXp(result!.xp));
   });
 
-  test('different-tier pair (Tier 2 + Tier 3) throws (rejected → 400)', () => {
+  test('different-tier pair (Tier 2 + Tier 3) fuses (same-tier requirement dropped, #390)', () => {
     const p = makePlayer(db);
-    const fire = makeRing(db, p, FIRE, T2_XP); // Tier 2
-    const water = makeRing(db, p, WATER, T3_XP); // Tier 3
+    const fire = makeRing(db, p, FIRE, T2_XP); // Tier 2 (1500 XP)
+    const water = makeRing(db, p, WATER, T3_XP); // Tier 3 (3000 XP)
 
-    expect(() => repo.fuseRings(p, fire, water)).toThrow(/same tier/);
-    // Both parents still present; no fusion ring created.
-    const rings = repo.getRingsByOwner(p);
-    expect(rings).toHaveLength(2);
+    // #390 — both parents clear the Tier-1 floor, so the differing tiers no longer
+    // block fusion. Combined 4500 → Tier 3 → 3 + 3 = 6 uses.
+    const newId = repo.fuseRings(p, fire, water);
+    const result = repo.getRingsByOwner(p).find((r) => r.id === newId);
+
+    expect(result).toBeDefined();
+    expect(result!.element).toBe(STEAM);
+    expect(result!.xp).toBe(T2_XP + T3_XP); // 4500
+    expect(result!.tier).toBe(tierForXp(T2_XP + T3_XP)); // 4500 → Tier 3
+    expect(result!.max_uses).toBe(3 + tierForXp(result!.xp));
+    // Only the fusion ring remains; both parents consumed.
+    expect(repo.getRingsByOwner(p)).toHaveLength(1);
   });
 
   test('same-tier Tier 1 pair → fusion succeeds (Tier 1 is the new minimum)', () => {
@@ -212,6 +221,20 @@ describe('fuseRings — DB transaction (§4.6)', () => {
     const rings = repo.getRingsByOwner(p);
     expect(rings).toHaveLength(2);
     expect(rings.every((r) => r.tier === 0)).toBe(true);
+  });
+
+  test('asymmetric sub-500: one Tier 0 + one Tier 1 parent throws (#390 per-parent gate)', () => {
+    const p = makePlayer(db);
+    // Only ONE parent is below the 500-XP floor. The per-parent `||` gate must
+    // still reject — a regression to `&&` (both must be sub-500) would let this
+    // through, so this asymmetric case is the one that pins the `||`.
+    const fire = makeRing(db, p, FIRE, 200); // Tier 0 — below the floor
+    const water = makeRing(db, p, WATER, 600); // Tier 1 — clears the floor
+
+    expect(() => repo.fuseRings(p, fire, water)).toThrow(/Tier 1/);
+    // Both parents intact; no fusion created.
+    const rings = repo.getRingsByOwner(p);
+    expect(rings).toHaveLength(2);
   });
 
   test('same-tier Tier 3 parents → fusion succeeds', () => {
@@ -266,6 +289,19 @@ describe('fuseRings — DB transaction (§4.6)', () => {
     const fire2 = makeRing(db, p, FIRE, T2_XP);
 
     expect(() => repo.fuseRings(p, fire1, fire2)).toThrow(/do not form a valid fusion/);
+  });
+
+  test('a parent that is itself a fusion throws a distinct "already a fusion" message (#390)', () => {
+    const p = makePlayer(db);
+    // STEAM is a fusion element (Fire+Water). Even though STEAM + WOOD is not a
+    // valid base pair, the isFusion gate fires FIRST — so the rejection is the
+    // distinct "already a fusion" message, not the generic invalid-pair one.
+    const steam = makeRing(db, p, STEAM, T2_XP);
+    const wood = makeRing(db, p, WOOD, T2_XP);
+
+    expect(() => repo.fuseRings(p, steam, wood)).toThrow(/already a fusion/);
+    // No fusion created; both parents intact.
+    expect(repo.getRingsByOwner(p)).toHaveLength(2);
   });
 
   test('parents are consumed (deleted) from the DB after fusion', () => {
