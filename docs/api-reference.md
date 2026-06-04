@@ -90,10 +90,12 @@ Verify credentials via `bcrypt.compare` and return a signed token. Both an unkno
 **Response (success):** `{ player: PlayerBlock, rings: Ring[], loadout: Loadout | null }` — HTTP 200
 **Response (error):** 401 — auth failure | 404 — `"Player not found"`
 
-Return the authenticated player's full state. `player` is the canonical `/api/me` player block (see below). `rings` is all rings owned by the player. `loadout` is the battle-hand slot map or null if never saved.
+Return the authenticated player's full state. `player` is the canonical `/api/me` player block (see below). `rings` is all rings owned by the player (excludes the heart-slot ring, which is in `player.heart_ring`). `loadout` is the battle-hand slot map or null if never saved.
 
 **PlayerBlock fields:** all columns from the `players` table plus computed fields:
-`difficulty`, `spirit_max` (derived from aggregate Reliquary XP × difficulty multiplier), `aggregate_xp` (sum of Reliquary ring XP), `carry_cap` (XP-derived carry capacity), `reliquaryCap`, `reliquaryShards`, `reliquaryCount`, `spareCapacity`, `heart_ring` (heart-slot ring row or null), `total_xp`, `battle_hand_avg_xp`.
+`difficulty`, `spirit_max` (derived from aggregate Reliquary XP × difficulty multiplier), `aggregate_xp` (sum of Reliquary ring XP), `carry_cap` (derived: `spare_ring_max + CORE_SLOTS`), `spare_ring_max` (per-player spare grid cap, default 9), `pending_ring_id` (id of the WON ring awaiting overflow resolution, or `null`), `reliquaryCap`, `reliquaryShards`, `reliquaryCount`, `heart_ring` (heart-slot ring row or null), `total_xp`, `battle_hand_avg_xp`.
+
+Note: `spareCapacity` was removed in EPIC #378 — use `spare_ring_max` instead.
 
 ---
 
@@ -140,6 +142,17 @@ Equip a ring into the Heart slot, or swap the heart ring with a battle-hand slot
 **Response (error):** 404 — `"ring not found"`
 
 Permanently discard a ring the player owns. Returns the full updated ring list.
+
+---
+
+### PUT /api/rings/:ringId/accept
+
+**Auth required:** yes (requireAuth only)
+**Request body:** none
+**Response (success):** `{ player: PlayerBlock, rings: Ring[] }` — HTTP 200
+**Response (error):** 400 — `"ring not found or not owned"` | 400 — `"ring is not pending"` | 400 — `"spare grid still full"`
+
+Accept the WON (pending) ring as a regular spare ring. Clears `rings.pending` on the ring. Only valid when the spare grid is no longer in overflow (spare count ≤ `spare_ring_max`). Returns the updated `/api/me` player block and ring list.
 
 ---
 
@@ -531,6 +544,17 @@ Credit one Reliquary Shard to the authenticated player.
 **Response (error):** 400 — `"npcId (string) is required"`
 
 Record a defeat of the given NPC for the authenticated player, so the boss-rematch row appears without driving a full win duel. Mirrors `recordNpcDefeat` called by `BattleRoom` on a real win.
+
+---
+
+### POST /api/test/grant-ring
+
+**Auth required:** yes (requireAuth only)
+**Request body:** `{ element?: number, tier?: number }`
+**Response (success):** `{ ringId: string, player: PlayerBlock }` — HTTP 200
+**Response (error):** 400 — any error from `grantRing`
+
+Grant the authenticated player a WON ring (`in_carry=1, pending=1`) as if they won a battle. Spare count goes to `spare_ring_max+1` (one-slot overflow, always allowed on this path). Used to seed the pending-ring state in E2E tests without driving a real duel.
 
 ---
 
