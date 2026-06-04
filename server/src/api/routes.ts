@@ -225,9 +225,14 @@ function buildMePlayerBlock(playerId: string): Record<string, unknown> | null {
  */
 apiRouter.get('/api/me', requireAuth, requirePlayer, (req: Request, res: Response): void => {
   const playerId = req.playerId as string;
+  // EPIC #378 — exclude heart_slot=1 rings from the client rings array. The heart
+  // ring is surfaced via player.heart_ring (buildMePlayerBlock) and occupies its own
+  // dedicated slot, not the Reliquary or carry grid. Filtering here keeps
+  // rings.length consistent with the 10-ring starter expectation that the E2E
+  // suite and CampScene UI rely on (5 carried + 5 resting = 10 visible rings).
   res.status(200).json({
     player: buildMePlayerBlock(playerId),
-    rings: getRingsByOwner(playerId),
+    rings: getRingsByOwner(playerId).filter((r) => r.heart_slot !== 1),
     loadout: getLoadout(playerId) ?? null,
   });
 });

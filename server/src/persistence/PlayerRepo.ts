@@ -102,14 +102,17 @@ export interface LoadoutRow {
   d2: string | null;
 }
 
-// EPIC #302 — starter inventory: 6 rings. One Wind ring lands in the dedicated
-// Heart slot (in_carry = 0, heart_slot = 1); the other five fill the battle hand
-// (in_carry = 1). The Reliquary starts empty, so spirit_max = 0 for a fresh
-// player. Canonical integer values come from shared ElementEnum (FIRE=0,
-// WATER=1, EARTH=2, WIND=3, WOOD=4) — do not hardcode the integers here.
+// EPIC #302 — starter inventory: 11 rings total. One Wind ring lands in the
+// dedicated Heart slot (in_carry = 0, heart_slot = 1); five fill the battle hand
+// (in_carry = 1); five non-heart resting rings seed the Reliquary (in_carry = 0,
+// heart_slot = 0) so spirit_max > 0 from the start. GET /api/me filters heart_slot
+// rings from the rings array, so clients see exactly 10 rings. Canonical integer
+// values come from shared ElementEnum (FIRE=0, WATER=1, EARTH=2, WIND=3, WOOD=4)
+// — do not hardcode the integers here.
 //
 //   Heart  → Wind   (in_carry = 0, heart_slot = 1)
 //   Thumb  → Earth   a1 → Wind   a2 → Wind   d1 → Earth   d2 → Earth
+//   Reliquary (in_carry = 0, heart_slot = 0): Fire, Water, Earth, Wind, Earth
 const STARTER_HEART_ELEMENT = ElementEnum.WIND;
 const STARTER_BATTLE_HAND: ReadonlyArray<{ slot: SlotKey; element: number }> = [
   { slot: 'thumb', element: ElementEnum.EARTH },
@@ -117,6 +120,17 @@ const STARTER_BATTLE_HAND: ReadonlyArray<{ slot: SlotKey; element: number }> = [
   { slot: 'a2', element: ElementEnum.WIND },
   { slot: 'd1', element: ElementEnum.EARTH },
   { slot: 'd2', element: ElementEnum.EARTH },
+];
+// EPIC #378 — five starter resting rings seed the Reliquary so spirit_max > 0
+// from the first session. These are in_carry=0, heart_slot=0 (Reliquary rings).
+// The mix includes FIRE and WATER so all four base elements are represented in
+// the starter inventory.
+const STARTER_RELIQUARY_ELEMENTS: ReadonlyArray<number> = [
+  ElementEnum.FIRE,
+  ElementEnum.WATER,
+  ElementEnum.EARTH,
+  ElementEnum.WIND,
+  ElementEnum.EARTH,
 ];
 
 // GDD §4.2 / EPIC #173 C8 — starter rings begin at tier 0 with 3 max uses (xp=0).
@@ -269,6 +283,15 @@ export const createPlayer = db.transaction(
     // #40 — the five battle-slot rings start carried (in_carry = 1). The heart
     // ring is intentionally NOT carried — it lives in the dedicated Heart slot.
     for (const ringId of Object.values(defaultSlots)) setRingCarry(ringId, 1);
+
+    // EPIC #378 — five starter Reliquary rings (in_carry=0, heart_slot=0). These
+    // seed spirit_max > 0 from the first session and give the player rings to swap
+    // into carry. insertStarterRing defaults to in_carry=0, heart_slot=0, so no
+    // extra flags are needed. GET /api/me filters heart_slot rings from the rings
+    // array, giving clients exactly 10 visible rings (5 carried + 5 resting).
+    for (const element of STARTER_RELIQUARY_ELEMENTS) {
+      insertStarterRing(playerId, element);
+    }
 
     // #61 — every new player starts attuned to the Forest entry waystone so the
     // overworld's first teleport destination is available immediately (GDD §10.7).

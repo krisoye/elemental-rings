@@ -200,18 +200,17 @@ test('carry: won-ring modal Add carries the pending ring (room case)', async ({ 
   const page = await ctx.newPage();
   await page.goto(URL);
 
-  // EPIC #378 — seed the pending WON ring via the server (er_pending_ring removed).
+  // EPIC #378 — seed the pending WON ring via the API server (Node.js context so
+  // the absolute API_URL is used, not the relative URL that hits the Vite client).
   // POST /api/test/grant-ring mints a ring with in_carry=1, pending=1 and returns
   // the player block with pending_ring_id set.
-  const grantedPendingId = await page.evaluate(async (tok) => {
-    const res = await fetch('/api/test/grant-ring', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${tok}` },
-      body: JSON.stringify({ element: 0 }),
-    });
-    const data = await res.json();
-    return data.player?.pending_ring_id as string;
-  }, token);
+  const grantRes = await fetch(`${API_URL}/api/test/grant-ring`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+    body: JSON.stringify({ element: 0 }),
+  });
+  const grantData = await grantRes.json();
+  const grantedPendingId = grantData.player?.pending_ring_id as string;
   expect(grantedPendingId).toBeTruthy();
 
   // Move from CampScene into EncounterScene, where the won-ring prompt fires.
@@ -230,13 +229,14 @@ test('carry: won-ring modal Add carries the pending ring (room case)', async ({ 
 
   await page.evaluate(() => (window as any).__encounterResolveWonRing('carry'));
 
-  // EPIC #378 — pending_ring_id cleared on server after resolution (not localStorage).
-  await page.waitForFunction(async () => {
-    const token = localStorage.getItem('er_token');
-    const res = await fetch('/api/me', { headers: { Authorization: `Bearer ${token}` } });
-    const data = await res.json();
-    return data.player?.pending_ring_id === null;
-  }, { timeout: 5000 });
+  // EPIC #378 — resolveWonRing clears window.__encounterState.pendingWonRing to null
+  // after the PUT /api/rings/:id/accept call succeeds. This is the browser-side
+  // signal that server resolution is complete; avoids a relative-URL fetch that
+  // would hit the Vite dev server (port 8090) instead of the API (port 2568).
+  await page.waitForFunction(
+    () => (window as any).__encounterState?.pendingWonRing === null,
+    { timeout: 5000 },
+  );
   // The won ring is now carried (verify against real server state).
   const after = await me(token);
   expect(after.rings.find((r) => r.id === grantedPendingId)?.in_carry).toBe(1);
@@ -353,13 +353,14 @@ test('carry: full-carry win → discard in Manage Battle Hand auto-carries the w
     const yes = bh.discardConfirm?.getAll().find((o: any) => o.name === 'discard-confirm-yes');
     yes?.emit('pointerdown');
   });
-  // EPIC #378 — pending_ring_id cleared on server after auto-carry (not localStorage).
-  await page.waitForFunction(async () => {
-    const token = localStorage.getItem('er_token');
-    const res = await fetch('/api/me', { headers: { Authorization: `Bearer ${token}` } });
-    const data = await res.json();
-    return data.player?.pending_ring_id === null;
-  }, { timeout: 8000 });
+  // EPIC #378 — wait for the server to clear pending_ring_id after auto-carry. The
+  // discardCarriedRing path does not expose a browser-side window hook for this state
+  // transition, so we poll the API from Node.js context (avoids the relative-URL
+  // issue where fetch('/api/me') in a waitForFunction hits Vite at port 8090).
+  await expect.poll(async () => {
+    const { player } = await me(token);
+    return player?.pending_ring_id;
+  }, { timeout: 8000 }).toBeNull();
 
   const { rings: final } = await me(token);
   // Won ring is now carried (auto-carried by tryAutoCarryPending when the discard

@@ -756,23 +756,21 @@ test('manage-battle-rings (#350): selecting a battle-slot ring and clicking empt
   const tok = await page.evaluate(() => localStorage.getItem('er_token') ?? '');
 
   // Seed a ring into the a1 slot.
-  await fetch(`${API_URL}/api/merchant/buy`, {
+  // merchantBuyRing sets in_carry=1 immediately, so read the id from the response
+  // rather than searching /api/me for an in_carry=0 ring. With EPIC #378's 5 starter
+  // reliquary rings, a PUT /api/carry { ringIds: [reliqRingId] } call would exceed
+  // the reliquary cap (10 resting > cap 9), causing the carry call to silently fail
+  // and leaving the ring at in_carry=0, which makes the final in_carry===1 assertion fail.
+  const buyRes = await fetch(`${API_URL}/api/merchant/buy`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${tok}` },
     body: JSON.stringify({ item: 'ring', element: 'fire', tier: 1 }),
   });
-  const meBefore = (await (
-    await fetch(`${API_URL}/api/me`, { headers: { Authorization: `Bearer ${tok}` } })
-  ).json()) as { rings: Array<{ id: string; in_carry: number }> };
-  const newRing = meBefore.rings.find((r) => r.in_carry === 0);
-  expect(newRing).toBeTruthy();
-  const ringId = newRing!.id;
-  // Carry it, then stake it into a1.
-  await fetch(`${API_URL}/api/carry`, {
-    method: 'PUT',
-    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${tok}` },
-    body: JSON.stringify({ ringIds: [ringId] }),
-  });
+  const buyData = (await buyRes.json()) as { ring: { id: string } };
+  const ringId = buyData.ring.id;
+  expect(ringId).toBeTruthy();
+  // The merchant-bought ring is already in_carry=1; no PUT /api/carry needed.
+  // Stake it into a1.
   await fetch(`${API_URL}/api/loadout`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${tok}` },

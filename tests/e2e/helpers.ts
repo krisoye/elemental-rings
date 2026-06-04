@@ -381,9 +381,11 @@ export async function driveAiDuel(
 
   // EPIC #378 — pending ring is now server-owned (rings.pending column).
   // Read pending_ring_id from /api/me instead of the removed er_pending_ring key.
+  // Use the absolute server URL (port 2568): a relative fetch('/api/me') would hit
+  // the Vite dev server at port 8090 which returns an HTML SPA fallback, not JSON.
   return page.evaluate(async () => {
     const token = localStorage.getItem('er_token');
-    const res = await fetch('/api/me', {
+    const res = await fetch('http://localhost:2568/api/me', {
       headers: { Authorization: `Bearer ${token}` },
     });
     const data = await res.json();
