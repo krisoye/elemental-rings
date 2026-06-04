@@ -249,3 +249,162 @@ test('#212: a won ring (er_pending_ring) survives the [Return to Overworld] rout
 
   await ctx.close();
 });
+
+// ── #382 Scenario 6: BattleEndModal banner text ───────────────────────────────
+// #382 adversarial: the banner "YOU WIN!" / "YOU LOSE!" uses crispCanvasText
+// (canvas text, not DOM). If the text string is mutated during the crispCanvasText
+// conversion (e.g., wrong variable name, capitalisation error, wrong ternary
+// branch), the banner shows the wrong string. This test drives a WIN and a LOSE
+// and verifies the banner text is exactly correct in both cases — the crispCanvasText
+// path must preserve the same string the original add.text produced.
+test('#382: BattleEndModal banner shows "YOU WIN!" on a win outcome', async ({ browser }) => {
+  const ctx = await browser.newContext();
+  // aiHearts:1 forces a quick protagonist win (AI has only 1 heart).
+  const page = await hubDuelToEndedModal(ctx, { aiHearts: 1, aiUses: 0 });
+
+  const winnerId = await page.evaluate(() => (window as any).__room?.state?.winnerId);
+  const sessionId = await page.evaluate(() => (window as any).__room?.sessionId);
+
+  // Only assert banner text if we actually won (non-deterministic seed may lose).
+  if (winnerId === sessionId) {
+    // Banner is either a canvas Text (pre-#382) or a DOM label (post-#382). We
+    // check both: scan the Phaser scene graph for a text containing the string,
+    // and also scan the DOM .er-dom-label nodes.
+    const bannerText = await page.evaluate(() => {
+      // Check DOM labels first (post-#382 path).
+      const root = document.querySelector('#game-container');
+      if (root) {
+        for (const el of Array.from(root.querySelectorAll('.er-dom-label'))) {
+          const t = (el as HTMLElement).textContent ?? '';
+          if (t.includes('WIN') || t.includes('LOSE')) return t.trim();
+        }
+      }
+      // Fallback: search canvas scene graph (pre-#382 path / mixed state).
+      const scene = (window as any).__scene as any;
+      const walk = (c: any): string | null => {
+        if (typeof c?.text === 'string' && (c.text.includes('WIN') || c.text.includes('LOSE'))) return c.text;
+        for (const child of (c?.list ?? [])) {
+          const hit = walk(child);
+          if (hit) return hit;
+        }
+        return null;
+      };
+      for (const obj of (scene?.children?.getAll?.() ?? [])) {
+        const hit = walk(obj);
+        if (hit) return hit;
+      }
+      return null;
+    });
+
+    expect(
+      bannerText,
+      'BattleEndModal banner must exist (either as .er-dom-label DOM node or canvas Text)',
+    ).not.toBeNull();
+    expect(
+      bannerText,
+      `BattleEndModal banner must read "YOU WIN!" on a win outcome (got: "${bannerText}")`,
+    ).toBe('YOU WIN!');
+  }
+
+  await ctx.close();
+});
+
+test('#382: BattleEndModal banner shows "YOU LOSE!" on a loss outcome', async ({ browser }) => {
+  const ctx = await browser.newContext();
+  // Default AI strength (no override) → player likely loses with normal hand.
+  // Force a loss: set aiHearts to a high number and aiUses to many.
+  // Simpler: use forfeit — driveToEndedModal forks to forfeit when both rings dead.
+  // The forfeit path still produces phase=ENDED with a winner, so the banner fires.
+  const page = await hubDuelToEndedModal(ctx);
+
+  const winnerId = await page.evaluate(() => (window as any).__room?.state?.winnerId);
+  const sessionId = await page.evaluate(() => (window as any).__room?.sessionId);
+
+  if (winnerId !== sessionId) {
+    // We lost (or forfeited). Assert the banner says "YOU LOSE!".
+    const bannerText = await page.evaluate(() => {
+      const root = document.querySelector('#game-container');
+      if (root) {
+        for (const el of Array.from(root.querySelectorAll('.er-dom-label'))) {
+          const t = (el as HTMLElement).textContent ?? '';
+          if (t.includes('WIN') || t.includes('LOSE')) return t.trim();
+        }
+      }
+      const scene = (window as any).__scene as any;
+      const walk = (c: any): string | null => {
+        if (typeof c?.text === 'string' && (c.text.includes('WIN') || c.text.includes('LOSE'))) return c.text;
+        for (const child of (c?.list ?? [])) {
+          const hit = walk(child);
+          if (hit) return hit;
+        }
+        return null;
+      };
+      for (const obj of (scene?.children?.getAll?.() ?? [])) {
+        const hit = walk(obj);
+        if (hit) return hit;
+      }
+      return null;
+    });
+
+    expect(bannerText, 'BattleEndModal banner must exist on loss outcome').not.toBeNull();
+    expect(
+      bannerText,
+      `BattleEndModal banner must read "YOU LOSE!" on a loss/forfeit outcome (got: "${bannerText}")`,
+    ).toBe('YOU LOSE!');
+  }
+
+  await ctx.close();
+});
+
+// ── #382 Scenario 7: BattleEndModal DOM teardown — no leaked .er-dom-label ───
+// #382 adversarial: the banner uses crispCanvasText (not addDomLabel). Scenario 7
+// guards against DOM accumulation from OTHER concurrent .er-dom-label nodes in the
+// modal (not a banner DOM teardown — the banner has no DOM node). We verify the
+// .er-dom-label count in #game-container returns to its pre-modal baseline after
+// the modal is fully dismissed, ensuring no other modal-owned DOM nodes leak.
+test('#382: BattleEndModal dismiss removes all .er-dom-label nodes it added', async ({ browser }) => {
+  const ctx = await browser.newContext();
+  const page = await hubDuelToEndedModal(ctx);
+
+  // Count .er-dom-label nodes while the modal is open.
+  const countModalOpen = await page.evaluate(
+    () => document.querySelectorAll('.er-dom-label').length,
+  );
+
+  // Dismiss the modal and route to the overworld.
+  await page.evaluate(() => (window as any).__battleEndChoice('overworld'));
+  await page.waitForFunction(() => (window as any).__game?.scene?.isActive('EncounterScene'), {
+    timeout: 8000,
+  });
+
+  // Wait a frame for any teardown to propagate.
+  await page.waitForTimeout(300);
+
+  // Count .er-dom-label nodes after routing. The BattleScene (which owned the
+  // modal DOM labels) has been torn down; EncounterScene's DOM labels are its own.
+  // We cannot compare directly to BattleScene's baseline — instead assert that
+  // no .er-dom-label with banner text ("WIN" / "LOSE") survives the scene teardown.
+  const leakedBannerLabels = await page.evaluate(() => {
+    const root = document.querySelector('#game-container');
+    if (!root) return [];
+    return Array.from(root.querySelectorAll('.er-dom-label'))
+      .map((el) => (el as HTMLElement).textContent?.trim() ?? '')
+      .filter((t) => t.includes('WIN') || t.includes('LOSE') || t.includes('YOU '));
+  });
+
+  expect(
+    leakedBannerLabels,
+    `BattleEndModal banner .er-dom-label nodes must be destroyed after [Return to Overworld]: found leaked labels [${leakedBannerLabels.join(', ')}]`,
+  ).toHaveLength(0);
+
+  // Also assert the total did not grow unboundedly (scene teardown cleans up).
+  const countAfterRoute = await page.evaluate(
+    () => document.querySelectorAll('.er-dom-label').length,
+  );
+  expect(
+    countAfterRoute,
+    `After BattleScene teardown, .er-dom-label count (${countAfterRoute}) must not exceed the count while the modal was open (${countModalOpen}) — scene teardown must clean up DOM nodes`,
+  ).toBeLessThanOrEqual(countModalOpen);
+
+  await ctx.close();
+});

@@ -2,6 +2,7 @@ import Phaser from 'phaser';
 import { connectToRoom } from '../net/Connection';
 import type { AIPersonality } from '../../../shared/types';
 import { CANVAS_W, CANVAS_H, ELEMENT_COLORS, ELEMENT_NAMES } from '../Constants';
+import { crispCanvasText } from '../objects/ui/DomLabel';
 import type { RingData } from '../objects/InventoryGrid';
 import { BattleHandOverlay } from '../objects/BattleHandOverlay';
 import { CHARSET_KEY, charsetFrame, preloadCharset } from '../objects/world/charset';
@@ -239,18 +240,26 @@ export class EncounterScene extends Phaser.Scene {
       return;
     }
 
-    this.add
-      .text(CANVAS_W / 2, 40, 'TRAINING — choose a challenger', {
-        fontSize: '24px',
-        color: '#ffffff',
-      })
-      .setOrigin(0.5);
+    // #382 — all EncounterScene text labels are scene-level (not Container
+    // children) and do not scroll (no world camera). crispCanvasText keeps them
+    // smooth on fractional DPI; addDomLabel is not used because the scene never
+    // needs explicit DOM teardown (Phaser cleans up on scene.start transition).
+    crispCanvasText(
+      this.add
+        .text(CANVAS_W / 2, 40, 'TRAINING — choose a challenger', {
+          fontSize: '24px',
+          color: '#ffffff',
+        })
+        .setOrigin(0.5),
+    );
 
     // Player avatar placeholder (center).
     this.add.rectangle(CANVAS_W / 2, CANVAS_H / 2, 70, 110, 0x335577).setStrokeStyle(2, 0xaaccee);
-    this.add
-      .text(CANVAS_W / 2, CANVAS_H / 2 + 70, 'YOU', { fontSize: '16px', color: '#aaccee' })
-      .setOrigin(0.5);
+    crispCanvasText(
+      this.add
+        .text(CANVAS_W / 2, CANVAS_H / 2 + 70, 'YOU', { fontSize: '16px', color: '#aaccee' })
+        .setOrigin(0.5),
+    );
 
     // Build markers at fixed positions; fill with fallback colors immediately,
     // then update colors + stake labels once the preview fetch resolves.
@@ -276,37 +285,43 @@ export class EncounterScene extends Phaser.Scene {
       rects.set(m.choice, rect);
 
       // Personality label.
-      this.add
-        .text(x, markerY - 40, m.label, {
-          fontSize: '11px',
-          color: '#ffffff',
-          align: 'center',
-          wordWrap: { width: 86 },
-        })
-        .setOrigin(0.5);
+      crispCanvasText(
+        this.add
+          .text(x, markerY - 40, m.label, {
+            fontSize: '11px',
+            color: '#ffffff',
+            align: 'center',
+            wordWrap: { width: 86 },
+          })
+          .setOrigin(0.5),
+      );
 
-      const stakeLabel = this.add
-        .text(x, markerY + 30, m.choice === 'PVP' ? '' : '…', {
-          fontSize: '11px',
-          color: '#ffffffaa',
-          align: 'center',
-          wordWrap: { width: 86 },
-        })
-        .setOrigin(0.5);
+      const stakeLabel = crispCanvasText(
+        this.add
+          .text(x, markerY + 30, m.choice === 'PVP' ? '' : '…', {
+            fontSize: '11px',
+            color: '#ffffffaa',
+            align: 'center',
+            wordWrap: { width: 86 },
+          })
+          .setOrigin(0.5),
+      );
       stakeLabels.set(m.choice, stakeLabel);
 
       // #196 — difficulty label below the stake line (AI markers only). Empty
       // until loadPreview() fills it from the scaled npcEffectiveXp.
       if (m.choice !== 'PVP') {
-        const diffLabel = this.add
-          .text(x, markerY + 62, '', {
-            fontSize: '12px',
-            color: '#ffffff',
-            align: 'center',
-            fontStyle: 'bold',
-            wordWrap: { width: 86 },
-          })
-          .setOrigin(0.5);
+        const diffLabel = crispCanvasText(
+          this.add
+            .text(x, markerY + 62, '', {
+              fontSize: '12px',
+              color: '#ffffff',
+              align: 'center',
+              fontStyle: 'bold',
+              wordWrap: { width: 86 },
+            })
+            .setOrigin(0.5),
+        );
         diffLabels.set(m.choice, diffLabel);
       }
 
@@ -319,21 +334,27 @@ export class EncounterScene extends Phaser.Scene {
       rect.on('pointerdown', () => this.select(m.choice));
     });
 
-    this.add
-      .text(20, 20, '◀ Sanctum', { fontSize: '16px', color: '#aaffaa' })
-      .setInteractive({ useHandCursor: true })
-      .on('pointerdown', () => this.scene.start('CampScene'));
+    crispCanvasText(
+      this.add
+        .text(20, 20, '◀ Sanctum', { fontSize: '16px', color: '#aaffaa' })
+        .setInteractive({ useHandCursor: true })
+        .on('pointerdown', () => this.scene.start('CampScene')),
+    );
 
     // Manage Battle Hand — reassign carried rings to battle slots without
     // returning to camp. Modal has NO Sleep/Recharge actions (#40).
-    this.add
-      .text(CANVAS_W - 200, 20, '⚔ Manage Battle Hand', { fontSize: '14px', color: '#ffcc88' })
-      .setInteractive({ useHandCursor: true })
-      .on('pointerdown', () => void this.openManageBattleHand());
+    crispCanvasText(
+      this.add
+        .text(CANVAS_W - 200, 20, '⚔ Manage Battle Hand', { fontSize: '14px', color: '#ffcc88' })
+        .setInteractive({ useHandCursor: true })
+        .on('pointerdown', () => void this.openManageBattleHand()),
+    );
 
-    this.statusText = this.add
-      .text(CANVAS_W / 2, CANVAS_H - 40, '', { fontSize: '16px', color: '#ffff88' })
-      .setOrigin(0.5);
+    this.statusText = crispCanvasText(
+      this.add
+        .text(CANVAS_W / 2, CANVAS_H - 40, '', { fontSize: '16px', color: '#ffff88' })
+        .setOrigin(0.5),
+    );
 
     // Deterministic E2E hook — identical code path to a marker click.
     window.__encounterSelect = (choice: Choice): void => {
@@ -500,12 +521,14 @@ export class EncounterScene extends Phaser.Scene {
    */
   private renderRematchRow(): void {
     const rowY = 380;
-    this.add
-      .text(CANVAS_W / 2, rowY - 80, 'Rematch (practice)', {
-        fontSize: '16px',
-        color: '#ffcc88',
-      })
-      .setOrigin(0.5);
+    crispCanvasText(
+      this.add
+        .text(CANVAS_W / 2, rowY - 80, 'Rematch (practice)', {
+          fontSize: '16px',
+          color: '#ffcc88',
+        })
+        .setOrigin(0.5),
+    );
 
     const spacing = CANVAS_W / (this.rematchBosses.length + 1);
     const CARD_W = 90;
@@ -526,21 +549,27 @@ export class EncounterScene extends Phaser.Scene {
       const fill = new FusedCardFill(this, card, 0, -10, 60, 40);
       fill.paint(boss.element);
 
-      this.add
-        .text(x, rowY - 38, boss.name, {
-          fontSize: '10px',
-          color: '#ffffff',
-          align: 'center',
-          wordWrap: { width: CARD_W - 6 },
-        })
-        .setOrigin(0.5);
-      this.add
-        .text(x, rowY + 30, `${boss.tier} · ${ELEMENT_NAMES[boss.element] ?? '?'}`, {
-          fontSize: '9px',
-          color: '#ffddaa',
-          align: 'center',
-        })
-        .setOrigin(0.5);
+      // #382 — boss name/tier labels are scene-level (not in the card Container)
+      // → crispCanvasText keeps them smooth on fractional DPI.
+      crispCanvasText(
+        this.add
+          .text(x, rowY - 38, boss.name, {
+            fontSize: '10px',
+            color: '#ffffff',
+            align: 'center',
+            wordWrap: { width: CARD_W - 6 },
+          })
+          .setOrigin(0.5),
+      );
+      crispCanvasText(
+        this.add
+          .text(x, rowY + 30, `${boss.tier} · ${ELEMENT_NAMES[boss.element] ?? '?'}`, {
+            fontSize: '9px',
+            color: '#ffddaa',
+            align: 'center',
+          })
+          .setOrigin(0.5),
+      );
 
       bg.on('pointerdown', () => this.rematchBoss(boss.id));
     });
@@ -705,23 +734,26 @@ export class EncounterScene extends Phaser.Scene {
     // naming the won ring and instructing the player to resolve the overflow.
     const wonRing = rings.find((r) => r.id === ringId);
     const wonRingEl = wonRing ? (ELEMENT_NAMES[wonRing.element] ?? '?') : 'won';
-    const notice = this.add
-      .text(
-        CANVAS_W / 2,
-        80,
-        `You won a ${wonRingEl} ring! Manage your rings to resolve it`,
-        {
-          fontSize: '15px',
-          color: '#ffcc44',
-          backgroundColor: '#000000bb',
-          padding: { x: 10, y: 6 },
-          align: 'center',
-          wordWrap: { width: CANVAS_W - 40 },
-        },
-      )
-      .setOrigin(0.5)
-      .setScrollFactor(0)
-      .setDepth(3000);
+    // #382 — won-ring notice: scene-level, setScrollFactor(0), tween → crispCanvasText.
+    const notice = crispCanvasText(
+      this.add
+        .text(
+          CANVAS_W / 2,
+          80,
+          `You won a ${wonRingEl} ring! Manage your rings to resolve it`,
+          {
+            fontSize: '15px',
+            color: '#ffcc44',
+            backgroundColor: '#000000bb',
+            padding: { x: 10, y: 6 },
+            align: 'center',
+            wordWrap: { width: CANVAS_W - 40 },
+          },
+        )
+        .setOrigin(0.5)
+        .setScrollFactor(0)
+        .setDepth(3000),
+    );
     this.tweens.add({
       targets: notice,
       alpha: 0,

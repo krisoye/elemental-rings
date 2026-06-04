@@ -1,4 +1,5 @@
 import Phaser from 'phaser';
+import { crispCanvasText } from './ui/DomLabel';
 
 /**
  * Top-center phase banner — the most visually prominent UI moment in a battle
@@ -15,34 +16,44 @@ export class Hud extends Phaser.GameObjects.Container {
 
   constructor(scene: Phaser.Scene) {
     super(scene, 0, 0);
-    this.banner = scene.add
-      .text(512, 40, 'WAITING...', {
-        fontSize: '40px',
-        fontStyle: 'bold',
-        color: '#ffffff',
-        backgroundColor: '#00000099',
-        padding: { x: 20, y: 10 },
-      })
-      .setOrigin(0.5)
-      .setDepth(500);
+    // #382 — banner, opponentName, and spirit are scene-level objects (not
+    // Container children). They are ineligible for addDomLabel because they call
+    // setColor / mutate color dynamically at runtime. crispCanvasText keeps them
+    // smooth on fractional DPI (the accepted ceiling for canvas text).
+    this.banner = crispCanvasText(
+      scene.add
+        .text(512, 40, 'WAITING...', {
+          fontSize: '40px',
+          fontStyle: 'bold',
+          color: '#ffffff',
+          backgroundColor: '#00000099',
+          padding: { x: 20, y: 10 },
+        })
+        .setOrigin(0.5)
+        .setDepth(500),
+    );
     // Opponent label (top-left); blank for human opponents, personality for AI.
-    this.opponentName = scene.add.text(16, 16, '', {
-      fontSize: '16px',
-      color: '#ffcc66',
-    });
+    this.opponentName = crispCanvasText(
+      scene.add.text(16, 16, '', {
+        fontSize: '16px',
+        color: '#ffcc66',
+      }),
+    );
     // #211 — spirit readout, bottom-left. Hidden until updateFromState confirms a
     // non-zero spiritMax (AI / no-token sessions have spiritMax 0 → no DB balance).
-    this.spirit = scene.add
-      .text(16, 564, '', {
-        fontSize: '20px',
-        fontStyle: 'bold',
-        color: '#ffffff',
-        backgroundColor: '#00000099',
-        padding: { x: 8, y: 4 },
-      })
-      .setOrigin(0, 1)
-      .setDepth(500)
-      .setVisible(false);
+    this.spirit = crispCanvasText(
+      scene.add
+        .text(16, 564, '', {
+          fontSize: '20px',
+          fontStyle: 'bold',
+          color: '#ffffff',
+          backgroundColor: '#00000099',
+          padding: { x: 8, y: 4 },
+        })
+        .setOrigin(0, 1)
+        .setDepth(500)
+        .setVisible(false),
+    );
     scene.add.existing(this);
   }
 

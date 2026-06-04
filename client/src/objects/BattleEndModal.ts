@@ -1,6 +1,7 @@
 import Phaser from 'phaser';
 import { CANVAS_W, CANVAS_H, ELEMENT_NAMES } from '../Constants';
 import { createOverlay } from './ui/ModalShell';
+import { crispCanvasText } from './ui/DomLabel';
 
 /** The win/lose result + reward lines the modal renders (all server-authoritative). */
 export interface BattleEndResult {
@@ -83,22 +84,28 @@ export class BattleEndModal {
     });
 
     // Banner — same colors as the old inline WIN/LOSE text.
-    const banner = this.scene.add
-      .text(cx, cy - 110, won ? 'YOU WIN!' : 'YOU LOSE!', {
-        fontSize: '44px',
-        fontStyle: 'bold',
-        color: won ? '#44ff44' : '#ff4444',
-      })
-      .setOrigin(0.5);
+    // #382 — Container child → crispCanvasText.
+    const banner = crispCanvasText(
+      this.scene.add
+        .text(cx, cy - 110, won ? 'YOU WIN!' : 'YOU LOSE!', {
+          fontSize: '44px',
+          fontStyle: 'bold',
+          color: won ? '#44ff44' : '#ff4444',
+        })
+        .setOrigin(0.5),
+    );
     container.add(banner);
 
     // Result lines (won/lost ring + rewards).
+    // #382 — Container children → crispCanvasText.
     const lines = this.resultLines();
     lines.forEach((line, i) => {
       container.add(
-        this.scene.add
-          .text(cx, cy - 50 + i * 28, line.text, { fontSize: '18px', color: line.color })
-          .setOrigin(0.5),
+        crispCanvasText(
+          this.scene.add
+            .text(cx, cy - 50 + i * 28, line.text, { fontSize: '18px', color: line.color })
+            .setOrigin(0.5),
+        ),
       );
     });
 
@@ -140,13 +147,16 @@ export class BattleEndModal {
     color: string,
     onClick: () => void,
   ): Phaser.GameObjects.Text {
-    const t = this.scene.add
-      .text(x, y, label, { fontSize: '18px', fontStyle: 'bold', color })
-      .setOrigin(0.5)
-      .setInteractive({ useHandCursor: true })
-      .on('pointerdown', onClick)
-      .on('pointerover', () => t.setColor('#ffffff'))
-      .on('pointerout', () => t.setColor(color));
+    // #382 — Container child (button is added to the modal container) → crispCanvasText.
+    const t = crispCanvasText(
+      this.scene.add
+        .text(x, y, label, { fontSize: '18px', fontStyle: 'bold', color })
+        .setOrigin(0.5)
+        .setInteractive({ useHandCursor: true })
+        .on('pointerdown', onClick)
+        .on('pointerover', () => t.setColor('#ffffff'))
+        .on('pointerout', () => t.setColor(color)),
+    );
     return t;
   }
 
@@ -193,9 +203,12 @@ export class BattleEndModal {
       .setStrokeStyle(2, 0xffcc88)
       .setInteractive({ useHandCursor: true })
       .on('pointerdown', () => this.reopen());
-    const label = this.scene.add
-      .text(cx, y, '▸ Battle Over — options', { fontSize: '15px', color: '#ffcc88' })
-      .setOrigin(0.5);
+    // #382 — Container child (pill container) → crispCanvasText.
+    const label = crispCanvasText(
+      this.scene.add
+        .text(cx, y, '▸ Battle Over — options', { fontSize: '15px', color: '#ffcc88' })
+        .setOrigin(0.5),
+    );
     pill.add([bg, label]);
     this.reopenPill = pill;
 

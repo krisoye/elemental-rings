@@ -4,6 +4,7 @@ import type { InteractionZone } from './InteractionZone';
 import { DOUBLE_CLICK_MS, BLINK_MAX_RANGE } from '../../Constants';
 import { apiFetch, getToken } from '../../net/api';
 import { withinRadius } from '../../util/geometry';
+import { crispCanvasText } from '../ui/DomLabel';
 
 /**
  * Short-range blink (#87 Part A, GDD §12). Double-clicking an interaction zone
@@ -130,17 +131,22 @@ export class BlinkController {
 
   /** Brief camera-pinned feedback toast (matches the overlay feedback style). */
   private showFeedback(message: string): void {
-    const txt = this.scene.add
-      .text(this.scene.cameras.main.width / 2, 110, message, {
-        fontSize: '14px',
-        color: '#ff8888',
-        backgroundColor: '#000000aa',
-        padding: { x: 8, y: 4 },
-      })
-      .setOrigin(0.5, 0)
-      .setScrollFactor(0)
-      .setDepth(1500)
-      .setName('blink-feedback');
+    // #382 — screen-fixed toast (setScrollFactor 0, scene-root, not in a
+    // Container). Transient and not occluded → crispCanvasText (the toast
+    // auto-destroys after 2 s so addDomLabel teardown complexity isn't worth it).
+    const txt = crispCanvasText(
+      this.scene.add
+        .text(this.scene.cameras.main.width / 2, 110, message, {
+          fontSize: '14px',
+          color: '#ff8888',
+          backgroundColor: '#000000aa',
+          padding: { x: 8, y: 4 },
+        })
+        .setOrigin(0.5, 0)
+        .setScrollFactor(0)
+        .setDepth(1500)
+        .setName('blink-feedback'),
+    );
     this.scene.time.delayedCall(2000, () => {
       if (txt.active) txt.destroy();
     });

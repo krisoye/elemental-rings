@@ -17,6 +17,7 @@ import { FOREST_SCREENS } from '../../../shared/world/forest';
 import { restAtCamp, summonSanctum as summonSanctumHelper } from '../net/campActions';
 import { API_BASE, apiClient, apiFetch, fetchMe, getToken } from '../net/api';
 import { DualCameraScene } from './DualCameraScene';
+import { crispCanvasText } from '../objects/ui/DomLabel';
 
 // #85 Fix 2A — the inventory grids in the Ring Storage overlay clip to this many
 // rows; beyond that the ▲/▼ arrows + mouse wheel scroll the grid. 3 rows fit
@@ -249,13 +250,16 @@ export class CampScene extends DualCameraScene {
     // actions (Reliquary / Recharge / Sleep) are spatial interaction zones, but
     // difficulty is a global preference, so it lives as an always-visible HUD
     // button rather than a station you walk to. Opens the DifficultyModal.
-    const settingsBtn = this.add
-      .text(CANVAS_W - 16, 16, '[Settings]', { fontSize: '14px', color: '#ffdd66' })
-      .setOrigin(1, 0)
-      .setScrollFactor(0)
-      .setName('settings-btn')
-      .setInteractive({ useHandCursor: true })
-      .on('pointerdown', () => this.openDifficultyModal());
+    // #382 — settingsBtn is added to uiRoot (a Container) → crispCanvasText.
+    const settingsBtn = crispCanvasText(
+      this.add
+        .text(CANVAS_W - 16, 16, '[Settings]', { fontSize: '14px', color: '#ffdd66' })
+        .setOrigin(1, 0)
+        .setScrollFactor(0)
+        .setName('settings-btn')
+        .setInteractive({ useHandCursor: true })
+        .on('pointerdown', () => this.openDifficultyModal()),
+    );
     this.uiRoot.add(settingsBtn);
     // uiCam ignores world objects; collected after buildZones() below.
 
@@ -581,14 +585,19 @@ export class CampScene extends DualCameraScene {
     const panel = this.add
       .rectangle(CANVAS_W / 2, CANVAS_H / 2, panelW, panelH, 0x161622)
       .setStrokeStyle(2, 0x6082aa);
-    const titleText = this.add
-      .text(CANVAS_W / 2, 60, title, { fontSize: '20px', color: '#ffffff' })
-      .setOrigin(0.5);
-    const closeBtn = this.add
-      .text(CANVAS_W / 2 + 360, 56, '[×]', { fontSize: '16px', color: '#ff8888' })
-      .setOrigin(0.5)
-      .setInteractive({ useHandCursor: true })
-      .on('pointerdown', () => this.closeModalOverlay());
+    // #382 — title and close button are Container children → crispCanvasText.
+    const titleText = crispCanvasText(
+      this.add
+        .text(CANVAS_W / 2, 60, title, { fontSize: '20px', color: '#ffffff' })
+        .setOrigin(0.5),
+    );
+    const closeBtn = crispCanvasText(
+      this.add
+        .text(CANVAS_W / 2 + 360, 56, '[×]', { fontSize: '16px', color: '#ff8888' })
+        .setOrigin(0.5)
+        .setInteractive({ useHandCursor: true })
+        .on('pointerdown', () => this.closeModalOverlay()),
+    );
     c.add([backdrop, panel, titleText, closeBtn]);
     this.routeToUi(c);
 
@@ -714,40 +723,50 @@ export class CampScene extends DualCameraScene {
     // XP, right-aligned to the content edge. Each is its own Text object so the
     // segments stay anchored independently as values change. All read from the
     // authoritative /api/me snapshot — never computed client-side.
-    this.reliquaryHeaderLeft = this.add
-      .text(COL_RELIQUARY_X, 92, '', { fontSize: '14px', color: '#ffdd66' })
-      .setOrigin(0, 0)
-      .setScrollFactor(0)
-      .setName('reliquary-header-left');
-    this.reliquaryHeaderCenter = this.add
-      .text(CANVAS_W / 2, 92, '', { fontSize: '14px', color: '#ff8888' })
-      .setOrigin(0.5, 0)
-      .setScrollFactor(0)
-      .setName('reliquary-header-center');
-    this.reliquaryHeaderRight = this.add
-      .text(CONTENT_RIGHT, 92, '', { fontSize: '13px', color: '#aaccff' })
-      .setOrigin(1, 0)
-      .setScrollFactor(0)
-      .setName('reliquary-header-right');
+    // #382 — header texts are added to the overlay container c → crispCanvasText.
+    this.reliquaryHeaderLeft = crispCanvasText(
+      this.add
+        .text(COL_RELIQUARY_X, 92, '', { fontSize: '14px', color: '#ffdd66' })
+        .setOrigin(0, 0)
+        .setScrollFactor(0)
+        .setName('reliquary-header-left'),
+    );
+    this.reliquaryHeaderCenter = crispCanvasText(
+      this.add
+        .text(CANVAS_W / 2, 92, '', { fontSize: '14px', color: '#ff8888' })
+        .setOrigin(0.5, 0)
+        .setScrollFactor(0)
+        .setName('reliquary-header-center'),
+    );
+    this.reliquaryHeaderRight = crispCanvasText(
+      this.add
+        .text(CONTENT_RIGHT, 92, '', { fontSize: '13px', color: '#aaccff' })
+        .setOrigin(1, 0)
+        .setScrollFactor(0)
+        .setName('reliquary-header-right'),
+    );
     c.add([this.reliquaryHeaderLeft, this.reliquaryHeaderCenter, this.reliquaryHeaderRight]);
     // #182 — "Add Shard" expansion button: only shown when player has ≥ 1 shard.
     // EPIC #302 — moved to y=128 (the column-label row, right-aligned) so it no
     // longer overlaps the right header segment now occupying (CONTENT_RIGHT, 92).
     const reliquaryShards: number = window.__campState?.reliquaryShards ?? 0;
     if (reliquaryShards > 0) {
+      // #382 — Container child → crispCanvasText.
       c.add(
-        this.add
-          .text(
-            CONTENT_RIGHT,
-            128,
-            `[Add Shard (+10)] (${reliquaryShards} available)`,
-            { fontSize: '11px', color: '#ffcc44' },
-          )
-          .setOrigin(1, 0)
-          .setScrollFactor(0)
-          .setName('add-shard-btn')
-          .setInteractive({ useHandCursor: true })
-          .on('pointerdown', () => void this.doExpandReliquary()),
+        crispCanvasText(
+          this.add
+            .text(
+              CONTENT_RIGHT,
+              128,
+              `[Add Shard (+10)] (${reliquaryShards} available)`,
+              { fontSize: '11px', color: '#ffcc44' },
+            )
+            .setOrigin(1, 0)
+            .setScrollFactor(0)
+            .setName('add-shard-btn')
+            .setInteractive({ useHandCursor: true })
+            .on('pointerdown', () => void this.doExpandReliquary()),
+        ),
       );
     }
     // Thin divider beneath the header separating it from the columns.
@@ -759,46 +778,57 @@ export class CampScene extends DualCameraScene {
     // EPIC #302 — relabelled SPIRIT ↓ (these rings drive the spirit pool). The
     // whole label row stays interactive: clicking it with a carried ring selected
     // drops that ring back to the Reliquary/spirit pool (replaces the old dropzone).
-    const reliquaryLabel = this.add
-      .text(COL_RELIQUARY_X, 128, 'SPIRIT  ↓', { fontSize: '13px', color: '#cccccc' })
-      .setScrollFactor(0)
-      .setName('reliquary-label')
-      .setInteractive({ useHandCursor: true })
-      .on('pointerdown', () => void this.onReliquaryDropClicked());
+    // #382 — all column-header labels are Container (c) children → crispCanvasText.
+    const reliquaryLabel = crispCanvasText(
+      this.add
+        .text(COL_RELIQUARY_X, 128, 'SPIRIT  ↓', { fontSize: '13px', color: '#cccccc' })
+        .setScrollFactor(0)
+        .setName('reliquary-label')
+        .setInteractive({ useHandCursor: true })
+        .on('pointerdown', () => void this.onReliquaryDropClicked()),
+    );
     c.add(reliquaryLabel);
 
     // ── Middle column — SPARES ───────────────────────────────────────────────
     // Label row is interactive: clicking it with a selected ring drops into Spare pool.
-    const spareLabel = this.add
-      .text(COL_SPARE_X, 128, 'SPARES  ↓', { fontSize: '13px', color: '#88ccaa' })
-      .setScrollFactor(0)
-      .setName('spare-label')
-      .setInteractive({ useHandCursor: true })
-      .on('pointerdown', () => void this.onSpareDropClicked());
+    const spareLabel = crispCanvasText(
+      this.add
+        .text(COL_SPARE_X, 128, 'SPARES  ↓', { fontSize: '13px', color: '#88ccaa' })
+        .setScrollFactor(0)
+        .setName('spare-label')
+        .setInteractive({ useHandCursor: true })
+        .on('pointerdown', () => void this.onSpareDropClicked()),
+    );
     c.add(spareLabel);
 
     // ── HEALTH column header (#347) ───────────────────────────────────────────
     // Sits between SPARES and COMBAT, above the relocated Heart card.
     c.add(
-      this.add
-        .text(HEART_CARD_X, 128, 'HEALTH', { fontSize: '13px', color: '#ff99aa' })
-        .setScrollFactor(0)
-        .setName('health-label'),
+      crispCanvasText(
+        this.add
+          .text(HEART_CARD_X, 128, 'HEALTH', { fontSize: '13px', color: '#ff99aa' })
+          .setScrollFactor(0)
+          .setName('health-label'),
+      ),
     );
 
     // ── Right column — COMBAT (#347) ──────────────────────────────────────────
     // Left edge lines up with the A1/D1 card left edge (BATTLEHAND_RING_X = 724).
     c.add(
-      this.add
-        .text(BATTLEHAND_RING_X, 128, 'COMBAT', { fontSize: '13px', color: '#cc88ff' })
-        .setScrollFactor(0)
-        .setName('battle-hand-label'),
+      crispCanvasText(
+        this.add
+          .text(BATTLEHAND_RING_X, 128, 'COMBAT', { fontSize: '13px', color: '#cc88ff' })
+          .setScrollFactor(0)
+          .setName('battle-hand-label'),
+      ),
     );
     // [n/m] loadout badge moves beside the COMBAT label so it clears the HEALTH column.
-    this.loadoutBadge = this.add
-      .text(BATTLEHAND_RING_X + 70, 128, '', { fontSize: '13px', color: '#aaffaa' })
-      .setScrollFactor(0)
-      .setName('loadout-badge');
+    this.loadoutBadge = crispCanvasText(
+      this.add
+        .text(BATTLEHAND_RING_X + 70, 128, '', { fontSize: '13px', color: '#aaffaa' })
+        .setScrollFactor(0)
+        .setName('loadout-badge'),
+    );
     c.add(this.loadoutBadge);
 
     // Adopt the reusable grids/panels into the overlay at their column positions.
@@ -842,11 +872,14 @@ export class CampScene extends DualCameraScene {
 
     // Live status echo (errors from carry / assign), inside the modal above the
     // bottom edge.
+    // #382 — Container child → crispCanvasText.
     c.add(
-      this.add
-        .text(CONTENT_LEFT, 478, this.statusText.text, { fontSize: '12px', color: '#ff8888' })
-        .setName('overlay-status')
-        .setScrollFactor(0),
+      crispCanvasText(
+        this.add
+          .text(CONTENT_LEFT, 478, this.statusText.text, { fontSize: '12px', color: '#ff8888' })
+          .setName('overlay-status')
+          .setScrollFactor(0),
+      ),
     );
 
     // EPIC #302 — the permanent passive strip is replaced by a hover tooltip on
@@ -921,10 +954,13 @@ export class CampScene extends DualCameraScene {
     });
     // #347 — HP title above the card (was a bare ♥ glyph). The three-part header's
     // centre `♥ cur/max` HP readout is a separate object and is unchanged.
-    const title = this.add
-      .text(HEART_CARD_X + cx, HEART_CARD_Y + cy - 36, 'HP', { fontSize: '12px', color: '#ff6688' })
-      .setOrigin(0.5)
-      .setScrollFactor(0);
+    // #382 — HP title is a child of card (a Container) → crispCanvasText.
+    const title = crispCanvasText(
+      this.add
+        .text(HEART_CARD_X + cx, HEART_CARD_Y + cy - 36, 'HP', { fontSize: '12px', color: '#ff6688' })
+        .setOrigin(0.5)
+        .setScrollFactor(0),
+    );
     card.add(title);
     // Click the heart card → enter the universal-swap state machine as 'heart'.
     card.bg
@@ -1593,40 +1629,49 @@ export class CampScene extends DualCameraScene {
    */
   private openMeditationOverlay(): void {
     const c = this.beginModalOverlay('meditation', 'MEDITATION CIRCLE');
+    // #382 — all labels are Container (c) children → crispCanvasText.
     c.add(
-      this.add
-        .text(CANVAS_W / 2, 150, 'Channel spirit to recharge your rings.', {
-          fontSize: '13px',
-          color: '#cccccc',
-        })
-        .setOrigin(0.5)
-        .setScrollFactor(0),
+      crispCanvasText(
+        this.add
+          .text(CANVAS_W / 2, 150, 'Channel spirit to recharge your rings.', {
+            fontSize: '13px',
+            color: '#cccccc',
+          })
+          .setOrigin(0.5)
+          .setScrollFactor(0),
+      ),
     );
     c.add(
-      this.add
-        .text(CANVAS_W / 2 - 120, 220, '[Recharge]', { fontSize: '16px', color: '#ffcc44' })
-        .setOrigin(0.5)
-        .setScrollFactor(0)
-        .setInteractive({ useHandCursor: true })
-        .on('pointerdown', () => void this.doRechargeSelected()),
+      crispCanvasText(
+        this.add
+          .text(CANVAS_W / 2 - 120, 220, '[Recharge]', { fontSize: '16px', color: '#ffcc44' })
+          .setOrigin(0.5)
+          .setScrollFactor(0)
+          .setInteractive({ useHandCursor: true })
+          .on('pointerdown', () => void this.doRechargeSelected()),
+      ),
     );
     c.add(
-      this.add
-        .text(CANVAS_W / 2 + 60, 220, '[Recharge All]', { fontSize: '16px', color: '#ffcc44' })
-        .setOrigin(0.5)
-        .setScrollFactor(0)
-        .setInteractive({ useHandCursor: true })
-        .on('pointerdown', () => void this.doRechargeAll()),
+      crispCanvasText(
+        this.add
+          .text(CANVAS_W / 2 + 60, 220, '[Recharge All]', { fontSize: '16px', color: '#ffcc44' })
+          .setOrigin(0.5)
+          .setScrollFactor(0)
+          .setInteractive({ useHandCursor: true })
+          .on('pointerdown', () => void this.doRechargeAll()),
+      ),
     );
     // Teleport (8B.3): opens the waystone teleport modal (server-gated).
     c.add(
-      this.add
-        .text(CANVAS_W / 2, 300, '[Teleport]', { fontSize: '15px', color: '#ffcc44' })
-        .setOrigin(0.5)
-        .setScrollFactor(0)
-        .setName('teleport-btn')
-        .setInteractive({ useHandCursor: true })
-        .on('pointerdown', () => void this.openTeleportModal()),
+      crispCanvasText(
+        this.add
+          .text(CANVAS_W / 2, 300, '[Teleport]', { fontSize: '15px', color: '#ffcc44' })
+          .setOrigin(0.5)
+          .setScrollFactor(0)
+          .setName('teleport-btn')
+          .setInteractive({ useHandCursor: true })
+          .on('pointerdown', () => void this.openTeleportModal()),
+      ),
     );
   }
 
@@ -1701,14 +1746,17 @@ export class CampScene extends DualCameraScene {
     const c = this.beginModalOverlay('teleport', 'TELEPORT');
 
     // Spirit balance display
+    // #382 — Container (c) child → crispCanvasText.
     c.add(
-      this.add
-        .text(CANVAS_W / 2, 95, `Spirit: ${payload.spiritCurrent ?? 0}`, {
-          fontSize: '14px',
-          color: '#88ccff',
-        })
-        .setOrigin(0.5)
-        .setScrollFactor(0),
+      crispCanvasText(
+        this.add
+          .text(CANVAS_W / 2, 95, `Spirit: ${payload.spiritCurrent ?? 0}`, {
+            fontSize: '14px',
+            color: '#88ccff',
+          })
+          .setOrigin(0.5)
+          .setScrollFactor(0),
+      ),
     );
 
     // Thin divider below header
@@ -1718,17 +1766,21 @@ export class CampScene extends DualCameraScene {
         .setScrollFactor(0),
     );
 
-    // Scroll arrows
-    const upArrow = this.add
-      .text(ARROW_X, LIST_TOP + 8, '▲', { fontSize: '14px', color: '#aaaaaa' })
-      .setOrigin(0.5)
-      .setScrollFactor(0)
-      .setInteractive({ useHandCursor: true });
-    const downArrow = this.add
-      .text(ARROW_X, LIST_BOTTOM - 8, '▼', { fontSize: '14px', color: '#aaaaaa' })
-      .setOrigin(0.5)
-      .setScrollFactor(0)
-      .setInteractive({ useHandCursor: true });
+    // Scroll arrows — Container (c) children → crispCanvasText.
+    const upArrow = crispCanvasText(
+      this.add
+        .text(ARROW_X, LIST_TOP + 8, '▲', { fontSize: '14px', color: '#aaaaaa' })
+        .setOrigin(0.5)
+        .setScrollFactor(0)
+        .setInteractive({ useHandCursor: true }),
+    );
+    const downArrow = crispCanvasText(
+      this.add
+        .text(ARROW_X, LIST_BOTTOM - 8, '▼', { fontSize: '14px', color: '#aaaaaa' })
+        .setOrigin(0.5)
+        .setScrollFactor(0)
+        .setInteractive({ useHandCursor: true }),
+    );
     c.add([upArrow, downArrow]);
 
     const applyScroll = (): void => {
@@ -1771,41 +1823,52 @@ export class CampScene extends DualCameraScene {
       const isAnchor = w.id === payload.anchor;
       const anchorMark = isAnchor ? ' ★' : '';
 
+      // #382 — all waystone-row texts are Container (c) children → crispCanvasText.
       if (!w.attuned) {
-        const nameText = this.add
-          .text(NAME_X, 0, `??? — undiscovered${anchorMark}`, { fontSize: '14px', color: '#555555' })
-          .setOrigin(0, 0.5)
-          .setScrollFactor(0);
+        const nameText = crispCanvasText(
+          this.add
+            .text(NAME_X, 0, `??? — undiscovered${anchorMark}`, { fontSize: '14px', color: '#555555' })
+            .setOrigin(0, 0.5)
+            .setScrollFactor(0),
+        );
         c.add(nameText);
         rows.push({ nameText });
       } else if (!w.meetsThreshold) {
         // #87 Part B — spirit-locked: name greyed out, cost shown as subtitle.
-        const nameText = this.add
-          .text(NAME_X, 0, `${w.name}${anchorMark}`, { fontSize: '14px', color: '#888888' })
-          .setOrigin(0, 0.5)
-          .setScrollFactor(0);
-        const subText = this.add
-          .text(NAME_X, 0, `${w.spiritCost ?? 0} spirit required`, { fontSize: '12px', color: '#666666' })
-          .setOrigin(0, 0.5)
-          .setScrollFactor(0);
+        const nameText = crispCanvasText(
+          this.add
+            .text(NAME_X, 0, `${w.name}${anchorMark}`, { fontSize: '14px', color: '#888888' })
+            .setOrigin(0, 0.5)
+            .setScrollFactor(0),
+        );
+        const subText = crispCanvasText(
+          this.add
+            .text(NAME_X, 0, `${w.spiritCost ?? 0} spirit required`, { fontSize: '12px', color: '#666666' })
+            .setOrigin(0, 0.5)
+            .setScrollFactor(0),
+        );
         c.add([nameText, subText]);
         rows.push({ nameText, subText });
       } else {
         // Attuned + affordable — actionable [Travel] button.
-        const nameText = this.add
-          .text(NAME_X, 0, `${w.name}${anchorMark}`, { fontSize: '14px', color: '#cccccc' })
-          .setOrigin(0, 0.5)
-          .setScrollFactor(0);
-        const btnText = this.add
-          .text(BTN_X, 0, `[Travel — ${w.spiritCost ?? 0} spirit]`, {
-            fontSize: '13px',
-            color: '#ffcc44',
-          })
-          .setOrigin(0, 0.5)
-          .setScrollFactor(0)
-          .setName(`travel-${w.id}`)
-          .setInteractive({ useHandCursor: true })
-          .on('pointerdown', () => void this.doTeleport(w.id, w.name));
+        const nameText = crispCanvasText(
+          this.add
+            .text(NAME_X, 0, `${w.name}${anchorMark}`, { fontSize: '14px', color: '#cccccc' })
+            .setOrigin(0, 0.5)
+            .setScrollFactor(0),
+        );
+        const btnText = crispCanvasText(
+          this.add
+            .text(BTN_X, 0, `[Travel — ${w.spiritCost ?? 0} spirit]`, {
+              fontSize: '13px',
+              color: '#ffcc44',
+            })
+            .setOrigin(0, 0.5)
+            .setScrollFactor(0)
+            .setName(`travel-${w.id}`)
+            .setInteractive({ useHandCursor: true })
+            .on('pointerdown', () => void this.doTeleport(w.id, w.name)),
+        );
         c.add([nameText, btnText]);
         rows.push({ nameText, btnText });
       }
@@ -1831,17 +1894,20 @@ export class CampScene extends DualCameraScene {
     }
     if (res.ok) {
       this.closeModalOverlay();
-      // #118: toast lives in uiRoot → renders at 1:1 through uiCam.
-      const msg = this.add
-        .text(CANVAS_W / 2, CANVAS_H / 2 - 50, `Sanctum re-anchored near ${waystoneName}`, {
-          fontSize: '14px',
-          color: '#aaffaa',
-          backgroundColor: '#222222',
-          padding: { x: 8, y: 4 },
-        })
-        .setOrigin(0.5)
-        .setDepth(600)
-        .setName('teleport-confirm');
+      // #118: toast lives in uiRoot (a Container) → renders at 1:1 through uiCam.
+      // #382 — Container (uiRoot) child → crispCanvasText.
+      const msg = crispCanvasText(
+        this.add
+          .text(CANVAS_W / 2, CANVAS_H / 2 - 50, `Sanctum re-anchored near ${waystoneName}`, {
+            fontSize: '14px',
+            color: '#aaffaa',
+            backgroundColor: '#222222',
+            padding: { x: 8, y: 4 },
+          })
+          .setOrigin(0.5)
+          .setDepth(600)
+          .setName('teleport-confirm'),
+      );
       this.uiRoot.add(msg);
       this.time.delayedCall(2000, () => {
         this.uiRoot?.remove(msg);
@@ -1866,11 +1932,14 @@ export class CampScene extends DualCameraScene {
    * nothing at the scene-root level) to display it.
    */
   private showTeleportError(message: string): void {
-    const errText = this.add
-      .text(CANVAS_W / 2, 420, message, { fontSize: '13px', color: '#ff6666' })
-      .setOrigin(0.5)
-      .setDepth(4001) // above the overlay container (depth 4000)
-      .setName('teleport-error');
+    // #382 — scene-level text (not in a Container) routed to uiCam → crispCanvasText.
+    const errText = crispCanvasText(
+      this.add
+        .text(CANVAS_W / 2, 420, message, { fontSize: '13px', color: '#ff6666' })
+        .setOrigin(0.5)
+        .setDepth(4001) // above the overlay container (depth 4000)
+        .setName('teleport-error'),
+    );
     // Exclude from the 2× world camera so the text renders at 1:1 via uiCam.
     this.routeToUi(errText);
     this.time.delayedCall(8000, () => {
@@ -1886,23 +1955,28 @@ export class CampScene extends DualCameraScene {
   private openBedOverlay(): void {
     const c = this.beginModalOverlay('bed', 'REST');
     const food = window.__campState?.food_units ?? 0;
+    // #382 — Container (c) children → crispCanvasText.
     c.add(
-      this.add
-        .text(CANVAS_W / 2, 170, `Sleep to fully restore spirit and advance a day. (Food: ${food})`, {
-          fontSize: '13px',
-          color: '#cccccc',
-        })
-        .setOrigin(0.5)
-        .setScrollFactor(0),
+      crispCanvasText(
+        this.add
+          .text(CANVAS_W / 2, 170, `Sleep to fully restore spirit and advance a day. (Food: ${food})`, {
+            fontSize: '13px',
+            color: '#cccccc',
+          })
+          .setOrigin(0.5)
+          .setScrollFactor(0),
+      ),
     );
     c.add(
-      this.add
-        .text(CANVAS_W / 2, 250, '[Sleep — 25 food]', { fontSize: '18px', color: '#88ccff' })
-        .setOrigin(0.5)
-        .setScrollFactor(0)
-        .setName('sleep-confirm')
-        .setInteractive({ useHandCursor: true })
-        .on('pointerdown', () => void this.confirmSleep()),
+      crispCanvasText(
+        this.add
+          .text(CANVAS_W / 2, 250, '[Sleep — 25 food]', { fontSize: '18px', color: '#88ccff' })
+          .setOrigin(0.5)
+          .setScrollFactor(0)
+          .setName('sleep-confirm')
+          .setInteractive({ useHandCursor: true })
+          .on('pointerdown', () => void this.confirmSleep()),
+      ),
     );
   }
 
@@ -1921,19 +1995,24 @@ export class CampScene extends DualCameraScene {
     const c = this.beginModalOverlay('eat', 'CAMPFIRE');
     const food = window.__campState?.food_units ?? 0;
 
+    // #382 — all campfire-overlay labels are Container (c) children → crispCanvasText.
     c.add(
-      this.add
-        .text(CANVAS_W / 2, 150, `Food stores: ${food} units`, { fontSize: '14px', color: '#ffdd88' })
-        .setOrigin(0.5)
-        .setScrollFactor(0),
+      crispCanvasText(
+        this.add
+          .text(CANVAS_W / 2, 150, `Food stores: ${food} units`, { fontSize: '14px', color: '#ffdd88' })
+          .setOrigin(0.5)
+          .setScrollFactor(0),
+      ),
     );
 
     // Status label for results/errors.
-    const statusLbl = this.add
-      .text(CANVAS_W / 2, 370, '', { fontSize: '12px', color: '#ff8888' })
-      .setOrigin(0.5)
-      .setScrollFactor(0)
-      .setName('campfire-status');
+    const statusLbl = crispCanvasText(
+      this.add
+        .text(CANVAS_W / 2, 370, '', { fontSize: '12px', color: '#ff8888' })
+        .setOrigin(0.5)
+        .setScrollFactor(0)
+        .setName('campfire-status'),
+    );
     c.add(statusLbl);
 
     const setFireStatus = (msg: string, color = '#ff8888'): void => {
@@ -1942,18 +2021,20 @@ export class CampScene extends DualCameraScene {
 
     // [Rest — 25 food] button.
     c.add(
-      this.add
-        .text(CANVAS_W / 2, 220, '[Rest — 25 food]', { fontSize: '17px', color: '#88ccff' })
-        .setOrigin(0.5)
-        .setScrollFactor(0)
-        .setInteractive({ useHandCursor: true })
-        .on('pointerdown', () => {
-          void (async () => {
-            await this.doSleep();
-            // doSleep calls loadData on success; surface errors via status label.
-            if (this.overlayName === 'eat') setFireStatus('');
-          })();
-        }),
+      crispCanvasText(
+        this.add
+          .text(CANVAS_W / 2, 220, '[Rest — 25 food]', { fontSize: '17px', color: '#88ccff' })
+          .setOrigin(0.5)
+          .setScrollFactor(0)
+          .setInteractive({ useHandCursor: true })
+          .on('pointerdown', () => {
+            void (async () => {
+              await this.doSleep();
+              // doSleep calls loadData on success; surface errors via status label.
+              if (this.overlayName === 'eat') setFireStatus('');
+            })();
+          }),
+      ),
     );
 
     // [Summon Sanctum] button.
@@ -1963,20 +2044,22 @@ export class CampScene extends DualCameraScene {
       ? '[Summon Sanctum]'
       : '[Summon Sanctum] — no anchorage attuned';
     c.add(
-      this.add
-        .text(CANVAS_W / 2, 295, summonLabel, { fontSize: '17px', color: summonColor })
-        .setOrigin(0.5)
-        .setScrollFactor(0)
-        .setInteractive({ useHandCursor: true })
-        .on('pointerdown', () => {
-          if (!anchorId) {
-            setFireStatus('You are not attuned to any Anchorage');
-            return;
-          }
-          void (async () => {
-            await this.doSummonSanctum(anchorId, setFireStatus);
-          })();
-        }),
+      crispCanvasText(
+        this.add
+          .text(CANVAS_W / 2, 295, summonLabel, { fontSize: '17px', color: summonColor })
+          .setOrigin(0.5)
+          .setScrollFactor(0)
+          .setInteractive({ useHandCursor: true })
+          .on('pointerdown', () => {
+            if (!anchorId) {
+              setFireStatus('You are not attuned to any Anchorage');
+              return;
+            }
+            void (async () => {
+              await this.doSummonSanctum(anchorId, setFireStatus);
+            })();
+          }),
+      ),
     );
   }
 
@@ -2086,21 +2169,29 @@ export class CampScene extends DualCameraScene {
     // Off-screen header/stat/status texts the panels & overlays update. These
     // mirror the old flat layout's labels but are not visible until an overlay
     // adopts them (8A.2 reads their text into overlay-local labels).
-    this.statLineText = this.add
-      .text(OFFSCREEN_X, OFFSCREEN_Y - 60, 'Day: — | Gold: — | Food: — | Spirit: —/—', {
-        fontSize: '14px',
-        color: '#ffdd66',
-      })
-      .setName('stat-line');
-    this.loadoutHeaderText = this.add
-      .text(OFFSCREEN_X + 350, OFFSCREEN_Y - 30, 'Loadout (0/10)', {
-        fontSize: '14px',
-        color: '#cccccc',
-      })
-      .setName('loadout-header');
-    this.statusText = this.add
-      .text(OFFSCREEN_X, OFFSCREEN_Y - 100, '', { fontSize: '13px', color: '#ff8888' })
-      .setName('camp-status');
+    // #382 — these offscreen tracking labels are scene-level (not Container children)
+    // and are used for data storage / E2E access → crispCanvasText.
+    this.statLineText = crispCanvasText(
+      this.add
+        .text(OFFSCREEN_X, OFFSCREEN_Y - 60, 'Day: — | Gold: — | Food: — | Spirit: —/—', {
+          fontSize: '14px',
+          color: '#ffdd66',
+        })
+        .setName('stat-line'),
+    );
+    this.loadoutHeaderText = crispCanvasText(
+      this.add
+        .text(OFFSCREEN_X + 350, OFFSCREEN_Y - 30, 'Loadout (0/10)', {
+          fontSize: '14px',
+          color: '#cccccc',
+        })
+        .setName('loadout-header'),
+    );
+    this.statusText = crispCanvasText(
+      this.add
+        .text(OFFSCREEN_X, OFFSCREEN_Y - 100, '', { fontSize: '13px', color: '#ff8888' })
+        .setName('camp-status'),
+    );
   }
 
   // ── Data loading ──────────────────────────────────────────────────────────

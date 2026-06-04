@@ -2,6 +2,7 @@ import Phaser from 'phaser';
 import { WorldInteractable } from './WorldInteractable';
 import { ELEMENT_NAMES } from '../../Constants';
 import { apiFetch, fetchMe, getToken } from '../../net/api';
+import { crispCanvasText } from '../ui/DomLabel';
 
 /** Minimal slice of a /api/me ring row the shrine needs for the ring-key check. */
 interface ShrineRing {
@@ -222,14 +223,17 @@ export class ShrineZone extends WorldInteractable {
     const panel = this.scene.add
       .rectangle(cx, cy, 460, 150, 0x1d1d2e)
       .setStrokeStyle(2, 0xcc88ff);
-    const label = this.scene.add
-      .text(cx, cy, text, {
-        fontSize: '15px',
-        color: '#ffffff',
-        align: 'center',
-        wordWrap: { width: 420 },
-      })
-      .setOrigin(0.5);
+    // #382 — Container child (overlay container) → crispCanvasText.
+    const label = crispCanvasText(
+      this.scene.add
+        .text(cx, cy, text, {
+          fontSize: '15px',
+          color: '#ffffff',
+          align: 'center',
+          wordWrap: { width: 420 },
+        })
+        .setOrigin(0.5),
+    );
     container.add([dim, panel, label]);
     this.overlay = container;
     // The shrine overlay renders through the UI camera at 1:1 (it lives at the

@@ -1,4 +1,5 @@
 import Phaser from 'phaser';
+import { crispCanvasText } from './DomLabel';
 
 /**
  * Lazy hover tooltip (EPIC #291 / WS D). Attaches a pointer-driven tooltip to any
@@ -44,17 +45,22 @@ export function attachTooltip(
     const txt = getText();
     if (!txt) return;
     if (!label) {
-      label = scene.add
-        .text(0, 0, txt, {
-          fontSize: '11px',
-          color: '#ffffff',
-          backgroundColor: '#000000cc',
-          padding: { x: 6, y: 3 },
-          wordWrap: { width: maxWidth },
-        })
-        .setOrigin(0, 1)
-        .setScrollFactor(0)
-        .setDepth(5000);
+      // #382 — tooltip tracks the pointer (repositioned each frame) and has
+      // setScrollFactor(0), so it is screen-fixed but moves dynamically → DOM
+      // repositioning is awkward; crispCanvasText is the safe/correct choice.
+      label = crispCanvasText(
+        scene.add
+          .text(0, 0, txt, {
+            fontSize: '11px',
+            color: '#ffffff',
+            backgroundColor: '#000000cc',
+            padding: { x: 6, y: 3 },
+            wordWrap: { width: maxWidth },
+          })
+          .setOrigin(0, 1)
+          .setScrollFactor(0)
+          .setDepth(5000),
+      );
     } else {
       label.setText(txt).setVisible(true);
     }

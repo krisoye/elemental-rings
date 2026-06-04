@@ -1,4 +1,5 @@
 import Phaser from 'phaser';
+import { crispCanvasText } from '../ui/DomLabel';
 
 /**
  * A walkable point-of-interest in a spatial scene (bed, meditation circle,
@@ -59,19 +60,22 @@ export class InteractionZone {
 
     // Floating prompt above the zone, hidden until active. Suppressed entirely
     // (null) for touch-fired zones so no stale hint flashes on contact.
+    // #382 — world-space prompt (scrolls with the world camera) → crispCanvasText.
     this.prompt =
       promptText === null
         ? null
-        : scene.add
-            .text(this.centerX, y - 14, promptText, {
-              fontSize: '13px',
-              color: '#ffffaa',
-              backgroundColor: '#000000aa',
-              padding: { x: 6, y: 3 },
-            })
-            .setOrigin(0.5, 1)
-            .setDepth(1000)
-            .setVisible(false);
+        : crispCanvasText(
+            scene.add
+              .text(this.centerX, y - 14, promptText, {
+                fontSize: '13px',
+                color: '#ffffaa',
+                backgroundColor: '#000000aa',
+                padding: { x: 6, y: 3 },
+              })
+              .setOrigin(0.5, 1)
+              .setDepth(1000)
+              .setVisible(false),
+          );
   }
 
   /** The static overlap body's game object (for `physics.add.overlap`). */

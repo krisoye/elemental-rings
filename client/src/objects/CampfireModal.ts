@@ -3,6 +3,7 @@ import { CANVAS_W, CANVAS_H } from '../Constants';
 import { restAtCamp, summonSanctum } from '../net/campActions';
 import { getToken } from '../net/api';
 import { createOverlay } from './ui/ModalShell';
+import { crispCanvasText } from './ui/DomLabel';
 
 /**
  * Overworld Anchorage campfire overlay (#191).
@@ -88,33 +89,40 @@ export class CampfireModal {
     const c = shell.container;
     this.setStatusLine = shell.setStatus;
 
-    const stats = this.scene.add
-      .text(CANVAS_W / 2, CANVAS_H / 2 - 80, `Food: ${food}  |  Spirit: ${spirit}`, {
-        fontSize: '13px', color: '#cccccc',
-      })
-      .setOrigin(0.5, 0)
-      .setScrollFactor(0);
+    // #382 — all three labels are Container children → crispCanvasText.
+    const stats = crispCanvasText(
+      this.scene.add
+        .text(CANVAS_W / 2, CANVAS_H / 2 - 80, `Food: ${food}  |  Spirit: ${spirit}`, {
+          fontSize: '13px', color: '#cccccc',
+        })
+        .setOrigin(0.5, 0)
+        .setScrollFactor(0),
+    );
 
-    const restBtn = this.scene.add
-      .text(CANVAS_W / 2, CANVAS_H / 2 - 20, '[Rest — 25 food]', {
-        fontSize: '15px', color: '#88ddff',
-      })
-      .setOrigin(0.5)
-      .setScrollFactor(0)
-      .setInteractive({ useHandCursor: true })
-      .on('pointerdown', () => void this.doRest());
+    const restBtn = crispCanvasText(
+      this.scene.add
+        .text(CANVAS_W / 2, CANVAS_H / 2 - 20, '[Rest — 25 food]', {
+          fontSize: '15px', color: '#88ddff',
+        })
+        .setOrigin(0.5)
+        .setScrollFactor(0)
+        .setInteractive({ useHandCursor: true })
+        .on('pointerdown', () => void this.doRest()),
+    );
 
     const summonLabel = summonCost === 0
       ? '[Summon Sanctum — free]'
       : `[Summon Sanctum — ${summonCost} spirit]`;
-    const summonBtn = this.scene.add
-      .text(CANVAS_W / 2, CANVAS_H / 2 + 20, summonLabel, {
-        fontSize: '15px', color: '#aaffcc',
-      })
-      .setOrigin(0.5)
-      .setScrollFactor(0)
-      .setInteractive({ useHandCursor: true })
-      .on('pointerdown', () => void this.doSummon(summonCost));
+    const summonBtn = crispCanvasText(
+      this.scene.add
+        .text(CANVAS_W / 2, CANVAS_H / 2 + 20, summonLabel, {
+          fontSize: '15px', color: '#aaffcc',
+        })
+        .setOrigin(0.5)
+        .setScrollFactor(0)
+        .setInteractive({ useHandCursor: true })
+        .on('pointerdown', () => void this.doSummon(summonCost)),
+    );
 
     c.add([stats, restBtn, summonBtn]);
     this.container = c;
