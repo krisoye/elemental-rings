@@ -309,12 +309,15 @@ describe('carry-cap: spare→heart swap at full carry (#376)', () => {
     fillCarryToCap(playerId);
     expect(repo.getCarry(playerId).length).toBe(repo.getCarryCap(playerId));
 
-    const carried = repo.getCarry(playerId);
-    const incomingSpare = carried[0].id; // a carried ring that becomes the new heart
+    // Pick a ring that is actually in the spare set (in_carry=1, NOT in any loadout slot).
+    // carried[0] may be a battle-slot ring; getSpareIds returns only non-slot carried rings.
+    const spareIds = repo.getSpareIds(playerId);
+    expect(spareIds.length).toBeGreaterThan(0);
+    const incomingSpare = spareIds[0]; // a genuine spare ring that becomes the new heart
     const oldHeart = repo.getHeartRing(playerId)!;
     expect(oldHeart).not.toBeNull();
 
-    // spare→heart: incomingSpare leaves carry; oldHeart joins carry → net-zero
+    // spare→heart: incomingSpare leaves spare (−1); oldHeart joins spare (+1) → net-zero
     expect(() => repo.setHeartRing(playerId, incomingSpare, 'spare')).not.toThrow();
 
     // Post-condition: old heart is now in carry; incomingSpare is the new heart (not carried)

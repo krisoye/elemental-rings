@@ -675,13 +675,12 @@ export class EncounterScene extends Phaser.Scene {
    * New flow: read `pending_ring_id` from `/api/me` (server-authoritative).
    */
   private async checkPendingWonRing(): Promise<void> {
+    // Guard against concurrent dispatch: openBattleHandOnCreate and checkPendingWonRing may both fire in create()
     if (this.wonRingModal || this.battleHand.isOpen()) return;
     if (!getToken()) return;
 
     let rings: RingData[];
     let pendingRingId: string | null;
-    let spareRingMax: number;
-    let spareCount: number;
     try {
       const data = await fetchMe<{
         player: { carry_cap?: number; spare_ring_max?: number; pending_ring_id?: string | null };
@@ -689,12 +688,6 @@ export class EncounterScene extends Phaser.Scene {
       }>();
       rings = data.rings;
       pendingRingId = data.player.pending_ring_id ?? null;
-      spareRingMax = data.player.spare_ring_max ?? 9;
-      // Spare count: in_carry=1 rings not in any loadout slot. Use the full ring
-      // list since we do not fetch the loadout here — approximate with carried count.
-      // The Manage Hand overlay fetches its own fresh /api/me, so the exact count
-      // is irrelevant for the banner message here.
-      spareCount = rings.filter((r) => r.in_carry === 1).length;
     } catch {
       return;
     }
@@ -716,9 +709,7 @@ export class EncounterScene extends Phaser.Scene {
       .text(
         CANVAS_W / 2,
         80,
-        spareCount > spareRingMax
-          ? `You won a ${wonRingEl} ring! Spare grid full — discard a ring to make room`
-          : `You won a ${wonRingEl} ring! Manage your rings to resolve it`,
+        `You won a ${wonRingEl} ring! Manage your rings to resolve it`,
         {
           fontSize: '15px',
           color: '#ffcc44',
@@ -769,13 +760,23 @@ export class EncounterScene extends Phaser.Scene {
 
     try {
       if (choice === 'discard') {
-        await apiFetch(`/api/rings/${ringId}`, { method: 'DELETE' });
+        const res = await apiFetch(`/api/rings/${ringId}`, { method: 'DELETE' });
+        if (!res.ok) {
+          const body = await res.json().catch(() => ({}));
+          this.statusText?.setText((body as { error?: string }).error ?? 'Something went wrong');
+          return; // do NOT dismiss modal or clear pendingWonRing
+        }
       } else {
         // 'carry': accept the WON ring as a regular spare (clears pending server-side).
-        await apiFetch(`/api/rings/${ringId}/accept`, { method: 'PUT' });
+        const res = await apiFetch(`/api/rings/${ringId}/accept`, { method: 'PUT' });
+        if (!res.ok) {
+          const body = await res.json().catch(() => ({}));
+          this.statusText?.setText((body as { error?: string }).error ?? 'Something went wrong');
+          return; // do NOT dismiss modal or clear pendingWonRing
+        }
       }
     } catch {
-      this.statusText.setText('Network error during ring resolution');
+      this.statusText?.setText('Network error during ring resolution');
       return;
     }
 

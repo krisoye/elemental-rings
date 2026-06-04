@@ -112,6 +112,7 @@ export class BattleHandOverlay {
    * `refreshManageData()`.
    */
   private pendingRingId: string | null = null;
+  // pending_ring_id is intentionally promoted to this.pendingRingId — not stored here
   private managePlayer: { game_day?: number; gold?: number; food_units?: number; spirit_current?: number; spirit_max?: number; aggregate_xp?: number; carry_cap?: number; spare_ring_max?: number } | null = null;
   private manageStatusText: Phaser.GameObjects.Text | null = null;
   /**

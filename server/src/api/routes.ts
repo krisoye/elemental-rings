@@ -70,7 +70,7 @@ import {
   consumeAndUnlockShrine,
 } from '../persistence/PlayerRepo';
 import { ElementEnum } from '../../../shared/types';
-import { insertRing as insertRingRow, makeRing } from '../persistence/ringRows';
+import { insertRing as insertRingRow, makeRing, getRingById } from '../persistence/ringRows';
 import { NPC_SPAWNS, hashNpcId } from '../persistence/NpcSpawns';
 import {
   FOOD_PER_SLEEP,
@@ -384,9 +384,9 @@ apiRouter.put('/api/rings/:ringId/accept', requireAuth, (req: Request, res: Resp
   const playerId = req.playerId as string;
   const ringId = req.params.ringId;
 
-  // Validate ownership.
-  const ring = getRingsByOwner(playerId).find((r) => r.id === ringId);
-  if (!ring) {
+  // Validate ownership using a single-ring lookup (avoids full owner scan).
+  const ring = getRingById(ringId);
+  if (!ring || ring.owner_id !== playerId) {
     fail(res, 400, 'ring not found or not owned');
     return;
   }
@@ -1273,9 +1273,8 @@ if (process.env.E2E_TEST_ROUTES === '1') {
       fail(res, 400, 'element must be a non-negative integer');
       return;
     }
-    // grantRing inserts with in_carry = 0 (DB default), so rings land in the Reliquary.
     for (let i = 0; i < count; i++) {
-      grantRing(playerId, element, 0, 3, 0);
+      insertRingRow(playerId, makeRing({ element, tier: 0, xp: 0, maxUses: 3, currentUses: 3, escrowed: 0, inCarry: 0, pending: 0 }));
     }
     res.status(200).json({ ok: true, reliquaryCount: getReliquaryCount(playerId) });
   });

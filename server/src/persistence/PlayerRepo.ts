@@ -593,6 +593,7 @@ export function setEscrowed(ringId: string, escrowed: boolean): void {
  * one overflow slot). This path intentionally bypasses `assertSpareWithinMax`
  * — the overflow is by design and requires the player to resolve it.
  */
+// Awards a WON ring: enters carry immediately (in_carry=1, pending=1). For non-pending grants use insertRingRow directly.
 export function grantRing(
   ownerId: string,
   element: number,
@@ -659,7 +660,7 @@ export const transferRing = db.transaction(
     // overflow (WON ring — one slot beyond spare_ring_max, by design).
     updateRingOwner.run(toPlayerId, ringId, fromPlayerId);
     setRingCarry(ringId, 1);
-    db.prepare('UPDATE rings SET pending = 1 WHERE id = ?').run(ringId);
+    setPendingStmt.run(ringId);
     return ringId;
   },
 );
@@ -1028,13 +1029,19 @@ export function assertReliquaryWithinMax(
   if (resulting > cap) throw new Error('Reliquary full');
 }
 
+// EPIC #378 — module-level prepared statements for the pending-flag lifecycle.
+// Both are module-level to avoid re-preparing on every call (same pattern as
+// all other single-column mutators in this file).
+const setPendingStmt = db.prepare('UPDATE rings SET pending = 1 WHERE id = ?');
+const clearPendingStmt = db.prepare('UPDATE rings SET pending = 0 WHERE id = ?');
+
 /**
  * Clear the `pending` flag on a ring (set pending=0). Called when a WON ring
  * is accepted as a regular spare (PUT /api/rings/:ringId/accept), assigned to
  * a slot, or discarded.
  */
 export function clearPendingFlag(ringId: string): void {
-  db.prepare('UPDATE rings SET pending = 0 WHERE id = ?').run(ringId);
+  clearPendingStmt.run(ringId);
 }
 
 /**
@@ -1359,20 +1366,23 @@ export const setHeartRing = db.transaction(
       if (oldHeartId && oldHeartId !== ringId) {
         setRingHeartSlot(oldHeartId, 0);
         if (releaseTo === 'spare') {
-          // EPIC #378 — spare-grid guard: old heart joins carry (spare grid); fire
-          // only when no carried ring is vacating carry in exchange.
-          //
-          // When ringId is currently carried (in_carry=1) — spare ring or battle-
-          // slot ring — carry count stays flat (ringId → heart, oldHeart → spare).
-          // The net carry delta is zero, so no cap can be exceeded; skip the guard.
-          //
-          // When ringId is null, oldHeart joins carry without anything leaving it
-          // (genuine +1 to spare). assertSpareWithinMax correctly rejects this when
-          // the spare grid is already full.
-          const incomingIsCarried = ringId
-            ? getRingById(ringId)?.in_carry === 1
-            : false;
-          if (!incomingIsCarried) {
+          // EPIC #378 — spare-grid guard: old heart joins carry (spare grid).
+          // Use spare-membership to compute the accurate net delta:
+          //   - Spare ring → heart: old heart joins spare (+1), incoming leaves spare (−1) → net zero.
+          //   - Battle-slot ring → heart: old heart joins spare (+1), no ring leaves spare → net +1.
+          //   - null incoming: old heart joins spare (+1), nothing leaves spare → net +1.
+          // Using in_carry===1 (old guard) would treat a battle-slot ring (in_carry=1,
+          // NOT in spare) the same as a spare ring, silently bypassing the cap.
+          const incomingIsSpare = ringId ? getSpareIds(playerId).includes(ringId) : false;
+          if (incomingIsSpare) {
+            // net-zero: spare ring leaves spare (−1), old heart joins spare (+1)
+            assertSpareWithinMax(playerId, {
+              addingToSpare: [oldHeartId],
+              removingFromSpare: [ringId!],
+            });
+          } else {
+            // battle-slot ring → heart: old heart joins spare (+1), no ring leaves spare
+            // (or null incoming: new ring from nowhere → old heart joins spare +1)
             assertSpareWithinMax(playerId, {
               addingToSpare: [oldHeartId],
               removingFromSpare: [],
@@ -1389,8 +1399,6 @@ export const setHeartRing = db.transaction(
       if (ringId) {
         // EPIC #378 — pending lifecycle: clear the pending flag when the WON ring
         // is equipped to the Heart slot (overflow resolved by heart assignment).
-        // NOTE: do NOT change the incomingIsCarried guard above — it is correct and
-        // intentional for the spare-cap net-zero accounting.
         const incomingRing = getRingById(ringId);
         if (incomingRing?.pending === 1) {
           clearPendingFlag(ringId);
