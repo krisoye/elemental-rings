@@ -139,12 +139,12 @@ test('passive-strip: WATER Thumb shows full Torrent effect text', async ({ brows
   await ctx.close();
 });
 
-// ── Scenario 2: Reliquary redesign (#154) — two-panel labels + live header ────
-// After #154 the modal is a two-panel loadout manager (RELIQUARY left, LOADOUT
-// right with BATTLE HAND over SPARE) topped by a live stats header. The old
-// [Add to Loadout]/[Leave at Sanctum] action buttons are gone — moves are
-// click-then-click. Assert the new structure is present.
-test('reliquary-redesign: two-panel labels + live stats header are present', async ({ browser }) => {
+// ── Scenario 2: Reliquary converged labels + live header (#302/#347/#389) ─────
+// The modal is the unified ring-management overlay: four column headers
+// (SPIRIT | BENCH | HEALTH | COMBAT) topped by a three-part live stats header
+// (Spirit / ♥ / Total XP). Moves are click-then-click. Assert the converged
+// structure is present.
+test('reliquary-redesign: converged column labels + live stats header are present', async ({ browser }) => {
   const token = await registerAndToken();
   const ctx = await browser.newContext();
   await ctx.addInitScript(`localStorage.setItem('er_token', ${JSON.stringify(token)})`);
@@ -159,21 +159,23 @@ test('reliquary-redesign: two-panel labels + live stats header are present', asy
       .flatMap((c: any) => (c.getAll ? [c, ...c.getAll()] : [c]));
     const byName = (n: string) => all.find((o: any) => o.name === n);
     return {
-      header: (byName('reliquary-header') as any)?.text ?? null,
+      headerLeft: (byName('reliquary-header-left') as any)?.text ?? null,
       reliquary: (byName('reliquary-label') as any)?.text ?? null,
-      loadout: (byName('loadout-label') as any)?.text ?? null,
+      health: (byName('health-label') as any)?.text ?? null,
       battleHand: (byName('battle-hand-label') as any)?.text ?? null,
       spare: (byName('spare-label') as any)?.text ?? null,
       hasFuse: !!all.find((o: any) => o.type === 'Text' && o.text === '[Fuse Rings]'),
     };
   });
-  expect(labels.reliquary).toContain('RELIQUARY'); // label is 'RELIQUARY  ↓'
-  expect(labels.loadout).toBe('LOADOUT');
-  expect(labels.battleHand).toBe('BATTLE HAND');
-  expect(labels.spare).toContain('SPARE'); // label is 'SPARE  ↓'
+  // #302/#347 — left column is SPIRIT, COMBAT replaces BATTLE HAND, HEALTH present.
+  expect(labels.reliquary).toContain('SPIRIT');
+  expect(labels.battleHand).toBe('COMBAT');
+  expect(labels.health).toBe('HEALTH');
+  // #389 — the middle column is BENCH (was SPARES).
+  expect(labels.spare).toContain('BENCH');
   expect(labels.hasFuse).toBe(false); // Fuse Rings moved out of this overlay
-  expect(labels.header).toContain('XP:'); // renamed from aggregate_xp
-  expect(labels.header).toContain('Spirit:');
+  // The live header's left segment carries the spirit reading.
+  expect(labels.headerLeft).toContain('Spirit:');
   await ctx.close();
 });
 
