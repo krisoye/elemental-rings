@@ -221,8 +221,15 @@ test('#212: a won ring (er_pending_ring) survives the [Return to Overworld] rout
   // the win lands quickly.
   const page = await hubDuelToEndedModal(ctx, { aiHearts: 1, aiUses: 0 });
 
+  // EPIC #378 — pending ring is now server-owned (rings.pending column); read
+  // pending_ring_id from /api/me instead of the removed er_pending_ring key.
   // The win granted a ring before routing.
-  expect(await page.evaluate(() => localStorage.getItem('er_pending_ring'))).toBeTruthy();
+  expect(await page.evaluate(async () => {
+    const token = localStorage.getItem('er_token');
+    const res = await fetch('/api/me', { headers: { Authorization: `Bearer ${token}` } });
+    const data = await res.json();
+    return data.player?.pending_ring_id;
+  })).toBeTruthy();
 
   await page.evaluate(() => (window as any).__battleEndChoice('overworld'));
   await page.waitForFunction(() => (window as any).__game?.scene?.isActive('EncounterScene'), {
@@ -232,7 +239,12 @@ test('#212: a won ring (er_pending_ring) survives the [Return to Overworld] rout
   // The pending won ring is still set immediately after routing (the carry prompt
   // surfaces it on the hub; the route itself never clears it). EncounterScene may
   // resolve it on create, so read it in the same tick the scene becomes active.
-  const pending = await page.evaluate(() => localStorage.getItem('er_pending_ring'));
+  const pending = await page.evaluate(async () => {
+    const token = localStorage.getItem('er_token');
+    const res = await fetch('/api/me', { headers: { Authorization: `Bearer ${token}` } });
+    const data = await res.json();
+    return data.player?.pending_ring_id;
+  });
   expect(pending).toBeTruthy();
 
   await ctx.close();

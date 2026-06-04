@@ -68,7 +68,7 @@ test('spare-carry: fresh player has spareCapacity 9 and carry cap 14', async () 
   const token = await mintToken();
   const { player } = await getMe(token);
   expect(player.carry_cap).toBe(14);
-  expect(player.spareCapacity).toBe(9);
+  expect(player.spare_ring_max).toBe(9);
 });
 
 // ── Scenario 2: a veteran with high Reliquary XP still has carry cap 14 ───────
@@ -84,7 +84,7 @@ test('spare-carry: high Reliquary XP does not change the flat carry cap of 14', 
   const { player } = await getMe(token);
   expect(player.aggregate_xp).toBe(10000);
   expect(player.carry_cap).toBe(14); // unchanged — flat cap
-  expect(player.spareCapacity).toBe(9);
+  expect(player.spare_ring_max).toBe(9);
 });
 
 // ── Scenario 3: carry exactly 14 succeeds; 15 is rejected ────────────────────

@@ -11,7 +11,11 @@ CREATE TABLE IF NOT EXISTS players (
   difficulty     TEXT NOT NULL DEFAULT 'seeker',
   -- EPIC #302 — the ring equipped in the Heart slot, or NULL when empty. The
   -- referenced ring carries heart_slot = 1 and is excluded from spirit/carry sums.
-  heart_ring_id  TEXT
+  heart_ring_id  TEXT,
+  -- EPIC #378 — per-player cap on spare-grid rings (in_carry=1 AND not in any
+  -- loadout slot). Default 9. Independent of battle-slot occupancy: clearing a
+  -- battle slot does NOT free spare capacity. Expandable per-player in the future.
+  spare_ring_max INTEGER NOT NULL DEFAULT 9
 );
 CREATE TABLE IF NOT EXISTS rings (
   id           TEXT PRIMARY KEY,
@@ -29,7 +33,11 @@ CREATE TABLE IF NOT EXISTS rings (
   parent_dominant INTEGER NOT NULL DEFAULT -1,
   -- EPIC #302 — 1 when this ring is equipped in the player's Heart slot. Heart
   -- rings are excluded from spirit_max, carry, and Reliquary sums (in_carry = 0).
-  heart_slot INTEGER NOT NULL DEFAULT 0
+  heart_slot INTEGER NOT NULL DEFAULT 0,
+  -- EPIC #378 — 1 when this ring was received as a WON ring and has not yet been
+  -- assigned to a slot or discarded (overflow carry state). At most one ring per
+  -- player holds pending=1 at any time. Cleared by clearPendingFlag.
+  pending INTEGER NOT NULL DEFAULT 0
 );
 CREATE TABLE IF NOT EXISTS loadout (
   player_id TEXT PRIMARY KEY REFERENCES players(id),

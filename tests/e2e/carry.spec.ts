@@ -191,24 +191,27 @@ test('carry: __campAddToLoadout carries a Sanctum ring', async ({ browser }) => 
 // won-ring prompt uses the room-case modal. We confirm the Add path works.
 test('carry: won-ring modal Add carries the pending ring (room case)', async ({ browser }) => {
   const { token } = await register();
-  // Reduce carry to 4 rings to make room for the pending ring (cap=5, 4 < 5).
-  const { rings } = await me(token);
-  const carried = rings.filter((r) => r.in_carry === 1).map((r) => r.id);
-  await fetch(`${API_URL}/api/carry`, {
-    method: 'PUT',
-    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-    body: JSON.stringify({ ringIds: carried.slice(0, 4) }),
-  });
-  const { rings: updated } = await me(token);
-  const pending = updated.find((r) => r.in_carry === 0)!; // a spare to simulate "won"
+  // A fresh player carries 5 rings (under the cap of 14), so there is room
+  // for the pending ring without reducing carry first. The server grants a ring
+  // via POST /api/test/grant-ring below (pending=1, in_carry=1).
 
   const ctx = await browser.newContext();
-  await ctx.addInitScript(
-    `localStorage.setItem('er_token', ${JSON.stringify(token)});` +
-      `localStorage.setItem('er_pending_ring', ${JSON.stringify(pending.id)});`,
-  );
+  await ctx.addInitScript(`localStorage.setItem('er_token', ${JSON.stringify(token)})`);
   const page = await ctx.newPage();
   await page.goto(URL);
+
+  // EPIC #378 — seed the pending WON ring via the API server (Node.js context so
+  // the absolute API_URL is used, not the relative URL that hits the Vite client).
+  // POST /api/test/grant-ring mints a ring with in_carry=1, pending=1 and returns
+  // the player block with pending_ring_id set.
+  const grantRes = await fetch(`${API_URL}/api/test/grant-ring`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+    body: JSON.stringify({ element: 0 }),
+  });
+  const grantData = await grantRes.json();
+  const grantedPendingId = grantData.player?.pending_ring_id as string;
+  expect(grantedPendingId).toBeTruthy();
 
   // Move from CampScene into EncounterScene, where the won-ring prompt fires.
   await page.waitForFunction(() => typeof (window as any).__campGoEncounter === 'function', {
@@ -222,17 +225,21 @@ test('carry: won-ring modal Add carries the pending ring (room case)', async ({ 
     { timeout: 8000 },
   );
   const pend = await page.evaluate(() => (window as any).__encounterState.pendingWonRing);
-  expect(pend.ringId).toBe(pending.id);
+  expect(pend.ringId).toBe(grantedPendingId);
 
   await page.evaluate(() => (window as any).__encounterResolveWonRing('carry'));
 
-  // er_pending_ring cleared after resolution.
-  await page.waitForFunction(() => localStorage.getItem('er_pending_ring') === null, {
-    timeout: 5000,
-  });
+  // EPIC #378 — resolveWonRing clears window.__encounterState.pendingWonRing to null
+  // after the PUT /api/rings/:id/accept call succeeds. This is the browser-side
+  // signal that server resolution is complete; avoids a relative-URL fetch that
+  // would hit the Vite dev server (port 8090) instead of the API (port 2568).
+  await page.waitForFunction(
+    () => (window as any).__encounterState?.pendingWonRing === null,
+    { timeout: 5000 },
+  );
   // The won ring is now carried (verify against real server state).
   const after = await me(token);
-  expect(after.rings.find((r) => r.id === pending.id)?.in_carry).toBe(1);
+  expect(after.rings.find((r) => r.id === grantedPendingId)?.in_carry).toBe(1);
   await ctx.close();
 });
 
@@ -281,19 +288,25 @@ test('carry: full-carry win → discard in Manage Battle Hand auto-carries the w
 
   // With cap=14 and 14 rings already carried, the player is AT the cap.
   // The win prompt should route DIRECTLY to Manage Battle Hand (full-carry case),
-  // not the room-case modal. The won ring stays uncarried as a pending ring.
-  const { rings } = await me(token);
+  // not the room-case modal. EPIC #378: the won ring enters carry immediately
+  // (in_carry=1, pending=1), so spare overflows to spare_ring_max+1.
+  const { rings, loadout: slots } = await me(token);
   expect(rings.length).toBe(15); // 14 owned + 1 won
 
   const currentlyCarried = rings.filter((r) => r.in_carry === 1);
-  expect(currentlyCarried.length).toBe(14); // exactly at cap
+  expect(currentlyCarried.length).toBe(15); // won ring is already in_carry=1 (pending=1)
 
-  const discardId = currentlyCarried[0].id; // one carried ring to discard
+  // Pick a SPARE (non-slotted, non-WON) ring to discard — discarding a battle-slot
+  // ring does not reduce spare count, so accept would still return 400.
+  const slottedIds = new Set(Object.values(slots || {}).filter(Boolean) as string[]);
+  const discardId = currentlyCarried.find((r) => r.id !== wonRingId && !slottedIds.has(r.id))?.id;
+  expect(discardId).toBeTruthy();
 
-  // Re-arm the won ring as pending, reload, and enter EncounterScene. Because
-  // carry is full (14/14), checkPendingWonRing routes to Manage Battle Hand
-  // rather than the room-case modal.
-  await page.evaluate((id) => localStorage.setItem('er_pending_ring', id), wonRingId!);
+  // EPIC #378 — pending state is owned by the server (rings.pending column).
+  // The duel win already set rings.pending=1 on wonRingId. No localStorage re-arm
+  // is needed: after reload the client reads /api/me which returns pending_ring_id.
+  // Because carry is full (spare overflow), checkPendingWonRing routes to Manage
+  // Battle Hand rather than the room-case modal.
   await page.reload();
   await page.waitForFunction(() => typeof (window as any).__campGoEncounter === 'function', {
     timeout: 8000,
@@ -308,13 +321,13 @@ test('carry: full-carry win → discard in Manage Battle Hand auto-carries the w
   // back to Node (it returns undefined), so checking typeof here is mandatory. The
   // programmatic hook is retained as a direct test affordance (#348).
   expect(await page.evaluate(() => typeof (window as any).__encounterDiscardRing)).toBe('function');
-  // Confirm the FULL case before the discard (real server state).
-  expect((await me(token)).rings.filter((r) => r.in_carry === 1).length).toBe(14);
+  // Confirm the FULL case before the discard (real server state): 15 in carry (14 + WON pending).
+  expect((await me(token)).rings.filter((r) => r.in_carry === 1).length).toBe(15);
 
   // #348 — drive the new safe 3-step discard UI (replaces the one-click ×): select
   // the carried ring → click the DISCARD slot (group-1 row-1, x=262 y=240) → confirm
-  // [Discard]. Freeing a slot triggers tryAutoCarryPending, which carries the won
-  // ring and clears er_pending_ring.
+  // [Discard]. After freeing a slot, the WON ring is still pending=1; we then call
+  // PUT /api/rings/:id/accept from Node.js context to clear pending (EPIC #378).
   await page.waitForFunction(
     () => (window as any).__game?.scene?.getScene('EncounterScene')?.battleHand?.isOpen?.() === true,
     { timeout: 8000 },
@@ -324,7 +337,7 @@ test('carry: full-carry win → discard in Manage Battle Hand auto-carries the w
     const bh = (window as any).__game.scene.getScene('EncounterScene').battleHand;
     bh.swap.select(id, 'spare');
     bh.renderManageModal();
-  }, discardId);
+  }, discardId as string);
   // Step 2 — click the DISCARD slot → confirm modal opens, nothing deleted yet.
   await page.evaluate(() => {
     const modal = (window as any).__game.scene.getScene('EncounterScene').battleHand.manageModal;
@@ -345,16 +358,35 @@ test('carry: full-carry win → discard in Manage Battle Hand auto-carries the w
     const yes = bh.discardConfirm?.getAll().find((o: any) => o.name === 'discard-confirm-yes');
     yes?.emit('pointerdown');
   });
-  await page.waitForFunction(() => localStorage.getItem('er_pending_ring') === null, {
-    timeout: 8000,
+  // EPIC #378 — wait for the discard to complete (carry drops from 15 to 14 after the
+  // DELETE). The WON ring is still in_carry=1,pending=1 at this point — tryAutoCarryPending
+  // was removed. Poll from Node.js context to avoid relative-URL issues with Vite at 8090.
+  await expect.poll(async () => {
+    const { rings: r } = await me(token);
+    return r.find((x: Ring) => x.id === discardId);
+  }, { timeout: 8000 }).toBeUndefined();
+
+  // EPIC #378 — explicitly accept the WON ring as a regular spare now that a slot was
+  // freed (spare count dropped to ≤ spare_ring_max). PUT /api/rings/:id/accept clears
+  // pending=1 on the WON ring, resolving the overflow state.
+  const acceptRes = await fetch(`${API_URL}/api/rings/${wonRingId}/accept`, {
+    method: 'PUT',
+    headers: { Authorization: `Bearer ${token}` },
   });
+  expect(acceptRes.status).toBe(200);
+
+  // Confirm pending_ring_id is cleared on the server.
+  await expect.poll(async () => {
+    const { player } = await me(token);
+    return player?.pending_ring_id;
+  }, { timeout: 8000 }).toBeNull();
 
   const { rings: final } = await me(token);
-  // Won ring is now carried.
+  // Won ring is still carried (it was in_carry=1 from the win; accept only clears pending).
   expect(final.find((r) => r.id === wonRingId)?.in_carry).toBe(1);
   // Discarded ring is permanently gone (deleted, not returned to the Sanctum).
   expect(final.find((r) => r.id === discardId)).toBeUndefined();
-  // Carry holds at the cap; total drops by the one discarded ring (15 → 14).
+  // Carry drops by the one discarded ring (15 → 14); WON ring stays in carry.
   expect(final.filter((r) => r.in_carry === 1).length).toBe(14);
   expect(final.length).toBe(14);
   await ctx.close();

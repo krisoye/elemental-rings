@@ -198,33 +198,33 @@ describe('awardXP — natural tier crossings (#173 C2)', () => {
   });
 
   // -------------------------------------------------------------------------
-  // EPIC #279 — fixed spare carry slots (GDD §4.1/§12.2). The former XP-driven
-  // ceil(log_2(aggregate_xp)) curve is retired: getSpareSlots() is a flat 9 and
-  // getCarryCap() is a flat CORE_SLOTS(5) + SPARE_SLOTS(9) = 14 for every player,
-  // regardless of Reliquary XP. These tests live inside this describe so they
-  // share the same DB singleton.
+  // EPIC #279/#378 — per-player spare_ring_max (GDD §4.1/§12.2). The former XP-
+  // driven ceil(log_2(aggregate_xp)) curve is retired. EPIC #378 moves the cap to
+  // a per-player DB column (spare_ring_max, default 9) so it can grow independently.
+  // getCarryCap(playerId) is now derived: CORE_SLOTS(5) + getSpareRingMax(playerId).
+  // These tests live inside this describe so they share the same DB singleton.
   // -------------------------------------------------------------------------
 
-  test('fresh player has 9 spare slots and carry cap 14', () => {
+  test('fresh player has 9 spare ring max and carry cap 14', () => {
     const p = makePlayer();
-    expect(repo.getSpareSlots()).toBe(9);
+    expect(repo.getSpareRingMax(p)).toBe(9);
     expect(repo.getCarryCap(p)).toBe(14);
   });
 
-  test('a veteran with high Reliquary XP still has 9 spare slots and carry cap 14', () => {
+  test('a veteran with high Reliquary XP still has 9 spare ring max and carry cap 14', () => {
     // The flat cap is independent of XP: a player with 10,000 aggregate XP in the
-    // Reliquary gets the same 14 cap as a fresh player.
+    // Reliquary gets the same default 14 cap as a fresh player.
     const p = makePlayer();
     db.prepare(
       `INSERT INTO rings (id, owner_id, element, tier, max_uses, current_uses, xp, in_carry)
        VALUES (?, ?, 0, 0, 3, 3, 10000, 0)`,
     ).run(`ring_vet_${Math.random().toString(36).slice(2)}`, p);
-    expect(repo.getSpareSlots()).toBe(9);
+    expect(repo.getSpareRingMax(p)).toBe(9);
     expect(repo.getCarryCap(p)).toBe(14);
   });
 
-  test('getCarryCap returns 14 regardless of which player id is passed', () => {
-    // The playerId parameter is retained for call-site compatibility but ignored.
+  test('getCarryCap returns 14 for default players (CORE_SLOTS + spare_ring_max)', () => {
+    // Both players start at spare_ring_max=9, so carry_cap=14 for each.
     const a = makePlayer();
     const b = makePlayer();
     expect(repo.getCarryCap(a)).toBe(14);

@@ -861,9 +861,10 @@ export class BattleScene extends Phaser.Scene {
   /**
    * #212 — On phase ENDED, resolve the post-duel destination and arm the
    * persistent end-of-battle modal. There is NO auto-route timer: the modal is the
-   * single exit for everyone (including E2E fast mode). The er_pending_ring
-   * localStorage key (set by Connection.ts on a win) is left intact by BOTH routes
-   * so the won-ring carry prompt still surfaces on arrival. Guarded so it fires once.
+   * single exit for everyone (including E2E fast mode). EPIC #378: pending ring
+   * state is server-authoritative (pending_ring_id from /api/me); both routes
+   * leave it intact so the won-ring prompt surfaces on EncounterScene arrival.
+   * Guarded so it fires once.
    *
    * Input is inert once ENDED: onSlotPressed gates every send on the live
    * ATTACK_SELECT/DEFEND_WINDOW phase, so no room.send can fire after ENDED.
@@ -934,8 +935,8 @@ export class BattleScene extends Phaser.Scene {
 
   /**
    * #212 — perform the post-duel scene transition for the chosen route. Both routes
-   * use the SAME destination resolved on ENDED (#88) and leave er_pending_ring
-   * intact (the won-ring carry prompt surfaces on arrival):
+   * use the SAME destination resolved on ENDED (#88). EPIC #378: pending ring state
+   * is server-authoritative; the won-ring prompt surfaces on arrival via /api/me:
    *   - 'managehand' → openBattleHand: true (lands with the Manage Battle-Hand overlay)
    *   - 'overworld'  → openBattleHand omitted (lands in the biome/hub, no overlay)
    */

@@ -8,12 +8,15 @@
 
 | Concept | Description | Cap | Grows via |
 |---|---|---|---|
-| Reliquary | All rings stored in the Sanctum; not in carry loadout; sum of their XP = `aggregate_xp` | 20 | Reliquary Shard (+10, see §4.1.1) |
-| Loadout (carry) | Rings taken on expedition; excluded from `aggregate_xp` | 14 (5 core + 9 spare) | Fixed |
+| Reliquary | All rings stored in the Sanctum; not in carry loadout; sum of their XP = `aggregate_xp` | 9 (default) | Reliquary Shard (+10, see §4.1.1) |
 | Battle hand | 5 named slots (Thumb/A1/A2/D1/D2) used in combat | 5 (fixed) | No |
-| Spare | Carried rings not assigned to battle slots; swappable between encounters | 9 (fixed) | No |
+| Spare grid | Carried rings NOT assigned to any battle slot; swappable between encounters | `spare_ring_max` (default 9, per-player) | Future expansion |
+| Loadout (carry) | Battle hand + spare grid combined | `spare_ring_max` + 5 (default 14) | Grows with `spare_ring_max` |
 
-- **Spare slots:** fixed at **9** for every player (`SPARE_SLOTS` in `server/src/game/constants.ts`). Carry capacity is therefore a flat `CORE_SLOTS(5) + SPARE_SLOTS(9) = 14` rings regardless of Reliquary XP. The former `ceil(log_2(aggregate_xp))` curve is retired in favour of one predictable number. Combined with the 9-slot Reliquary cap (§4.1.1), the total rings held at any time is bounded at **23** (14 carried + 9 resting). See §12.2.
+- **Spare grid** (`spare_ring_max`, default **9** per player): the rings carried but not in any named battle slot. This cap is stored as a per-player DB column and can be expanded independently in the future. The former `SPARE_SLOTS` constant still provides the default value.
+- **Battle hand and spare grid are independent pools.** Clearing a battle slot does **not** free spare capacity — the spare-grid cap counts only rings that are carried AND not in any battle slot. An empty battle slot is simply an empty battle slot; it has no effect on how many spare rings the player may hold.
+- **WON ring overflow:** when a player wins a ring but the spare grid is already at `spare_ring_max`, the ring is added to carry as a **pending** ring (one allowed overflow slot). The player must resolve this — by discarding a spare, assigning the ring to a slot, or discarding the won ring — before the pending flag is cleared. `pending_ring_id` in `/api/me` is the authoritative identifier for an unresolved WON ring; it replaces the former `er_pending_ring` client-side key.
+- Combined with the default Reliquary cap (§4.1.1), the total rings held at any time is bounded at **23** (14 carried + 9 resting) at default settings. See §12.2.
 - Rings in the Reliquary recharge uses on the game day timer
 - Rings on your person do **not** recharge in the field — only at camp (sleep or paid recharge)
 - Rings in the Reliquary do **not** earn XP — battle use is the only XP source (see §4.4)
@@ -24,7 +27,7 @@ The Reliquary holds a **bounded** number of rings so the protagonist cannot stoc
 
 | Property | Value |
 |---|---|
-| Default Reliquary capacity | **20** rings |
+| Default Reliquary capacity | **9** rings |
 | Expansion increment | **+10** rings per Reliquary Shard added |
 | Effective maximum | Bounded by the number of major bosses (each yields one Shard) — no separate hard cap |
 

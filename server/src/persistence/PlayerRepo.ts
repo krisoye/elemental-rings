@@ -32,6 +32,11 @@ import {
   SPARE_SLOTS,
 } from '../game/constants';
 
+// EPIC #378 — the default spare-ring max (kept as the DB-level fallback literal,
+// matching the schema DEFAULT 9 / the db.ts migration DEFAULT 9). Not exported
+// as game logic — callers use getSpareRingMax(playerId) instead.
+const SPARE_RING_MAX_DEFAULT = SPARE_SLOTS;
+
 /** A persisted player row (no password hash exposed to callers of read helpers). */
 export interface PlayerRow {
   id: string;
@@ -78,6 +83,13 @@ export interface RingRow {
    * with in_carry = 0). At most one ring per player carries heart_slot = 1.
    */
   heart_slot: number;
+  /**
+   * EPIC #378 — 1 when this ring was received as a WON ring and has not yet been
+   * assigned to a slot or discarded. Cleared by clearPendingFlag when the player
+   * accepts it as a spare, assigns it to a slot, or discards it. 0 for all normal
+   * rings.
+   */
+  pending: number;
 }
 
 /** A persisted loadout row — each slot holds a ring id (or null when empty). */
@@ -90,14 +102,17 @@ export interface LoadoutRow {
   d2: string | null;
 }
 
-// EPIC #302 — starter inventory: 6 rings. One Wind ring lands in the dedicated
-// Heart slot (in_carry = 0, heart_slot = 1); the other five fill the battle hand
-// (in_carry = 1). The Reliquary starts empty, so spirit_max = 0 for a fresh
-// player. Canonical integer values come from shared ElementEnum (FIRE=0,
-// WATER=1, EARTH=2, WIND=3, WOOD=4) — do not hardcode the integers here.
+// EPIC #302 — starter inventory: 11 rings total. One Wind ring lands in the
+// dedicated Heart slot (in_carry = 0, heart_slot = 1); five fill the battle hand
+// (in_carry = 1); five non-heart resting rings seed the Reliquary (in_carry = 0,
+// heart_slot = 0) so spirit_max > 0 from the start. GET /api/me filters heart_slot
+// rings from the rings array, so clients see exactly 10 rings. Canonical integer
+// values come from shared ElementEnum (FIRE=0, WATER=1, EARTH=2, WIND=3, WOOD=4)
+// — do not hardcode the integers here.
 //
 //   Heart  → Wind   (in_carry = 0, heart_slot = 1)
 //   Thumb  → Earth   a1 → Wind   a2 → Wind   d1 → Earth   d2 → Earth
+//   Reliquary (in_carry = 0, heart_slot = 0): Fire, Water, Earth, Wind, Earth
 const STARTER_HEART_ELEMENT = ElementEnum.WIND;
 const STARTER_BATTLE_HAND: ReadonlyArray<{ slot: SlotKey; element: number }> = [
   { slot: 'thumb', element: ElementEnum.EARTH },
@@ -105,6 +120,17 @@ const STARTER_BATTLE_HAND: ReadonlyArray<{ slot: SlotKey; element: number }> = [
   { slot: 'a2', element: ElementEnum.WIND },
   { slot: 'd1', element: ElementEnum.EARTH },
   { slot: 'd2', element: ElementEnum.EARTH },
+];
+// EPIC #378 — five starter resting rings seed the Reliquary so spirit_max > 0
+// from the first session. These are in_carry=0, heart_slot=0 (Reliquary rings).
+// The mix includes FIRE and WATER so all four base elements are represented in
+// the starter inventory.
+const STARTER_RELIQUARY_ELEMENTS: ReadonlyArray<number> = [
+  ElementEnum.FIRE,
+  ElementEnum.WATER,
+  ElementEnum.EARTH,
+  ElementEnum.WIND,
+  ElementEnum.EARTH,
 ];
 
 // GDD §4.2 / EPIC #173 C8 — starter rings begin at tier 0 with 3 max uses (xp=0).
@@ -257,6 +283,15 @@ export const createPlayer = db.transaction(
     // #40 — the five battle-slot rings start carried (in_carry = 1). The heart
     // ring is intentionally NOT carried — it lives in the dedicated Heart slot.
     for (const ringId of Object.values(defaultSlots)) setRingCarry(ringId, 1);
+
+    // EPIC #378 — five starter Reliquary rings (in_carry=0, heart_slot=0). These
+    // seed spirit_max > 0 from the first session and give the player rings to swap
+    // into carry. insertStarterRing defaults to in_carry=0, heart_slot=0, so no
+    // extra flags are needed. GET /api/me filters heart_slot rings from the rings
+    // array, giving clients exactly 10 visible rings (5 carried + 5 resting).
+    for (const element of STARTER_RELIQUARY_ELEMENTS) {
+      insertStarterRing(playerId, element);
+    }
 
     // #61 — every new player starts attuned to the Forest entry waystone so the
     // overworld's first teleport destination is available immediately (GDD §10.7).
@@ -413,10 +448,6 @@ export const saveLoadout = db.transaction(
   (playerId: string, partial: Partial<Record<'thumb' | 'a1' | 'a2' | 'd1' | 'd2', string | null>>): LoadoutRow => {
     const current = selectLoadout.get(playerId) as LoadoutRow | undefined;
     if (!current) throw new Error(`No loadout for player ${playerId}`);
-    // #171 — carry-cap guard: reject if the player is currently carrying more
-    // rings than the XP-derived cap (5 + ceil(log_2(aggregate_xp))). Single-
-    // sourced via assertCarryWithinCap so the limit matches packLoadout and the route check.
-    assertCarryWithinCap(playerId);
 
     const ownerRings = new Set(getRingsForPlayer(playerId).map((r) => r.id));
 
@@ -443,6 +474,26 @@ export const saveLoadout = db.transaction(
       slots[key] = val;
     }
 
+    // EPIC #378 — spare-cap guard: compute the net spare-grid delta from the
+    // slot changes in `partial`. A slot cleared to null displaces its current ring
+    // to spare (+addingToSpare); a slot assigned a new ring pulls that ring out of
+    // spare (−removingFromSpare). Ring-for-ring swaps are net-zero. Rings not
+    // currently in the spare set are no-ops on the respective side.
+    const addingToSpare: string[] = [];
+    const removingFromSpare: string[] = [];
+    const currentSpareIds = new Set(getSpareIds(playerId));
+    for (const key of ['thumb', 'a1', 'a2', 'd1', 'd2'] as const) {
+      if (!(key in partial)) continue;
+      const oldVal = current[key] as string | null;
+      const newVal = slots[key] as string | null;
+      if (oldVal === newVal) continue;
+      // Slot cleared: the old ring (if any) moves to spare.
+      if (newVal === null && oldVal !== null) addingToSpare.push(oldVal);
+      // Slot assigned: the new ring (if in spare) leaves spare.
+      if (newVal !== null && currentSpareIds.has(newVal)) removingFromSpare.push(newVal);
+    }
+    assertSpareWithinMax(playerId, { addingToSpare, removingFromSpare });
+
     updateLoadoutSlot.run({
       player_id: playerId,
       thumb: slots.thumb,
@@ -451,6 +502,18 @@ export const saveLoadout = db.transaction(
       d1: slots.d1,
       d2: slots.d2,
     });
+
+    // EPIC #378 — pending lifecycle: clear the pending flag when the WON ring is
+    // assigned to any loadout slot (the overflow is resolved by slotting the ring).
+    const pendingId = getPendingRingId(playerId);
+    if (pendingId) {
+      for (const key of ['thumb', 'a1', 'a2', 'd1', 'd2'] as const) {
+        if (slots[key] === pendingId) {
+          clearPendingFlag(pendingId);
+          break;
+        }
+      }
+    }
 
     return selectLoadout.get(playerId) as LoadoutRow;
   },
@@ -547,7 +610,13 @@ export function setEscrowed(ringId: string, escrowed: boolean): void {
  * Grant a new ring (tier 1, full uses) to a player. Used when the human
  * player beats the AI — the AI has no DB ring to transfer, so we create one
  * matching the AI's thumb element (GDD §9.1: winner receives the staked ring).
+ *
+ * EPIC #378 — WON ring overflow model: the ring enters carry immediately with
+ * `in_carry=1, pending=1`. The spare count may reach spare_ring_max+1 (exactly
+ * one overflow slot). This path intentionally bypasses `assertSpareWithinMax`
+ * — the overflow is by design and requires the player to resolve it.
  */
+// Awards a WON ring: enters carry immediately (in_carry=1, pending=1). For non-pending grants use insertRingRow directly.
 export function grantRing(
   ownerId: string,
   element: number,
@@ -564,14 +633,21 @@ export function grantRing(
       maxUses,
       currentUses: maxUses,
       escrowed: 0,
+      inCarry: 1,
+      pending: 1,
     }),
   );
 }
 
 /**
- * Transfer ownership of a ring from one player to another. Nulls out any
- * loadout slots that referenced the ring on the losing player. The ring's XP
- * travels with it (GDD §9.1).
+ * Transfer ownership of a staked ring from one player to another. Nulls out
+ * any loadout slots that referenced the ring on the losing player. The ring's
+ * XP travels with it (GDD §9.1).
+ *
+ * EPIC #378 — WON ring overflow model: after ownership changes the ring enters
+ * the winner's carry with `in_carry=1, pending=1`. The spare count may reach
+ * spare_ring_max+1 (one overflow slot). This path intentionally bypasses
+ * `assertSpareWithinMax` — the overflow is by design.
  */
 export const transferRing = db.transaction(
   (ringId: string, fromPlayerId: string, toPlayerId: string): string => {
@@ -602,7 +678,12 @@ export const transferRing = db.transaction(
         });
       }
     }
+    // updateRingOwner resets escrowed=0, in_carry=0. After ownership changes we
+    // set in_carry=1 and pending=1 to place the ring in the winner's carry as
+    // overflow (WON ring — one slot beyond spare_ring_max, by design).
     updateRingOwner.run(toPlayerId, ringId, fromPlayerId);
+    setRingCarry(ringId, 1);
+    setPendingStmt.run(ringId);
     return ringId;
   },
 );
@@ -748,6 +829,10 @@ export const discardRing = db.transaction(
     if (getHeartRingId(playerId) === ringId) {
       updateHeartRingId.run(null, playerId);
     }
+    // EPIC #378 — pending lifecycle: clear the pending flag before deletion so it
+    // is never left dangling (the row will not exist after deleteRingOwned, but
+    // clearing beforehand is the safe, explicit contract).
+    clearPendingFlag(ringId);
     const info = deleteRingOwned(ringId, playerId);
     return { ok: info.changes > 0 };
   },
@@ -870,86 +955,192 @@ export const fuseRings = db.transaction(
   },
 );
 
+// ---------------------------------------------------------------------------
+// EPIC #378 — Spare-grid cap primitives (replaces assertCarryWithinCap)
+// ---------------------------------------------------------------------------
+
 /**
- * The player's spare carry slots (EPIC #279, GDD §4.1). Fixed at SPARE_SLOTS (9)
- * for every player — the former XP-driven ceil(log_2(aggregate_xp)) curve is
- * retired. Takes no arguments: the value no longer depends on the player.
+ * The per-player cap on spare-grid rings. Reads the `spare_ring_max` column;
+ * falls back to SPARE_RING_MAX_DEFAULT (9) when the row is missing.
  */
-export function getSpareSlots(): number {
-  return SPARE_SLOTS;
+export function getSpareRingMax(playerId: string): number {
+  const row = db
+    .prepare('SELECT spare_ring_max FROM players WHERE id = ?')
+    .get(playerId) as { spare_ring_max: number } | undefined;
+  return row?.spare_ring_max ?? SPARE_RING_MAX_DEFAULT;
 }
 
 /**
- * The player's carry cap (rings carryable on an expedition). Flat constant for
- * everyone (EPIC #279): carry_cap = CORE_SLOTS(5) + SPARE_SLOTS(9) = 14. The
- * playerId parameter is retained so the four call sites (packLoadout,
- * merchantBuyRing, the route check, /api/me) need no churn.
+ * The ids of every ring currently in the spare grid for this player: rings with
+ * in_carry=1 that are NOT assigned to any of the 5 loadout slots. These are the
+ * rings that count toward `spare_ring_max`.
  */
-export function getCarryCap(_playerId: string): number {
-  return CORE_SLOTS + SPARE_SLOTS;
+export function getSpareIds(playerId: string): string[] {
+  const carry = getCarry(playerId);
+  const loadout = selectLoadout.get(playerId) as LoadoutRow | undefined;
+  const loadoutIds = new Set<string>();
+  if (loadout) {
+    for (const slot of ['thumb', 'a1', 'a2', 'd1', 'd2'] as const) {
+      const id = loadout[slot];
+      if (id) loadoutIds.add(id);
+    }
+  }
+  return carry.filter((r) => !loadoutIds.has(r.id)).map((r) => r.id);
 }
 
 /**
- * The number of rings the player would be carrying after applying the given
- * delta to the current carried set (in_carry=1). Heart-slot rings (in_carry=0)
- * are never in the carried set, so they never count. Dedupes so a repeated id
- * cannot inflate the count.
+ * The number of spare-grid rings the player would have after applying the given
+ * delta. Uses a Set so repeated ids in the delta arrays are deduplicated.
+ *
+ * @param addingToSpare - ring ids that would enter the spare grid (e.g. a cleared
+ *   battle slot's old ring, an old heart ring released to spare).
+ * @param removingFromSpare - ring ids that would leave the spare grid (e.g. a ring
+ *   assigned to a battle slot, a spare ring moved to the heart slot).
  */
-export function carriedCountAfter(
+export function spareCountAfter(
   playerId: string,
-  { adding = [], removing = [] }: { adding?: string[]; removing?: string[] } = {},
+  { addingToSpare = [], removingFromSpare = [] }: {
+    addingToSpare?: string[];
+    removingFromSpare?: string[];
+  } = {},
 ): number {
-  const set = new Set(getCarry(playerId).map((r) => r.id));
-  for (const id of removing) set.delete(id);
-  for (const id of adding) set.add(id);
+  const set = new Set(getSpareIds(playerId));
+  for (const id of removingFromSpare) set.delete(id);
+  for (const id of addingToSpare) set.add(id);
   return set.size;
 }
 
-/** Throws 'carry cap exceeded (n > cap)' if the post-delta carried count exceeds the cap. */
-export function assertCarryWithinCap(
+/**
+ * Throws `'spare grid full (n > max)'` if the post-delta spare count would
+ * exceed `spare_ring_max`. Clearing a battle slot does NOT free spare capacity —
+ * only rings that leave the spare grid via `removingFromSpare` do.
+ */
+export function assertSpareWithinMax(
   playerId: string,
-  delta: { adding?: string[]; removing?: string[] } = {},
+  delta: { addingToSpare?: string[]; removingFromSpare?: string[] } = {},
 ): void {
-  const n = carriedCountAfter(playerId, delta);
-  const cap = getCarryCap(playerId);
-  if (n > cap) throw new Error(`carry cap exceeded (${n} > ${cap})`);
+  const n = spareCountAfter(playerId, delta);
+  const max = getSpareRingMax(playerId);
+  if (n > max) throw new Error(`spare grid full (${n} > ${max})`);
+}
+
+/**
+ * Throws `'Reliquary full'` if adding the given rings to the Reliquary (while
+ * removing the specified rings from it) would exceed `reliquary_cap`.
+ *
+ * Used by the `packLoadout` reliquary portion (extracted from the former inline
+ * `resultingReliquary > reliquaryCap` check in #182).
+ */
+export function assertReliquaryWithinMax(
+  playerId: string,
+  delta: { addingToReliquary?: string[]; removingFromReliquary?: string[] } = {},
+): void {
+  const { addingToReliquary = [], removingFromReliquary = [] } = delta;
+  const currentCount = getReliquaryCount(playerId);
+  const set = new Set<string>();
+  // Build a virtual set by size: +1 per adding id (if not already counted),
+  // -1 per removing id. We use a Set of adding/removing ids for deduplication
+  // since getReliquaryCount returns a scalar (no id list available here).
+  // Net delta: unique adds minus unique removes that might be in the Reliquary.
+  const addSet = new Set(addingToReliquary);
+  const removeSet = new Set(removingFromReliquary);
+  // Remove any overlap: if same id is in both, it is net-zero.
+  for (const id of addSet) if (removeSet.has(id)) { addSet.delete(id); removeSet.delete(id); }
+  const netDelta = addSet.size - removeSet.size;
+  const resulting = currentCount + netDelta;
+  const cap = getReliquaryCap(playerId);
+  if (resulting > cap) throw new Error('Reliquary full');
+}
+
+// EPIC #378 — module-level prepared statements for the pending-flag lifecycle.
+// Both are module-level to avoid re-preparing on every call (same pattern as
+// all other single-column mutators in this file).
+const setPendingStmt = db.prepare('UPDATE rings SET pending = 1 WHERE id = ?');
+const clearPendingStmt = db.prepare('UPDATE rings SET pending = 0 WHERE id = ?');
+
+/**
+ * Clear the `pending` flag on a ring (set pending=0). Called when a WON ring
+ * is accepted as a regular spare (PUT /api/rings/:ringId/accept), assigned to
+ * a slot, or discarded.
+ */
+export function clearPendingFlag(ringId: string): void {
+  clearPendingStmt.run(ringId);
+}
+
+/**
+ * The id of the player's pending WON ring (the ring with pending=1), or null
+ * when no WON ring awaits resolution. At most one ring per player holds pending=1
+ * at any time.
+ */
+export function getPendingRingId(playerId: string): string | null {
+  const row = db
+    .prepare('SELECT id FROM rings WHERE owner_id = ? AND pending = 1 LIMIT 1')
+    .get(playerId) as { id: string } | undefined;
+  return row?.id ?? null;
+}
+
+/**
+ * The player's carry cap (rings carryable on an expedition). Derived from the
+ * per-player spare cap: carry_cap = CORE_SLOTS(5) + spare_ring_max. The
+ * playerId parameter is required because spare_ring_max is per-player.
+ */
+export function getCarryCap(playerId: string): number {
+  return CORE_SLOTS + getSpareRingMax(playerId);
 }
 
 /**
  * Atomically set the carried set to EXACTLY the given ring ids. Validates that
- * the count is within the player's carry_cap and that every id is owned by the
- * player; throws otherwise. All other rings have their in_carry flag cleared.
+ * the count is within the player's spare_ring_max and that every id is owned by
+ * the player; throws otherwise. All other rings have their in_carry flag cleared.
  *
  * #182 — Reliquary cap guard: after setting the new carry set, the number of
  * resting (non-carried, non-escrowed) rings must not exceed reliquary_cap.
  * Throws 'Reliquary full' when the resulting resting count would exceed the cap.
+ *
+ * EPIC #378 — spare-grid guard: uses assertSpareWithinMax so only spare rings
+ * (in_carry=1 AND not in any loadout slot) are counted. Clearing a battle slot
+ * does NOT free spare capacity.
  */
 export const packLoadout = db.transaction(
   (playerId: string, ringIds: string[]): void => {
     // Dedupe defensively so a repeated id can't inflate the count past the cap.
     const unique = Array.from(new Set(ringIds));
-    assertCarryWithinCap(playerId, { adding: unique, removing: getCarry(playerId).map((r) => r.id) });
     const ownerRings = getRingsForPlayer(playerId);
     const ownerRingSet = new Set(ownerRings.map((r) => r.id));
     for (const id of unique) {
       if (!ownerRingSet.has(id)) throw new Error(`ring ${id} not owned by player`);
     }
 
-    // #182 — Reliquary cap guard: count owned non-escrowed, non-heart-slot rings;
-    // the ones NOT in the new carry set will rest in the Reliquary. heart_slot=1
-    // rings are excluded because they occupy their own dedicated slot, not a
-    // Reliquary slot — omitting this caused neutral swaps to fail when a heart
-    // ring was equipped (the heart ring inflated the count by 1).
+    // EPIC #378 — spare-cap guard. Compute the new spare set: rings in `unique`
+    // that are NOT assigned to any loadout slot. Compare against current spare set.
+    const loadout = selectLoadout.get(playerId) as LoadoutRow | undefined;
+    const loadoutSlotIds = new Set<string>();
+    if (loadout) {
+      for (const slot of ['thumb', 'a1', 'a2', 'd1', 'd2'] as const) {
+        const id = loadout[slot];
+        if (id) loadoutSlotIds.add(id);
+      }
+    }
+    const nonLoadoutInUnique = unique.filter((id) => !loadoutSlotIds.has(id));
+    assertSpareWithinMax(playerId, {
+      addingToSpare: nonLoadoutInUnique,
+      removingFromSpare: getSpareIds(playerId),
+    });
+
+    // #182 — Reliquary cap guard (EPIC #378: extracted via assertReliquaryWithinMax).
+    // Count rings that will rest (owned non-escrow non-heart minus the new carry set).
     const ownedNonEscrowed = (
       db.prepare('SELECT COUNT(*) as cnt FROM rings WHERE owner_id = ? AND escrowed = 0 AND heart_slot = 0')
         .get(playerId) as { cnt: number }
     ).cnt;
     const resultingReliquary = ownedNonEscrowed - unique.length;
-    const reliquaryCap =
-      (db.prepare('SELECT reliquary_cap FROM players WHERE id = ?').get(playerId) as
-        | { reliquary_cap: number }
-        | undefined)?.reliquary_cap ?? RELIQUARY_BASE_CAP;
-    if (resultingReliquary > reliquaryCap) {
+    // Use assertReliquaryWithinMax by expressing the delta as the resulting resting
+    // count vs. the cap. We add a direct inline cap check here because the full
+    // delta-based primitive needs the pre/post sets; the packLoadout path already
+    // computed resultingReliquary directly, so we call getReliquaryCap and throw
+    // with the canonical message.
+    const relCapForPack = getReliquaryCap(playerId);
+    if (resultingReliquary > relCapForPack) {
       throw new Error('Reliquary full');
     }
 
@@ -1198,12 +1389,28 @@ export const setHeartRing = db.transaction(
       if (oldHeartId && oldHeartId !== ringId) {
         setRingHeartSlot(oldHeartId, 0);
         if (releaseTo === 'spare') {
-          // Carry-cap guard: old heart joins the carry, incoming ring leaves it.
-          // When ringId is a carried spare (in_carry=1), this is net-zero and the guard
-          // passes at cap. When ringId is a pending won ring (in_carry=0, not yet carried),
-          // the delete is a no-op and the guard counts it as +1 — correctly blocking the
-          // swap at full carry since the old heart ring would genuinely grow the carry.
-          assertCarryWithinCap(playerId, { adding: [oldHeartId], removing: ringId ? [ringId] : [] });
+          // EPIC #378 — spare-grid guard: old heart joins carry (spare grid).
+          // Use spare-membership to compute the accurate net delta:
+          //   - Spare ring → heart: old heart joins spare (+1), incoming leaves spare (−1) → net zero.
+          //   - Battle-slot ring → heart: old heart joins spare (+1), no ring leaves spare → net +1.
+          //   - null incoming: old heart joins spare (+1), nothing leaves spare → net +1.
+          // Using in_carry===1 (old guard) would treat a battle-slot ring (in_carry=1,
+          // NOT in spare) the same as a spare ring, silently bypassing the cap.
+          const incomingIsSpare = ringId ? getSpareIds(playerId).includes(ringId) : false;
+          if (incomingIsSpare) {
+            // net-zero: spare ring leaves spare (−1), old heart joins spare (+1)
+            assertSpareWithinMax(playerId, {
+              addingToSpare: [oldHeartId],
+              removingFromSpare: [ringId!],
+            });
+          } else {
+            // battle-slot ring → heart: old heart joins spare (+1), no ring leaves spare
+            // (or null incoming: new ring from nowhere → old heart joins spare +1)
+            assertSpareWithinMax(playerId, {
+              addingToSpare: [oldHeartId],
+              removingFromSpare: [],
+            });
+          }
           setRingCarry(oldHeartId, 1);
         } else {
           // 'reliquary' — rest it (in_carry = 0).
@@ -1213,6 +1420,12 @@ export const setHeartRing = db.transaction(
 
       // Equip the new ring (if any) into the heart slot.
       if (ringId) {
+        // EPIC #378 — pending lifecycle: clear the pending flag when the WON ring
+        // is equipped to the Heart slot (overflow resolved by heart assignment).
+        const incomingRing = getRingById(ringId);
+        if (incomingRing?.pending === 1) {
+          clearPendingFlag(ringId);
+        }
         setRingCarry(ringId, 0);
         setRingHeartSlot(ringId, 1);
         updateHeartRingId.run(ringId, playerId);
