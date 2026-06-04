@@ -270,9 +270,9 @@ Return the list of boss NPCs this player has already defeated. Intersects the pl
 **Auth required:** yes (requireAuth only)
 **Request body:** `{ ringId1: string, ringId2: string }`
 **Response (success):** `{ ring: Ring }` — HTTP 200
-**Response (error):** 400 — `"ringId1 and ringId2 are required"` | 400 — descriptive message from `fuseRings` (not owned, below minimum tier, invalid pair)
+**Response (error):** 400 — `"ringId1 and ringId2 are required"` | 400 — descriptive message from `fuseRings` (not owned, already a fusion, below 500 XP, invalid pair)
 
-Fuse two same-tier parent rings (minimum Tier 1) into a fusion ring. Returns the new fusion ring row.
+Fuse two parent rings into a fusion ring. Each parent must have `xp ≥ 500` (independently); neither may itself be a fusion ring; their elements must form a valid fusion pair. The same-tier requirement was removed in #390. Returns the new fusion ring row.
 
 ---
 

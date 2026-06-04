@@ -184,6 +184,8 @@ Returns the single triangle element that beats `el` — the ring a defender pick
 | `triangleComponentsOf` | `(el: number): number[]` | Only the triangle (FIRE/WATER/WOOD) components of the element. |
 | `TRIANGLE` | `ReadonlySet<number>` | The three triangle base elements: FIRE, WATER, WOOD. |
 | `NEUTRAL` | `ReadonlySet<number>` | The two asymmetric neutral base elements: WIND, EARTH. |
+| `MIN_FUSION_PARENT_XP` | `500` | Minimum XP for a ring to qualify as a fusion parent (= Tier-1 floor, GDD §4.2). |
+| `isFusionEligibleParent` | `(el: number, xp: number): boolean` | True when a ring may serve as a fusion parent: `xp ≥ MIN_FUSION_PARENT_XP && !isFusion(el)`. Used by both server (`fuseRings`) and client (`FusionPanel`, `RingCard` glyph). |
 
 ---
 
