@@ -489,8 +489,8 @@ test('manage-battle-rings (#381): 4×2 cluster renders and the 3-col spare Inven
 
   // The spare InventoryGrid has 3 visible rows and ≥1 populated cell.
   const grid = await spareGridInfo(page);
-  expect(grid.rows).toBeGreaterThanOrEqual(1);
-  expect(grid.cells).toBeGreaterThanOrEqual(1);
+  expect(grid.rows).toBe(3);    // ceil(7/3) = 3 rows
+  expect(grid.cells).toBe(7);   // 7 spares = 7 cells
 
   await ctx.close();
 });
@@ -896,6 +896,7 @@ test('manage-battle-rings (#352/#381 regression): Day/Gold/Food/AvgBattleXP abse
   const textsFirst = await modalTexts(page);
   expect(textsFirst.some((t) => /Day:?\s*\d/.test(t))).toBe(false);
   expect(textsFirst.some((t) => /Gold:?\s*\d/.test(t))).toBe(false);
+  expect(textsFirst.some((t) => /Food:?\s*\d/.test(t))).toBe(false);
   expect(textsFirst.some((t) => t.includes('Avg Battle XP:'))).toBe(false);
 
   // Close the overlay.

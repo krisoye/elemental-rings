@@ -1,7 +1,7 @@
 import Phaser from 'phaser';
 import { CANVAS_W, CANVAS_H, ELEMENT_NAMES, THUMB_PASSIVE_INFO, SLOT_KEYS } from '../Constants';
 import type { SlotKey } from '../Constants';
-import { InventoryGrid, type RingData } from './InventoryGrid';
+import { InventoryGrid, type RingData, GRID_CARD_W, GRID_COL_GAP } from './InventoryGrid';
 import { RingCard } from './ui/RingCard';
 import { CLOSE_GLYPH } from './ui/ModalShell';
 import { attachTooltip } from './ui/Tooltip';
@@ -81,6 +81,8 @@ export class BattleHandOverlay {
    * #381 — the reusable InventoryGrid for the spare pool (3-col, scrollable).
    * Created once and re-populated on every renderManageModal call so scroll state
    * resets correctly. Destroyed with the modal on close/rebuild.
+   *
+   * @internal E2E-visible via runtime access — do not rename without updating manage-battle-rings.spec.ts
    */
   private spareGrid: InventoryGrid | null = null;
   /**
@@ -515,6 +517,8 @@ export class BattleHandOverlay {
     const slottedIds = new Set(Object.values(this.manageLoadout).filter(Boolean) as string[]);
     // Also exclude the heart ring from the spare pool display.
     if (this.heartRing) slottedIds.add(this.heartRing.id);
+    // Exclude the WON (pending) ring — it renders in its own dedicated card above the grid.
+    if (this.pendingRingId) slottedIds.add(this.pendingRingId);
     const availableRings = this.manageRings.filter((r) => !slottedIds.has(r.id));
     // EPIC #378 — spare_ring_max from /api/me (server-computed).
     const spareCapacity = this.managePlayer?.spare_ring_max ?? 0;
@@ -599,20 +603,34 @@ export class BattleHandOverlay {
     // cards, visible when the grid has empty capacity and something actionable is held.
     // InventoryGrid does not render empty-slot placeholders, so we add one manually
     // when relevant (mirrors the old plain-rect placeholder for empty spare slots).
-    if (emptySpareActionable) {
+    if (emptySpareActionable && usedSpares < spareCapacity) {
       // The InventoryGrid's card container sits at (GRID_ORIGIN_X, GRID_CONTENT_TOP_Y).
-      // An empty placeholder is placed below the last card row.
-      // We emit the moveHeldRingToSpare action on click.
-      const GRID_ROW_GAP = 92; // from InventoryGrid constants
+      // The placeholder is added to spareGrid.getCardContainer() so it scrolls with
+      // the grid contents — adding it to the outer container would leave it fixed.
+      // Coordinates are local to the card container (origin at GRID_ORIGIN_X, GRID_CONTENT_TOP_Y).
+      const GRID_ROW_GAP = 92; // from InventoryGrid constants (GRID_ROW_GAP export)
       const GRID_CARD_H = 88;
-      const filledRows = Math.ceil(availableRings.length / 3);
-      // Place placeholder when spare pool has remaining capacity (usedSpares < spareCapacity).
-      // We do NOT gate on filledRows < RINGWALL_VISIBLE_ROWS — even a full 3-row grid
-      // (e.g. 9 rings in 9 slots) can have capacity when spare_ring_max > 9.
-      if (usedSpares < spareCapacity) {
-        const phY = GRID_CONTENT_TOP_Y + filledRows * GRID_ROW_GAP + GRID_CARD_H / 2;
+      const NUM_COLS = 3;
+      const MODAL_BOTTOM = 538; // MODAL_TOP(38) + MODAL_H(500)
+      const filledRows = Math.ceil(availableRings.length / NUM_COLS);
+
+      // Clamp phY so it stays within the visible grid window and within the modal.
+      // Local y is relative to the cardContainer origin (which is at GRID_CONTENT_TOP_Y
+      // in screen space). The visible window spans rows [scrollRow, scrollRow + RINGWALL_VISIBLE_ROWS).
+      // We suppress the placeholder if clamping would push it outside the window — the
+      // player can scroll to reveal capacity, and a non-scrolling placeholder would be confusing.
+      const rawPhY = filledRows * GRID_ROW_GAP + GRID_CARD_H / 2;
+      const maxLocalY = MODAL_BOTTOM - GRID_CONTENT_TOP_Y - GRID_CARD_H / 2 - 4;
+      const phY = Math.min(rawPhY, maxLocalY);
+
+      // Only render placeholder if it lands within the visible row window (rows 0–2).
+      const GRID_VISIBLE_BOTTOM_LOCAL = RINGWALL_VISIBLE_ROWS * GRID_ROW_GAP;
+      if (phY < GRID_VISIBLE_BOTTOM_LOCAL) {
+        // L-1: place placeholder in the correct column (not always col 0).
+        const nextCol = availableRings.length % NUM_COLS;
+        const phX = nextCol * GRID_COL_GAP + GRID_CARD_W / 2;
         const ph = this.scene.add
-          .rectangle(GRID_ORIGIN_X + 32, phY, 64, GRID_CARD_H, 0x2a2a33)
+          .rectangle(phX, phY, GRID_CARD_W, GRID_CARD_H, 0x2a2a33)
           .setScrollFactor(0)
           .setStrokeStyle(2, 0x665544)
           .setAlpha(0.7)
@@ -620,7 +638,8 @@ export class BattleHandOverlay {
           .on('pointerdown', () => {
             void this.moveHeldRingToSpare(emptySpareSelId!, emptySpareSelSlot);
           });
-        container.add(ph);
+        // Add to the scrollable card container so the placeholder follows scroll.
+        spareGrid.getCardContainer().add(ph);
       }
     }
 
