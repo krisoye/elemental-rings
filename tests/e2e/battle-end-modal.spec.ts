@@ -251,12 +251,12 @@ test('#212: a won ring (er_pending_ring) survives the [Return to Overworld] rout
 });
 
 // ── #382 Scenario 6: BattleEndModal banner text ───────────────────────────────
-// #382 adversarial: the banner "YOU WIN!" / "YOU LOSE!" is converted from
-// scene.add.text to addDomLabel. If the text string is mutated during conversion
-// (e.g., wrong variable name, capitalisation error, wrong ternary branch), the
-// banner shows the wrong string. This test drives a WIN and a LOSE and verifies
-// the banner text is exactly correct in both cases — the addDomLabel path must
-// preserve the same string the original add.text produced.
+// #382 adversarial: the banner "YOU WIN!" / "YOU LOSE!" uses crispCanvasText
+// (canvas text, not DOM). If the text string is mutated during the crispCanvasText
+// conversion (e.g., wrong variable name, capitalisation error, wrong ternary
+// branch), the banner shows the wrong string. This test drives a WIN and a LOSE
+// and verifies the banner text is exactly correct in both cases — the crispCanvasText
+// path must preserve the same string the original add.text produced.
 test('#382: BattleEndModal banner shows "YOU WIN!" on a win outcome', async ({ browser }) => {
   const ctx = await browser.newContext();
   // aiHearts:1 forces a quick protagonist win (AI has only 1 heart).
@@ -357,12 +357,11 @@ test('#382: BattleEndModal banner shows "YOU LOSE!" on a loss outcome', async ({
 });
 
 // ── #382 Scenario 7: BattleEndModal DOM teardown — no leaked .er-dom-label ───
-// #382 adversarial: if BattleEndModal.ts converts the banner to addDomLabel, the
-// DOM node must be destroyed when the modal is dismissed (either via [Return to
-// Overworld], [Manage Battle Hand], or [X]-collapse). A leaked node means
-// "YOU WIN!" or "YOU LOSE!" stays in the DOM on the next scene, potentially
-// overlapping new content. We verify the .er-dom-label count in #game-container
-// returns to its pre-modal baseline after the modal is fully dismissed.
+// #382 adversarial: the banner uses crispCanvasText (not addDomLabel). Scenario 7
+// guards against DOM accumulation from OTHER concurrent .er-dom-label nodes in the
+// modal (not a banner DOM teardown — the banner has no DOM node). We verify the
+// .er-dom-label count in #game-container returns to its pre-modal baseline after
+// the modal is fully dismissed, ensuring no other modal-owned DOM nodes leak.
 test('#382: BattleEndModal dismiss removes all .er-dom-label nodes it added', async ({ browser }) => {
   const ctx = await browser.newContext();
   const page = await hubDuelToEndedModal(ctx);

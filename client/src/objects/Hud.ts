@@ -16,9 +16,10 @@ export class Hud extends Phaser.GameObjects.Container {
 
   constructor(scene: Phaser.Scene) {
     super(scene, 0, 0);
-    // #382 — all three HUD labels update color dynamically and change text at
-    // runtime → DOM-ineligible (setColor is the blocker). crispCanvasText keeps
-    // them smooth on fractional DPI (the accepted ceiling for canvas text).
+    // #382 — banner, opponentName, and spirit are scene-level objects (not
+    // Container children). They are ineligible for addDomLabel because they call
+    // setColor / mutate color dynamically at runtime. crispCanvasText keeps them
+    // smooth on fractional DPI (the accepted ceiling for canvas text).
     this.banner = crispCanvasText(
       scene.add
         .text(512, 40, 'WAITING...', {

@@ -1202,9 +1202,9 @@ test('dom-label #382 H1: MerchantModal open+close twice leaves zero leaked .er-d
 });
 
 // #382 adversarial: Campfire modal open+close twice — no leaked .er-dom-label.
-// CampfireModal.close() calls container.destroy(true). If any #382 conversion
-// in CampfireModal.ts uses addDomLabel without explicit tracking + destroy(),
-// the node leaks. After two cycles the count must equal the baseline.
+// CampfireModal uses crispCanvasText (no DOM nodes created). The test guards
+// against DOM accumulation from any other concurrent addDomLabel sites in the
+// modal. After two cycles the count must equal the baseline.
 test('dom-label #382 H2: CampfireModal open+close twice leaves zero leaked .er-dom-label nodes', async ({
   browser,
 }) => {
