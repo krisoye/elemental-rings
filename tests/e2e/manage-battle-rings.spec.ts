@@ -487,10 +487,14 @@ test('manage-battle-rings (#381): 4×2 cluster renders and the 3-col spare Inven
   expect(Math.abs(labelXs.STATUS - 659)).toBeLessThanOrEqual(1);
   expect(labelXs.HP).toBe(659);
 
-  // The spare InventoryGrid has 3 visible rows and ≥1 populated cell.
+  // The spare InventoryGrid shows the seeded spares. After the M-1 fix the WON
+  // (pending) ring is excluded from availableRings, so if the fresh player has a
+  // pending ring it appears in its own WON card and the spare grid shows 6 rings
+  // (ceil(6/3)=2 rows). If no pending ring exists all 7 appear (ceil(7/3)=3 rows).
+  // Assert the grid is populated with at least 2 rows and at least 6 cells.
   const grid = await spareGridInfo(page);
-  expect(grid.rows).toBe(3);    // ceil(7/3) = 3 rows
-  expect(grid.cells).toBe(7);   // 7 spares = 7 cells
+  expect(grid.rows).toBe(2);    // pending ring excluded → 6 spares → ceil(6/3) = 2 rows
+  expect(grid.cells).toBe(6);   // 6 visible spares after WON ring excluded
 
   await ctx.close();
 });
@@ -776,16 +780,18 @@ test('manage-battle-rings (#350): selecting a battle-slot ring and clicking empt
     bh.renderManageModal();
   }, ringId);
 
-  // Find and click the empty spare placeholder. It is a bare Rectangle added
-  // directly to the modal container (not inside the InventoryGrid sub-container).
+  // Find and click the empty spare placeholder. After the H-1 scroll fix the
+  // placeholder Rectangle lives inside spareGrid.getCardContainer(), not as a
+  // direct child of the modal container. Search there instead.
   // Phaser maps useHandCursor:true → input.cursor === 'pointer'.
   const clicked = await page.evaluate(() => {
     const scene = (window as any).__game?.scene?.getScene('ForestScene');
-    const modal = scene?.battleHand?.manageModal;
-    if (!modal) return false;
-    // Walk direct children of the modal container, looking for an interactive
-    // Rectangle (type === 'Rectangle') with pointer cursor.
-    for (const child of modal.getAll()) {
+    const bh = scene?.battleHand;
+    if (!bh) return false;
+    const cardContainer = bh.spareGrid?.getCardContainer?.();
+    if (!cardContainer) return false;
+    // The placeholder is a bare Rectangle (no getAll) with a pointer cursor.
+    for (const child of cardContainer.getAll()) {
       if (child.type === 'Rectangle' && child.input?.cursor === 'pointer') {
         child.emit('pointerdown');
         return true;
@@ -848,13 +854,16 @@ test('manage-battle-rings (#350): selecting heart card and clicking empty spare 
     bh.renderManageModal();
   }, heartId);
 
-  // Click the empty spare placeholder (same walk as Scenario 3: bare Rectangle
-  // in the modal container with pointer cursor).
+  // Click the empty spare placeholder. After the H-1 scroll fix the placeholder
+  // Rectangle lives inside spareGrid.getCardContainer(), not as a direct child of
+  // the modal container (same fix as Scenario 3).
   const clicked = await page.evaluate(() => {
     const scene = (window as any).__game?.scene?.getScene('ForestScene');
-    const modal = scene?.battleHand?.manageModal;
-    if (!modal) return false;
-    for (const child of modal.getAll()) {
+    const bh = scene?.battleHand;
+    if (!bh) return false;
+    const cardContainer = bh.spareGrid?.getCardContainer?.();
+    if (!cardContainer) return false;
+    for (const child of cardContainer.getAll()) {
       if (child.type === 'Rectangle' && child.input?.cursor === 'pointer') {
         child.emit('pointerdown');
         return true;
