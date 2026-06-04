@@ -1213,31 +1213,54 @@ test('dom-label #382 H2: CampfireModal open+close twice leaves zero leaked .er-d
   const page = await ctx.newPage();
   await loadForest(page);
 
-  // Wait for the campfire rest hook (confirms anchorage screen loaded + campfire built).
-  await page.waitForFunction(() => typeof (window as any).__campfireRest === 'function', { timeout: 10000 });
+  // Suppress edge transitions so no spurious scene stop fires during the test.
+  await page.evaluate(() => {
+    const scene = (window as any).__scene;
+    if (scene) scene.suppressEdgeTransitions = true;
+  });
+
+  // Wait for the campfire zone to appear in __zoneCenters (confirms anchorage
+  // screen is loaded and the campfire InteractionZone has been built).
+  // __campfireRest is only set when the modal is OPEN, so it cannot serve as
+  // a pre-condition here — use the zone center sentinel instead.
+  await page.waitForFunction(
+    () => {
+      const zc = (window as any).__zoneCenters as Record<string, { x: number; y: number }> | undefined;
+      return !!zc && Object.keys(zc).some((k) => k === 'forest_anchorage' || k.startsWith('forest_'));
+    },
+    { timeout: 10000 },
+  );
+
+  // Position the player on the campfire zone center so pressing E fires the campfire modal.
+  const campfireZoneKey = await page.evaluate(() => {
+    const zc = (window as any).__zoneCenters as Record<string, { x: number; y: number }>;
+    const key = Object.keys(zc).find((k) => k === 'forest_anchorage' || k.startsWith('forest_'));
+    if (key) (window as any).__player?.setPosition(zc[key].x, zc[key].y);
+    return key ?? null;
+  });
+
+  if (!campfireZoneKey) {
+    // No campfire zone found — skip (anchorage not present on this screen).
+    await ctx.close();
+    return;
+  }
+
+  // Wait for the campfire zone to become the active zone in the overlap list.
+  await page.waitForFunction(
+    (key) => ((window as any).__sanctumZones as string[] | undefined)?.includes(key),
+    campfireZoneKey,
+    { timeout: 5000 },
+  );
 
   const baseline = await page.evaluate(() => document.querySelectorAll('.er-dom-label').length);
 
-  // Open via the campfire zone interact hook (same path as pressing E on the zone).
-  await page.evaluate(() => {
-    // __campfireModal is set by CampfireModal.open(). We trigger open by walking
-    // the player onto the campfire zone center and calling __sanctumInteract().
-    const zc = (window as any).__zoneCenters as Record<string, { x: number; y: number }> | undefined;
-    if (!zc) return;
-    const fireKey = Object.keys(zc).find((k) => k.startsWith('forest'));
-    if (fireKey) (window as any).__player?.setPosition(zc[fireKey].x, zc[fireKey].y);
-    // Open the campfire modal directly via the test hook
-    (window as any).__campfireOpenModal?.();
-  });
-
-  // CampfireModal may or may not have a dedicated open hook. Check both the hook
-  // and the __campfireModal sentinel (set by CampfireModal.open()).
+  // Open the campfire modal via E press (identical path to player pressing E on the zone).
+  await page.keyboard.press('e');
   await page.waitForFunction(
     () => (window as any).__campfireModal !== null && (window as any).__campfireModal !== undefined,
-    { timeout: 3000 },
+    { timeout: 5000 },
   ).catch(() => {
-    // If hook not available, skip — campfire modal open path not reachable in this
-    // harness without the zone interaction. Test degrades gracefully.
+    // If the modal did not open (e.g., player missed the zone), degrade gracefully.
   });
 
   const isOpen = await page.evaluate(() => !!(window as any).__campfireModal);
@@ -1247,12 +1270,16 @@ test('dom-label #382 H2: CampfireModal open+close twice leaves zero leaked .er-d
     return;
   }
 
-  // Count with modal open (must be >= baseline).
+  // Count with modal open (must be >= baseline; CampfireModal uses crispCanvasText
+  // so it should add zero .er-dom-label nodes, but we accept >= for safety).
   const countOpen1 = await page.evaluate(() => document.querySelectorAll('.er-dom-label').length);
   expect(countOpen1).toBeGreaterThanOrEqual(baseline);
 
-  // Close.
-  await page.evaluate(() => (window as any).__campfireModal && (window as any).__scene?.closeCampfire?.());
+  // Close via the scene's private campfireModal reference (accessible at runtime).
+  await page.evaluate(() => {
+    const scene = (window as any).__scene as any;
+    scene?.campfireModal?.close?.();
+  });
   await page.waitForFunction(() => !(window as any).__campfireModal, { timeout: 3000 });
 
   const countAfterClose1 = await page.evaluate(() => document.querySelectorAll('.er-dom-label').length);

@@ -226,6 +226,13 @@ test('merchant-client #382: catalog row text content is unchanged after crispCan
   await page.goto(URL);
   await enterForestScreen(page, 'forest_anchorage');
 
+  // Suppress edge transitions so no spurious scene stop fires during the test
+  // (matches the pattern used in dom-label H1 which reliably opens the merchant modal).
+  await page.evaluate(() => {
+    const scene = (window as any).__scene;
+    if (scene) scene.suppressEdgeTransitions = true;
+  });
+
   // Position on merchant zone and open the modal.
   await page.waitForFunction(
     () => !!(window as any).__zoneCenters && Object.keys((window as any).__zoneCenters).some((k) => k.startsWith('merchant-')),
@@ -293,6 +300,13 @@ test('merchant-client #382: MERCHANT header DOM label renders correct text and i
   const page = await ctx.newPage();
   await page.goto(URL);
   await enterForestScreen(page, 'forest_anchorage');
+
+  // Suppress edge transitions so no spurious scene stop fires during the test
+  // (matches the pattern used in dom-label H1 which reliably opens the merchant modal).
+  await page.evaluate(() => {
+    const scene = (window as any).__scene;
+    if (scene) scene.suppressEdgeTransitions = true;
+  });
 
   await page.waitForFunction(
     () => !!(window as any).__zoneCenters && Object.keys((window as any).__zoneCenters).some((k) => k.startsWith('merchant-')),
