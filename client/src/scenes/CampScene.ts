@@ -1043,17 +1043,32 @@ export class CampScene extends DualCameraScene {
   }
 
   /**
-   * Dim and lock the Reliquary grid cards when the carry cap is full (the
-   * player cannot pull more rings from the Reliquary into carry). Also tracks
-   * the Reliquary-full condition (#182) via __reliquaryFull so the drop-to-
-   * Reliquary path can surface the right error. Both caps are enforced
-   * server-side with 400 as well.
+   * Dim and lock the Reliquary grid cards when the **spare (Bench) pool** is full
+   * — the player cannot pull more rings from the Reliquary into the resting pool.
+   * EPIC #378/#388 — the lock mirrors the server's `assertSpareWithinMax`
+   * predicate (spare count vs `spare_ring_max`), NOT the aggregate carry cap: a
+   * full battle loadout or a pending WON ring (one allowed overflow) must not lock
+   * the grid while the bench still has room. A spare ring is `in_carry=1`, not in
+   * any battle-hand slot, and not `pending`. Also tracks the Reliquary-full
+   * condition (#182) via __reliquaryFull so the drop-to-Reliquary path can surface
+   * the right error. The cap is enforced server-side with 400 as well.
    */
   private applyReliquaryLockState(): void {
     const s = window.__campState;
     if (!s) return;
-    const carried = s.rings.filter((r: RingData) => r.in_carry === 1).length;
-    const locked = carried >= s.carry_cap;
+    // Mirror the server `assertSpareWithinMax` counting semantics: spare rings are
+    // carried (in_carry=1), not occupying a battle-hand slot, and not the pending
+    // WON ring (its overflow slot is excluded). Reuse the SLOT_KEYS battle-slot
+    // pattern from refreshPools.
+    const battleHandIds = new Set(
+      (SLOT_KEYS as readonly string[]).map((k) => this.loadout[k]).filter(Boolean) as string[],
+    );
+    const spareRingMax = s.spare_ring_max ?? 9;
+    const spareCount = s.rings.filter(
+      (r: RingData) =>
+        r.in_carry === 1 && !battleHandIds.has(r.id) && !(r as { pending?: number }).pending,
+    ).length;
+    const locked = spareCount >= spareRingMax;
     // #182 — track Reliquary-full state for the drop-label hint.
     const reliquaryCount: number =
       s.reliquaryCount ??
@@ -2323,8 +2338,10 @@ export class CampScene extends DualCameraScene {
       reliquaryCap: player.reliquaryCap,
       reliquaryShards: player.reliquaryShards,
       reliquaryCount: player.reliquaryCount,
-      // #171 — spare capacity from the API response (server-computed, no client arithmetic)
-      spareCapacity: player.spareCapacity ?? undefined,
+      // EPIC #378/#388 — spare-grid cap from /api/me (server-computed). Drives the
+      // Reliquary SPIRIT-grid lock in applyReliquaryLockState. Replaces the dead
+      // `spareCapacity` alias dropped in #383. Default 9 on older servers.
+      spare_ring_max: player.spare_ring_max ?? 9,
       // EPIC #302 — heart slot fields from /api/me. heart_ring drives the Heart card
       // + center header (♥ cur/max); total_xp + battle_hand_avg_xp drive the right
       // header segment. All server-computed.

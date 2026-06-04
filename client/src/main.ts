@@ -311,8 +311,9 @@ declare global {
       reliquaryCap?: number;
       reliquaryShards?: number;
       reliquaryCount?: number;
-      // #171 — spare ring capacity (ceil(log_2(aggregate_xp))), from /api/me.
-      spareCapacity?: number;
+      // EPIC #378/#388 — spare-grid cap from /api/me (server-computed). Drives the
+      // Reliquary SPIRIT-grid lock; replaces the dead `spareCapacity` alias (#383).
+      spare_ring_max?: number;
       // #78 ④ — Thumb passive reminder. null when no Thumb ring is staked; a base
       // element yields { name, effect }; a fusion yields { name: null, effect: '…
       // no passive' }.
