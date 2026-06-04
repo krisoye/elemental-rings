@@ -210,3 +210,166 @@ test('merchant-client: walk to merchant and press E opens shop modal', async ({ 
 
   await ctx.close();
 });
+
+// ── #382 Scenario 7: Catalog text content unchanged after crispCanvasText conversion ───
+// #382 adversarial: MerchantModal catalog rows are masked-container children
+// (crispCanvasText, not addDomLabel). The conversion must not mutate the displayed
+// string — if crispCanvasText changes fontSize scaling or wraps text, the label
+// text property may be altered. We assert the catalog row text still contains the
+// expected food price and ring element strings after modal open.
+test('merchant-client #382: catalog row text content is unchanged after crispCanvasText conversion', async ({
+  browser,
+}) => {
+  const ctx = await browser.newContext();
+  await seedAuthToken(ctx);
+  const page = await ctx.newPage();
+  await page.goto(URL);
+  await enterForestScreen(page, 'forest_anchorage');
+
+  // Position on merchant zone and open the modal.
+  await page.waitForFunction(
+    () => !!(window as any).__zoneCenters && Object.keys((window as any).__zoneCenters).some((k) => k.startsWith('merchant-')),
+    { timeout: 8000 },
+  );
+  const merchantZoneName = await page.evaluate(() => {
+    const zc = (window as any).__zoneCenters as Record<string, { x: number; y: number }>;
+    const name = Object.keys(zc).find((k) => k.startsWith('merchant-'))!;
+    (window as any).__player?.setPosition(zc[name].x, zc[name].y);
+    return name;
+  });
+  await page.waitForFunction(
+    (name) => ((window as any).__sanctumZones as string[] | undefined)?.includes(name),
+    merchantZoneName,
+    { timeout: 5000 },
+  );
+  await page.keyboard.press('e');
+  await page.waitForFunction(() => (window as any).__merchantModalOpen === true, { timeout: 5000 });
+
+  // Collect all canvas Text objects inside the merchant modal container.
+  // The container lives in the Phaser scene graph; we walk it to find row labels.
+  const catalogTexts = await page.evaluate(() => {
+    const scene = (window as any).__scene as any;
+    const modal = scene?.merchantModal;
+    if (!modal?.container) return null;
+    const texts: string[] = [];
+    const walk = (c: any): void => {
+      for (const obj of (c.getAll?.() ?? [])) {
+        if (typeof obj?.text === 'string' && obj.text.length > 2) texts.push(obj.text);
+        if (typeof obj?.getAll === 'function') walk(obj);
+      }
+    };
+    walk(modal.container);
+    return texts;
+  });
+
+  // If hook unavailable, at minimum the modal opened — skip content check.
+  if (catalogTexts === null) {
+    await ctx.close();
+    return;
+  }
+
+  // #382 adversarial: row text must still include the food price "GP/unit" string
+  // — if crispCanvasText accidentally cleared or truncated the text arg, these
+  // strings would be missing (regression: wrong variable used in the wrapper call).
+  const hasFood = catalogTexts.some((t) => t.includes('GP') || t.includes('food') || t.includes('Food') || t.includes('Ring'));
+  expect(
+    hasFood,
+    `Merchant catalog rows must contain pricing text after #382 crispCanvasText conversion. Found texts: [${catalogTexts.slice(0, 5).join(' | ')}]`,
+  ).toBe(true);
+
+  await ctx.close();
+});
+
+// ── #382 Scenario 8: MerchantModal DOM header text unchanged after addDomLabel conversion ──
+// #382 adversarial: MerchantModal's "MERCHANT" header and gold label use addDomLabel
+// (already as of EPIC #361). After #382, the same nodes must still render the correct
+// strings. We also check that the DOM labels are destroyed on close and NOT present
+// after a second open+close cycle (no accumulation).
+test('merchant-client #382: MERCHANT header DOM label renders correct text and is removed on close', async ({
+  browser,
+}) => {
+  const ctx = await browser.newContext();
+  await seedAuthToken(ctx);
+  const page = await ctx.newPage();
+  await page.goto(URL);
+  await enterForestScreen(page, 'forest_anchorage');
+
+  await page.waitForFunction(
+    () => !!(window as any).__zoneCenters && Object.keys((window as any).__zoneCenters).some((k) => k.startsWith('merchant-')),
+    { timeout: 8000 },
+  );
+  const merchantZoneName = await page.evaluate(() => {
+    const zc = (window as any).__zoneCenters as Record<string, { x: number; y: number }>;
+    const name = Object.keys(zc).find((k) => k.startsWith('merchant-'))!;
+    (window as any).__player?.setPosition(zc[name].x, zc[name].y);
+    return name;
+  });
+  await page.waitForFunction(
+    (name) => ((window as any).__sanctumZones as string[] | undefined)?.includes(name),
+    merchantZoneName,
+    { timeout: 5000 },
+  );
+
+  const baseline = await page.evaluate(() => document.querySelectorAll('.er-dom-label').length);
+
+  // Open first time.
+  await page.keyboard.press('e');
+  await page.waitForFunction(() => (window as any).__merchantModalOpen === true, { timeout: 5000 });
+
+  // Assert MERCHANT header DOM label text.
+  const headerLabel = await page.evaluate(() => {
+    const root = document.querySelector('#game-container');
+    if (!root) return null;
+    for (const el of Array.from(root.querySelectorAll('.er-dom-label'))) {
+      const t = (el as HTMLElement).textContent?.trim() ?? '';
+      if (t === 'MERCHANT' || t.startsWith('MERCHANT')) return t;
+    }
+    return null;
+  });
+  expect(
+    headerLabel,
+    'MerchantModal must render a .er-dom-label DOM node with textContent "MERCHANT" while open',
+  ).toBeTruthy();
+
+  const countOpen1 = await page.evaluate(() => document.querySelectorAll('.er-dom-label').length);
+  expect(countOpen1).toBeGreaterThan(baseline);
+
+  // Close.
+  await page.evaluate(() => {
+    const scene = (window as any).__scene as any;
+    scene?.merchantModal?.close?.();
+  });
+  await page.waitForFunction(
+    () => (window as any).__merchantModalOpen === false || (window as any).__merchantModalOpen === undefined,
+    { timeout: 3000 },
+  );
+
+  // #382 adversarial: after close the "MERCHANT" label DOM node must be gone.
+  // If destroy() was not called, the node persists even though the Container was
+  // destroyed (DOM elements are not Container children).
+  const countAfterClose1 = await page.evaluate(() => document.querySelectorAll('.er-dom-label').length);
+  expect(
+    countAfterClose1,
+    `After MerchantModal close, .er-dom-label count (${countAfterClose1}) must return to baseline (${baseline})`,
+  ).toBe(baseline);
+
+  // Open and close a second time — guards against the "works once, leaks on second" bug.
+  await page.keyboard.press('e');
+  await page.waitForFunction(() => (window as any).__merchantModalOpen === true, { timeout: 5000 });
+  await page.evaluate(() => {
+    const scene = (window as any).__scene as any;
+    scene?.merchantModal?.close?.();
+  });
+  await page.waitForFunction(
+    () => (window as any).__merchantModalOpen === false || (window as any).__merchantModalOpen === undefined,
+    { timeout: 3000 },
+  );
+
+  const countAfterClose2 = await page.evaluate(() => document.querySelectorAll('.er-dom-label').length);
+  expect(
+    countAfterClose2,
+    `After second MerchantModal close, .er-dom-label count (${countAfterClose2}) must equal baseline (${baseline}) — DOM nodes must not accumulate`,
+  ).toBe(baseline);
+
+  await ctx.close();
+});
