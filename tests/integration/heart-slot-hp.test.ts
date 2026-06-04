@@ -399,3 +399,134 @@ describe('carry-cap: spare→heart swap at full carry (#376)', () => {
     expect(repo.getCarry(playerId).length).toBe(repo.getCarryCap(playerId));
   });
 });
+
+// ---------------------------------------------------------------------------
+// EPIC #378 — setHeartRing spare-guard edge cases (P1-D review fix)
+// ---------------------------------------------------------------------------
+
+describe('setHeartRing — spare-guard edge cases (#378)', () => {
+  /**
+   * Insert a spare ring (in_carry=1, not in any loadout slot) directly for a player.
+   */
+  function insertSpareRing(playerId: string): string {
+    const id = `spare_${Math.random().toString(36).slice(2)}`;
+    db.prepare(
+      `INSERT INTO rings (id, owner_id, element, tier, max_uses, current_uses, xp, in_carry, escrowed, heart_slot)
+       VALUES (?, ?, 0, 0, 3, 3, 0, 1, 0, 0)`,
+    ).run(id, playerId);
+    return id;
+  }
+
+  /**
+   * Fill the player's spare grid to exactly spare_ring_max. The starter player has
+   * 5 battle-hand rings (all in loadout slots); we add non-slot carried rings to top up.
+   */
+  function fillSpareToCap(playerId: string): void {
+    const max = repo.getSpareRingMax(playerId);
+    const currentSpare = repo.getSpareIds(playerId).length;
+    const needed = max - currentSpare;
+    for (let i = 0; i < needed; i++) {
+      insertSpareRing(playerId);
+    }
+  }
+
+  test('battle-slot ring → heart at full spare grid throws spare grid full (P1-D fix)', () => {
+    // #378 adversarial (P1-D): before the review fix, incomingIsSpare was false for
+    // a battle-slot ring but the code still used the old in_carry===1 guard which
+    // allowed a net-+1 overflow. After the fix, setHeartRing must throw when the
+    // incoming ring is a battle-slot ring (not in spare) and spare is already full,
+    // because the old heart joins spare (+1) with no ring leaving spare.
+    const { playerId } = makePlayer();
+    fillSpareToCap(playerId);
+    expect(repo.getSpareIds(playerId).length).toBe(repo.getSpareRingMax(playerId));
+
+    // Pick a ring from the loadout (battle-slot ring, in_carry=1 but NOT in spare)
+    const loadout = repo.getLoadout(playerId)!;
+    expect(loadout.a1).not.toBeNull();
+    const battleSlotRing = loadout.a1!;
+    // Confirm it is NOT in the spare set
+    expect(repo.getSpareIds(playerId)).not.toContain(battleSlotRing);
+
+    // Attempt: battle-slot ring → heart, with releaseTo='spare' (old heart would join spare)
+    // Old heart joins spare (+1), battle-slot ring does not leave spare → net +1 → must throw
+    expect(() => repo.setHeartRing(playerId, battleSlotRing, 'spare')).toThrow(
+      /spare grid full/,
+    );
+  });
+
+  test('spare ring → heart at full spare grid does NOT throw (net-zero: spare leaves, old heart joins)', () => {
+    // #378 spec: the heart←→spare swap is the canonical net-zero case. At full spare,
+    // a genuine spare ring becoming the new heart must always succeed because the old
+    // heart joining spare is offset by the incoming spare leaving spare.
+    const { playerId } = makePlayer();
+    fillSpareToCap(playerId);
+    const spares = repo.getSpareIds(playerId);
+    expect(spares.length).toBeGreaterThan(0);
+    const incomingSpare = spares[0]!;
+
+    // spare → heart: incomingSpare leaves spare (−1), old heart joins spare (+1) → net zero
+    expect(() => repo.setHeartRing(playerId, incomingSpare, 'spare')).not.toThrow();
+
+    // Post-condition: incoming spare is now the heart ring
+    const newHeart = repo.getHeartRing(playerId);
+    expect(newHeart?.id).toBe(incomingSpare);
+  });
+
+  test('null incoming ring with spare releaseTo at full spare throws spare grid full', () => {
+    // #378 adversarial: ringId=null means clear the heart slot while sending the old
+    // heart to spare. With no incoming ring, nothing leaves spare → net +1 → must throw.
+    const { playerId } = makePlayer();
+    fillSpareToCap(playerId);
+    expect(repo.getSpareIds(playerId).length).toBe(repo.getSpareRingMax(playerId));
+
+    // No incoming ring: old heart would join spare with nothing leaving → overflow
+    expect(() => repo.setHeartRing(playerId, null, 'spare')).toThrow(/spare grid full/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// EPIC #378 — setHeartRing clears pending flag (#380)
+// ---------------------------------------------------------------------------
+
+describe('setHeartRing — pending lifecycle (#380)', () => {
+  test('equipping the pending WON ring to the heart slot clears pending=0', () => {
+    // #380 spec: when the WON ring is assigned to the heart slot, clearPendingFlag
+    // must be called. getPendingRingId must return null after the swap.
+    const { playerId } = makePlayer();
+    // Grant a WON ring (in_carry=1, pending=1)
+    const wonRingId = repo.grantRing(playerId, 0 /* FIRE */);
+    expect(repo.getPendingRingId(playerId)).toBe(wonRingId);
+
+    // Equip to heart with releaseTo='reliquary' (old heart goes to reliquary, not spare)
+    expect(() => repo.setHeartRing(playerId, wonRingId, 'reliquary')).not.toThrow();
+
+    // Pending flag must be cleared
+    expect(repo.getPendingRingId(playerId)).toBeNull();
+    const row = db.prepare('SELECT pending FROM rings WHERE id = ?').get(wonRingId) as
+      | { pending: number }
+      | undefined;
+    expect(row?.pending).toBe(0);
+  });
+
+  test('equipping a normal (non-pending) ring to the heart slot does not clear any pending ring', () => {
+    // #380 adversarial: clearPendingFlag must only fire on the INCOMING ring when it
+    // carries pending=1. A normal ring going to heart must not clear an unrelated
+    // pending ring that belongs to the same player.
+    const { playerId } = makePlayer();
+    // Grant a WON ring first (pending=1)
+    const wonRingId = repo.grantRing(playerId, 0 /* FIRE */);
+    expect(repo.getPendingRingId(playerId)).toBe(wonRingId);
+
+    // Now equip a DIFFERENT spare ring to the heart (not the WON ring)
+    const normalSpare = db.prepare(
+      `INSERT INTO rings (id, owner_id, element, tier, max_uses, current_uses, xp, in_carry, escrowed, heart_slot)
+       VALUES (?, ?, 0, 0, 3, 3, 0, 1, 0, 0)`,
+    );
+    const normalId = `normal_${Math.random().toString(36).slice(2)}`;
+    normalSpare.run(normalId, playerId);
+
+    expect(() => repo.setHeartRing(playerId, normalId, 'reliquary')).not.toThrow();
+    // The WON ring (wonRingId) was NOT assigned to heart, so its pending flag must remain
+    expect(repo.getPendingRingId(playerId)).toBe(wonRingId);
+  });
+});
