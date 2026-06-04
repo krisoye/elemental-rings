@@ -52,6 +52,8 @@ elemental-rings/
 
 **The Colyseus server is the only source of truth.** Never put game logic (timing classification, element relationships, block resolution, rally state) in the Phaser client. Clients call `room.send('selectAttack', {slot})` and `room.send('submitDefense', {slot, pressTime})` — the server resolves and broadcasts `BattleState` diffs.
 
+**Text rendering:** screen-fixed UI text uses `addDomLabel`; DOM-ineligible (Container/world/animated) text uses `crispCanvasText`. See `docs/architecture-overview.md` §7 before adding any UI text.
+
 ---
 
 ## GDD Reference
@@ -122,7 +124,7 @@ cat .claude/skills/phaser/game-setup-and-config/SKILL.md         # Game config, 
 
 Also available: animations, audio-and-sound, cameras, particles, physics-arcade, tilemaps, v3-to-v4-migration.
 
-**Phaser version is 4.1.0** — do not use 3.x APIs. Source is at `~/refs/phaser/src/` if you need to verify an API.
+**Phaser version is 4.1.0** — do not use 3.x APIs. Source is at `client/node_modules/phaser/src/` if you need to verify an API.
 
 ---
 

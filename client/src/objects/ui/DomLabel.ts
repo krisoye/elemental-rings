@@ -151,6 +151,15 @@ export function setDomLabelText(
  * setResolution call site post-revert, and it is ALWAYS paired with the LINEAR
  * filter — never scatter raw setResolution calls elsewhere.
  *
+ * Re-render safety: Phaser's `Text.updateText` re-rasterizes the canvas and
+ * re-uploads it to the GPU (`canvasToTexture(..., true)` replaces the
+ * glTexture), which silently discards any previously-set filter. Every
+ * `setText`/`setStyle`/`setColor` funnels through `updateText`, so a one-time
+ * filter set at creation is lost on the first mutation, reverting the label to
+ * soft/blocky rendering. To stay crisp across re-renders we override the
+ * **instance's** `updateText` (NOT the prototype) to re-assert LINEAR after the
+ * super-call. See `docs/architecture-overview.md` §7.
+ *
  * @returns the same text object, for chaining.
  */
 export function crispCanvasText(
@@ -158,5 +167,13 @@ export function crispCanvasText(
 ): Phaser.GameObjects.Text {
   text.setResolution(Math.ceil(window.devicePixelRatio));
   text.texture.setFilter(Phaser.Textures.FilterMode.LINEAR);
+  // Re-apply the LINEAR filter after every re-rasterization. updateText replaces
+  // the glTexture, so the filter set above is otherwise discarded on the first
+  // setText/setColor. Instance-level override only — never patch the prototype.
+  text.updateText = function () {
+    Phaser.GameObjects.Text.prototype.updateText.call(this);
+    this.texture.setFilter(Phaser.Textures.FilterMode.LINEAR);
+    return this;
+  };
   return text;
 }
