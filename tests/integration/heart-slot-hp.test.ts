@@ -326,17 +326,17 @@ describe('carry-cap: spare→heart swap at full carry (#376)', () => {
     expect(newCarry.length).toBe(repo.getCarryCap(playerId));
   });
 
-  test('heart release to spare when carry is full and no incoming ring throws carry cap exceeded', () => {
-    // #376 adversarial: releasing the heart ring to spare WITHOUT providing a new ring to
-    // take the heart slot is a net +1 to carry — must be blocked at full carry.
-    // ringId=null means clear heart slot; releaseTo='spare' means old heart goes to carry
+  test('heart release to spare when spare grid is full and no incoming ring throws spare grid full', () => {
+    // EPIC #378: releasing the heart ring to spare WITHOUT providing a new ring to
+    // take the heart slot is a net +1 to the spare grid — must be blocked when spare is full.
+    // ringId=null means clear heart slot; releaseTo='spare' means old heart goes to spare.
     const { playerId } = makePlayer();
     fillCarryToCap(playerId);
     const oldHeart = repo.getHeartRing(playerId)!;
     expect(oldHeart).not.toBeNull();
 
-    // carry is full and old heart would join it → must throw
-    expect(() => repo.setHeartRing(playerId, null, 'spare')).toThrow(/carry cap exceeded/);
+    // spare grid is full and old heart would join it → must throw
+    expect(() => repo.setHeartRing(playerId, null, 'spare')).toThrow(/spare grid full/);
   });
 
   test('heart→spare when carry has one free slot succeeds (+1 within cap)', () => {

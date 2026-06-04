@@ -5,10 +5,12 @@ import { describe, test, expect, beforeAll } from 'vitest';
 import { ElementEnum } from '../../shared/types';
 
 // ---------------------------------------------------------------------------
-// #376 — carriedCountAfter / assertCarryWithinCap unit coverage.
+// EPIC #378 — spareCountAfter / assertSpareWithinMax unit coverage.
 //
 // Uses a throwaway SQLite DB seeded with minimal player + ring rows. Heart-slot
-// rings (in_carry=0, heart_slot=1) must never count toward the carry cap.
+// rings (in_carry=0, heart_slot=1) must never count toward the spare cap.
+// Clearing a battle slot must NOT free spare capacity — spare and battle-hand
+// are independently bounded pools.
 // DB_PATH must be set before the first import of db.ts.
 // ---------------------------------------------------------------------------
 
@@ -51,6 +53,16 @@ function makePlayer(db: import('better-sqlite3').Database): string {
   return id;
 }
 
+/** Assign a ring to a loadout slot directly in the DB. */
+function assignSlot(
+  db: import('better-sqlite3').Database,
+  playerId: string,
+  slot: 'thumb' | 'a1' | 'a2' | 'd1' | 'd2',
+  ringId: string,
+): void {
+  db.prepare(`UPDATE loadout SET ${slot} = ? WHERE player_id = ?`).run(ringId, playerId);
+}
+
 // ---------------------------------------------------------------------------
 // Setup
 // ---------------------------------------------------------------------------
@@ -69,16 +81,17 @@ beforeAll(async () => {
 });
 
 // ---------------------------------------------------------------------------
-// carriedCountAfter
+// spareCountAfter
 // ---------------------------------------------------------------------------
 
-describe('carriedCountAfter', () => {
-  test('returns current carry count when no delta', () => {
+describe('spareCountAfter', () => {
+  test('returns current spare count when no delta', () => {
     const p = makePlayer(dbInstance);
     makeRing(dbInstance, p, { inCarry: 1 });
     makeRing(dbInstance, p, { inCarry: 1 });
     makeRing(dbInstance, p, { inCarry: 1 });
-    expect(repo.carriedCountAfter(p)).toBe(3);
+    // All 3 are in carry and not in any loadout slot → all are spare
+    expect(repo.spareCountAfter(p)).toBe(3);
   });
 
   test('add-only: appends new ids', () => {
@@ -86,7 +99,7 @@ describe('carriedCountAfter', () => {
     makeRing(dbInstance, p, { inCarry: 1 });
     makeRing(dbInstance, p, { inCarry: 1 });
     const newId = `phantom_${Math.random().toString(36).slice(2)}`;
-    expect(repo.carriedCountAfter(p, { adding: [newId] })).toBe(3);
+    expect(repo.spareCountAfter(p, { addingToSpare: [newId] })).toBe(3);
   });
 
   test('remove-only: subtracts existing ids', () => {
@@ -94,232 +107,269 @@ describe('carriedCountAfter', () => {
     const r1 = makeRing(dbInstance, p, { inCarry: 1 });
     makeRing(dbInstance, p, { inCarry: 1 });
     makeRing(dbInstance, p, { inCarry: 1 });
-    expect(repo.carriedCountAfter(p, { removing: [r1] })).toBe(2);
+    expect(repo.spareCountAfter(p, { removingFromSpare: [r1] })).toBe(2);
   });
 
   test('net-zero swap: adding and removing the same ring leaves count unchanged', () => {
     const p = makePlayer(dbInstance);
     const r1 = makeRing(dbInstance, p, { inCarry: 1 });
     makeRing(dbInstance, p, { inCarry: 1 });
-    // r1 leaves (becomes heart), phantom joins (becomes carried)
+    // r1 leaves spare (becomes heart); phantom joins (incoming old heart)
     const phantom = `phantom_${Math.random().toString(36).slice(2)}`;
-    expect(repo.carriedCountAfter(p, { adding: [phantom], removing: [r1] })).toBe(2);
+    expect(repo.spareCountAfter(p, { addingToSpare: [phantom], removingFromSpare: [r1] })).toBe(2);
   });
 
   test('heart-slot ring (in_carry=0, heart_slot=1) is never counted', () => {
     const p = makePlayer(dbInstance);
-    // Heart ring: in_carry=0, heart_slot=1 — must not appear in getCarry()
+    // Heart ring: in_carry=0, heart_slot=1 — must not appear in getSpareIds()
     makeRing(dbInstance, p, { inCarry: 0, heartSlot: 1 });
     makeRing(dbInstance, p, { inCarry: 1 });
-    expect(repo.carriedCountAfter(p)).toBe(1);
+    expect(repo.spareCountAfter(p)).toBe(1);
   });
 
-  test('dedupe: a repeated id in adding does not inflate count', () => {
+  test('dedupe: a repeated id in addingToSpare does not inflate count', () => {
     const p = makePlayer(dbInstance);
     makeRing(dbInstance, p, { inCarry: 1 });
     const dupId = `dup_${Math.random().toString(36).slice(2)}`;
     // Adding the same id twice should add it only once
-    expect(repo.carriedCountAfter(p, { adding: [dupId, dupId] })).toBe(2);
+    expect(repo.spareCountAfter(p, { addingToSpare: [dupId, dupId] })).toBe(2);
+  });
+
+  test('a ring in a loadout slot is NOT counted as spare', () => {
+    // EPIC #378 — the key invariant: battle-slot rings are NOT spare.
+    const p = makePlayer(dbInstance);
+    const r = makeRing(dbInstance, p, { inCarry: 1 });
+    assignSlot(dbInstance, p, 'thumb', r);
+    // r is in carry but in the loadout → not spare
+    expect(repo.spareCountAfter(p)).toBe(0);
+  });
+
+  test('clearing a battle slot does NOT free spare capacity', () => {
+    // EPIC #378 core invariant: spare is independent of battle-slot occupancy.
+    // A player with the spare grid full should stay full even if they clear a battle slot.
+    const p = makePlayer(dbInstance);
+    const max = repo.getSpareRingMax(p);
+    // Fill spare grid to max
+    const spareIds: string[] = [];
+    for (let i = 0; i < max; i++) {
+      spareIds.push(makeRing(dbInstance, p, { inCarry: 1 }));
+    }
+    // Also add a ring in a loadout slot (not spare)
+    const battleRing = makeRing(dbInstance, p, { inCarry: 1 });
+    assignSlot(dbInstance, p, 'thumb', battleRing);
+    // Spare count is exactly max (battle ring not counted)
+    expect(repo.spareCountAfter(p)).toBe(max);
+    // "Clear" the battle slot by adding the battle ring's old slot ring to spare —
+    // that is what saveLoadout does when slot→null. This simulates clearing thumb.
+    // The new spare count would be max + 1 (over cap).
+    expect(repo.spareCountAfter(p, { addingToSpare: [battleRing] })).toBe(max + 1);
+    // And assertSpareWithinMax must throw
+    expect(() => repo.assertSpareWithinMax(p, { addingToSpare: [battleRing] })).toThrow(
+      /spare grid full/,
+    );
   });
 });
 
 // ---------------------------------------------------------------------------
-// assertCarryWithinCap
+// assertSpareWithinMax
 // ---------------------------------------------------------------------------
 
-describe('assertCarryWithinCap', () => {
-  test('does not throw when carry is below cap', () => {
+describe('assertSpareWithinMax', () => {
+  test('does not throw when spare is below max', () => {
     const p = makePlayer(dbInstance);
     makeRing(dbInstance, p, { inCarry: 1 });
     makeRing(dbInstance, p, { inCarry: 1 });
-    expect(() => repo.assertCarryWithinCap(p)).not.toThrow();
+    expect(() => repo.assertSpareWithinMax(p)).not.toThrow();
   });
 
-  test('does not throw when carry equals cap exactly', () => {
+  test('does not throw when spare equals max exactly', () => {
     const p = makePlayer(dbInstance);
-    const cap = repo.getCarryCap(p);
-    for (let i = 0; i < cap; i++) {
+    const max = repo.getSpareRingMax(p);
+    for (let i = 0; i < max; i++) {
       makeRing(dbInstance, p, { inCarry: 1 });
     }
-    expect(() => repo.assertCarryWithinCap(p)).not.toThrow();
+    expect(() => repo.assertSpareWithinMax(p)).not.toThrow();
   });
 
-  test('throws carry cap exceeded when count exceeds cap', () => {
+  test('throws spare grid full when count exceeds max', () => {
     const p = makePlayer(dbInstance);
-    const cap = repo.getCarryCap(p);
-    for (let i = 0; i < cap; i++) {
+    const max = repo.getSpareRingMax(p);
+    for (let i = 0; i < max; i++) {
       makeRing(dbInstance, p, { inCarry: 1 });
     }
-    // Adding one more phantom pushes over cap
+    // Adding one more phantom pushes over max
     const phantom = `ovr_${Math.random().toString(36).slice(2)}`;
-    expect(() => repo.assertCarryWithinCap(p, { adding: [phantom] })).toThrow(
-      /carry cap exceeded/,
+    expect(() => repo.assertSpareWithinMax(p, { addingToSpare: [phantom] })).toThrow(
+      /spare grid full/,
     );
   });
 
-  test('net-zero spare→heart swap at cap does not throw', () => {
+  test('net-zero spare→heart swap at max does not throw', () => {
     const p = makePlayer(dbInstance);
-    const cap = repo.getCarryCap(p);
-    // Fill carry to cap
-    for (let i = 0; i < cap; i++) {
+    const max = repo.getSpareRingMax(p);
+    // Fill spare to max
+    for (let i = 0; i < max; i++) {
       makeRing(dbInstance, p, { inCarry: 1 });
     }
-    const carried = repo.getCarry(p);
-    const incomingSpare = carried[0].id; // spare about to become heart (leaves carry)
-    const oldHeartPhantom = `oldheart_${Math.random().toString(36).slice(2)}`; // old heart joins carry
+    const spares = repo.getSpareIds(p);
+    const incomingSpare = spares[0]; // spare about to become heart (leaves spare)
+    const oldHeartPhantom = `oldheart_${Math.random().toString(36).slice(2)}`; // old heart joins spare
     // Net-zero: adding old-heart, removing incoming-spare
     expect(() =>
-      repo.assertCarryWithinCap(p, { adding: [oldHeartPhantom], removing: [incomingSpare] }),
+      repo.assertSpareWithinMax(p, {
+        addingToSpare: [oldHeartPhantom],
+        removingFromSpare: [incomingSpare],
+      }),
     ).not.toThrow();
   });
 
-  test('releasing heart to empty spare at cap throws (net-grow)', () => {
+  test('releasing heart to empty spare at max throws (net-grow)', () => {
     const p = makePlayer(dbInstance);
-    const cap = repo.getCarryCap(p);
-    for (let i = 0; i < cap; i++) {
+    const max = repo.getSpareRingMax(p);
+    for (let i = 0; i < max; i++) {
       makeRing(dbInstance, p, { inCarry: 1 });
     }
     const oldHeartPhantom = `oldheart2_${Math.random().toString(36).slice(2)}`;
-    // No incoming ring → removing=[]; adding=[oldHeart] → count = cap + 1 → throws
+    // No incoming ring → removingFromSpare=[]; addingToSpare=[oldHeart] → count = max + 1 → throws
     expect(() =>
-      repo.assertCarryWithinCap(p, { adding: [oldHeartPhantom], removing: [] }),
-    ).toThrow(/carry cap exceeded/);
+      repo.assertSpareWithinMax(p, { addingToSpare: [oldHeartPhantom], removingFromSpare: [] }),
+    ).toThrow(/spare grid full/);
   });
 
-  test('pending won ring (in_carry=0) not in carry set → delete is no-op → net +1 → correctly blocked at cap', () => {
+  test('pending won ring (in_carry=1, not in loadout) is in spare → net +1 → correctly blocked at max', () => {
     const p = makePlayer(dbInstance);
-    const cap = repo.getCarryCap(p);
-    // Fill carry to exactly the cap.
-    for (let i = 0; i < cap; i++) {
+    const max = repo.getSpareRingMax(p);
+    // Fill spare to exactly max.
+    for (let i = 0; i < max; i++) {
       makeRing(dbInstance, p, { inCarry: 1 });
     }
-    // phantomOldHeart simulates the old heart ring that would join the carry.
+    // phantomOldHeart simulates the old heart ring that would join the spare.
     const phantomOldHeart = `oldheart_pending_${Math.random().toString(36).slice(2)}`;
-    // notInCarry simulates a pending won ring (in_carry=0): it is NOT in the carry
-    // set, so Set.delete is a no-op and the guard sees count = cap + 1.
-    const notInCarry = `pending_won_${Math.random().toString(36).slice(2)}`;
+    // notInSpare simulates a pending won ring that is already in_carry=1 but we
+    // are adding as if it isn't tracked yet (phantom not in DB).
+    const notInSpare = `pending_won_${Math.random().toString(36).slice(2)}`;
     expect(() =>
-      repo.assertCarryWithinCap(p, { adding: [phantomOldHeart], removing: [notInCarry] }),
-    ).toThrow(/carry cap exceeded/);
+      repo.assertSpareWithinMax(p, {
+        addingToSpare: [phantomOldHeart],
+        removingFromSpare: [notInSpare],
+      }),
+    ).toThrow(/spare grid full/);
   });
 });
 
 // ---------------------------------------------------------------------------
-// Phase 1 adversarial edge cases (#376)
+// Adversarial edge cases (EPIC #378)
 // ---------------------------------------------------------------------------
 
-describe('carriedCountAfter — adversarial edge cases (#376)', () => {
-  test('adding an id already in the carried set does not inflate count above actual carry', () => {
-    // #376 adversarial: Set.add on an existing id must be idempotent — a caller cannot
-    // smuggle an extra ring past the cap guard by repeating a carried id in the adding array
+describe('spareCountAfter — adversarial edge cases (#378)', () => {
+  test('adding an id already in the spare set does not inflate count', () => {
+    // Set.add on an existing id must be idempotent
     const p = makePlayer(dbInstance);
     const r1 = makeRing(dbInstance, p, { inCarry: 1 });
     makeRing(dbInstance, p, { inCarry: 1 });
-    // r1 is already in carry; adding it again must keep count at 2, not inflate to 3
-    expect(repo.carriedCountAfter(p, { adding: [r1] })).toBe(2);
+    // r1 is already spare; adding it again must keep count at 2, not inflate to 3
+    expect(repo.spareCountAfter(p, { addingToSpare: [r1] })).toBe(2);
   });
 
-  test('removing more ids than are in carry does not produce a negative count', () => {
-    // #376 adversarial: Set.delete is a no-op for missing ids, so over-removing can never
-    // drive count negative — a crafted removing list should not trick the guard into thinking
-    // there is phantom free capacity
+  test('removing more ids than are in spare does not produce a negative count', () => {
+    // Set.delete is a no-op for missing ids
     const p = makePlayer(dbInstance);
     const r1 = makeRing(dbInstance, p, { inCarry: 1 });
     const phantom1 = `phantom_rm1_${Math.random().toString(36).slice(2)}`;
     const phantom2 = `phantom_rm2_${Math.random().toString(36).slice(2)}`;
-    // 1 ring in carry, removing 3 ids (1 real + 2 phantoms) — result must be 0, never negative
-    const count = repo.carriedCountAfter(p, { removing: [r1, phantom1, phantom2] });
+    // 1 spare, removing 3 ids (1 real + 2 phantoms) — result must be 0, never negative
+    const count = repo.spareCountAfter(p, { removingFromSpare: [r1, phantom1, phantom2] });
     expect(count).toBe(0);
   });
 
-  test('empty adding + empty removing at exactly cap returns cap without throwing', () => {
-    // #376 adversarial: no-op delta at the cap boundary — carriedCountAfter(p, {}) must
-    // equal cap and assertCarryWithinCap(p, {}) must NOT throw (the contract is n > cap, not >=)
+  test('empty addingToSpare + empty removingFromSpare at exactly max does not throw', () => {
     const p = makePlayer(dbInstance);
-    const cap = repo.getCarryCap(p);
-    for (let i = 0; i < cap; i++) makeRing(dbInstance, p, { inCarry: 1 });
-    expect(repo.carriedCountAfter(p, { adding: [], removing: [] })).toBe(cap);
-    expect(() => repo.assertCarryWithinCap(p, { adding: [], removing: [] })).not.toThrow();
+    const max = repo.getSpareRingMax(p);
+    for (let i = 0; i < max; i++) makeRing(dbInstance, p, { inCarry: 1 });
+    expect(repo.spareCountAfter(p, { addingToSpare: [], removingFromSpare: [] })).toBe(max);
+    expect(() => repo.assertSpareWithinMax(p, { addingToSpare: [], removingFromSpare: [] })).not.toThrow();
   });
 
-  test('assertCarryWithinCap at post-delta count exactly equal to cap does not throw', () => {
-    // #376 adversarial: boundary n === cap must NOT throw — the off-by-one between > and >=
-    // would silently block valid swaps that land precisely at the cap
+  test('assertSpareWithinMax at post-delta count exactly equal to max does not throw', () => {
     const p = makePlayer(dbInstance);
-    const cap = repo.getCarryCap(p);
-    // Seed cap-1 rings in carry, then add one phantom → post-delta count = cap exactly
-    for (let i = 0; i < cap - 1; i++) makeRing(dbInstance, p, { inCarry: 1 });
-    const newId = `exact_cap_${Math.random().toString(36).slice(2)}`;
-    expect(() => repo.assertCarryWithinCap(p, { adding: [newId] })).not.toThrow();
+    const max = repo.getSpareRingMax(p);
+    // Seed max-1 rings in spare, then add one phantom → post-delta count = max exactly
+    for (let i = 0; i < max - 1; i++) makeRing(dbInstance, p, { inCarry: 1 });
+    const newId = `exact_max_${Math.random().toString(36).slice(2)}`;
+    expect(() => repo.assertSpareWithinMax(p, { addingToSpare: [newId] })).not.toThrow();
   });
 
-  test('assertCarryWithinCap with post-delta count one above cap throws carry cap exceeded', () => {
-    // #376 adversarial: count = cap + 1 must throw — confirms the guard fires precisely at
-    // cap+1 and no sooner; this is the companion test to the cap-exactly-does-not-throw case
+  test('assertSpareWithinMax with post-delta count one above max throws spare grid full', () => {
     const p = makePlayer(dbInstance);
-    const cap = repo.getCarryCap(p);
-    // Seed exactly cap rings, then try adding one more phantom → count = cap + 1
-    for (let i = 0; i < cap; i++) makeRing(dbInstance, p, { inCarry: 1 });
+    const max = repo.getSpareRingMax(p);
+    // Seed exactly max rings, then try adding one more phantom → count = max + 1
+    for (let i = 0; i < max; i++) makeRing(dbInstance, p, { inCarry: 1 });
     const overflow = `overflow_${Math.random().toString(36).slice(2)}`;
-    expect(() => repo.assertCarryWithinCap(p, { adding: [overflow] })).toThrow(
-      /carry cap exceeded/,
+    expect(() => repo.assertSpareWithinMax(p, { addingToSpare: [overflow] })).toThrow(
+      /spare grid full/,
     );
   });
 
-  test('three repetitions of the same id in adding are deduplicated to a single slot', () => {
-    // #376 adversarial: must handle >2 repetitions; a naive loop-push would inflate count
-    // by N-1 extra phantom insertions, bypassing the cap guard for any N≥2
+  test('three repetitions of the same id in addingToSpare are deduplicated', () => {
     const p = makePlayer(dbInstance);
-    makeRing(dbInstance, p, { inCarry: 1 }); // 1 in carry
+    makeRing(dbInstance, p, { inCarry: 1 }); // 1 in spare
     const dupId = `tripleDup_${Math.random().toString(36).slice(2)}`;
     // Adding the same phantom id three times must add it only once → count stays at 2
-    expect(repo.carriedCountAfter(p, { adding: [dupId, dupId, dupId] })).toBe(2);
+    expect(repo.spareCountAfter(p, { addingToSpare: [dupId, dupId, dupId] })).toBe(2);
+  });
+
+  test('a ring in a loadout slot that is cleared does NOT reduce spare capacity', () => {
+    // EPIC #378: battle-slot occupancy is independent of spare count.
+    // A ring in a loadout slot is NOT spare; clearing that slot would ADD it to spare,
+    // not reduce spare count. This is the core invariant of the new model.
+    const p = makePlayer(dbInstance);
+    const max = repo.getSpareRingMax(p);
+    // Fill spare to max (all non-slot rings in carry)
+    for (let i = 0; i < max; i++) makeRing(dbInstance, p, { inCarry: 1 });
+    // Put one more ring in a battle slot — NOT spare
+    const slotRing = makeRing(dbInstance, p, { inCarry: 1 });
+    assignSlot(dbInstance, p, 'a1', slotRing);
+    // Spare count is still max (slot ring excluded)
+    expect(repo.getSpareIds(p).length).toBe(max);
+    // "Clearing" the slot by adding slotRing to spare would overflow
+    expect(() =>
+      repo.assertSpareWithinMax(p, { addingToSpare: [slotRing] }),
+    ).toThrow(/spare grid full/);
   });
 });
 
 // ---------------------------------------------------------------------------
-// Phase 2 implementation-aware tests (#376)
+// packLoadout — spare cap migration (EPIC #378)
 // ---------------------------------------------------------------------------
 
-describe('packLoadout — carry cap migration (#376)', () => {
-  test('packLoadout with exactly cap rings succeeds without throwing', () => {
-    // #376 adversarial: packLoadout uses assertCarryWithinCap(playerId, { adding: unique, removing: getCarry(...) })
-    // — a net-zero swap should never throw at cap; previously the inline unique.length > cap
-    // used the new count directly and could off-by-one on the swap delta
+describe('packLoadout — spare cap migration (#378)', () => {
+  test('packLoadout with exactly max spare rings succeeds without throwing', () => {
     const p = makePlayer(dbInstance);
-    const cap = repo.getCarryCap(p);
-    // Build a set of exactly cap ring ids, all owned by the player (in_carry starts 0)
+    const max = repo.getSpareRingMax(p);
+    // Build a set of exactly max ring ids (no loadout slots assigned)
     const ringIds: string[] = [];
-    for (let i = 0; i < cap; i++) {
+    for (let i = 0; i < max; i++) {
       ringIds.push(makeRing(dbInstance, p, { inCarry: 0 }));
     }
-    // The heart ring from createPlayer is counted separately — but this bare test uses makePlayer
-    // from the unit helper which does NOT call createPlayer, so there is no heart ring here.
-    // packLoadout should succeed: the player owns exactly cap rings, none currently in carry.
+    // packLoadout with max rings, none in loadout slots → all become spare → should succeed
     expect(() => repo.packLoadout(p, ringIds)).not.toThrow();
-    // All cap rings are now carried
-    expect(repo.getCarry(p).length).toBe(cap);
+    expect(repo.getSpareIds(p).length).toBe(max);
   });
 
-  test('packLoadout with one ring above cap throws carry cap exceeded', () => {
-    // #376 adversarial: packLoadout with cap+1 rings must throw; this was already guarded
-    // by the inline check before the migration — confirms the primitive replacement is equivalent
+  test('packLoadout with one ring above spare max throws spare grid full', () => {
     const p = makePlayer(dbInstance);
-    const cap = repo.getCarryCap(p);
+    const max = repo.getSpareRingMax(p);
     const ringIds: string[] = [];
-    for (let i = 0; i < cap + 1; i++) {
+    for (let i = 0; i < max + 1; i++) {
       ringIds.push(makeRing(dbInstance, p, { inCarry: 0 }));
     }
-    expect(() => repo.packLoadout(p, ringIds)).toThrow(/carry cap exceeded/);
+    expect(() => repo.packLoadout(p, ringIds)).toThrow(/spare grid full/);
   });
 
-  test('packLoadout still enforces the reliquary cap guard independently of carry cap', () => {
-    // #376 adversarial: carrying fewer rings than cap but owning more rings than reliquary_cap
-    // must throw Reliquary full — the #182 guard must not be silently removed by the carry-cap
-    // primitive migration
+  test('packLoadout still enforces the reliquary cap guard independently of spare cap', () => {
     const p = makePlayer(dbInstance);
     const reliquaryCap = repo.getReliquaryCap(p); // default RELIQUARY_BASE_CAP = 9
-    const carryCount = 2; // well within carry cap
+    const carryCount = 2; // well within spare cap
     const carryIds: string[] = [];
     for (let i = 0; i < carryCount; i++) {
       carryIds.push(makeRing(dbInstance, p, { inCarry: 0 }));
@@ -328,42 +378,59 @@ describe('packLoadout — carry cap migration (#376)', () => {
     for (let i = 0; i < reliquaryCap + 1; i++) {
       makeRing(dbInstance, p, { inCarry: 0 });
     }
-    // packLoadout with just carryIds — total non-escrow rings = carryCount + reliquaryCap + 1
-    // resulting reliquary = (carryCount + reliquaryCap + 1) - carryCount = reliquaryCap + 1 > reliquaryCap
+    // packLoadout with just carryIds — resulting reliquary = reliquaryCap + 1 > reliquaryCap
     expect(() => repo.packLoadout(p, carryIds)).toThrow(/Reliquary full/);
   });
 });
 
-describe('saveLoadout — carry cap migration (#376)', () => {
-  test('saveLoadout at carry cap succeeds (pointer swap, not a carry count change)', () => {
-    // #376 adversarial: saveLoadout calls assertCarryWithinCap(playerId) with no delta,
-    // which checks current carry count ≤ cap — a player at cap who is merely swapping
-    // loadout slot assignments (no carry count change) must not be blocked
+// ---------------------------------------------------------------------------
+// saveLoadout — spare cap migration (EPIC #378)
+// ---------------------------------------------------------------------------
+
+describe('saveLoadout — spare cap migration (#378)', () => {
+  test('saveLoadout at spare max succeeds (pointer swap, no spare count change)', () => {
+    // A player at spare max who is merely reassigning existing carried rings to
+    // different loadout slots must not be blocked.
     const p = makePlayer(dbInstance);
-    const cap = repo.getCarryCap(p);
-    // Seed cap rings all in carry
+    const max = repo.getSpareRingMax(p);
+    // Seed max rings all in carry (not in any slot yet)
     const ringIds: string[] = [];
-    for (let i = 0; i < cap; i++) {
+    for (let i = 0; i < max; i++) {
       ringIds.push(makeRing(dbInstance, p, { inCarry: 1 }));
     }
-    // Save a loadout reassigning existing carried rings — carry count stays at cap
-    // (saveLoadout only changes which carried ring maps to which slot, not carry count)
-    const partial = { thumb: ringIds[0], a1: ringIds[1], a2: ringIds[2], d1: ringIds[3], d2: ringIds[4] };
+    // Assign first 5 to slots — they leave spare (spare goes from max to max-5)
+    for (let i = 0; i < 5 && i < ringIds.length; i++) {
+      const slot = (['thumb', 'a1', 'a2', 'd1', 'd2'] as const)[i];
+      assignSlot(dbInstance, p, slot, ringIds[i]);
+    }
+    // Now spare is max-5 (well within max). Re-assigning slot rings to different
+    // slots is a no-op on spare count.
+    const partial = {
+      thumb: ringIds[0],
+      a1: ringIds[1],
+      a2: ringIds[2],
+      d1: ringIds[3],
+      d2: ringIds[4],
+    };
     expect(() => repo.saveLoadout(p, partial)).not.toThrow();
   });
 });
 
-describe('setHeartRing removing — non-carry ids do not create negative phantom capacity (#376)', () => {
-  test('assertCarryWithinCap removing list with a mix of carried and non-carried ids floors at 0', () => {
-    // #376 adversarial: the removing array in assertCarryWithinCap may include ids that are NOT
-    // in the current carry set (e.g. a pending won ring with in_carry=0); Set.delete must be
-    // a no-op for those ids so the resulting count is never lower than 0 — no phantom capacity
+// ---------------------------------------------------------------------------
+// setHeartRing removing — non-spare ids do not create negative phantom capacity (#378)
+// ---------------------------------------------------------------------------
+
+describe('setHeartRing removing — non-spare ids floors at 0 (#378)', () => {
+  test('assertSpareWithinMax removingFromSpare with a mix of spare and non-spare ids', () => {
+    // The removingFromSpare array may include ids that are not in the spare set
+    // (e.g. a pending won ring not yet in spare); Set.delete must be a no-op for
+    // those ids so the resulting count is never lower than actual
     const p = makePlayer(dbInstance);
     const r1 = makeRing(dbInstance, p, { inCarry: 1 });
     const r2 = makeRing(dbInstance, p, { inCarry: 1 });
-    const notCarried = makeRing(dbInstance, p, { inCarry: 0 }); // in reliquary
-    // Removing 2 carried + 1 non-carried; the non-carried delete is a no-op
-    const count = repo.carriedCountAfter(p, { removing: [r1, r2, notCarried] });
-    expect(count).toBe(0); // only the 2 carried were deleted; non-carried was a no-op
+    const notInSpare = makeRing(dbInstance, p, { inCarry: 0 }); // in reliquary
+    // Removing 2 spare + 1 non-spare; the non-spare delete is a no-op
+    const count = repo.spareCountAfter(p, { removingFromSpare: [r1, r2, notInSpare] });
+    expect(count).toBe(0); // only the 2 spare were deleted
   });
 });

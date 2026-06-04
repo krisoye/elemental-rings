@@ -46,7 +46,10 @@ import {
   rechargeNecklace,
   getCarry,
   getCarryCap,
-  getSpareSlots,
+  getSpareRingMax,
+  getPendingRingId,
+  clearPendingFlag,
+  getSpareIds,
   getDefeatedNpcs,
   recordNpcDefeat,
   forage,
@@ -205,7 +208,11 @@ function buildMePlayerBlock(playerId: string): Record<string, unknown> | null {
     reliquaryCap: getReliquaryCap(playerId),
     reliquaryShards: getReliquaryShards(playerId),
     reliquaryCount: getReliquaryCount(playerId),
-    spareCapacity: getSpareSlots(),
+    // EPIC #378 — spare-grid cap (per-player) and pending WON ring identifier.
+    spare_ring_max: getSpareRingMax(playerId),
+    pending_ring_id: getPendingRingId(playerId),
+    // Deprecated alias kept for Sub-1 backwards compatibility; removed in Sub-2.
+    spareCapacity: getSpareRingMax(playerId),
     // EPIC #302 — heart slot.
     heart_ring: getHeartRing(playerId),
     total_xp: getTotalRingXp(playerId),
@@ -363,6 +370,51 @@ apiRouter.delete('/api/rings/:ringId', requireAuth, (req: Request, res: Response
 });
 
 /**
+ * PUT /api/rings/:ringId/accept — accept a WON ring as a regular spare (EPIC
+ * #378). Clears the `pending` flag on the ring, transitioning it from overflow
+ * carry to a normal spare-grid ring. Three validation checks:
+ *   1. The ring must be owned by the authenticated player.
+ *   2. The ring must have pending=1 (it is the unresolved WON ring).
+ *   3. After clearing pending, the spare count must be ≤ spare_ring_max (i.e.
+ *      the player must free a spare slot before accepting).
+ *
+ * Returns 400 `'spare grid still full'` when the spare grid remains over cap.
+ * Returns the updated `/api/me` player block on success. Requires auth.
+ */
+apiRouter.put('/api/rings/:ringId/accept', requireAuth, (req: Request, res: Response): void => {
+  const playerId = req.playerId as string;
+  const ringId = req.params.ringId;
+
+  // Validate ownership.
+  const ring = getRingsByOwner(playerId).find((r) => r.id === ringId);
+  if (!ring) {
+    fail(res, 400, 'ring not found or not owned');
+    return;
+  }
+
+  // Validate pending=1 (ring must be the unresolved WON ring).
+  if (ring.pending !== 1) {
+    fail(res, 400, 'ring is not pending');
+    return;
+  }
+
+  // Check spare capacity. The pending ring is already in_carry=1 and counts in
+  // getSpareIds. Clearing pending does not change spare count — but we must
+  // validate that the current spare count (including this ring) is ≤ spare_ring_max.
+  // If spare_count > spare_ring_max the grid is still in overflow and the player
+  // must discard or move a ring first.
+  const spareCount = getSpareIds(playerId).length;
+  const spareMax = getSpareRingMax(playerId);
+  if (spareCount > spareMax) {
+    fail(res, 400, 'spare grid still full');
+    return;
+  }
+
+  clearPendingFlag(ringId);
+  res.status(200).json({ player: buildMePlayerBlock(playerId) });
+});
+
+/**
  * POST /api/spirit/recharge — recharge one ring using spirit (#41). Body:
  * { ringId: string, uses?: number }. uses defaults to a full top-off. Spends
  * SPIRIT_PER_RING_USE per restored use. 400 when out of spirit or not owned.
@@ -435,22 +487,20 @@ apiRouter.post('/api/spirit/blink', requireAuth, (req: Request, res: Response): 
 /**
  * PUT /api/loadout — update one or more loadout slots.
  * Body: partial Record<SlotKey, string | null>
- * #171 — rejects when the player's carried-ring count already exceeds the
- * XP-derived carry cap (5 + spareCapacity) so that excess rings cannot be
- * assigned to battle slots.
+ * EPIC #378 — rejects when the player's spare-grid count already exceeds the
+ * per-player spare_ring_max so that excess rings cannot be assigned to battle slots.
  * Requires auth.
  */
 apiRouter.put('/api/loadout', requireAuth, (req: Request, res: Response): void => {
   const playerId = req.playerId as string;
-  // #171 — carry-cap gate: count carried rings and reject if the cap is already
-  // exceeded. This guards against excess carry when spareCapacity has decreased
-  // since the rings were first carried (e.g. XP was lost / transferred).
-  // Use getCarry() (indexed selectCarryByOwner) rather than a full ring scan.
-  const carriedCount = getCarry(playerId).length;
-  const cap = getCarryCap(playerId);
-  if (carriedCount > cap) {
-    const spare = getSpareSlots();
-    fail(res, 400, `carry cap exceeded: ${carriedCount} carried > ${cap} (5 + ${spare} spare)`);
+  // EPIC #378 — spare-grid gate: count spare rings and reject if the spare max is
+  // already exceeded. Uses getSpareIds for accuracy (spare is independent of battle
+  // slot occupancy). This is the belt-and-suspenders outer check; assertSpareWithinMax
+  // inside saveLoadout is the authoritative guard.
+  const spareCount = getSpareIds(playerId).length;
+  const spareMax = getSpareRingMax(playerId);
+  if (spareCount > spareMax) {
+    fail(res, 400, `spare grid exceeded: ${spareCount} spare > ${spareMax} spare_ring_max`);
     return;
   }
   const body = req.body ?? {};

@@ -113,6 +113,23 @@ if (!hasPlayerCol('reliquary_shards')) {
   db.exec('ALTER TABLE players ADD COLUMN reliquary_shards INTEGER NOT NULL DEFAULT 0');
 }
 
+// EPIC #378 — spare_ring_max: per-player cap on rings in the spare grid
+// (in_carry=1 AND not in any loadout slot). Defaults to SPARE_SLOTS (9).
+// Unlike the old carry_cap model, clearing a battle slot does NOT free spare
+// capacity — battle-hand and spare-grid are independently bounded.
+if (!hasPlayerCol('spare_ring_max')) {
+  db.exec('ALTER TABLE players ADD COLUMN spare_ring_max INTEGER NOT NULL DEFAULT 9');
+}
+
+// EPIC #378 — rings.pending: 1 when a ring was received as a WON ring but has
+// not yet been assigned to a slot or discarded (overflow carry state). A ring
+// with pending=1 is the authoritative WON-ring identifier exposed via /api/me
+// as pending_ring_id, replacing the fragile er_pending_ring localStorage key.
+// DEFAULT 0 backfills every existing row so no legacy ring starts pending.
+if (!hasRingCol('pending')) {
+  db.exec('ALTER TABLE rings ADD COLUMN pending INTEGER NOT NULL DEFAULT 0');
+}
+
 // #240 — Reliquary held at a FIXED RELIQUARY_BASE_CAP (9). Shard expansion is
 // paused. An ALTER ... DEFAULT only affects NEWLY-inserted column values, never
 // existing rows — so players created under the old cap (20), or who expanded via

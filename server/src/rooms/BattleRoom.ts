@@ -615,11 +615,11 @@ export class BattleRoom extends Room<{ state: BattleState }> {
         throw new ServerError(4001, 'No staked ring: stake a ring before battling');
       }
 
-      // #171 — seed spareCapacity from the live Reliquary XP so the client HUD
-      // reflects the correct carry headroom as soon as the battle room opens.
+      // #171/#378 — seed spareCapacity from the per-player spare_ring_max so the
+      // client HUD reflects the correct carry headroom as soon as the room opens.
       const ps = this.state.players.get(sessionId);
       if (ps) {
-        ps.spareCapacity = PlayerRepo.getSpareSlots();
+        ps.spareCapacity = PlayerRepo.getSpareRingMax(playerId);
         // #211 — seed the spirit gauge from the DB so the local HUD shows the
         // ⚡ current/max readout immediately (and recharge feedback has a baseline).
         // Only token sessions reach this branch; AI / no-token sessions leave
@@ -947,12 +947,12 @@ export class BattleRoom extends Room<{ state: BattleState }> {
       if (winnerPlayerId) PlayerRepo.refreshSpiritMax(winnerPlayerId);
       if (loserPlayerId) PlayerRepo.refreshSpiritMax(loserPlayerId);
 
-      // #171 — sync spareCapacity on the live PlayerState after XP changes so the
-      // client receives the updated carry headroom without a round-trip to /api/me.
+      // #171/#378 — sync spareCapacity on the live PlayerState after XP changes so
+      // the client receives the updated carry headroom without a round-trip to /api/me.
       for (const [sessionId, ps] of this.state.players) {
         const pid = this.sessionToPlayerId.get(sessionId);
         if (!pid) continue; // AI / no-token: skip
-        ps.spareCapacity = PlayerRepo.getSpareSlots();
+        ps.spareCapacity = PlayerRepo.getSpareRingMax(pid);
       }
 
       // Release escrow on every human thumb ring still escrowed.
