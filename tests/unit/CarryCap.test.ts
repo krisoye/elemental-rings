@@ -203,3 +203,167 @@ describe('assertCarryWithinCap', () => {
     ).toThrow(/carry cap exceeded/);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Phase 1 adversarial edge cases (#376)
+// ---------------------------------------------------------------------------
+
+describe('carriedCountAfter — adversarial edge cases (#376)', () => {
+  test('adding an id already in the carried set does not inflate count above actual carry', () => {
+    // #376 adversarial: Set.add on an existing id must be idempotent — a caller cannot
+    // smuggle an extra ring past the cap guard by repeating a carried id in the adding array
+    const p = makePlayer(dbInstance);
+    const r1 = makeRing(dbInstance, p, { inCarry: 1 });
+    makeRing(dbInstance, p, { inCarry: 1 });
+    // r1 is already in carry; adding it again must keep count at 2, not inflate to 3
+    expect(repo.carriedCountAfter(p, { adding: [r1] })).toBe(2);
+  });
+
+  test('removing more ids than are in carry does not produce a negative count', () => {
+    // #376 adversarial: Set.delete is a no-op for missing ids, so over-removing can never
+    // drive count negative — a crafted removing list should not trick the guard into thinking
+    // there is phantom free capacity
+    const p = makePlayer(dbInstance);
+    const r1 = makeRing(dbInstance, p, { inCarry: 1 });
+    const phantom1 = `phantom_rm1_${Math.random().toString(36).slice(2)}`;
+    const phantom2 = `phantom_rm2_${Math.random().toString(36).slice(2)}`;
+    // 1 ring in carry, removing 3 ids (1 real + 2 phantoms) — result must be 0, never negative
+    const count = repo.carriedCountAfter(p, { removing: [r1, phantom1, phantom2] });
+    expect(count).toBe(0);
+  });
+
+  test('empty adding + empty removing at exactly cap returns cap without throwing', () => {
+    // #376 adversarial: no-op delta at the cap boundary — carriedCountAfter(p, {}) must
+    // equal cap and assertCarryWithinCap(p, {}) must NOT throw (the contract is n > cap, not >=)
+    const p = makePlayer(dbInstance);
+    const cap = repo.getCarryCap(p);
+    for (let i = 0; i < cap; i++) makeRing(dbInstance, p, { inCarry: 1 });
+    expect(repo.carriedCountAfter(p, { adding: [], removing: [] })).toBe(cap);
+    expect(() => repo.assertCarryWithinCap(p, { adding: [], removing: [] })).not.toThrow();
+  });
+
+  test('assertCarryWithinCap at post-delta count exactly equal to cap does not throw', () => {
+    // #376 adversarial: boundary n === cap must NOT throw — the off-by-one between > and >=
+    // would silently block valid swaps that land precisely at the cap
+    const p = makePlayer(dbInstance);
+    const cap = repo.getCarryCap(p);
+    // Seed cap-1 rings in carry, then add one phantom → post-delta count = cap exactly
+    for (let i = 0; i < cap - 1; i++) makeRing(dbInstance, p, { inCarry: 1 });
+    const newId = `exact_cap_${Math.random().toString(36).slice(2)}`;
+    expect(() => repo.assertCarryWithinCap(p, { adding: [newId] })).not.toThrow();
+  });
+
+  test('assertCarryWithinCap with post-delta count one above cap throws carry cap exceeded', () => {
+    // #376 adversarial: count = cap + 1 must throw — confirms the guard fires precisely at
+    // cap+1 and no sooner; this is the companion test to the cap-exactly-does-not-throw case
+    const p = makePlayer(dbInstance);
+    const cap = repo.getCarryCap(p);
+    // Seed exactly cap rings, then try adding one more phantom → count = cap + 1
+    for (let i = 0; i < cap; i++) makeRing(dbInstance, p, { inCarry: 1 });
+    const overflow = `overflow_${Math.random().toString(36).slice(2)}`;
+    expect(() => repo.assertCarryWithinCap(p, { adding: [overflow] })).toThrow(
+      /carry cap exceeded/,
+    );
+  });
+
+  test('three repetitions of the same id in adding are deduplicated to a single slot', () => {
+    // #376 adversarial: must handle >2 repetitions; a naive loop-push would inflate count
+    // by N-1 extra phantom insertions, bypassing the cap guard for any N≥2
+    const p = makePlayer(dbInstance);
+    makeRing(dbInstance, p, { inCarry: 1 }); // 1 in carry
+    const dupId = `tripleDup_${Math.random().toString(36).slice(2)}`;
+    // Adding the same phantom id three times must add it only once → count stays at 2
+    expect(repo.carriedCountAfter(p, { adding: [dupId, dupId, dupId] })).toBe(2);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Phase 2 implementation-aware tests (#376)
+// ---------------------------------------------------------------------------
+
+describe('packLoadout — carry cap migration (#376)', () => {
+  test('packLoadout with exactly cap rings succeeds without throwing', () => {
+    // #376 adversarial: packLoadout uses assertCarryWithinCap(playerId, { adding: unique, removing: getCarry(...) })
+    // — a net-zero swap should never throw at cap; previously the inline unique.length > cap
+    // used the new count directly and could off-by-one on the swap delta
+    const p = makePlayer(dbInstance);
+    const cap = repo.getCarryCap(p);
+    // Build a set of exactly cap ring ids, all owned by the player (in_carry starts 0)
+    const ringIds: string[] = [];
+    for (let i = 0; i < cap; i++) {
+      ringIds.push(makeRing(dbInstance, p, { inCarry: 0 }));
+    }
+    // The heart ring from createPlayer is counted separately — but this bare test uses makePlayer
+    // from the unit helper which does NOT call createPlayer, so there is no heart ring here.
+    // packLoadout should succeed: the player owns exactly cap rings, none currently in carry.
+    expect(() => repo.packLoadout(p, ringIds)).not.toThrow();
+    // All cap rings are now carried
+    expect(repo.getCarry(p).length).toBe(cap);
+  });
+
+  test('packLoadout with one ring above cap throws carry cap exceeded', () => {
+    // #376 adversarial: packLoadout with cap+1 rings must throw; this was already guarded
+    // by the inline check before the migration — confirms the primitive replacement is equivalent
+    const p = makePlayer(dbInstance);
+    const cap = repo.getCarryCap(p);
+    const ringIds: string[] = [];
+    for (let i = 0; i < cap + 1; i++) {
+      ringIds.push(makeRing(dbInstance, p, { inCarry: 0 }));
+    }
+    expect(() => repo.packLoadout(p, ringIds)).toThrow(/carry cap exceeded/);
+  });
+
+  test('packLoadout still enforces the reliquary cap guard independently of carry cap', () => {
+    // #376 adversarial: carrying fewer rings than cap but owning more rings than reliquary_cap
+    // must throw Reliquary full — the #182 guard must not be silently removed by the carry-cap
+    // primitive migration
+    const p = makePlayer(dbInstance);
+    const reliquaryCap = repo.getReliquaryCap(p); // default RELIQUARY_BASE_CAP = 9
+    const carryCount = 2; // well within carry cap
+    const carryIds: string[] = [];
+    for (let i = 0; i < carryCount; i++) {
+      carryIds.push(makeRing(dbInstance, p, { inCarry: 0 }));
+    }
+    // Fill the reliquary above cap: create reliquaryCap+1 extra non-carried rings
+    for (let i = 0; i < reliquaryCap + 1; i++) {
+      makeRing(dbInstance, p, { inCarry: 0 });
+    }
+    // packLoadout with just carryIds — total non-escrow rings = carryCount + reliquaryCap + 1
+    // resulting reliquary = (carryCount + reliquaryCap + 1) - carryCount = reliquaryCap + 1 > reliquaryCap
+    expect(() => repo.packLoadout(p, carryIds)).toThrow(/Reliquary full/);
+  });
+});
+
+describe('saveLoadout — carry cap migration (#376)', () => {
+  test('saveLoadout at carry cap succeeds (pointer swap, not a carry count change)', () => {
+    // #376 adversarial: saveLoadout calls assertCarryWithinCap(playerId) with no delta,
+    // which checks current carry count ≤ cap — a player at cap who is merely swapping
+    // loadout slot assignments (no carry count change) must not be blocked
+    const p = makePlayer(dbInstance);
+    const cap = repo.getCarryCap(p);
+    // Seed cap rings all in carry
+    const ringIds: string[] = [];
+    for (let i = 0; i < cap; i++) {
+      ringIds.push(makeRing(dbInstance, p, { inCarry: 1 }));
+    }
+    // Save a loadout reassigning existing carried rings — carry count stays at cap
+    // (saveLoadout only changes which carried ring maps to which slot, not carry count)
+    const partial = { thumb: ringIds[0], a1: ringIds[1], a2: ringIds[2], d1: ringIds[3], d2: ringIds[4] };
+    expect(() => repo.saveLoadout(p, partial)).not.toThrow();
+  });
+});
+
+describe('setHeartRing removing — non-carry ids do not create negative phantom capacity (#376)', () => {
+  test('assertCarryWithinCap removing list with a mix of carried and non-carried ids floors at 0', () => {
+    // #376 adversarial: the removing array in assertCarryWithinCap may include ids that are NOT
+    // in the current carry set (e.g. a pending won ring with in_carry=0); Set.delete must be
+    // a no-op for those ids so the resulting count is never lower than 0 — no phantom capacity
+    const p = makePlayer(dbInstance);
+    const r1 = makeRing(dbInstance, p, { inCarry: 1 });
+    const r2 = makeRing(dbInstance, p, { inCarry: 1 });
+    const notCarried = makeRing(dbInstance, p, { inCarry: 0 }); // in reliquary
+    // Removing 2 carried + 1 non-carried; the non-carried delete is a no-op
+    const count = repo.carriedCountAfter(p, { removing: [r1, r2, notCarried] });
+    expect(count).toBe(0); // only the 2 carried were deleted; non-carried was a no-op
+  });
+});
