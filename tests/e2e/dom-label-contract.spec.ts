@@ -1389,3 +1389,199 @@ test('dom-label #382 H3: DifficultyModal open+close leaves no new .er-dom-label 
 
   await ctx.close();
 });
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Group I — #386 crispCanvasText re-render contract
+//
+// crispCanvasText sets text.setResolution(ceil(dpr)) + LINEAR filter ONCE at
+// creation. Phaser's Text.updateText re-rasterizes the canvas and re-uploads it
+// to the GPU (canvasToTexture(..., true) replaces the glTexture), discarding any
+// previously-set filter. Every setText/setStyle/setColor funnels through
+// updateText, so without the #386 instance-level updateText override the label
+// reverts to soft/blocky (scaleMode !== LINEAR) on the first mutation.
+//
+// LINEAR === 0 (Phaser.Textures.FilterMode.LINEAR; NEAREST === 1). TextureSource
+// .setFilter sets this.scaleMode = filterMode, so a LINEAR filter yields
+// scaleMode === 0. The filter is stored on the Text's texture source:
+// text.texture.source[0].scaleMode. The resolution is text.style.resolution.
+// These tests drive REAL crispCanvasText widgets — the reliquary header (setText
+// path) and the SPIRIT column label (setColor path) — and assert both invariants
+// survive a re-render. No call-site changes were made: the fix lives entirely in
+// crispCanvasText.
+// ═══════════════════════════════════════════════════════════════════════════
+
+/** Reliquary wall zone center from client/public/assets/maps/sanctum.json. */
+const RINGWALL = { x: 128, y: 56 };
+
+/** Boot to CampScene (Sanctum interior) and wait for the camp hooks. */
+async function loadSanctum(page: Page): Promise<void> {
+  await page.goto(URL);
+  await page.waitForFunction(() => !!(window as any).__player, { timeout: 10000 });
+  await page.waitForFunction(() => (window as any).__campState !== undefined, { timeout: 10000 });
+  await page.waitForFunction(() => typeof (window as any).__sanctumInteract === 'function', {
+    timeout: 10000,
+  });
+}
+
+/** Walk to the Reliquary wall zone and open the ringwall overlay. */
+async function openReliquary(page: Page): Promise<void> {
+  await page.evaluate(([x, y]) => (window as any).__player.setPosition(x, y), [
+    RINGWALL.x,
+    RINGWALL.y,
+  ]);
+  await page.waitForFunction(
+    () => ((window as any).__sanctumZones ?? []).includes('ringwall'),
+    undefined,
+    { timeout: 5000 },
+  );
+  await page.evaluate(() => (window as any).__sanctumInteract());
+  await page.waitForFunction(() => (window as any).__sanctumOverlayOpen === 'ringwall', {
+    timeout: 5000,
+  });
+  // The header labels exist once the overlay is open.
+  await page.waitForFunction(
+    () =>
+      !!(window as any).__scene?.children
+        ?.getAll?.()
+        ?.flatMap((c: any) => (c.getAll ? [c, ...c.getAll()] : [c]))
+        ?.flatMap((c: any) => (c.getAll ? [c, ...c.getAll()] : [c]))
+        ?.find((o: any) => o.name === 'reliquary-header-left'),
+    { timeout: 5000 },
+  );
+}
+
+/**
+ * Read a scene Text object's crisp-state by name (searches nested containers):
+ * its resolution and its texture source scaleMode (0 === LINEAR). Returns null
+ * when no Text with that name is found.
+ */
+async function readCrispState(
+  page: Page,
+  name: string,
+): Promise<{ resolution: number; scaleMode: number } | null> {
+  return page.evaluate((n) => {
+    const scene = (window as any).__scene as Phaser.Scene;
+    const found = scene.children
+      .getAll()
+      .flatMap((c: any) => (c.getAll ? [c, ...c.getAll()] : [c]))
+      .flatMap((c: any) => (c.getAll ? [c, ...c.getAll()] : [c]))
+      .find((o: any) => o.name === n) as any;
+    if (!found) return null;
+    return {
+      resolution: found.style?.resolution ?? -1,
+      scaleMode: found.texture?.source?.[0]?.scaleMode ?? -1,
+    };
+  }, name);
+}
+
+// #386 I1: a setText() on a crispCanvasText label (the reliquary header,
+// populated via renderReliquaryHeader) must retain resolution === ceil(dpr) AND
+// LINEAR filter. Before the fix the updateText re-upload discarded the filter.
+test('crisp-text #386 I1: setText on a crispCanvasText label retains ceil(dpr) resolution and LINEAR filter', async ({
+  browser,
+}) => {
+  const ctx = await browser.newContext();
+  await seedAuthToken(ctx);
+  const page = await ctx.newPage();
+  await loadSanctum(page);
+  await openReliquary(page);
+
+  // Force a re-render through setText (the renderReliquaryHeader path).
+  await page.evaluate(() => {
+    const scene = (window as any).__scene as Phaser.Scene;
+    const found = scene.children
+      .getAll()
+      .flatMap((c: any) => (c.getAll ? [c, ...c.getAll()] : [c]))
+      .flatMap((c: any) => (c.getAll ? [c, ...c.getAll()] : [c]))
+      .find((o: any) => o.name === 'reliquary-header-right') as any;
+    found?.setText('Total XP: 999  |  Avg Battle XP: 42');
+  });
+
+  const expectedRes = await page.evaluate(() => Math.ceil(window.devicePixelRatio));
+  const state = await readCrispState(page, 'reliquary-header-right');
+
+  expect(state, 'reliquary-header-right Text must be found in the scene graph').not.toBeNull();
+  expect(
+    state!.resolution,
+    `#386: resolution after setText (${state!.resolution}) must equal ceil(dpr) (${expectedRes})`,
+  ).toBe(expectedRes);
+  expect(
+    state!.scaleMode,
+    `#386: texture scaleMode after setText (${state!.scaleMode}) must be 0 (LINEAR) — updateText override must re-apply the filter`,
+  ).toBe(0);
+
+  await ctx.close();
+});
+
+// #386 I2: a setColor() on a crispCanvasText label (the SPIRIT column label,
+// recolored in applyReliquaryLockState) must retain ceil(dpr) resolution AND the
+// LINEAR filter. setColor funnels through updateText just like setText — this is
+// the exact SPIRIT-label lock-recolor path that regressed pre-#386.
+test('crisp-text #386 I2: setColor on the SPIRIT label retains ceil(dpr) resolution and LINEAR filter', async ({
+  browser,
+}) => {
+  const ctx = await browser.newContext();
+  await seedAuthToken(ctx);
+  const page = await ctx.newPage();
+  await loadSanctum(page);
+  await openReliquary(page);
+
+  // Recolor the SPIRIT column label (named 'reliquary-label') directly — the same
+  // setColor call applyReliquaryLockState makes when the Reliquary is full.
+  await page.evaluate(() => {
+    const scene = (window as any).__scene as Phaser.Scene;
+    const found = scene.children
+      .getAll()
+      .flatMap((c: any) => (c.getAll ? [c, ...c.getAll()] : [c]))
+      .flatMap((c: any) => (c.getAll ? [c, ...c.getAll()] : [c]))
+      .find((o: any) => o.name === 'reliquary-label') as any;
+    found?.setColor('#ff5555');
+  });
+
+  const expectedRes = await page.evaluate(() => Math.ceil(window.devicePixelRatio));
+  const state = await readCrispState(page, 'reliquary-label');
+
+  expect(state, 'SPIRIT label (reliquary-label) must be found in the scene graph').not.toBeNull();
+  expect(
+    state!.resolution,
+    `#386: resolution after setColor (${state!.resolution}) must equal ceil(dpr) (${expectedRes})`,
+  ).toBe(expectedRes);
+  expect(
+    state!.scaleMode,
+    `#386: texture scaleMode after setColor (${state!.scaleMode}) must be 0 (LINEAR) — the SPIRIT-label lock-recolor path`,
+  ).toBe(0);
+
+  await ctx.close();
+});
+
+// #386 I3: open the reliquary; after renderReliquaryHeader populates the three
+// header segments via setText, all of reliquary-header-left/center/right must
+// render with the LINEAR filter (scaleMode === 0). This is the header-fuzz
+// symptom from the original report, verified end-to-end through the real render.
+test('crisp-text #386 I3: reliquary header segments render with LINEAR filter after renderReliquaryHeader', async ({
+  browser,
+}) => {
+  const ctx = await browser.newContext();
+  await seedAuthToken(ctx);
+  const page = await ctx.newPage();
+  await loadSanctum(page);
+  await openReliquary(page);
+
+  const expectedRes = await page.evaluate(() => Math.ceil(window.devicePixelRatio));
+  const segments = ['reliquary-header-left', 'reliquary-header-center', 'reliquary-header-right'];
+
+  for (const name of segments) {
+    const state = await readCrispState(page, name);
+    expect(state, `${name} Text must be found in the scene graph`).not.toBeNull();
+    expect(
+      state!.scaleMode,
+      `#386: ${name} texture scaleMode (${state!.scaleMode}) must be 0 (LINEAR) after renderReliquaryHeader's setText`,
+    ).toBe(0);
+    expect(
+      state!.resolution,
+      `#386: ${name} resolution (${state!.resolution}) must equal ceil(dpr) (${expectedRes})`,
+    ).toBe(expectedRes);
+  }
+
+  await ctx.close();
+});

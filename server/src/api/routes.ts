@@ -643,10 +643,13 @@ apiRouter.get('/api/encounter/bosses', requireAuth, (req: Request, res: Response
 });
 
 /**
- * POST /api/fusion/combine — fuse two same-tier parent rings (≥ Tier 1) into a
- * fusion ring (#47, GDD §4.6). Body: { ringId1, ringId2 }. On success returns
- * the new fusion ring. 400 with a descriptive message on any validation failure
- * (not owned, below minimum tier, invalid pair). Requires auth.
+ * POST /api/fusion/combine — fuse two parent rings into a fusion ring (#47, #390,
+ * GDD §4.6). Each parent must independently be ≥ 500 XP (Tier 1), neither parent
+ * may itself be a fusion, and the two elements must form a valid fusion pair. The
+ * parents do NOT have to share a tier (#390 removed that requirement). Body:
+ * { ringId1, ringId2 }. On success returns the new fusion ring. 400 with a
+ * descriptive message on any validation failure (not owned, already a fusion,
+ * below Tier 1, invalid pair). Requires auth.
  */
 apiRouter.post('/api/fusion/combine', requireAuth, (req: Request, res: Response): void => {
   const playerId = req.playerId as string;

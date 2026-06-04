@@ -1,10 +1,13 @@
 import Phaser from 'phaser';
 import { InventoryGrid, type RingData } from '../objects/InventoryGrid';
-import { LoadoutPanel, type LoadoutSlot } from '../objects/LoadoutPanel';
-import { StakePanel } from '../objects/StakePanel';
 import { RingCard, usePips } from '../objects/ui/RingCard';
 import { attachTooltip } from '../objects/ui/Tooltip';
 import { SlotSwapManager, type SwapSlot } from '../objects/ui/SlotSwapManager';
+import {
+  benchSpareCount,
+  publishRingMgmtState,
+  clearRingMgmtState,
+} from '../objects/ui/RingManagementOverlay';
 import { FusionPanel } from '../objects/FusionPanel';
 import { DifficultyModal } from '../objects/DifficultyModal';
 import { ELEMENT_NAMES, CANVAS_W, CANVAS_H, THUMB_PASSIVE_INFO, SLOT_KEYS } from '../Constants';
@@ -19,6 +22,10 @@ import { API_BASE, apiClient, apiFetch, fetchMe, getToken } from '../net/api';
 import { DualCameraScene } from './DualCameraScene';
 import { crispCanvasText } from '../objects/ui/DomLabel';
 
+// #389 — the four combat-hand loadout slots (formerly the LoadoutPanel's type).
+// The Thumb (STATUS) slot is tracked separately as `'thumb' | LoadoutSlot`.
+type LoadoutSlot = 'a1' | 'a2' | 'd1' | 'd2';
+
 // #85 Fix 2A — the inventory grids in the Ring Storage overlay clip to this many
 // rows; beyond that the ▲/▼ arrows + mouse wheel scroll the grid. 3 rows fit
 // comfortably above the status echo without colliding with the header row.
@@ -32,23 +39,17 @@ const RINGWALL_VISIBLE_ROWS = 3;
 //   Middle (x=372): SPARES    3×3 scrollable grid (208px wide)
 //   Right  (x=594): BATTLE HAND — Thumb row + A1/A2 + D1/D2 (right-aligned rings)
 //
-// Battle hand detail (Option B — ring grid right-aligned to CONTENT_RIGHT=872):
-//   LoadoutPanel (A1/A2/D1/D2): CARD_W=70, COL_GAP=78 → 2-col width=148; origin x=724
-//   StakePanel (Thumb): aligns with A2/D2 (right col, center=837); origin x=802
-//   Passive effect display: x=594, width=200, sits to the left of the Thumb card.
+// #389 — COMBAT column (right): the STATUS thumb card + the 2×2 A1/A2 · D1/D2
+// cluster, left-aligned to BATTLEHAND_RING_X (the former LoadoutPanel origin).
 const MODAL_W = 760;
 const MODAL_H = 500;
 const MODAL_LEFT = CANVAS_W / 2 - MODAL_W / 2; // 132
 const CONTENT_LEFT = MODAL_LEFT + 20; // 152
 const CONTENT_RIGHT = CANVAS_W / 2 + MODAL_W / 2 - 20; // 872
 const COL_RELIQUARY_X = CONTENT_LEFT; // 152
-const COL_SPARE_X = 392;              // Middle column — spares 3×3 grid (offset +20px from reliquary for visual separation)
-const COL_BATTLEHAND_X = 594;         // Right column — battle hand section
-// Battle hand ring grid: right-aligned. LoadoutPanel CARD_W=70, COL_GAP=78 → width=148.
-const BATTLEHAND_RING_X = CONTENT_RIGHT - 148; // 724 — LoadoutPanel origin
-const BATTLEHAND_RING_Y = 246;                  // 148 + one LoadoutPanel ROW_GAP (98)
-// Thumb card aligns with right ring column (A2/D2): center=837, origin=802.
-const BATTLEHAND_THUMB_X = BATTLEHAND_RING_X + 78; // 802
+const COL_SPARE_X = 392;              // Middle column — Bench 3×3 grid (offset +20px from SPIRIT for visual separation)
+// COMBAT cluster left edge, right-aligned to CONTENT_RIGHT (2-col width=148).
+const BATTLEHAND_RING_X = CONTENT_RIGHT - 148; // 724 — COMBAT column left edge
 
 // #347 — Heart slot card now lives in its own HEALTH column between SPARES and
 // COMBAT (it no longer sits above A1). Origin x is in the gap between the SPARES
@@ -56,10 +57,22 @@ const BATTLEHAND_THUMB_X = BATTLEHAND_RING_X + 78; // 802
 // +35) renders at ≈659, spanning ≈624–694 — clear of both neighbours.
 const HEART_CARD_X = 624; // HEALTH column origin
 const HEART_CARD_Y = 148;
-// The ♥ heart card body matches the LoadoutPanel cell geometry (70×90, card center
+// The ♥ heart card body matches the COMBAT cell geometry (70×90, card center
 // at +35 horizontally).
 const HEART_CARD_W = 70;
 const HEART_CARD_H = 90;
+
+// #389 — COMBAT cluster (STATUS thumb left-aligned above the 2×2 A1/A2 · D1/D2).
+// The 2×2 grid: card width 70, 78px column pitch → A1/D1 left col center 759,
+// A2/D2 right col center 837; rows at y=291 (A1/A2) and y=389 (D1/D2). STATUS is
+// left-aligned with the A1/D1 column (center 759), one row above at y=193.
+const COMBAT_CARD_W = 70;
+const COMBAT_CARD_H = 90;
+const COMBAT_COL_LEFT_X = BATTLEHAND_RING_X + 35;  // 759 — A1/D1 + STATUS column
+const COMBAT_COL_RIGHT_X = BATTLEHAND_RING_X + 113; // 837 — A2/D2 column
+const COMBAT_STATUS_Y = 193;
+const COMBAT_ROW0_Y = 291; // A1 / A2
+const COMBAT_ROW1_Y = 389; // D1 / D2
 
 // The off-screen holding origin for the reusable panel instances. The panels are
 // created once and parked here while the spatial room is shown; 8A.2 re-parents
@@ -125,8 +138,6 @@ export class CampScene extends DualCameraScene {
   // ── Reusable inventory panels (parked off-screen, shown in overlays) ───────
   private sanctumGrid!: InventoryGrid;
   private loadoutGrid!: InventoryGrid;
-  private loadoutPanel!: LoadoutPanel;
-  private stakePanel!: StakePanel;
   private fusionPanel!: FusionPanel;
   // EPIC #279 — Settings → difficulty selector. Self-contained modal (FusionPanel
   // lifecycle shape); opened by the persistent Settings button on uiRoot.
@@ -160,10 +171,22 @@ export class CampScene extends DualCameraScene {
    */
   private thumbTooltipDetach: (() => void) | null = null;
   /**
-   * The right-panel loadout count badge ("8 / 10"); turns red at the carry cap.
-   * Overlay-container-scoped like the header segments.
+   * #389 — the two converged column counters that replace the removed
+   * `loadoutBadge` (`LOADOUT (N/cap)`): SPIRIT `reliquaryCount/reliquaryCap` and
+   * BENCH `benchSpareCount/spare_ring_max`. Crisp column-header labels, overlay-
+   * container-scoped (the container destroy reclaims them on close).
    */
-  private loadoutBadge: Phaser.GameObjects.Text | null = null;
+  private spiritCounter: Phaser.GameObjects.Text | null = null;
+  private benchCounter: Phaser.GameObjects.Text | null = null;
+  /**
+   * #389 — the COMBAT cluster cards (STATUS thumb + A1/A2/D1/D2), built fresh per
+   * overlay open and added to the overlay container (reclaimed on close), replacing
+   * the retired StakePanel + LoadoutPanel. Each card's bg routes clicks through the
+   * universal-swap state machine via {@link onBattleSlotClicked}.
+   */
+  private combatCards: Map<'thumb' | LoadoutSlot, RingCard> = new Map();
+  /** #389 — the STATUS card's escrow LOCKED label (preserved from StakePanel). */
+  private statusLockLabel: Phaser.GameObjects.Text | null = null;
   /**
    * EPIC #291 WS I (#307) — the shared click-then-click swap state machine. Holds
    * the current "picked up" selection ({@link SlotSwapManager.selection}) and
@@ -677,24 +700,23 @@ export class CampScene extends DualCameraScene {
       window.__campLoadoutScroll = undefined;
       this.releasePanel(c, this.sanctumGrid);
       this.releasePanel(c, this.loadoutGrid);
-      this.releasePanel(c, this.stakePanel);
-      this.releasePanel(c, this.loadoutPanel);
-      // Clear any in-flight selection highlight on the battle-hand panels.
-      this.stakePanel.setSelected(false);
-      this.loadoutPanel.setSelectedSlot(null);
       // EPIC #302 — detach the Thumb passive hover tooltip (removes the pointer
       // listeners + destroys the lazy label) before the overlay container is
       // destroyed. Safe when never attached.
       this.thumbTooltipDetach?.();
       this.thumbTooltipDetach = null;
-      // The header + badge + heart card live inside the overlay container — the
-      // container destroy reclaims them, so just drop the stale references.
+      // The header + counters + heart card + COMBAT cluster live inside the overlay
+      // container — the container destroy reclaims them, so just drop the stale refs.
       this.reliquaryHeaderLeft = null;
       this.reliquaryHeaderCenter = null;
       this.reliquaryHeaderRight = null;
       this.heartCard = null;
-      this.loadoutBadge = null;
+      this.spiritCounter = null;
+      this.benchCounter = null;
+      this.combatCards.clear();
+      this.statusLockLabel = null;
       this.swapManager?.clear();
+      clearRingMgmtState(); // #389
       window.__campHitTestRing = undefined;
       window.__reliquaryMove = undefined;
       window.__reliquarySelect = undefined;
@@ -775,9 +797,9 @@ export class CampScene extends DualCameraScene {
     );
 
     // ── Left column — SPIRIT (the not-carried Reliquary pool) ─────────────────
-    // EPIC #302 — relabelled SPIRIT ↓ (these rings drive the spirit pool). The
-    // whole label row stays interactive: clicking it with a carried ring selected
-    // drops that ring back to the Reliquary/spirit pool (replaces the old dropzone).
+    // EPIC #302 — SPIRIT ↓ label (these rings drive the spirit pool). The whole
+    // label row stays interactive: clicking it with a carried ring selected drops
+    // that ring back to the Reliquary/spirit pool (replaces the old dropzone).
     // #382 — all column-header labels are Container (c) children → crispCanvasText.
     const reliquaryLabel = crispCanvasText(
       this.add
@@ -788,21 +810,39 @@ export class CampScene extends DualCameraScene {
         .on('pointerdown', () => void this.onReliquaryDropClicked()),
     );
     c.add(reliquaryLabel);
+    // #389 — SPIRIT n/max counter (reliquaryCount/reliquaryCap), right of the label.
+    this.spiritCounter = crispCanvasText(
+      this.add
+        .text(COL_RELIQUARY_X + 90, 128, '', { fontSize: '12px', color: '#ffdd66' })
+        .setScrollFactor(0)
+        .setName('spirit-counter'),
+    );
+    c.add(this.spiritCounter);
 
-    // ── Middle column — SPARES ───────────────────────────────────────────────
-    // Label row is interactive: clicking it with a selected ring drops into Spare pool.
+    // ── Middle column — BENCH (#389; carried, not battle-slotted) ─────────────
+    // NAMING: player-facing "Bench" replaces the old "Spares"; the code/DB/API
+    // identifiers stay `spare_*`. The label row is interactive: clicking it with a
+    // selected ring drops the ring into the Bench (spare) pool.
     const spareLabel = crispCanvasText(
       this.add
-        .text(COL_SPARE_X, 128, 'SPARES  ↓', { fontSize: '13px', color: '#88ccaa' })
+        .text(COL_SPARE_X, 128, 'BENCH  ↓', { fontSize: '13px', color: '#88ccaa' })
         .setScrollFactor(0)
         .setName('spare-label')
         .setInteractive({ useHandCursor: true })
         .on('pointerdown', () => void this.onSpareDropClicked()),
     );
     c.add(spareLabel);
+    // #389 — BENCH n/max counter (benchSpareCount/spare_ring_max), right of label.
+    this.benchCounter = crispCanvasText(
+      this.add
+        .text(COL_SPARE_X + 84, 128, '', { fontSize: '12px', color: '#aaffaa' })
+        .setScrollFactor(0)
+        .setName('bench-counter'),
+    );
+    c.add(this.benchCounter);
 
     // ── HEALTH column header (#347) ───────────────────────────────────────────
-    // Sits between SPARES and COMBAT, above the relocated Heart card.
+    // Sits between BENCH and COMBAT, above the relocated Heart card.
     c.add(
       crispCanvasText(
         this.add
@@ -822,30 +862,22 @@ export class CampScene extends DualCameraScene {
           .setName('battle-hand-label'),
       ),
     );
-    // [n/m] loadout badge moves beside the COMBAT label so it clears the HEALTH column.
-    this.loadoutBadge = crispCanvasText(
-      this.add
-        .text(BATTLEHAND_RING_X + 70, 128, '', { fontSize: '13px', color: '#aaffaa' })
-        .setScrollFactor(0)
-        .setName('loadout-badge'),
-    );
-    c.add(this.loadoutBadge);
 
-    // Adopt the reusable grids/panels into the overlay at their column positions.
-    //   Reliquary (left): 3-col scrollable grid, y=148
-    //   Spares (middle): 3-col scrollable grid, y=148
-    //   Thumb (right): aligns with right ring column, row 0 → y=148
-    //   Battle ring grid (right): rows 1–2 of battle hand section → y=BATTLEHAND_RING_Y
+    // Adopt the reusable grids into the overlay at their column positions.
+    //   Reliquary/SPIRIT (left): 3-col scrollable grid, y=148
+    //   Bench (middle): 3-col scrollable grid, y=148
+    // #389 — the COMBAT cluster (STATUS + A1/A2/D1/D2) is built fresh below as
+    // overlay-scoped RingCards (replacing the retired StakePanel + LoadoutPanel).
     this.adoptPanel(c, this.sanctumGrid, COL_RELIQUARY_X, 148);
     this.adoptPanel(c, this.loadoutGrid, COL_SPARE_X, 148);
-    this.adoptPanel(c, this.stakePanel, BATTLEHAND_THUMB_X, 148);
-    this.adoptPanel(c, this.loadoutPanel, BATTLEHAND_RING_X, BATTLEHAND_RING_Y);
 
-    // #347 — Heart slot card now renders in the HEALTH column (driven by the moved
-    // HEART_CARD_X), no longer above A1. The ATTACK/DEFENSE row labels are dropped:
-    // the four-column header (SPIRIT↓ | SPARES↓ | HEALTH | COMBAT) reads cleanly
-    // without them.
+    // #347 — Heart slot card renders in the HEALTH column (driven by HEART_CARD_X).
+    // #389 — the COMBAT cluster (STATUS thumb left-aligned above the 2×2 A1/A2 ·
+    // D1/D2) is built as overlay-scoped RingCards (replacing StakePanel +
+    // LoadoutPanel). The four-column header (SPIRIT | BENCH | HEALTH | COMBAT)
+    // reads cleanly without per-row ATTACK/DEFENSE labels.
     this.buildHeartCard(c);
+    this.buildCombatCluster(c);
 
     // Cap the grids at their visible-row windows. Clipping is now done by
     // visibility-windowing (cards outside the window are hidden), not GeometryMask.
@@ -883,13 +915,13 @@ export class CampScene extends DualCameraScene {
     );
 
     // EPIC #302 — the permanent passive strip is replaced by a hover tooltip on
-    // the Thumb card. attachTooltip reads the live passive text lazily on each
-    // hover so it always reflects the current staked ring; detach() is wired in the
-    // overlay's onClose callback. The Thumb card bg is already interactive (it owns
-    // the stake click); the tooltip listeners coexist with that click.
+    // the STATUS (Thumb) card. attachTooltip reads the live passive text lazily on
+    // each hover so it always reflects the current staked ring; detach() is wired in
+    // the overlay's onClose callback. The STATUS card bg is already interactive (it
+    // owns the stake click); the tooltip listeners coexist with that click.
     this.thumbTooltipDetach = attachTooltip(
       this,
-      this.stakePanel.thumbBg,
+      this.combatCards.get('thumb')!.bg,
       () => this.thumbPassiveTooltipText(),
       { maxWidth: 220 },
     );
@@ -949,7 +981,6 @@ export class CampScene extends DualCameraScene {
       elementY: -22,
       pipsY: -5,
       xpY: 12,
-      tierY: 27,
       xpPrefix: 'XP:',
     });
     // #347 — HP title above the card (was a bare ♥ glyph). The three-part header's
@@ -997,6 +1028,102 @@ export class CampScene extends DualCameraScene {
     this.heartCard.setStroke(selected ? 3 : 2, selected ? 0xffff00 : 0xcc4466);
   }
 
+  /**
+   * #389 — build the COMBAT cluster: the STATUS (Thumb) card left-aligned above a
+   * 2×2 of A1/A2 (top) · D1/D2 (bottom), each a {@link RingCard} added to the
+   * overlay container `c` (reclaimed on close). Replaces the retired StakePanel +
+   * LoadoutPanel; every card's bg routes clicks through {@link onBattleSlotClicked}.
+   * A per-card crisp slot label sits above each card; the STATUS card additionally
+   * gets an escrow LOCKED label (preserved from StakePanel). Painted by
+   * {@link renderCombatCluster}.
+   */
+  private buildCombatCluster(c: Phaser.GameObjects.Container): void {
+    this.combatCards.clear();
+    const defs: { slot: 'thumb' | LoadoutSlot; label: string; x: number; y: number }[] = [
+      { slot: 'thumb', label: 'STATUS', x: COMBAT_COL_LEFT_X, y: COMBAT_STATUS_Y },
+      { slot: 'a1', label: 'A1', x: COMBAT_COL_LEFT_X, y: COMBAT_ROW0_Y },
+      { slot: 'a2', label: 'A2', x: COMBAT_COL_RIGHT_X, y: COMBAT_ROW0_Y },
+      { slot: 'd1', label: 'D1', x: COMBAT_COL_LEFT_X, y: COMBAT_ROW1_Y },
+      { slot: 'd2', label: 'D2', x: COMBAT_COL_RIGHT_X, y: COMBAT_ROW1_Y },
+    ];
+    for (const def of defs) {
+      const card = new RingCard(this, def.x, def.y, {
+        width: COMBAT_CARD_W,
+        height: COMBAT_CARD_H,
+        scrollFactor: 0,
+        strokeColor: def.slot === 'thumb' ? 0xaa8800 : 0x888888,
+        textColor: '#000000',
+        fontSize: '9px',
+      });
+      // Crisp slot label above each card (STATUS / A1 / A2 / D1 / D2). The card is a
+      // Container positioned at (def.x, def.y) with its body drawn at the origin
+      // (cx/cy default 0), so child labels use LOCAL coordinates — (0, −36) renders
+      // 36px above the card center, not double-offset by (def.x, def.y).
+      const lbl = crispCanvasText(
+        this.add
+          .text(0, -36, def.label, { fontSize: '10px', color: def.slot === 'thumb' ? '#ffcc44' : '#aaaaaa' })
+          .setOrigin(0.5)
+          .setScrollFactor(0)
+          .setName(`combat-label-${def.slot}`),
+      );
+      card.add(lbl);
+      card.bg
+        .setInteractive({ useHandCursor: true })
+        .on('pointerdown', () => void this.onBattleSlotClicked(def.slot));
+      // STATUS card carries the escrow LOCKED label (Thumb can be staked in a duel).
+      if (def.slot === 'thumb') {
+        this.statusLockLabel = crispCanvasText(
+          this.add
+            .text(0, 41, '', { fontSize: '10px', color: '#ff6666' })
+            .setOrigin(0.5)
+            .setScrollFactor(0)
+            .setName('status-lock'),
+        );
+        card.add(this.statusLockLabel);
+      }
+      c.add(card);
+      this.combatCards.set(def.slot, card);
+    }
+    this.renderCombatCluster();
+  }
+
+  /**
+   * #389 — paint the COMBAT cluster cards from the authoritative loadout/ringMap.
+   * Each slot shows its assigned ring (or the dim em-dash empty look), re-applies
+   * the selection stroke (yellow when that slot is the active swap source), and
+   * surfaces the STATUS escrow LOCKED label. A no-op once the cluster is torn down.
+   */
+  private renderCombatCluster(): void {
+    if (this.combatCards.size === 0) return;
+    const sel = this.swapManager?.selection ?? null;
+    for (const [slot, card] of this.combatCards) {
+      const ringId = this.loadout[slot] ?? null;
+      const ring = ringId ? this.ringMap.get(ringId) : null;
+      if (ring) {
+        card.setRing({
+          element: ring.element,
+          tier: ring.tier,
+          xp: ring.xp,
+          currentUses: ring.current_uses,
+          maxUses: ring.max_uses,
+          fusionParents: ring.fusionParents,
+        });
+        card.setTextColor('#000000');
+      } else {
+        card.clear();
+        card.setElementText('—', '#888888');
+      }
+      const selected = sel?.source === slot;
+      const escrowed = slot === 'thumb' && ring?.escrowed === 1;
+      if (selected) card.setStroke(3, 0xffff00);
+      else if (escrowed) card.setStroke(2, 0xff6666);
+      else card.setStroke(2, slot === 'thumb' ? 0xaa8800 : 0x888888);
+      if (slot === 'thumb' && this.statusLockLabel) {
+        this.statusLockLabel.setText(escrowed ? 'LOCKED' : '');
+      }
+    }
+  }
+
   // ── Reliquary modal — selection + moves (#154) ────────────────────────────
 
   /**
@@ -1030,34 +1157,71 @@ export class CampScene extends DualCameraScene {
         this.reliquaryHeaderRight.setText(`Total XP: ${totalXp}  |  Avg Battle XP: ${avgXp}`);
       }
     }
-    // EPIC #302 — keep the Heart card painted in sync with the header.
+    // EPIC #302 — keep the Heart card + COMBAT cluster painted in sync.
     this.renderHeartCard();
-    if (this.loadoutBadge && s) {
-      // #154 — badge reads "(N/cap)" beside the LOADOUT label; red at the cap.
-      const carried = s.rings.filter((r: RingData) => r.in_carry === 1).length;
-      const atCap = carried >= s.carry_cap;
-      this.loadoutBadge
-        .setText(`(${carried}/${s.carry_cap})`)
-        .setColor(atCap ? '#ff5555' : '#aaffaa');
+    this.renderCombatCluster();
+    // #389 — paint the converged SPIRIT + BENCH counters and publish the structure
+    // reporter (replacing the removed LOADOUT badge). Both read /api/me-computed
+    // fields mirrored into __campState; the Bench count excludes the pending WON
+    // ring exactly like the lock predicate.
+    if (s) {
+      const reliquaryCount =
+        s.reliquaryCount ??
+        s.rings.filter((r: RingData) => r.in_carry === 0 && !(r as { escrowed?: number }).escrowed && r.heart_slot !== 1).length;
+      const reliquaryCap = s.reliquaryCap ?? 0;
+      const pendingId = (s.player?.pending_ring_id as string | null | undefined) ?? null;
+      const benchN = benchSpareCount(s.rings as RingData[], s.loadout, pendingId);
+      const benchMax = s.spare_ring_max ?? 0;
+      if (this.spiritCounter) {
+        this.spiritCounter
+          .setText(`${reliquaryCount}/${reliquaryCap}`)
+          .setColor(reliquaryCount >= reliquaryCap ? '#ff5555' : '#ffdd66');
+      }
+      if (this.benchCounter) {
+        this.benchCounter
+          .setText(`${benchN}/${benchMax}`)
+          .setColor(benchN >= benchMax ? '#ff5555' : '#aaffaa');
+      }
+      publishRingMgmtState(
+        'sanctum',
+        {
+          spirit: { n: reliquaryCount, max: reliquaryCap },
+          bench: { n: benchN, max: benchMax },
+        },
+        this.overlay,
+      );
     }
   }
 
   /**
-   * Dim and lock the Reliquary grid cards when the carry cap is full (the
-   * player cannot pull more rings from the Reliquary into carry). Also tracks
-   * the Reliquary-full condition (#182) via __reliquaryFull so the drop-to-
-   * Reliquary path can surface the right error. Both caps are enforced
-   * server-side with 400 as well.
+   * Dim and lock the Reliquary grid cards when the **spare (Bench) pool** is full
+   * — the player cannot pull more rings from the Reliquary into the resting pool.
+   * EPIC #378/#388 — the lock mirrors the server's `assertSpareWithinMax`
+   * predicate (spare count vs `spare_ring_max`), NOT the aggregate carry cap: a
+   * full battle loadout or a pending WON ring (one allowed overflow) must not lock
+   * the grid while the bench still has room. A spare ring is `in_carry=1`, not in
+   * any battle-hand slot, and not `pending`. Also tracks the Reliquary-full
+   * condition (#182) via __reliquaryFull so the drop-to-Reliquary path can surface
+   * the right error. The cap is enforced server-side with 400 as well.
    */
   private applyReliquaryLockState(): void {
     const s = window.__campState;
     if (!s) return;
-    const carried = s.rings.filter((r: RingData) => r.in_carry === 1).length;
-    const locked = carried >= s.carry_cap;
-    // #182 — track Reliquary-full state for the drop-label hint.
+    // #389 — the lock threshold and the BENCH counter MUST use identical spare
+    // semantics, so both go through the single canonical benchSpareCount predicate
+    // (carried, not battle-slotted, and not the pending WON ring — by id AND flag).
+    const spareRingMax = s.spare_ring_max ?? 9;
+    const pendingId = (s.player?.pending_ring_id as string | null | undefined) ?? null;
+    const spareCount = benchSpareCount(s.rings as RingData[], this.loadout, pendingId);
+    const locked = spareCount >= spareRingMax;
+    // #182 — track Reliquary-full state for the drop-label hint. The fallback
+    // mirrors renderReliquaryHeader: resting rings are in_carry=0, not escrowed,
+    // and NOT the equipped heart ring (heart_slot=1, which also rests at in_carry=0).
     const reliquaryCount: number =
       s.reliquaryCount ??
-      s.rings.filter((r: RingData) => r.in_carry === 0 && !(r as any).escrowed).length;
+      s.rings.filter(
+        (r: RingData) => r.in_carry === 0 && !(r as { escrowed?: number }).escrowed && r.heart_slot !== 1,
+      ).length;
     const reliquaryCap: number = s.reliquaryCap ?? 20;
     window.__reliquaryFull = reliquaryCount >= reliquaryCap;
     for (const ring of s.atSanctum as RingData[]) {
@@ -1253,29 +1417,20 @@ export class CampScene extends DualCameraScene {
    */
   private setSelection(sel: { ringId: string; source: SwapSlot }): void {
     this.swapManager?.select(sel.ringId, sel.source);
-    // Always drop the battle-hand + heart highlights — they are never the grid source.
-    this.stakePanel.setSelected(false);
-    this.loadoutPanel.setSelectedSlot(null);
+    // The grids (reliquary/spare) own their stroke on click; clear the OTHER grid
+    // so only one card is ever highlighted. For non-grid sources clear both grids.
     if (sel.source === 'reliquary') {
-      // sanctumGrid already shows the stroke; clear only the Spare grid.
       this.loadoutGrid.clearSelection();
     } else if (sel.source === 'spare') {
       this.sanctumGrid.clearSelection();
-    } else if (sel.source === 'thumb') {
-      this.sanctumGrid.clearSelection();
-      this.loadoutGrid.clearSelection();
-      this.stakePanel.setSelected(true);
-    } else if (sel.source === 'heart') {
-      // EPIC #302 — the heart card paints its own selection stroke via renderHeartCard.
-      this.sanctumGrid.clearSelection();
-      this.loadoutGrid.clearSelection();
     } else {
       this.sanctumGrid.clearSelection();
       this.loadoutGrid.clearSelection();
-      this.loadoutPanel.setSelectedSlot(sel.source);
     }
-    // Re-paint the heart card's stroke (selected iff source === 'heart').
+    // #389 — the heart card + COMBAT cluster paint their own selection stroke from
+    // the live swap source (renderHeartCard / renderCombatCluster).
     this.renderHeartCard();
+    this.renderCombatCluster();
   }
 
   /**
@@ -1512,18 +1667,17 @@ export class CampScene extends DualCameraScene {
   }
 
   /**
-   * Clear the yellow selection stroke on both grids and both battle-hand panels
-   * without touching the swap manager's selection. Used before re-applying a fresh
-   * highlight and when clearing the selection entirely.
+   * Clear the yellow selection stroke on both grids and the COMBAT cluster + heart
+   * card without touching the swap manager's selection. Used before re-applying a
+   * fresh highlight and when clearing the selection entirely.
    */
   private clearSelectionHighlights(): void {
     this.sanctumGrid.clearSelection();
     this.loadoutGrid.clearSelection();
-    this.stakePanel.setSelected(false);
-    this.loadoutPanel.setSelectedSlot(null);
-    // EPIC #302 — re-paint the heart card so its selection stroke clears in step
-    // with the swap manager (renderHeartCard reads the live selection source).
+    // #389 — re-paint the heart card + COMBAT cluster so their selection strokes
+    // clear in step with the swap manager (both read the live selection source).
     this.renderHeartCard();
+    this.renderCombatCluster();
   }
 
   /** Re-render header + lock state after a Reliquary modal reload. */
@@ -2125,24 +2279,14 @@ export class CampScene extends DualCameraScene {
       (ring) => void this.onGridSelectionChanged(ring, 'spare'),
       3,
     );
-    // The Battle Hand panels behave as swap targets/sources: clicking a slot
-    // either applies the pending swap (if a different ring is selected) or picks
-    // up the ring already in that slot as the new selection.
-    this.stakePanel = new StakePanel(
-      this, OFFSCREEN_X + 700, OFFSCREEN_Y,
-      () => void this.onBattleSlotClicked('thumb'),
-      () => this.setStatus('Ring is locked in a duel — cannot move while escrowed'),
-    );
-    this.loadoutPanel = new LoadoutPanel(this, OFFSCREEN_X + 790, OFFSCREEN_Y, (slot: LoadoutSlot) =>
-      void this.onBattleSlotClicked(slot),
-    );
-    // #118 P2: parked panels are invisible so neither camera traverses them per
+    // #389 — the COMBAT cluster (STATUS + A1/A2/D1/D2) is no longer a parked
+    // reusable panel; it is built fresh per overlay open (buildCombatCluster) as
+    // overlay-scoped RingCards, matching the field overlay and the heart card.
+    // #118 P2: parked grids are invisible so neither camera traverses them per
     // frame. adoptPanel re-shows them when an overlay opens; releasePanel hides
     // them again. They are still populated by loadData() while hidden.
     this.sanctumGrid.setVisible(false);
     this.loadoutGrid.setVisible(false);
-    this.stakePanel.setVisible(false);
-    this.loadoutPanel.setVisible(false);
     this.fusionPanel = new FusionPanel(
       this,
       (ringId1, ringId2) => this.doFuse(ringId1, ringId2),
@@ -2274,8 +2418,8 @@ export class CampScene extends DualCameraScene {
 
     this.sanctumGrid.populate(atSanctum);
     this.loadoutGrid.populate(loadoutPool);
-    this.loadoutPanel.updateFromLoadout(this.loadout, this.ringMap);
-    this.stakePanel.updateFromLoadout(this.loadout.thumb ?? null, this.ringMap);
+    // #389 — the COMBAT cluster (when the overlay is open) is repainted from the
+    // fresh loadout/ringMap by afterReliquaryReload → renderCombatCluster below.
 
     // #263 — publish the rendered two-tone fill order per ring id (across both
     // grids) so an E2E test can assert which component color leads on each card
@@ -2323,8 +2467,10 @@ export class CampScene extends DualCameraScene {
       reliquaryCap: player.reliquaryCap,
       reliquaryShards: player.reliquaryShards,
       reliquaryCount: player.reliquaryCount,
-      // #171 — spare capacity from the API response (server-computed, no client arithmetic)
-      spareCapacity: player.spareCapacity ?? undefined,
+      // EPIC #378/#388 — spare-grid cap from /api/me (server-computed). Drives the
+      // Reliquary SPIRIT-grid lock in applyReliquaryLockState. Replaces the dead
+      // `spareCapacity` alias dropped in #383. Default 9 on older servers.
+      spare_ring_max: player.spare_ring_max ?? 9,
       // EPIC #302 — heart slot fields from /api/me. heart_ring drives the Heart card
       // + center header (♥ cur/max); total_xp + battle_hand_avg_xp drive the right
       // header segment. All server-computed.

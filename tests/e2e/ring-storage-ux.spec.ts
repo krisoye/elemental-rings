@@ -1,6 +1,6 @@
 import { test, expect } from '@playwright/test';
 import type { Page } from '@playwright/test';
-import { seedAuthToken, campToEncounter, waitForEncounter } from './helpers';
+import { seedAuthToken, campToEncounter, waitForEncounter, enterForestScreen } from './helpers';
 
 // #85 — Ring Storage overlay + Encounter UX fixes. Asserts on REAL server state
 // and live Phaser scene objects (no mocks), mirroring the sanctum-zones harness:
@@ -48,6 +48,21 @@ async function putCarry(token: string, ringIds: string[]): Promise<void> {
   });
 }
 
+/**
+ * POST /api/test/seed-resting-rings → add `count` rings directly to the SPIRIT
+ * (Reliquary) pool (in_carry=0). Used to overflow the grid past 3 rows. The test
+ * endpoint inserts directly, bypassing the carry-cap / reliquary-cap guards — so
+ * it can fill the grid past the default reliquary cap (9) to exercise scrolling.
+ */
+async function seedRestingRings(token: string, count: number): Promise<void> {
+  const res = await fetch(`${API_URL}/api/test/seed-resting-rings`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+    body: JSON.stringify({ count }),
+  });
+  if (!res.ok) throw new Error(`seed-resting-rings failed (${res.status}): ${await res.text()}`);
+}
+
 async function loadSanctum(page: Page): Promise<void> {
   await page.goto(URL);
   await page.waitForFunction(() => !!(window as any).__player, { timeout: 10000 });
@@ -84,27 +99,13 @@ async function campTextByName(page: Page, name: string): Promise<string | null> 
   }, name);
 }
 
-/**
- * Read an EncounterScene Text object's text by name. EncounterScene does not set
- * window.__scene (only the spatial scenes do), so resolve it via the game's
- * SceneManager by key and search its display list (incl. nested containers).
- */
-async function encounterTextByName(page: Page, name: string): Promise<string | null> {
-  return page.evaluate((n) => {
-    const scene = (window as any).__game.scene.getScene('EncounterScene') as Phaser.Scene;
-    const found = scene.children
-      .getAll()
-      .flatMap((c: any) => (c.getAll ? [c, ...c.getAll()] : [c]))
-      .find((o: any) => o.name === n);
-    return found ? (found as any).text ?? null : null;
-  }, name);
-}
-
-// ── Scenario 1: Full passive text WATER Thumb (Ring Storage) ─────────────────
+// ── Scenario 1: WATER Thumb passive (Ring Storage) ───────────────────────────
 // #241 — WATER's passive is now the all-in setup distributor "Torrent" (was
 // "Wellspring"): at duel start it pours the thumb's uses onto matching Water
-// rings, highest-XP first. The strip shows the name + its full effect text.
-test('passive-strip: WATER Thumb shows full Torrent effect text', async ({ browser }) => {
+// rings, highest-XP first. EPIC #302 replaced the always-on passive strip with a
+// hover tooltip on the STATUS card; the authoritative passive (name + full effect
+// text) is published on __campState.staked_passive and surfaced by the tooltip.
+test('passive-strip: WATER Thumb shows full Torrent passive (tooltip + staked_passive)', async ({ browser }) => {
   const token = await registerAndToken();
   const { rings } = await getMe(token);
   const water = rings.find((r: any) => r.element === WATER_EL);
@@ -118,33 +119,37 @@ test('passive-strip: WATER Thumb shows full Torrent effect text', async ({ brows
   await loadSanctum(page);
   await openReliquary(page);
 
+  // The authoritative passive name lands in __campState.staked_passive.
   await page.waitForFunction(
     () => (window as any).__campState.staked_passive?.name === 'Torrent',
     { timeout: 5000 },
   );
-  await page.waitForFunction(
-    () => {
-      const scene = (window as any).__scene as Phaser.Scene;
-      const strip = scene.children
-        .getAll()
-        .flatMap((c: any) => (c.getAll ? [c, ...c.getAll()] : [c]))
-        .find((o: any) => o.name === 'staked-passive-strip');
-      return !!strip && /round-robin highest XP first/.test((strip as any).text ?? '');
-    },
-    { timeout: 5000 },
-  );
-  const stripText = await campTextByName(page, 'staked-passive-strip');
-  expect(stripText).toContain('Torrent');
-  expect(stripText).toContain('round-robin highest XP first');
+  const passive = await page.evaluate(() => (window as any).__campState.staked_passive);
+  expect(passive.name).toBe('Torrent');
+  // The full effect text (what the STATUS-card hover tooltip renders) is present.
+  expect(passive.effect).toContain('round-robin highest XP first');
+
+  // Hovering the STATUS (Thumb) card surfaces the tooltip with the same text.
+  const tooltipText = await page.evaluate(() => {
+    const scene = (window as any).__scene as any;
+    scene.combatCards.get('thumb').bg.emit('pointerover', { x: 800, y: 200 });
+    const lbl = scene.children
+      .getAll()
+      .find((o: any) => o.depth === 5000 && o.visible && typeof o.text === 'string');
+    return lbl ? lbl.text : null;
+  });
+  expect(tooltipText).toBeTruthy();
+  expect(tooltipText).toContain('Torrent');
+  expect(tooltipText).toContain('round-robin highest XP first');
   await ctx.close();
 });
 
-// ── Scenario 2: Reliquary redesign (#154) — two-panel labels + live header ────
-// After #154 the modal is a two-panel loadout manager (RELIQUARY left, LOADOUT
-// right with BATTLE HAND over SPARE) topped by a live stats header. The old
-// [Add to Loadout]/[Leave at Sanctum] action buttons are gone — moves are
-// click-then-click. Assert the new structure is present.
-test('reliquary-redesign: two-panel labels + live stats header are present', async ({ browser }) => {
+// ── Scenario 2: Reliquary converged labels + live header (#302/#347/#389) ─────
+// The modal is the unified ring-management overlay: four column headers
+// (SPIRIT | BENCH | HEALTH | COMBAT) topped by a three-part live stats header
+// (Spirit / ♥ / Total XP). Moves are click-then-click. Assert the converged
+// structure is present.
+test('reliquary-redesign: converged column labels + live stats header are present', async ({ browser }) => {
   const token = await registerAndToken();
   const ctx = await browser.newContext();
   await ctx.addInitScript(`localStorage.setItem('er_token', ${JSON.stringify(token)})`);
@@ -159,30 +164,34 @@ test('reliquary-redesign: two-panel labels + live stats header are present', asy
       .flatMap((c: any) => (c.getAll ? [c, ...c.getAll()] : [c]));
     const byName = (n: string) => all.find((o: any) => o.name === n);
     return {
-      header: (byName('reliquary-header') as any)?.text ?? null,
+      headerLeft: (byName('reliquary-header-left') as any)?.text ?? null,
       reliquary: (byName('reliquary-label') as any)?.text ?? null,
-      loadout: (byName('loadout-label') as any)?.text ?? null,
+      health: (byName('health-label') as any)?.text ?? null,
       battleHand: (byName('battle-hand-label') as any)?.text ?? null,
       spare: (byName('spare-label') as any)?.text ?? null,
       hasFuse: !!all.find((o: any) => o.type === 'Text' && o.text === '[Fuse Rings]'),
     };
   });
-  expect(labels.reliquary).toContain('RELIQUARY'); // label is 'RELIQUARY  ↓'
-  expect(labels.loadout).toBe('LOADOUT');
-  expect(labels.battleHand).toBe('BATTLE HAND');
-  expect(labels.spare).toContain('SPARE'); // label is 'SPARE  ↓'
+  // #302/#347 — left column is SPIRIT, COMBAT replaces BATTLE HAND, HEALTH present.
+  expect(labels.reliquary).toContain('SPIRIT');
+  expect(labels.battleHand).toBe('COMBAT');
+  expect(labels.health).toBe('HEALTH');
+  // #389 — the middle column is BENCH (was SPARES).
+  expect(labels.spare).toContain('BENCH');
   expect(labels.hasFuse).toBe(false); // Fuse Rings moved out of this overlay
-  expect(labels.header).toContain('XP:'); // renamed from aggregate_xp
-  expect(labels.header).toContain('Spirit:');
+  // The live header's left segment carries the spirit reading.
+  expect(labels.headerLeft).toContain('Spirit:');
   await ctx.close();
 });
 
 // ── Scenario 3: Sanctum grid scrolls when overflowed (8 sanctum rings) ───────
 test('scroll: overflowing sanctum grid clips at 3 rows and scrolls by row', async ({ browser }) => {
   const token = await registerAndToken();
-  const { rings } = await getMe(token);
-  // 10 starter rings; carry 0 so all 10 remain in Reliquary (4 grid rows at 3-col width).
-  await putCarry(token, []);
+  // A fresh player has 5 resting (Reliquary) rings. Seed 5 more directly so the
+  // SPIRIT grid holds 10 rings = 4 rows at 3-col width (overflowing the 3-row
+  // window). #378's reliquary cap (9) makes uncarrying all rings to the Reliquary
+  // impossible, so seed resting rings directly instead of `putCarry([])`.
+  await seedRestingRings(token, 5);
 
   const ctx = await browser.newContext();
   await ctx.addInitScript(`localStorage.setItem('er_token', ${JSON.stringify(token)})`);
@@ -273,8 +282,9 @@ test('reliquary-redesign: move a Reliquary ring into Spare carries it', async ({
 // ── Scenario 5: Reopen resets scroll to row 0 ────────────────────────────────
 test('scroll: closing (Esc) and reopening resets scroll to row 0', async ({ browser }) => {
   const token = await registerAndToken();
-  const { rings } = await getMe(token);
-  await putCarry(token, []); // all 10 in Reliquary
+  // Seed 5 extra resting rings → 10 in the SPIRIT grid (4 rows). See the sibling
+  // scroll test: #378's reliquary cap (9) blocks `putCarry([])` of all 10 rings.
+  await seedRestingRings(token, 5);
 
   const ctx = await browser.newContext();
   await ctx.addInitScript(`localStorage.setItem('er_token', ${JSON.stringify(token)})`);
@@ -305,52 +315,48 @@ test('scroll: closing (Esc) and reopening resets scroll to row 0', async ({ brow
   await ctx.close();
 });
 
-// ── Scenario 6: Full passive text in Manage Battle Hand + clear of carried rings
-test('manage-passive: WATER Thumb full text above the carried-rings label', async ({ browser }) => {
+// ── Scenario 6: WATER Thumb passive in the field Manage Battle Rings overlay ──
+// #87/#305 extracted the encounter manage-battle-hand UI into the standalone
+// BattleHandOverlay, and EPIC #302 replaced the always-on passive strip with a
+// hover tooltip on the STATUS card. This asserts the same WATER "Torrent" passive
+// (name + full effect text) surfaces in the field overlay's STATUS-card tooltip.
+test('manage-passive: WATER Thumb full text in the field overlay STATUS tooltip', async ({ browser }) => {
   const token = await registerAndToken();
-  const { rings } = await getMe(token);
-  const water = rings.find((r: any) => r.element === WATER_EL);
+  const me = await getMe(token);
+  const water = me.rings.find((r: any) => r.element === WATER_EL);
   expect(water).toBeDefined();
+  // The fresh WATER ring rests in the Reliquary (in_carry=0). The field overlay's
+  // thumbPassiveText() resolves the staked Thumb from the CARRIED rings, so carry
+  // the WATER ring (alongside the existing carried set) before staking it as Thumb.
+  const carried = me.rings.filter((r: any) => r.in_carry === 1).map((r: any) => r.id);
+  await putCarry(token, Array.from(new Set([...carried, water.id])));
   await putLoadout(token, { thumb: water.id });
 
   const ctx = await browser.newContext();
   await ctx.addInitScript(`localStorage.setItem('er_token', ${JSON.stringify(token)})`);
   const page = await ctx.newPage();
   await page.goto(URL);
-  await campToEncounter(page);
-  await waitForEncounter(page);
-
-  await page.evaluate(() => (window as any).__encounterManageBattleHand());
+  await page.waitForFunction(() => (window as any).__activeScene === 'CampScene', { timeout: 10000 });
+  await enterForestScreen(page, 'forest_anchorage');
   await page.waitForFunction(
-    () => {
-      const scene = (window as any).__game.scene.getScene('EncounterScene') as Phaser.Scene;
-      return !!scene.children
-        .getAll()
-        .flatMap((c: any) => (c.getAll ? [c, ...c.getAll()] : [c]))
-        .find((o: any) => o.name === 'manage-staked-passive');
-    },
+    () => typeof (window as any).__overworldToggleBattleHand === 'function',
     { timeout: 8000 },
   );
-
-  const stripText = await encounterTextByName(page, 'manage-staked-passive');
-  expect(stripText).toContain('Torrent');
-  expect(stripText).toContain('round-robin highest XP first');
-
-  // The passive strip bottom must sit above the Carried-rings label top (no overlap).
-  const bounds = await page.evaluate(() => {
-    const scene = (window as any).__game.scene.getScene('EncounterScene') as Phaser.Scene;
-    const all = scene.children
-      .getAll()
-      .flatMap((c: any) => (c.getAll ? [c, ...c.getAll()] : [c]));
-    const strip = all.find((o: any) => o.name === 'manage-staked-passive');
-    const carried = all.find(
-      (o: any) => o.type === 'Text' && /Carried rings/.test((o as any).text ?? ''),
-    );
-    const sb = (strip as any).getBounds();
-    const cb = (carried as any).getBounds();
-    return { stripBottom: sb.bottom, carriedTop: cb.top };
+  await page.evaluate(() => (window as any).__overworldToggleBattleHand());
+  await page.waitForFunction(() => (window as any).__overworldBattleHandOpen === true, {
+    timeout: 5000,
   });
-  expect(bounds.stripBottom).toBeLessThanOrEqual(bounds.carriedTop);
+  await page.waitForFunction(() => !!(window as any).__heartCardState, { timeout: 5000 });
+
+  // The field overlay exposes the staked-Thumb passive text via thumbPassiveText()
+  // (the STATUS-card hover tooltip source). It must carry the WATER Torrent passive.
+  const passiveText = await page.evaluate(() => {
+    const scene = (window as any).__game?.scene?.getScene('ForestScene') as any;
+    return scene?.battleHand?.thumbPassiveText?.() ?? null;
+  });
+  expect(passiveText).toBeTruthy();
+  expect(passiveText).toContain('Torrent');
+  expect(passiveText).toContain('round-robin highest XP first');
   await ctx.close();
 });
 

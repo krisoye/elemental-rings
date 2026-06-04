@@ -540,36 +540,31 @@ describe('#362 DomLabel source guards: CSS construction in DomLabel.ts', () => {
 // Class 5 — Carve-out rule: per-card labels inside spareContainer stay canvas
 // ---------------------------------------------------------------------------
 
-describe('#363 carve-out invariant: BattleHandOverlay per-card labels stay canvas (not DOM)', () => {
+describe('#363/#389 carve-out invariant: scrollable per-card labels stay canvas (not DOM)', () => {
 
-  // #363 adversarial: if the impl agent incorrectly migrates spareContainer per-card
-  // labels to DOM, Phaser cannot clip the DOM element inside the masked scroll
-  // container — labels will bleed outside the visible area during scroll.
-  it('BattleHandOverlay.ts still creates canvas Text objects for per-card labels in the spare container', () => {
-    const src = readClientSrc('objects/BattleHandOverlay.ts');
+  // #363 adversarial: if per-card labels inside a masked scroll container are
+  // migrated to DOM, Phaser cannot clip the DOM element — labels bleed outside the
+  // visible area during scroll. #381/#389 moved BattleHandOverlay's per-card labels
+  // into the shared InventoryGrid → RingCard, so the carve-out now lives in
+  // RingCard: its element/pips/XP labels must be CANVAS text wrapped in
+  // crispCanvasText, never addDomLabel.
+  it('RingCard.ts keeps per-card labels on canvas (crispCanvasText, not addDomLabel)', () => {
+    const src = readClientSrc('objects/ui/RingCard.ts');
     if (src === null) return;
-
-    // The per-card labels were created with scene.add.text() calls at y offsets
-    // -22, -6, 10, 24 (ELEMENT_NAMES, pips, Xp, tier). After #364, these should
-    // use crispCanvasText(scene.add.text(...)) — NOT addDomLabel.
-    // We verify the spareContainer section still uses scene.add.text, not addDomLabel.
-    // Heuristic: the addCardLabel / buildSpareCard region must not contain addDomLabel.
-    // We check that at least some scene.add.text calls remain (the per-card labels).
-    const hasCanvasText = src.includes('scene.add.text') || src.includes('this.scene.add.text');
-    if (!hasCanvasText) {
-      // All text may have been migrated — but the spec explicitly says per-card
-      // labels inside spareContainer are DOM-ineligible. If no canvas text exists
-      // at all in BattleHandOverlay, that is a violation.
-      // If the file uses a helper like crispCanvasText which wraps add.text internally,
-      // skip this assertion (we cannot tell from source scan alone).
-      const hasCrispHelper = src.includes('crispCanvasText');
-      if (!hasCrispHelper) {
-        throw new Error(
-          'BattleHandOverlay.ts has no canvas Text objects and no crispCanvasText calls — ' +
-          'per-card labels inside spareContainer must NOT be migrated to DOM (they would break scroll clipping)',
-        );
-      }
-    }
+    // Per-card labels are canvas Text wrapped in crispCanvasText.
+    expect(
+      src.includes('crispCanvasText'),
+      'RingCard.ts must wrap its per-card labels in crispCanvasText (canvas carve-out)',
+    ).toBe(true);
+    expect(
+      src.includes('scene.add') && src.includes('.text('),
+      'RingCard.ts must create canvas Text objects for its stat rows',
+    ).toBe(true);
+    // The DOM-migration helper must NOT be used for scrollable per-card labels.
+    expect(
+      src.includes('addDomLabel'),
+      'RingCard per-card labels must NOT be migrated to DOM (would break scroll clipping)',
+    ).toBe(false);
   });
 
   // #363 adversarial: if the overlayTitle / spare HEADER label is NOT migrated to DOM
@@ -1214,58 +1209,61 @@ describe('#362 Phase 2: refreshHud teardown-race null guards in BaseBiomeScene.t
 // (e.g. missing the tier label) would leave one label jagged on fractional DPI
 // while the others are smooth — visible inconsistency.
 
-describe('#364 Phase 2: addRingInfo wraps ALL four labels with crispCanvasText', () => {
+describe('#364/#389 Phase 2: RingCard wraps every per-card label with crispCanvasText', () => {
 
-  it('addRingInfo method body in BattleHandOverlay.ts contains exactly 4 crispCanvasText calls', () => {
-    // #364 adversarial: if a future edit adds a fifth label without wrapping it,
-    // or removes a wrap from an existing label, this count check catches it.
-    const src = readClientSrc('objects/BattleHandOverlay.ts');
+  // #381 retired BattleHandOverlay.addRingInfo() and the inline spareContainer card
+  // build (ringGrp.add); #389 migrated InventoryGrid's inline card loop onto the
+  // shared RingCard too. So the single owner of per-card crisp labels is now
+  // RingCard — every per-card label is wrapped in crispCanvasText, and after #389's
+  // Tier-row removal no `tierLabel` / `T{n}` row remains. (#390 added one more crisp
+  // label, the fusion-eligible glyph, which is also wrapped.)
+  it('RingCard.ts wraps its per-card labels with crispCanvasText and has no Tier row', () => {
+    const src = readClientSrc('objects/ui/RingCard.ts');
     if (src === null) return;
-
-    // Isolate the addRingInfo method body.
-    const methodStart = src.indexOf('private addRingInfo(');
-    expect(methodStart, 'addRingInfo method must exist in BattleHandOverlay.ts').toBeGreaterThan(-1);
-
-    // Find the matching closing brace. We walk forward counting braces.
-    let braceDepth = 0;
-    let methodEnd = -1;
-    for (let i = methodStart; i < src.length; i++) {
-      if (src[i] === '{') braceDepth++;
-      else if (src[i] === '}') {
-        braceDepth--;
-        if (braceDepth === 0) { methodEnd = i; break; }
-      }
-    }
-    expect(methodEnd, 'addRingInfo method body must have a closing brace').toBeGreaterThan(methodStart);
-
-    const body = src.slice(methodStart, methodEnd + 1);
-    const crispCalls = (body.match(/crispCanvasText\(/g) ?? []).length;
+    expect(src, 'RingCard.ts must import crispCanvasText from DomLabel').toContain('crispCanvasText');
+    const crispCalls = (src.match(/crispCanvasText\(/g) ?? []).length;
+    // element / pips / XP stat rows (3) + the #390 fusion-eligible glyph (1) = 4.
     expect(
       crispCalls,
-      `addRingInfo must wrap all 4 text labels with crispCanvasText — found ${crispCalls}`,
+      `RingCard must wrap element/pips/XP + the fuse glyph in crispCanvasText — found ${crispCalls}`,
     ).toBe(4);
+    // #389 — the Tier row is gone: no tierLabel field nor any `T{n}` row construction.
+    expect(src.includes('tierLabel')).toBe(false);
+    expect(/T\$\{[^}]*tier/.test(src), 'no `T${...tier}` Tier-row label may remain').toBe(false);
   });
 
-  it('spareContainer inline card build also wraps all 4 per-card labels with crispCanvasText', () => {
-    // #364 adversarial: BattleHandOverlay has TWO places that build per-card labels:
-    // addRingInfo() for field cards and the inline spare card build in the forEach.
-    // Both must wrap ALL four labels. Missing one in either location leaves one
-    // label jagged in that specific render path.
-    const src = readClientSrc('objects/BattleHandOverlay.ts');
+  it('InventoryGrid.ts builds its cells from RingCard (no inline per-card label construction)', () => {
+    // #389 — the inline card-construction loop (bg rect + FusedCardFill + 4
+    // crispCanvasText labels) was migrated to instantiate a shared RingCard, so the
+    // grid no longer hand-rolls per-card labels.
+    const src = readClientSrc('objects/InventoryGrid.ts');
     if (src === null) return;
+    expect(src, 'InventoryGrid.ts must construct cards from RingCard').toContain('new RingCard(');
+    // The retired inline build is gone: no direct per-card text/FusedCardFill calls.
+    expect(src.includes('ringGrp.add(')).toBe(false);
+    expect(src.includes('new FusedCardFill(')).toBe(false);
+  });
 
-    // Locate the spare card inline build by the characteristic y-offsets (-22/-6/10/24).
-    // The inline build uses ringGrp.add([crispCanvasText(...), ...]) pattern.
-    const inlineMarker = src.indexOf('ringGrp.add([');
-    expect(inlineMarker, 'spareContainer inline card build must exist (ringGrp.add)').toBeGreaterThan(-1);
+  it('#389/#390 RingCard.ts has no Tier-row label (element/pips/XP rows + fuse glyph only)', () => {
+    // #389 adversarial: the Tier row was dropped. The card's crisp labels are the
+    // three stat rows (element/pips/XP) plus the #390 fusion-eligible glyph — never
+    // a `T{n}` Tier row. Assert structurally (no tierLabel, no `T${...tier}`) rather
+    // than by a brittle call count, so the #390 glyph doesn't trip a Tier-row alarm.
+    const src = readClientSrc('objects/ui/RingCard.ts');
+    if (src === null) return;
+    expect(src.includes('tierLabel'), 'no tierLabel field may remain').toBe(false);
+    expect(/T\$\{[^}]*tier/.test(src), 'no `T${...tier}` Tier-row label may remain').toBe(false);
+    expect(src.includes('this.tierLabel'), 'no tierLabel rendering may remain').toBe(false);
+  });
 
-    // Slice a generous window around the inline build (the array argument spans ~10 lines).
-    const window2 = src.slice(inlineMarker, inlineMarker + 600);
-    const inlineCrispCalls = (window2.match(/crispCanvasText\(/g) ?? []).length;
-    expect(
-      inlineCrispCalls,
-      `spareContainer inline build must wrap all 4 per-card labels with crispCanvasText — found ${inlineCrispCalls}`,
-    ).toBe(4);
+  it('#389 RingCard.ts has no tierLabel field or tierY option', () => {
+    // Source guard: both the instance field and the opts key were removed together.
+    // A partial removal (e.g. only tierLabel but tierY kept) would leave a dead option
+    // that confuses future editors into thinking Tier row is configurable.
+    const src = readClientSrc('objects/ui/RingCard.ts');
+    if (src === null) return;
+    expect(src, 'RingCard.ts must not have tierLabel field — Tier row is gone').not.toContain('tierLabel');
+    expect(src, 'RingCard.ts must not have tierY option — Tier row is gone').not.toContain('tierY');
   });
 
 });
@@ -1382,6 +1380,68 @@ describe('#362 Phase 2: addDomLabel originX branch for align overrides', () => {
     expect(src, "DomLabel must handle align='left' in originX computation").toContain("align === 'left'");
     expect(src, "DomLabel must handle align='right' in originX computation").toContain("align === 'right'");
     expect(src, 'DomLabel originX must have a 0.5 fallback for center').toContain('0.5');
+  });
+
+});
+
+// ── 6k: #389 BattleHandOverlay field-mode reliquary-target guard ─────────────
+//
+// Field mode disables the spirit/reliquary target so the player cannot bank a
+// ring to the resting pool away from the Sanctum.  We verify the source contains
+// a guard that conditionally enables/disables the reliquary move path.
+
+describe('#389 Phase 1+2: BattleHandOverlay field-mode reliquary-target disabled (source guard)', () => {
+
+  // #389 adversarial: if BattleHandOverlay delegates to the unified RingManagementOverlay
+  // in 'field' mode, the field-mode reliquary-target disable must be present either in
+  // BattleHandOverlay.ts or in the shared RingManagementOverlay.ts.
+  it('BattleHandOverlay.ts or RingManagementOverlay.ts contains a reliquary-target disable guard for field mode', () => {
+    // #389 adversarial: without this guard, a player in the field could banking a ring
+    // to the resting pool — violating the "no banking away from Sanctum" rule.
+    const bhoSrc = readClientSrc('objects/BattleHandOverlay.ts');
+    const rmoSrc = readClientSrc('objects/ui/RingManagementOverlay.ts');
+    // At least one of the two files must reference 'reliquary' in the context of
+    // disabling the target ('field' mode gate).
+    const bhoHasReliquaryGuard = bhoSrc?.includes('reliquary') ?? false;
+    const rmoHasReliquaryGuard = rmoSrc?.includes('reliquary') ?? false;
+    expect(
+      bhoHasReliquaryGuard || rmoHasReliquaryGuard,
+      'Field-mode reliquary-target disable must be present in BattleHandOverlay.ts or RingManagementOverlay.ts',
+    ).toBe(true);
+  });
+
+  it("RingManagementOverlay.ts exports RingMgmtMode type with 'sanctum' and 'field' variants", () => {
+    // #389 adversarial: if the type is narrowed to a single mode or loses a variant,
+    // mode-gating logic would be unreachable (or always active) without a TS error.
+    const src = readClientSrc('objects/ui/RingManagementOverlay.ts');
+    if (src === null) return;
+    expect(src, "RingManagementOverlay must define RingMgmtMode with 'sanctum'").toContain("'sanctum'");
+    expect(src, "RingManagementOverlay must define RingMgmtMode with 'field'").toContain("'field'");
+  });
+
+  it('BattleHandOverlay.ts publishes window.__ringMgmtState (calls publishRingMgmtState)', () => {
+    // #389 E2E introspection requirement: the field overlay must publish its structure
+    // to __ringMgmtState so cross-mode structural assertions can verify column parity.
+    // Without this call the Scenario 1c E2E test would wait forever for the hook.
+    const src = readClientSrc('objects/BattleHandOverlay.ts');
+    if (src === null) return;
+    expect(
+      src,
+      'BattleHandOverlay.ts must call publishRingMgmtState to expose field-mode state to E2E',
+    ).toContain('publishRingMgmtState');
+  });
+
+  it('BattleHandOverlay.ts calls clearRingMgmtState on close (hook cleanup)', () => {
+    // #389 adversarial: if clearRingMgmtState is not called on close, __ringMgmtState
+    // persists with stale field-mode data after the overlay is dismissed. The sanctum
+    // overlay's later publish would overwrite it, but a race between close and the
+    // re-render could produce a stale snapshot that trips the structural assertion.
+    const src = readClientSrc('objects/BattleHandOverlay.ts');
+    if (src === null) return;
+    expect(
+      src,
+      'BattleHandOverlay.ts must call clearRingMgmtState when the overlay is closed',
+    ).toContain('clearRingMgmtState');
   });
 
 });
@@ -1670,26 +1730,27 @@ describe('#364 Phase 2: crispCanvasText call-site coverage across target files',
     expect(callCount, 'BattleScene.ts must have at least 3 crispCanvasText calls (battle labels, banners, feedback)').toBeGreaterThanOrEqual(3);
   });
 
-  it('BattleHandOverlay.ts imports both addDomLabel and crispCanvasText from DomLabel', () => {
-    // #363/#364 adversarial: BattleHandOverlay uses both helpers — addDomLabel for
-    // screen-fixed labels and crispCanvasText for scrolling per-card labels. If the
-    // import statement drops either, one category of labels loses its treatment.
+  it('BattleHandOverlay.ts imports addDomLabel; per-card crisp labels live in InventoryGrid', () => {
+    // #363/#364 used both helpers in BattleHandOverlay. #381/#389 migrated the
+    // scrolling per-card labels to the shared InventoryGrid → RingCard, so the
+    // overlay now keeps addDomLabel for its screen-fixed chrome while crispCanvasText
+    // for per-card labels is owned by InventoryGrid/RingCard.
     const src = readClientSrc('objects/BattleHandOverlay.ts');
     if (src === null) return;
     expect(src, 'BattleHandOverlay.ts must import addDomLabel').toContain('addDomLabel');
-    expect(src, 'BattleHandOverlay.ts must import crispCanvasText').toContain('crispCanvasText');
-    // Both must come from the same DomLabel module (not scattered imports).
     const importLine = src.split('\n').find((l) => l.includes('addDomLabel') && l.includes('import'));
-    const crispImportLine = src.split('\n').find((l) => l.includes('crispCanvasText') && l.includes('import'));
-    // Either in the same import statement or both from './ui/DomLabel'.
-    const sameImport = importLine && crispImportLine && importLine === crispImportLine;
-    const bothFromDomLabel =
-      (importLine?.includes('DomLabel') ?? false) &&
-      (crispImportLine?.includes('DomLabel') ?? false);
     expect(
-      sameImport || bothFromDomLabel,
-      'BattleHandOverlay.ts must import both addDomLabel and crispCanvasText from DomLabel',
+      importLine?.includes('DomLabel') ?? false,
+      'BattleHandOverlay.ts must import addDomLabel from DomLabel',
     ).toBe(true);
+
+    // #389 — the carve-out (canvas, not DOM, for scrollable per-card labels) now
+    // lives in InventoryGrid, whose cards are RingCards that wrap their labels in
+    // crispCanvasText (RingCard.ts). Verify the chain is intact.
+    const ring = readClientSrc('objects/ui/RingCard.ts');
+    if (ring !== null) {
+      expect(ring, 'RingCard.ts must import crispCanvasText from DomLabel').toContain('crispCanvasText');
+    }
   });
 
 });

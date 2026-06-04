@@ -876,10 +876,12 @@ function clearRingFromLoadout(playerId: string, ringId: string): void {
 /**
  * Fuse two parent rings into a single compound-element fusion ring (GDD §4.6).
  *
- * Validates (in order): ownership of both distinct rings, that both parents sit
- * in the SAME tier (`tierForXp(r1.xp) === tierForXp(r2.xp)`), that the shared
- * tier is at least Tier 1, and that the two base elements form a valid fusion
- * pair. On success it inserts the new fusion ring — element from `fusionOf`, XP
+ * Validates (in order): ownership of both distinct rings, that NEITHER parent is
+ * itself a fusion ring (`isFusion(element)` — a fusion cannot be fused again),
+ * that EACH parent independently sits at Tier 1 or above (`tierForXp(xp) >= 1`,
+ * i.e. ≥ 500 XP), and that the two base elements form a valid fusion pair. The
+ * parents do NOT have to share a tier (#390 dropped that requirement). On
+ * success it inserts the new fusion ring — element from `fusionOf`, XP
  * the sum of both parents, tier recomputed from that summed XP via {@link
  * tierForXp}, and `max_uses = naturalMaxUses(fusedTier) = 3 + tier` — the same
  * pure-XP rule every natural ring obeys, so a fused ring is no exception to the
@@ -902,14 +904,18 @@ export const fuseRings = db.transaction(
       throw new Error('Ring not found or not owned');
     }
 
-    // §4.6 — both parents must be the same XP-derived tier, and that tier must
-    // be at least Tier 1 (≥ 500 XP). Tier is derived live from XP (not the cached column).
-    const tier1 = tierForXp(r1.xp);
-    const tier2 = tierForXp(r2.xp);
-    if (tier1 !== tier2) {
-      throw new Error('Rings must be the same tier to fuse');
+    // §4.6 — neither parent may itself be a fusion ring (a fusion cannot be fused
+    // again). Checked BEFORE the pair check so it yields a distinct message rather
+    // than the generic "do not form a valid fusion".
+    if (isFusion(r1.element) || isFusion(r2.element)) {
+      throw new Error('A fusion ring is already a fusion and cannot be fused again');
     }
-    if (tier1 < 1) {
+
+    // §4.6 — each parent must independently reach at least Tier 1 (≥ 500 XP).
+    // The same-tier requirement was dropped (#390): two rings of DIFFERENT tiers
+    // may fuse so long as both clear the Tier-1 floor. Tier is derived live from
+    // XP (not the cached column).
+    if (tierForXp(r1.xp) < 1 || tierForXp(r2.xp) < 1) {
       throw new Error('Both rings must reach Tier 1 to fuse');
     }
 
@@ -928,9 +934,9 @@ export const fuseRings = db.transaction(
 
     // #263 — persist the dominant (higher-XP) parent element so the two-tone card
     // renders the parent the player leveled first (top/left). A STRICT higher-XP
-    // parent sets the dominant; on equal XP (legal — same tier) we store -1 so the
-    // card falls through to the static FUSION_PARENTS order as the deterministic,
-    // argument-order-independent tiebreak (EPIC #256 Contracts / AC #3).
+    // parent sets the dominant; on equal XP we store -1 so the card falls through
+    // to the static FUSION_PARENTS order as the deterministic, argument-order-
+    // independent tiebreak (EPIC #256 Contracts / AC #3).
     const parentDominant = r1.xp > r2.xp ? r1.element : r2.xp > r1.xp ? r2.element : -1;
 
     const newRingId = uuidv4();

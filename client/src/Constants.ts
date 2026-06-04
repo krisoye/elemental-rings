@@ -75,7 +75,7 @@ export const PASSIVE_STRIP_WIDTH = 88;
 // #263 — orientation of the two-tone fused ring card. 'vertical' splits the card
 // into a top half (component 0) and a bottom half (component 1); 'horizontal'
 // splits left (0) / right (1). One global constant so every fused card flips
-// together (RingSlot, InventoryGrid, LoadoutPanel, StakePanel, OpponentDuelist).
+// together (RingSlot, InventoryGrid, RingCard, OpponentDuelist).
 export const FUSED_CARD_SPLIT: 'horizontal' | 'vertical' = 'vertical';
 
 // Triangle element indices for the 3-gauge HUD (FIRE/WATER/WOOD).

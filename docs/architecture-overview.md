@@ -184,7 +184,7 @@ DOM elements always composite above all canvas content. Text that **cannot** mov
 - Text inside a scrolling or masked Phaser container
 - World-space labels (positioned in world coordinates, not screen coordinates)
 
-For these cases use `crispCanvasText(textObj)` from `DomLabel.ts`. This is the **only** intentional `setResolution` call site post-revert. It raises the glyph-texture resolution to `Math.ceil(window.devicePixelRatio)` and switches the texture filter to `LINEAR`. Always pair both — never scatter raw `setResolution` calls elsewhere.
+For these cases use `crispCanvasText(textObj)` from `DomLabel.ts`. This is the **only** intentional `setResolution` call site post-revert. It raises the glyph-texture resolution to `Math.ceil(window.devicePixelRatio)` and switches the texture filter to `LINEAR`. Always pair both — never scatter raw `setResolution` calls elsewhere. `crispCanvasText` re-applies the `LINEAR` filter on **every** re-render (`setText`/`setColor`), so dynamically-updated labels stay crisp; this is why it overrides the Text instance's `updateText` (Phaser's `updateText` re-uploads the canvas to the GPU and would otherwise discard the filter on the first mutation).
 
 ### DomLabel updateSize() Width-Staleness Invariant
 

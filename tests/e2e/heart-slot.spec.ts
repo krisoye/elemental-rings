@@ -148,10 +148,11 @@ test('heart: the left column label reads SPIRIT (was RELIQUARY)', async ({ brows
   await ctx.close();
 });
 
-// ── Scenario 3: four-column header (SPIRIT↓|SPARES↓|HEALTH|COMBAT), no ATK/DEF ─
-// #347 — the modal moved to a four-column read. The HEALTH header (over the
-// relocated Heart card) and the COMBAT label (was "BATTLE HAND") are present, and
-// the old ATTACK/DEFENSE row labels are gone.
+// ── Scenario 3: four-column header (SPIRIT↓|BENCH↓|HEALTH|COMBAT), no ATK/DEF ──
+// #347 — the modal moved to a four-column read. #389 — the middle column is now
+// labelled BENCH (was SPARES). The HEALTH header (over the relocated Heart card)
+// and the COMBAT label (was "BATTLE HAND") are present; the old ATTACK/DEFENSE
+// row labels are gone.
 test('heart: four column headers render and ATTACK/DEFENSE labels are gone', async ({ browser }) => {
   const token = await registerAndToken();
   const ctx = await browser.newContext();
@@ -162,7 +163,9 @@ test('heart: four column headers render and ATTACK/DEFENSE labels are gone', asy
 
   // All four column headers present, left → right.
   expect(await campTextByName(page, 'reliquary-label')).toContain('SPIRIT');
-  expect(await campTextByName(page, 'spare-label')).toContain('SPARES');
+  // #389 — middle column is BENCH (player-facing), not the old SPARES.
+  expect(await campTextByName(page, 'spare-label')).toContain('BENCH');
+  expect(await campTextByName(page, 'spare-label')).not.toContain('SPARES');
   expect(await campTextByName(page, 'health-label')).toBe('HEALTH');
   expect(await campTextByName(page, 'battle-hand-label')).toBe('COMBAT');
 
@@ -230,12 +233,17 @@ test('heart: moving a Reliquary (spirit) ring into the heart slot equips it', as
   );
 
   const after = await getMe(token);
-  // The new ring is the heart ring (heart_slot = 1, outside carry).
-  const eq = after.rings.find((r: any) => r.id === spiritId);
+  // The new ring is the heart ring. /api/me excludes heart_slot=1 rings from the
+  // `rings` array (EPIC #378) — the heart ring is surfaced exclusively via
+  // player.heart_ring, which returns the full ring row including heart_slot and
+  // in_carry. Assert against that object directly.
   expect(after.player.heart_ring.id).toBe(spiritId);
-  expect(eq.heart_slot).toBe(1);
-  expect(eq.in_carry).toBe(0);
-  // The previous heart ring was released back to the Reliquary (heart_slot cleared).
+  // player.heart_ring is the full RingRow (SELECT r.* JOIN players) — heart_slot
+  // and in_carry are available here without searching after.rings.
+  expect(after.player.heart_ring.heart_slot).toBe(1);
+  expect(after.player.heart_ring.in_carry).toBe(0);
+  // The previous heart ring was released back to the Reliquary (heart_slot cleared,
+  // appears in after.rings since it is no longer heart_slot=1).
   if (oldHeartId && oldHeartId !== spiritId) {
     const old = after.rings.find((r: any) => r.id === oldHeartId);
     expect(old.heart_slot).toBe(0);
@@ -321,10 +329,12 @@ test('heart: the Thumb passive is a hover tooltip, not a permanent strip', async
   });
   expect(tooltipBefore).toBe(false);
 
-  // Fire the Thumb card bg pointerover — the tooltip appears with the passive text.
+  // Fire the STATUS (Thumb) card bg pointerover — the tooltip appears with the
+  // passive text. #389 — the STATUS card is now an overlay-scoped RingCard in the
+  // converged COMBAT cluster (scene.combatCards), replacing the retired StakePanel.
   await page.evaluate(() => {
     const scene = (window as any).__scene as any;
-    const bg = scene.stakePanel.thumbBg;
+    const bg = scene.combatCards.get('thumb').bg;
     bg.emit('pointerover', { x: 800, y: 200 } as any);
   });
   const tooltipText = await page.evaluate(() => {
@@ -340,7 +350,7 @@ test('heart: the Thumb passive is a hover tooltip, not a permanent strip', async
   // pointerout hides it again.
   await page.evaluate(() => {
     const scene = (window as any).__scene as any;
-    scene.stakePanel.thumbBg.emit('pointerout');
+    scene.combatCards.get('thumb').bg.emit('pointerout');
   });
   const tooltipAfter = await page.evaluate(() => {
     const scene = (window as any).__scene as Phaser.Scene;

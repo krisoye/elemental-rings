@@ -13,7 +13,7 @@
 | Spare grid | Carried rings NOT assigned to any battle slot; swappable between encounters | `spare_ring_max` (default 9, per-player) | Future expansion |
 | Loadout (carry) | Battle hand + spare grid combined | `spare_ring_max` + 5 (default 14) | Grows with `spare_ring_max` |
 
-- **Spare grid** (`spare_ring_max`, default **9** per player): the rings carried but not in any named battle slot. This cap is stored as a per-player DB column and can be expanded independently in the future. The former `SPARE_SLOTS` constant still provides the default value.
+- **Spare grid** (`spare_ring_max`, default **9** per player): the rings carried but not in any named battle slot. This cap is stored as a per-player DB column and can be expanded independently in the future. The former `SPARE_SLOTS` constant still provides the default value. *(UI label: the Spare grid is shown to the player as **"Bench"** in the ring-management overlays — the canonical mechanic name stays "Spare grid"; the code/DB/API identifiers stay `spare_*`.)*
 - **Battle hand and spare grid are independent pools.** Clearing a battle slot does **not** free spare capacity — the spare-grid cap counts only rings that are carried AND not in any battle slot. An empty battle slot is simply an empty battle slot; it has no effect on how many spare rings the player may hold.
 - **WON ring overflow:** when a player wins a ring but the spare grid is already at `spare_ring_max`, the ring is added to carry as a **pending** ring (one allowed overflow slot). The player must resolve this — by discarding a spare, assigning the ring to a slot, or discarding the won ring — before the pending flag is cleared. `pending_ring_id` in `/api/me` is the authoritative identifier for an unresolved WON ring; it replaces the former `er_pending_ring` client-side key.
 - Combined with the default Reliquary cap (§4.1.1), the total rings held at any time is bounded at **23** (14 carried + 9 resting) at default settings. See §12.2.
@@ -89,17 +89,18 @@ Tier thresholds follow a **triangular-number × 500** pattern. Each tier's XP ra
 
 ### 4.6 Fusion — Ring Crafting
 
-Fusion combines two rings of the **same tier** into a single compound-element ring. The compound element's battle behaviour is defined in §3.4.
+Fusion combines two eligible rings into a single compound-element ring. The compound element's battle behaviour is defined in §3.4.
 
 **Fusion rules:**
-- Both parent rings must be the **same tier**
-- Minimum tier to fuse: **Tier 1** (both rings must have ≥ 500 XP)
+- Each parent ring must independently be at least **Tier 1** (≥ 500 XP). The parents do **not** have to be the same tier — a leveled ring and a compatible fresh Tier-1 ring may fuse.
+- Neither parent may **itself be a fusion ring** — a fused ring cannot be fused again (maximum fusion depth is two base elements)
+- The two parent elements must form a **valid fusion pair** (a distinct base-element pair)
 - Both parent rings are consumed; they cease to exist
 - The fused ring's **XP = parent1.xp + parent2.xp** — the full investment of both parents is preserved
 - The fused ring's **tier is determined by its total XP** via the standard tier formula
 - The fused ring's **max uses = 3 + tier(parent1.xp + parent2.xp)** — the same pure-XP rule every natural ring obeys (§4.2), with no fusion exception
 
-**Unified XP-only rule:** a fused ring is just a ring at its combined-XP tier. Its max uses follow `3 + tier` exactly like a natural ring, so the `max_uses = 3 + tier(xp)` invariant holds universally. Because XP is additive, two near-cap same-tier parents can push the combined XP into the *next* tier — in which case the child lands at that higher tier's full uses, which may exceed either parent. That is intended: the player banked the parents' combined investment.
+**Unified XP-only rule:** a fused ring is just a ring at its combined-XP tier. Its max uses follow `3 + tier` exactly like a natural ring, so the `max_uses = 3 + tier(xp)` invariant holds universally. Because XP is additive, the combined XP can push the child into a *higher* tier than either parent — in which case it lands at that higher tier's full uses, which may exceed either parent. That is intended: the player banked the parents' combined investment.
 
 **Worked example — fusing two minimum Tier 1 rings (stays in Tier 1):**
 
@@ -124,7 +125,7 @@ The fused ring is a ring at its combined-XP tier — no penalty, no catch-up. Co
 | Path | Mechanic | Reward | Cost |
 |---|---|---|---|
 | Natural ascension | Battle XP accumulates on one ring | Higher tier (and its `3 + tier` uses); ring retains its single element | Time invested in a single ring |
-| Fusion | Two same-tier rings combined | Compound element — broader offensive coverage, no weakness — at the combined-XP tier | Two rings (two elements) collapse into one compound body; the second ring's separate identity is gone |
+| Fusion | Two eligible rings (each ≥ Tier 1) combined | Compound element — broader offensive coverage, no weakness — at the combined-XP tier | Two rings (two elements) collapse into one compound body; the second ring's separate identity is gone |
 
 Players who invest deeply in one ring keep a focused single element; players who fuse trade two rings for one compound body with broader match-up coverage. Both paths reach high tiers and both follow the same `3 + tier` uses rule; neither is strictly superior.
 

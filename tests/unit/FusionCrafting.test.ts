@@ -3,7 +3,8 @@ import path from 'path';
 import fs from 'fs';
 import { describe, test, expect, beforeAll } from 'vitest';
 import { ElementEnum } from '../../shared/types';
-import { fusionOf } from '../../server/src/game/Fusions';
+import { fusionOf, isFusion } from '../../server/src/game/Fusions';
+import { isFusionEligibleParent, MIN_FUSION_PARENT_XP } from '../../shared/fusions';
 import { tierForXp, tierStartXp, naturalMaxUses } from '../../server/src/game/Tiers';
 
 const { FIRE, WATER, EARTH, WIND, WOOD, STEAM, DUST, MAGMA } = ElementEnum;
@@ -60,11 +61,12 @@ describe('fusionOf — element pair → fusion element', () => {
 // import of any module that transitively imports db.ts, then dynamically import
 // the repo. better-sqlite3 is synchronous; the schema is applied on import.
 //
-// Fusion rules (GDD §4.6): both parents must share the same XP-derived tier, that
-// tier must be ≥ 1 (≥ 500 XP), XP is additive, fused tier = tierForXp(sum), and fused
-// max_uses = naturalMaxUses(fusedTier) = 3 + fusedTier — the same pure-XP rule every
-// natural ring obeys (no min(parents)−1 penalty). Tier is derived from XP, so tests
-// seed XP at/above the relevant tierStartXp threshold rather than the old hard caps.
+// Fusion rules (GDD §4.6, #390): each parent must independently reach Tier 1
+// (≥ 500 XP) — the parents need NOT share a tier — and neither parent may itself
+// be a fusion. XP is additive, fused tier = tierForXp(sum), and fused max_uses =
+// naturalMaxUses(fusedTier) = 3 + fusedTier — the same pure-XP rule every natural
+// ring obeys (no min(parents)−1 penalty). Tier is derived from XP, so tests seed
+// XP at/above the relevant tierStartXp threshold rather than the old hard caps.
 // ---------------------------------------------------------------------------
 
 // XP that lands a ring squarely in a given tier (start XP of that tier; §4.2).
@@ -178,15 +180,23 @@ describe('fuseRings — DB transaction (§4.6)', () => {
     expect(result!.max_uses).toBe(3 + tierForXp(result!.xp));
   });
 
-  test('different-tier pair (Tier 2 + Tier 3) throws (rejected → 400)', () => {
+  test('different-tier pair (Tier 2 + Tier 3) fuses (same-tier requirement dropped, #390)', () => {
     const p = makePlayer(db);
-    const fire = makeRing(db, p, FIRE, T2_XP); // Tier 2
-    const water = makeRing(db, p, WATER, T3_XP); // Tier 3
+    const fire = makeRing(db, p, FIRE, T2_XP); // Tier 2 (1500 XP)
+    const water = makeRing(db, p, WATER, T3_XP); // Tier 3 (3000 XP)
 
-    expect(() => repo.fuseRings(p, fire, water)).toThrow(/same tier/);
-    // Both parents still present; no fusion ring created.
-    const rings = repo.getRingsByOwner(p);
-    expect(rings).toHaveLength(2);
+    // #390 — both parents clear the Tier-1 floor, so the differing tiers no longer
+    // block fusion. Combined 4500 → Tier 3 → 3 + 3 = 6 uses.
+    const newId = repo.fuseRings(p, fire, water);
+    const result = repo.getRingsByOwner(p).find((r) => r.id === newId);
+
+    expect(result).toBeDefined();
+    expect(result!.element).toBe(STEAM);
+    expect(result!.xp).toBe(T2_XP + T3_XP); // 4500
+    expect(result!.tier).toBe(tierForXp(T2_XP + T3_XP)); // 4500 → Tier 3
+    expect(result!.max_uses).toBe(3 + tierForXp(result!.xp));
+    // Only the fusion ring remains; both parents consumed.
+    expect(repo.getRingsByOwner(p)).toHaveLength(1);
   });
 
   test('same-tier Tier 1 pair → fusion succeeds (Tier 1 is the new minimum)', () => {
@@ -212,6 +222,20 @@ describe('fuseRings — DB transaction (§4.6)', () => {
     const rings = repo.getRingsByOwner(p);
     expect(rings).toHaveLength(2);
     expect(rings.every((r) => r.tier === 0)).toBe(true);
+  });
+
+  test('asymmetric sub-500: one Tier 0 + one Tier 1 parent throws (#390 per-parent gate)', () => {
+    const p = makePlayer(db);
+    // Only ONE parent is below the 500-XP floor. The per-parent `||` gate must
+    // still reject — a regression to `&&` (both must be sub-500) would let this
+    // through, so this asymmetric case is the one that pins the `||`.
+    const fire = makeRing(db, p, FIRE, 200); // Tier 0 — below the floor
+    const water = makeRing(db, p, WATER, 600); // Tier 1 — clears the floor
+
+    expect(() => repo.fuseRings(p, fire, water)).toThrow(/Tier 1/);
+    // Both parents intact; no fusion created.
+    const rings = repo.getRingsByOwner(p);
+    expect(rings).toHaveLength(2);
   });
 
   test('same-tier Tier 3 parents → fusion succeeds', () => {
@@ -268,6 +292,19 @@ describe('fuseRings — DB transaction (§4.6)', () => {
     expect(() => repo.fuseRings(p, fire1, fire2)).toThrow(/do not form a valid fusion/);
   });
 
+  test('a parent that is itself a fusion throws a distinct "already a fusion" message (#390)', () => {
+    const p = makePlayer(db);
+    // STEAM is a fusion element (Fire+Water). Even though STEAM + WOOD is not a
+    // valid base pair, the isFusion gate fires FIRST — so the rejection is the
+    // distinct "already a fusion" message, not the generic invalid-pair one.
+    const steam = makeRing(db, p, STEAM, T2_XP);
+    const wood = makeRing(db, p, WOOD, T2_XP);
+
+    expect(() => repo.fuseRings(p, steam, wood)).toThrow(/already a fusion/);
+    // No fusion created; both parents intact.
+    expect(repo.getRingsByOwner(p)).toHaveLength(2);
+  });
+
   test('parents are consumed (deleted) from the DB after fusion', () => {
     const p = makePlayer(db);
     const wind = makeRing(db, p, WIND, T2_XP);
@@ -316,5 +353,204 @@ describe('fuseRings — DB transaction (§4.6)', () => {
     expect(rings).toHaveLength(1);
     expect(rings[0].id).toBe(newId);
     expect(rings[0].element).toBe(ElementEnum.BLOOM);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Phase 1 — Spec-driven adversarial tests (#390)
+// ---------------------------------------------------------------------------
+
+describe('MIN_FUSION_PARENT_XP constant — spec conformance (#390)', () => {
+  // #390 adversarial: constant drift is silent — a refactor moving the value to 499
+  // or 501 would change game balance without any type error; pin it explicitly.
+  test('MIN_FUSION_PARENT_XP equals 500 (locks the per-parent XP floor)', () => {
+    expect(MIN_FUSION_PARENT_XP).toBe(500);
+  });
+
+  // #390 adversarial: the constant must match the Tier-1 threshold so the "≥ Tier 1"
+  // prose and the numeric constant never diverge silently.
+  test('MIN_FUSION_PARENT_XP equals tierStartXp(1) — floor is exactly Tier-1 start', () => {
+    expect(MIN_FUSION_PARENT_XP).toBe(tierStartXp(1));
+  });
+});
+
+describe('isFusionEligibleParent — unit (shared/fusions.ts, #390)', () => {
+  // #390 adversarial: 499 XP is one below the floor; previously the tier check ran
+  // across both parents together so a near-miss on one could slip through.
+  test('returns false at exactly 499 XP for a base element (one below the floor)', () => {
+    expect(isFusionEligibleParent(FIRE, 499)).toBe(false);
+  });
+
+  // #390 adversarial: exactly-on-boundary must accept — an off-by-one (> vs >=)
+  // would silently lock out freshly-minted Tier-1 rings.
+  test('returns true at exactly 500 XP for a base element (exactly the floor)', () => {
+    expect(isFusionEligibleParent(FIRE, 500)).toBe(true);
+  });
+
+  // #390 Phase 2 adversarial: a fusion element (STEAM) at very high XP must always
+  // be ineligible — isFusionEligibleParent must gate on !isFusion regardless of XP.
+  test('returns false for a fusion element even at XP=10000 (re-fusing is always blocked)', () => {
+    expect(isFusionEligibleParent(STEAM, 10000)).toBe(false);
+  });
+
+  // #390 adversarial: all 10 fusion elements must be ineligible at any XP to ensure
+  // the isFusion branch covers every compound element, not just STEAM.
+  test('returns false for every fusion element at XP=5000 (exhaustive fusion-element check)', () => {
+    const fusionElements = [
+      ElementEnum.STEAM, ElementEnum.WILDFIRE, ElementEnum.INFERNO, ElementEnum.MAGMA,
+      ElementEnum.TIDAL, ElementEnum.STORM, ElementEnum.MUD, ElementEnum.THORNADO,
+      ElementEnum.BLOOM, ElementEnum.DUST,
+    ];
+    for (const el of fusionElements) {
+      expect(isFusionEligibleParent(el, 5000)).toBe(false);
+    }
+  });
+
+  // #390 adversarial: all 5 base elements must be eligible at exactly the floor so
+  // the predicate doesn't accidentally hard-code only FIRE or WATER.
+  test('returns true for every base element at exactly 500 XP', () => {
+    for (const el of [FIRE, WATER, EARTH, WIND, WOOD]) {
+      expect(isFusionEligibleParent(el, 500)).toBe(true);
+    }
+  });
+});
+
+describe('fuseRings — adversarial boundary and guard-order tests (#390)', () => {
+  let repo: typeof import('../../server/src/persistence/PlayerRepo');
+
+  function makeRing(
+    db: import('better-sqlite3').Database,
+    playerId: string,
+    element: number,
+    xp: number,
+    maxUses = 5,
+  ): string {
+    const id = `ring_${element}_${Math.random().toString(36).slice(2)}`;
+    db.prepare(
+      `INSERT INTO rings (id, owner_id, element, tier, max_uses, current_uses, xp)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    ).run(id, playerId, element, tierForXp(xp), maxUses, maxUses, xp);
+    return id;
+  }
+
+  function makePlayer(db: import('better-sqlite3').Database): string {
+    const id = `p_${Math.random().toString(36).slice(2)}`;
+    db.prepare(`INSERT INTO players (id, username, password_hash) VALUES (?, ?, ?)`).run(
+      id, `u_${id}`, 'x',
+    );
+    db.prepare(
+      `INSERT INTO loadout (player_id, thumb, a1, a2, d1, d2) VALUES (?, NULL, NULL, NULL, NULL, NULL)`,
+    ).run(id);
+    return id;
+  }
+
+  let db: import('better-sqlite3').Database;
+
+  beforeAll(async () => {
+    // Use a separate DB file so these adversarial tests are isolated from the
+    // main fuseRings suite above (which already owns its singleton DB_PATH).
+    // We share the same process so DB_PATH is already set; fetch the singleton.
+    repo = await import('../../server/src/persistence/PlayerRepo');
+    db = (await import('../../server/src/persistence/db')).db;
+  });
+
+  // --- XP boundary tests ---
+
+  // #390 adversarial: exactly 499 XP is one below the Tier-1 floor; the per-parent
+  // gate must reject even when the partner clears the floor (asymmetric case).
+  test('parent at exactly 499 XP is rejected — one below the floor', () => {
+    const p = makePlayer(db);
+    const fire = makeRing(db, p, FIRE, 499);  // 499 — one below T1
+    const water = makeRing(db, p, WATER, 600); // 600 — clears T1
+
+    expect(() => repo.fuseRings(p, fire, water)).toThrow(/Tier 1/);
+    expect(repo.getRingsByOwner(p)).toHaveLength(2); // both parents intact
+  });
+
+  // #390 adversarial: exactly 500 XP must be accepted — an off-by-one (> instead of
+  // >=) would silently lock out the minimum-viable ring; regression would be invisible
+  // until a player complains.
+  test('parent at exactly 500 XP is accepted — exactly the floor', () => {
+    const p = makePlayer(db);
+    const fire = makeRing(db, p, FIRE, 500);  // exactly T1
+    const water = makeRing(db, p, WATER, 500); // exactly T1
+
+    const newId = repo.fuseRings(p, fire, water);
+    const result = repo.getRingsByOwner(p).find((r) => r.id === newId);
+
+    expect(result).toBeDefined();
+    expect(result!.element).toBe(STEAM);
+    expect(result!.xp).toBe(1000); // 500 + 500 — no rounding, no cap
+  });
+
+  // #390 adversarial: child XP must be the exact arithmetic sum of both parent XP
+  // values — no rounding, no clamping, no floating-point drift. A subtle bug that
+  // truncates or rounds the sum would quietly destroy XP for players.
+  test('child xp === r1.xp + r2.xp exactly — no rounding, no cap', () => {
+    const p = makePlayer(db);
+    // Use deliberately asymmetric, non-round XP values to catch rounding bugs.
+    const r1Xp = 613;
+    const r2Xp = 2887;
+    const fire = makeRing(db, p, FIRE, r1Xp);
+    const water = makeRing(db, p, WATER, r2Xp);
+
+    const newId = repo.fuseRings(p, fire, water);
+    const result = repo.getRingsByOwner(p).find((r) => r.id === newId);
+
+    expect(result!.xp).toBe(r1Xp + r2Xp); // 3500 — must be exact
+  });
+
+  // --- Guard-order tests ---
+
+  // #390 Phase 2 adversarial: guard order is (1) ownership, (2) isFusion, (3) xp≥500,
+  // (4) fusionOf. A sub-500-XP fusion-element ring is BOTH a fusion AND below the
+  // floor — but the isFusion guard must fire first, yielding "already a fusion", NOT
+  // the Tier-1 message. Swapping guards 2 and 3 would flip the message.
+  test('sub-500 fusion-element ring throws "already a fusion", not the Tier-1 message (guard order #390)', () => {
+    const p = makePlayer(db);
+    // STEAM at 200 XP — fails BOTH the isFusion gate AND the xp≥500 gate.
+    // The isFusion gate is listed first in fuseRings, so it must fire first.
+    const steam = makeRing(db, p, STEAM, 200); // fusion element + below floor
+    const fire = makeRing(db, p, FIRE, 600);   // clean base element above floor
+
+    // Must throw the "already a fusion" message, not /Tier 1/.
+    expect(() => repo.fuseRings(p, steam, fire)).toThrow(/already a fusion/);
+    expect(() => repo.fuseRings(p, steam, fire)).not.toThrow(/Tier 1/);
+  });
+
+  // #390 adversarial: the isFusion check must also fire when it is the SECOND ring
+  // that is a fusion (isFusion covers r2 too — the `||` operator must not be `&&`).
+  test('second ring being a fusion also triggers the "already a fusion" guard', () => {
+    const p = makePlayer(db);
+    const fire = makeRing(db, p, FIRE, 600);   // clean
+    const magma = makeRing(db, p, MAGMA, 600); // fusion element as r2
+
+    expect(() => repo.fuseRings(p, fire, magma)).toThrow(/already a fusion/);
+  });
+
+  // --- Commutativity test ---
+
+  // #390 adversarial: argument order must not gate-crash on the valid asymmetric
+  // case. fuseRings(r1, r2) and fuseRings(r2, r1) must both succeed — a guard that
+  // only inspects r1 for the XP floor would silently reject the reversed order.
+  test('combine(r1, r2) and combine(r2, r1) both succeed for an asymmetric valid pair', () => {
+    const p1 = makePlayer(db);
+    const fire1 = makeRing(db, p1, FIRE, 600);   // T1 (low)
+    const water1 = makeRing(db, p1, WATER, 3200); // T3 (high)
+    const newId1 = repo.fuseRings(p1, fire1, water1); // low, high
+    const result1 = repo.getRingsByOwner(p1).find((r) => r.id === newId1);
+    expect(result1).toBeDefined();
+    expect(result1!.element).toBe(STEAM);
+
+    const p2 = makePlayer(db);
+    const water2 = makeRing(db, p2, WATER, 3200); // high first
+    const fire2 = makeRing(db, p2, FIRE, 600);    // low second
+    const newId2 = repo.fuseRings(p2, water2, fire2); // high, low (reversed)
+    const result2 = repo.getRingsByOwner(p2).find((r) => r.id === newId2);
+    expect(result2).toBeDefined();
+    expect(result2!.element).toBe(STEAM);
+
+    // Both fusions must produce the same child XP regardless of argument order.
+    expect(result1!.xp).toBe(result2!.xp);
   });
 });

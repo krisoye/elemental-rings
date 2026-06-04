@@ -16,6 +16,27 @@ const RINGWALL = { x: 128, y: 56 };
 
 const BATTLE_SLOTS = ['thumb', 'a1', 'a2', 'd1', 'd2'] as const;
 
+/** POST /api/test/seed-resting-rings → add `count` Reliquary rings (in_carry=0). */
+async function seedRestingRings(token: string, count: number): Promise<void> {
+  const res = await fetch(`${API_URL}/api/test/seed-resting-rings`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+    body: JSON.stringify({ count }),
+  });
+  if (!res.ok) throw new Error(`seed-resting-rings failed (${res.status}): ${await res.text()}`);
+}
+
+/** POST /api/test/grant-ring → mint a WON ring (in_carry=1, pending=1). */
+async function grantWonRing(token: string): Promise<string> {
+  const res = await fetch(`${API_URL}/api/test/grant-ring`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+    body: JSON.stringify({ element: 0 }),
+  });
+  if (!res.ok) throw new Error(`grant-ring failed (${res.status}): ${await res.text()}`);
+  return (await res.json()).player.pending_ring_id as string;
+}
+
 async function registerAndToken(): Promise<string> {
   const res = await fetch(`${API_URL}/auth/register`, {
     method: 'POST',
@@ -33,8 +54,8 @@ async function getMe(token: string): Promise<any> {
   return res.json();
 }
 
-async function putCarry(token: string, ringIds: string[]): Promise<void> {
-  await fetch(`${API_URL}/api/carry`, {
+async function putCarry(token: string, ringIds: string[]): Promise<Response> {
+  return fetch(`${API_URL}/api/carry`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
     body: JSON.stringify({ ringIds }),
@@ -88,8 +109,12 @@ function carriedCount(me: any): number {
   return me.rings.filter((r: any) => r.in_carry === 1).length;
 }
 
-// ── Scenario 1: Modal opens; header shows aggregate_xp, spirit_max, spirit ────
-test('reliquary: opens at the wall and renders the live stats header', async ({ browser }) => {
+// ── Scenario 1 (#389): converged columns, SPIRIT + BENCH counters, no LOADOUT ──
+// The reliquary modal now shares the unified RingManagementOverlay structure:
+// SPIRIT | BENCH | HEALTH | COMBAT columns. The old combined `loadout (N/cap)`
+// badge is gone, replaced by separate SPIRIT (reliquaryCount/reliquaryCap) and
+// BENCH (spareCount/spare_ring_max) counters. The live header still shows spirit.
+test('reliquary (#389): opens with converged columns and SPIRIT + BENCH counters (no loadout badge)', async ({ browser }) => {
   const token = await registerAndToken();
   const me = await getMe(token);
 
@@ -99,16 +124,44 @@ test('reliquary: opens at the wall and renders the live stats header', async ({ 
   await loadSanctum(page);
   await openReliquary(page);
 
-  // The header text reflects the authoritative /api/me snapshot — not a local
-  // computation. Assert each value appears verbatim.
-  const header = await campTextByName(page, 'reliquary-header');
-  expect(header).toBeTruthy();
-  expect(header).toContain(`XP: ${me.player.aggregate_xp}`);
-  expect(header).toContain(`Spirit: ${me.player.spirit_current} / ${me.player.spirit_max}`);
+  // #389 — the converged structure reporter announces sanctum mode + the four
+  // columns + the Spirit/Bench counter values, and confirms no card has a Tier row.
+  const state = await page.evaluate(() => (window as any).__ringMgmtState);
+  expect(state).toBeTruthy();
+  expect(state.mode).toBe('sanctum');
+  expect(state.columns).toEqual(['SPIRIT', 'BENCH', 'HEALTH', 'COMBAT']);
+  expect(state.anyCardHasTierRow).toBe(false);
 
-  // The LOADOUT badge shows carried / cap.
-  const badge = await campTextByName(page, 'loadout-badge');
-  expect(badge).toBe(`(${carriedCount(me)}/${me.player.carry_cap})`);
+  // SPIRIT counter = reliquaryCount / reliquaryCap (server-authoritative).
+  const reliquaryCount = me.player.reliquaryCount ??
+    me.rings.filter((r: any) => r.in_carry === 0 && !r.escrowed && r.heart_slot !== 1).length;
+  expect(state.counters.spirit.n).toBe(reliquaryCount);
+  expect(state.counters.spirit.max).toBe(me.player.reliquaryCap);
+
+  // BENCH counter = spareCount / spare_ring_max (pending excluded). A fresh player
+  // carries the 5 battle-slot rings (all slotted) → bench 0.
+  expect(state.counters.bench.max).toBe(me.player.spare_ring_max);
+  const battleIds = new Set(['thumb','a1','a2','d1','d2'].map((s) => (me.loadout as any)[s]).filter(Boolean));
+  const expectedBench = me.rings.filter(
+    (r: any) => r.in_carry === 1 && !battleIds.has(r.id) && r.id !== me.player.pending_ring_id && !r.pending,
+  ).length;
+  expect(state.counters.bench.n).toBe(expectedBench);
+
+  // The crisp counter labels are rendered (named scene texts).
+  expect(await campTextByName(page, 'spirit-counter')).toBe(`${reliquaryCount}/${me.player.reliquaryCap}`);
+  expect(await campTextByName(page, 'bench-counter')).toBe(`${expectedBench}/${me.player.spare_ring_max}`);
+
+  // The removed combined badge no longer exists.
+  expect(await campTextByName(page, 'loadout-badge')).toBeNull();
+
+  // The middle column header reads BENCH (not the old SPARES).
+  const benchLabel = await campTextByName(page, 'spare-label');
+  expect(benchLabel).toContain('BENCH');
+  expect(benchLabel).not.toContain('SPARES');
+
+  // The live header still surfaces the authoritative spirit reading.
+  const headerLeft = await campTextByName(page, 'reliquary-header-left');
+  expect(headerLeft).toContain(`Spirit: ${me.player.spirit_current} / ${me.player.spirit_max}`);
   await ctx.close();
 });
 
@@ -158,9 +211,9 @@ test('reliquary: moving a ring into Spare drops aggregate_xp and updates spirit_
   // can only reduce it; spirit_max is server-recomputed and never rises here.
   expect(after.player.aggregate_xp).toBeLessThanOrEqual(before.player.aggregate_xp);
   expect(after.player.spirit_max).toBeLessThanOrEqual(before.player.spirit_max);
-  // The header re-renders from the new authoritative state.
-  const header = await campTextByName(page, 'reliquary-header');
-  expect(header).toContain(`XP: ${after.player.aggregate_xp}`);
+  // The header re-renders from the new authoritative state (left segment = spirit).
+  const headerLeft = await campTextByName(page, 'reliquary-header-left');
+  expect(headerLeft).toContain(`Spirit: ${after.player.spirit_current} / ${after.player.spirit_max}`);
   await ctx.close();
 });
 
@@ -428,5 +481,162 @@ test('reliquary: a Battle Hand ring can be sent to the Reliquary in one action',
   // Uncarried AND cleared from its battle slot in the single action.
   expect(after.rings.find((r: any) => r.id === a1Ring)?.in_carry).toBe(0);
   expect(BATTLE_SLOTS.every((s) => after.loadout[s] !== a1Ring)).toBe(true);
+  await ctx.close();
+});
+
+// ── Scenario 9 (#388): full battle loadout but spare room → grid NOT locked ───
+// Regression for the post-#378 lock bug: a full battle hand (5 slots) pushed the
+// old aggregate `carried >= carry_cap` check toward locking even though the spare
+// (Bench) pool was empty. The lock must track the spare-grid cap, so with all five
+// battle slots filled and zero spares, the SPIRIT grid stays interactive and a
+// Reliquary→Bench move succeeds.
+test('reliquary: full battle loadout with spare room keeps the SPIRIT grid unlocked (#388)', async ({
+  browser,
+}) => {
+  const token = await registerAndToken();
+  const me = await getMe(token);
+  // Fresh player: 5 battle-slot rings carried + 5 resting Reliquary rings. All
+  // battle slots are occupied; the spare pool is empty (spareCount 0 < 9).
+  const slotted = new Set(
+    BATTLE_SLOTS.map((s) => (me.loadout as any)[s]).filter(Boolean) as string[],
+  );
+  expect(slotted.size).toBe(5);
+  const reliquaryRing = me.rings.find(
+    (r: any) => r.in_carry === 0 && !slotted.has(r.id),
+  );
+  expect(reliquaryRing).toBeDefined();
+
+  const ctx = await browser.newContext();
+  await ctx.addInitScript(`localStorage.setItem('er_token', ${JSON.stringify(token)})`);
+  const page = await ctx.newPage();
+  await loadSanctum(page);
+  await openReliquary(page);
+
+  // With a full battle hand but an empty spare pool the grid is NOT locked.
+  const locked = await page.evaluate(() => (window as any).__reliquaryLocked);
+  expect(locked).toBeFalsy();
+
+  // The Reliquary→Bench (spare) move succeeds despite all battle slots being full.
+  await page.evaluate((id) => (window as any).__reliquaryMove(id, 'spare'), reliquaryRing.id);
+  await page.waitForFunction(
+    (id) => (window as any).__campState.loadout_pool.some((r: any) => r.id === id),
+    reliquaryRing.id,
+    { timeout: 8000 },
+  );
+
+  const after = await getMe(token);
+  expect(after.rings.find((r: any) => r.id === reliquaryRing.id)?.in_carry).toBe(1);
+  expect(BATTLE_SLOTS.every((s) => after.loadout[s] !== reliquaryRing.id)).toBe(true);
+  await ctx.close();
+});
+
+// ── Scenario 10 (#388): spare pool full → SPIRIT grid locked, pickup rejected ──
+// Seed the spare pool to spare_ring_max (9): 5 battle-slot rings + 9 spares = 14
+// carried (at carry_cap). spareCount 9 >= 9 → locked. SPIRIT cards dim and a fresh
+// Reliquary pick-up is rejected with the server cap message (no carry change).
+test('reliquary: a full spare pool locks the SPIRIT grid and rejects a fresh pickup (#388)', async ({
+  browser,
+}) => {
+  const token = await registerAndToken();
+  // Add enough resting rings to fill the spare pool to 9 while leaving Reliquary
+  // rings to click. Fresh: 5 battle + 5 resting (10). +9 resting → 19 owned.
+  await seedRestingRings(token, 9);
+  const me = await getMe(token);
+  const spareMax = me.player.spare_ring_max as number;
+  expect(spareMax).toBe(9);
+
+  const slotted = BATTLE_SLOTS.map((s) => (me.loadout as any)[s]).filter(Boolean) as string[];
+  expect(slotted.length).toBe(5);
+  // Carry the 5 battle-slot rings + 9 spares (unslotted) = 14 carried, at cap.
+  const resting = me.rings.filter((r: any) => r.in_carry === 0).map((r: any) => r.id);
+  const nineSpares = resting.slice(0, 9);
+  expect(nineSpares.length).toBe(9);
+  // A Reliquary ring left behind to attempt picking up while locked.
+  const remainingReliquary = resting[9];
+  expect(remainingReliquary).toBeDefined();
+  const carryRes = await putCarry(token, [...slotted, ...nineSpares]);
+  expect(carryRes.status).toBe(200);
+
+  const ctx = await browser.newContext();
+  await ctx.addInitScript(`localStorage.setItem('er_token', ${JSON.stringify(token)})`);
+  const page = await ctx.newPage();
+  await loadSanctum(page);
+  await page.waitForFunction(
+    () => (window as any).__campState.rings.filter((r: any) => r.in_carry === 1).length === 14,
+    { timeout: 8000 },
+  );
+  await openReliquary(page);
+
+  // spareCount (9) >= spare_ring_max (9) → the grid is locked.
+  await page.waitForFunction(() => (window as any).__reliquaryLocked === true, { timeout: 5000 });
+
+  // The locked Reliquary cards are dimmed (alpha < 1).
+  const cardAlpha = await page.evaluate((id) => {
+    const grid = (window as any).__scene.sanctumGrid;
+    return grid?.getCardBg?.(id)?.alpha ?? null;
+  }, remainingReliquary);
+  expect(cardAlpha).not.toBeNull();
+  expect(cardAlpha as number).toBeLessThan(1);
+
+  // A fresh Reliquary pick-up is a no-op: select + move is rejected (cap).
+  const beforeCarried = await page.evaluate(
+    () => (window as any).__campState.rings.filter((r: any) => r.in_carry === 1).length,
+  );
+  await page.evaluate(
+    (id) => (window as any).__reliquarySelect(id, 'reliquary'),
+    remainingReliquary,
+  );
+  await page.evaluate((id) => (window as any).__reliquaryMove(id, 'spare'), remainingReliquary);
+  await page.waitForTimeout(500);
+  const afterCarried = await page.evaluate(
+    () => (window as any).__campState.rings.filter((r: any) => r.in_carry === 1).length,
+  );
+  expect(afterCarried).toBe(beforeCarried);
+
+  const after = await getMe(token);
+  expect(after.rings.find((r: any) => r.id === remainingReliquary)?.in_carry).toBe(0);
+  await ctx.close();
+});
+
+// ── Scenario 11 (#388): pending WON ring is excluded from the spare lock count ─
+// A WON ring arrives in_carry=1, pending=1 (one allowed overflow). With a non-full
+// bench it must NOT count toward spareCount, so the SPIRIT grid stays unlocked and
+// a Reliquary→Bench move still succeeds.
+test('reliquary: a pending WON ring does not lock the SPIRIT grid (#388)', async ({ browser }) => {
+  const token = await registerAndToken();
+  // Mint a pending WON ring (in_carry=1, pending=1). Fresh player now has 5 battle
+  // rings + 5 resting + 1 pending overflow. Spares (excluding pending) = 0 << 9.
+  const pendingId = await grantWonRing(token);
+  const me = await getMe(token);
+  expect(me.player.pending_ring_id).toBe(pendingId);
+
+  const slotted = new Set(
+    BATTLE_SLOTS.map((s) => (me.loadout as any)[s]).filter(Boolean) as string[],
+  );
+  const reliquaryRing = me.rings.find(
+    (r: any) => r.in_carry === 0 && !slotted.has(r.id) && r.id !== pendingId,
+  );
+  expect(reliquaryRing).toBeDefined();
+
+  const ctx = await browser.newContext();
+  await ctx.addInitScript(`localStorage.setItem('er_token', ${JSON.stringify(token)})`);
+  const page = await ctx.newPage();
+  await loadSanctum(page);
+  await openReliquary(page);
+
+  // The pending ring is excluded from spareCount → the grid is NOT locked.
+  const locked = await page.evaluate(() => (window as any).__reliquaryLocked);
+  expect(locked).toBeFalsy();
+
+  // A Reliquary→Bench move still succeeds with the pending ring present.
+  await page.evaluate((id) => (window as any).__reliquaryMove(id, 'spare'), reliquaryRing.id);
+  await page.waitForFunction(
+    (id) => (window as any).__campState.loadout_pool.some((r: any) => r.id === id),
+    reliquaryRing.id,
+    { timeout: 8000 },
+  );
+
+  const after = await getMe(token);
+  expect(after.rings.find((r: any) => r.id === reliquaryRing.id)?.in_carry).toBe(1);
   await ctx.close();
 });

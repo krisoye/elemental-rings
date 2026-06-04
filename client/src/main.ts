@@ -155,6 +155,20 @@ declare global {
     // can assert which post-duel route opened the overlay. (Distinct from the
     // legacy __overworldBattleHandOpen, which is biome-scene-specific.)
     __battleHandOpen?: boolean;
+    // #389 — converged ring-management structure reporter. Published per render by
+    // whichever overlay is open (field BattleHandOverlay or Sanctum reliquary), so
+    // the cross-mode E2E assertions can verify the BENCH/HEALTH/COMBAT columns are
+    // the same structure in both modes, read the Spirit/Bench counters (n/max), and
+    // confirm no card carries a Tier row. Cleared (undefined) when both are closed.
+    __ringMgmtState?: {
+      mode: 'sanctum' | 'field';
+      columns: string[];
+      counters: {
+        spirit?: { n: number; max: number };
+        bench: { n: number; max: number };
+      };
+      anyCardHasTierRow: boolean;
+    };
     connectToRoom: (roomName: string, opts?: BattleRoomOptions) => Promise<void>;
     // Deterministic E2E hook: triggers the same code path as clicking an
     // EncounterScene marker. Set by EncounterScene.create(). 'PVP' starts the
@@ -284,7 +298,9 @@ declare global {
     __campState?: {
       player: any;
       rings: any[];
-      loadout: { thumb?: string | null; [key: string]: unknown };
+      // #389 — slot → ringId map. Narrowed from `unknown` so benchSpareCount /
+      // applyReliquaryLockState read it without an unsafe cast.
+      loadout: Record<string, string | null>;
       // Carry pool separation for #40 assertions.
       atSanctum: any[];
       loadout_pool: any[];
@@ -311,8 +327,9 @@ declare global {
       reliquaryCap?: number;
       reliquaryShards?: number;
       reliquaryCount?: number;
-      // #171 — spare ring capacity (ceil(log_2(aggregate_xp))), from /api/me.
-      spareCapacity?: number;
+      // EPIC #378/#388 — spare-grid cap from /api/me (server-computed). Drives the
+      // Reliquary SPIRIT-grid lock; replaces the dead `spareCapacity` alias (#383).
+      spare_ring_max?: number;
       // #78 ④ — Thumb passive reminder. null when no Thumb ring is staked; a base
       // element yields { name, effect }; a fusion yields { name: null, effect: '…
       // no passive' }.
