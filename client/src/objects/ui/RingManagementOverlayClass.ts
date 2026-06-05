@@ -36,14 +36,6 @@ const MODAL_W = 760;
 const MODAL_H = 500;
 const MODAL_TOP = CANVAS_H / 2 - MODAL_H / 2;   // 38 at 576 canvas
 
-// Left-column geometry (LOOT / WON / DISCARD in field mode).
-const COL0_X = 195;   // WON / DISCARD x-center (leftmost column)
-const ROW0_Y = 193;
-const ROW1_Y = 291;
-const CARD_W = 70;
-const CARD_H = 90;
-const LABEL_Y_ROW0 = ROW0_Y - 34;  // 159
-const LABEL_Y_ROW1 = ROW1_Y - 34;  // 257
 
 /** Data passed to `open()` / `refresh()` — mirrors a /api/me payload. */
 export interface OverlayData {
@@ -86,8 +78,11 @@ export interface RingManagementOverlayOpts {
   /** HEALTH or COMBAT slot card clicked — adapter handles swap routing. */
   onSlotClick?: (slot: 'heart' | SlotKey, overlay: RingManagementOverlay) => void;
 
-  /** DISCARD slot clicked (field mode). */
+  /** DISCARD slot clicked (all modes — BHC now owns it). */
   onDiscardSlotClick?: (overlay: RingManagementOverlay) => void;
+
+  /** Bench ghost placeholder clicked (#423 — always-visible ghost cell). */
+  onBenchGhostClick?: (overlay: RingManagementOverlay) => void;
 
   /**
    * Bench grid card selected (field and sanctum modes — adapter routes swaps).
@@ -313,12 +308,20 @@ export class RingManagementOverlay {
     this.teardown(false /* don't fire close callback */);
 
     const c = this.scene.add.container(0, 0).setDepth(2000);
+    // Field mode: no LOOT column — panel narrows from 760 to 560px, right-aligned
+    // to the same right edge (CANVAS_W/2 + MODAL_W/2 = 892).
+    const MODAL_W_FIELD = 560;
+    const modalW = this.mode === 'field' ? MODAL_W_FIELD : MODAL_W;
+    const panelCenterX = this.mode === 'field'
+      ? CANVAS_W / 2 + (MODAL_W - MODAL_W_FIELD) / 2
+      : CANVAS_W / 2;
+
     const backdrop = this.scene.add
       .rectangle(CANVAS_W / 2, CANVAS_H / 2, CANVAS_W, CANVAS_H, 0x000000, 0.75)
       .setScrollFactor(0)
       .setInteractive();
     const panel = this.scene.add
-      .rectangle(CANVAS_W / 2, CANVAS_H / 2, MODAL_W, MODAL_H, 0x222233)
+      .rectangle(panelCenterX, CANVAS_H / 2, modalW, MODAL_H, 0x222233)
       .setScrollFactor(0)
       .setStrokeStyle(2, 0xffcc88);
 
@@ -330,7 +333,7 @@ export class RingManagementOverlay {
           ? 'Fuse Rings'
           : 'Manage Battle Rings';
     this.domLabels.push(
-      addDomLabel(this.scene, CANVAS_W / 2, MODAL_TOP + 16, titleText, {
+      addDomLabel(this.scene, panelCenterX, MODAL_TOP + 16, titleText, {
         fontPx: 18,
         color: '#ffffff',
         align: 'center',
@@ -342,7 +345,7 @@ export class RingManagementOverlay {
     // text (`kids.find((o) => o.text === '[×]')`). Field/fusion keep CLOSE_GLYPH.
     const closeBtnText = this.mode === 'sanctum' ? '[×]' : CLOSE_GLYPH;
     const closeBtn = this.scene.add
-      .text(CANVAS_W / 2 + MODAL_W / 2 - 20, MODAL_TOP + 16, closeBtnText, {
+      .text(panelCenterX + modalW / 2 - 20, MODAL_TOP + 16, closeBtnText, {
         fontSize: '18px', color: '#ff8888',
       })
       .setScrollFactor(0)
@@ -352,13 +355,34 @@ export class RingManagementOverlay {
     c.add([backdrop, panel, closeBtn]);
 
     // ── Left column ──────────────────────────────────────────────────────────
-    if (this.mode === 'field') {
-      this.renderFieldLeft(c);
-    } else if (this.mode === 'sanctum') {
+    if (this.mode === 'sanctum') {
       this.opts.renderLeft?.(c);
     } else if (this.mode === 'fusion') {
       this.renderFusionLeft(c);
     }
+    // Field mode has no left column — WON/DISCARD/ghost now live in BHC.
+
+    // ── WON/DISCARD/ghost callbacks for BHC (#423) ────────────────────────────
+    const onWonSelect = (): void => {
+      const pendingId = this.pendingRingId;
+      if (!pendingId) return;
+      if (this.swap.selection?.ringId === pendingId && this.swap.selection?.source === 'spare') {
+        this.swap.clear();
+      } else {
+        this.swap.select(pendingId, 'spare');
+        // Publish pendingWonRing for E2E (field mode only).
+        if (window.__encounterState) {
+          const pendingRing = this.allRings.find((r) => r.id === pendingId);
+          if (pendingRing) {
+            window.__encounterState.pendingWonRing = { ringId: pendingId, element: pendingRing.element };
+          }
+        }
+      }
+      this.rerenderIfOpen();
+    };
+
+    const onDiscardClick = (): void => this.opts.onDiscardSlotClick?.(this);
+    const onBenchGhostClick = (): void => this.opts.onBenchGhostClick?.(this);
 
     // ── Shared right half (BenchHealthCombat) ───────────────────────────────
     // Per-mode bench-select callback wired into BHC (replaces the old no-op).
@@ -373,6 +397,9 @@ export class RingManagementOverlay {
       (slot) => this.onSlotClick(slot),
       () => this.opts.getThumbTooltip?.() ?? '',
       onBenchSelect,
+      onWonSelect,
+      onDiscardClick,
+      onBenchGhostClick,
     );
     const me: BenchHealthCombatMe = {
       player: {
@@ -389,11 +416,6 @@ export class RingManagementOverlay {
     bhc.build(me, this.swap.selection?.source ?? null, selRingId);
     c.add(bhc);
     this.bhc = bhc;
-
-    // Field mode — attach empty-bench placeholder to BHC's bench grid now that BHC is built.
-    if (this.mode === 'field') {
-      this.attachEmptyBenchPlaceholder(bhc);
-    }
 
     // ♥ cur/max label with dark backing rect — added as direct children of the
     // modal container (not inside BenchHealthCombat) so the flat modal.getAll()
@@ -450,129 +472,6 @@ export class RingManagementOverlay {
     if (this.mode === 'sanctum') {
       window.__reliquaryLocked = benchN >= spareMax;
     }
-  }
-
-  private renderFieldLeft(c: Phaser.GameObjects.Container): void {
-    const slottedIds = new Set(
-      (SLOT_KEYS as readonly string[]).map((k) => this.manageLoadout[k]).filter(Boolean) as string[],
-    );
-    if (this.heartRing) slottedIds.add(this.heartRing.id);
-    if (this.pendingRingId) slottedIds.add(this.pendingRingId);
-    const availableRings = this.manageRings.filter((r) => !slottedIds.has(r.id));
-    const spareMax = this.managePlayer?.spare_ring_max ?? 0;
-
-    // WON card.
-    const pendingRing = this.pendingRingId
-      ? this.allRings.find((r) => r.id === this.pendingRingId)
-      : undefined;
-    if (pendingRing) {
-      const wonSel =
-        this.swap.selection?.ringId === pendingRing.id && this.swap.selection?.source === 'spare';
-      const wonCard = new RingCard(this.scene, COL0_X, ROW0_Y, {
-        width: CARD_W, height: CARD_H, scrollFactor: 0,
-        strokeColor: wonSel ? 0xffff00 : 0xffcc44,
-        strokeWidth: wonSel ? 3 : 2,
-      });
-      wonCard.setRing({
-        element: pendingRing.element, tier: pendingRing.tier, xp: pendingRing.xp,
-        currentUses: pendingRing.current_uses, maxUses: pendingRing.max_uses,
-        fusionParents: pendingRing.fusionParents,
-      });
-      wonCard.bg
-        .setInteractive({ useHandCursor: true })
-        .on('pointerdown', () => {
-          if (wonSel) this.swap.clear();
-          else this.swap.select(pendingRing.id, 'spare');
-          this.rerenderIfOpen();
-        });
-      this.scene.add.existing(wonCard);
-      c.add(wonCard);
-      this.domLabels.push(
-        addDomLabel(this.scene, COL0_X, LABEL_Y_ROW0, 'WON ◆', { fontPx: 11, color: '#ffcc44', align: 'center' }),
-      );
-      if (window.__encounterState) {
-        window.__encounterState.pendingWonRing = {
-          ringId: pendingRing.id,
-          element: pendingRing.element,
-        };
-      }
-    } else {
-      const ph = this.scene.add
-        .rectangle(COL0_X, ROW0_Y, CARD_W, CARD_H, 0x2a2a33)
-        .setScrollFactor(0)
-        .setStrokeStyle(2, 0x555566)
-        .setAlpha(0.5);
-      c.add(ph);
-    }
-
-    // DISCARD slot.
-    const discardRect = this.scene.add
-      .rectangle(COL0_X, ROW1_Y, CARD_W, CARD_H, 0x331a1a, 0.4)
-      .setScrollFactor(0)
-      .setStrokeStyle(2, 0xaa4444)
-      .setName('discard-slot')
-      .setInteractive({ useHandCursor: true })
-      .on('pointerdown', () => this.opts.onDiscardSlotClick?.(this));
-    c.add(discardRect);
-    // DISCARD label — dark backing so E2E CSS background check passes.
-    this.domLabels.push(
-      addDomLabel(this.scene, COL0_X, LABEL_Y_ROW1, 'DISCARD', {
-        fontPx: 11, color: '#aa4444', align: 'center',
-        background: 'rgba(0,0,0,0.55)', padding: '1px 3px',
-      }),
-    );
-
-    // Empty-bench placeholder geometry is stored for attaching to BHC's bench grid
-    // after BHC is constructed (see render() below). We capture the needed values here.
-    this.pendingEmptyBenchPlaceholder = {
-      usedSpares: availableRings.length,
-      spareCapacity: spareMax,
-      selId: this.swap.selection?.ringId ?? null,
-      selSrc: this.swap.selection?.source ?? null,
-    };
-  }
-
-  /**
-   * Transient state set by `renderFieldLeft` so `render()` can attach the empty-bench
-   * placeholder to BHC's bench grid after BHC is built. Cleared after use.
-   */
-  private pendingEmptyBenchPlaceholder: {
-    usedSpares: number;
-    spareCapacity: number;
-    selId: string | null;
-    selSrc: string | null;
-  } | null = null;
-
-  /** Attach the empty-bench placeholder to the BHC bench grid (field mode only). */
-  private attachEmptyBenchPlaceholder(bhc: BenchHealthCombat): void {
-    const p = this.pendingEmptyBenchPlaceholder;
-    this.pendingEmptyBenchPlaceholder = null;
-    if (!p) return;
-    const { usedSpares, spareCapacity, selId, selSrc } = p;
-    const emptySpareActionable = selId !== null && selSrc !== 'spare';
-    if (!emptySpareActionable || usedSpares >= spareCapacity) return;
-    const GRID_CONTENT_TOP_Y = 148;
-    const GRID_VISIBLE_ROWS = 3;
-    const GRID_CARD_H = 88;
-    const MODAL_BOTTOM = 538;
-    const NUM_COLS = 3;
-    const rawPhY = Math.ceil(usedSpares / NUM_COLS) * GRID_ROW_GAP + GRID_CARD_H / 2;
-    const maxLocalY = MODAL_BOTTOM - GRID_CONTENT_TOP_Y - GRID_CARD_H / 2 - 4;
-    const phY = Math.min(rawPhY, maxLocalY);
-    const GRID_VISIBLE_BOTTOM_LOCAL = GRID_VISIBLE_ROWS * GRID_ROW_GAP;
-    if (phY >= GRID_VISIBLE_BOTTOM_LOCAL) return;
-    const grid = bhc.getBenchGrid();
-    if (!grid) return;
-    const nextCol = usedSpares % NUM_COLS;
-    const phX = nextCol * GRID_COL_GAP + GRID_CARD_W / 2;
-    const ph = this.scene.add
-      .rectangle(phX, phY, GRID_CARD_W, GRID_CARD_H, 0x2a2a33)
-      .setScrollFactor(0)
-      .setStrokeStyle(2, 0x665544)
-      .setAlpha(0.7)
-      .setInteractive({ useHandCursor: true })
-      .on('pointerdown', () => { void this.swap.moveTo('spare'); });
-    grid.getCardContainer().add(ph);
   }
 
   /**
@@ -901,7 +800,6 @@ export class RingManagementOverlay {
   }
 
   private teardown(fireCb = false): void {
-    this.pendingEmptyBenchPlaceholder = null;
     if (this.bhc) {
       this.bhc.destroy();
       this.bhc = null;

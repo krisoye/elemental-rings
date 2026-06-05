@@ -34,7 +34,7 @@ export type RingMgmtMode = 'sanctum' | 'field' | 'fusion';
  */
 export const COLUMN_LABELS: Record<RingMgmtMode, readonly string[]> = {
   sanctum: ['SPIRIT', 'BENCH', 'HEALTH', 'COMBAT'],
-  field:   ['LOOT',   'BENCH', 'HEALTH', 'COMBAT'],
+  field:   ['BENCH',  'HEALTH', 'COMBAT'],
   fusion:  ['FUSE',   'BENCH', 'HEALTH', 'COMBAT'],
 } as const;
 

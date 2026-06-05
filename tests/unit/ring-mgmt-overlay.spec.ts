@@ -405,23 +405,22 @@ describe('#389 COLUMN_LABELS: mode-column contract', () => {
     expect(COLUMN_LABELS.sanctum).toEqual(['SPIRIT', 'BENCH', 'HEALTH', 'COMBAT']);
   });
 
-  it('field mode has 4 columns: LOOT, BENCH, HEALTH, COMBAT', () => {
-    // Field left column is LOOT (WON + DISCARD); the three shared columns are identical.
-    expect(COLUMN_LABELS.field).toEqual(['LOOT', 'BENCH', 'HEALTH', 'COMBAT']);
+  it('field mode has 3 columns: BENCH, HEALTH, COMBAT (#423 — LOOT column removed)', () => {
+    // #423 — WON and DISCARD moved into BHC; field mode no longer has a LOOT left column.
+    expect(COLUMN_LABELS.field).toEqual(['BENCH', 'HEALTH', 'COMBAT']);
   });
 
-  it('both modes share the three right-hand columns BENCH, HEALTH, COMBAT at indices 1-3', () => {
-    // #389 spec: the three right columns are the SAME component in both modes.
-    // Any divergence (e.g. renaming "BENCH" to "SPARES" in one mode) is caught here.
-    const shared = COLUMN_LABELS.sanctum.slice(1);
-    expect(COLUMN_LABELS.field.slice(1)).toEqual(shared);
+  it('field mode shares all three columns BENCH, HEALTH, COMBAT with sanctum indices 1-3', () => {
+    // #423 — field mode IS the three shared BHC columns; it shares all with sanctum[1..3].
+    const sharedFromSanctum = COLUMN_LABELS.sanctum.slice(1);
+    expect(COLUMN_LABELS.field).toEqual(sharedFromSanctum);
   });
 
-  it('sanctum and field left columns differ (SPIRIT vs LOOT)', () => {
-    // The only difference between modes is the first column — this is the anti-drift test.
+  it('sanctum has a SPIRIT left column that field mode does not', () => {
+    // #423 — sanctum still has SPIRIT; field no longer has LOOT.
     expect(COLUMN_LABELS.sanctum[0]).toBe('SPIRIT');
-    expect(COLUMN_LABELS.field[0]).toBe('LOOT');
-    expect(COLUMN_LABELS.sanctum[0]).not.toBe(COLUMN_LABELS.field[0]);
+    expect(COLUMN_LABELS.field).not.toContain('SPIRIT');
+    expect(COLUMN_LABELS.field).not.toContain('LOOT');
   });
 
   it('column arrays are read-only (readonly tuple — mutation throws or is noop)', () => {
@@ -459,9 +458,9 @@ describe('#389 publishRingMgmtState + clearRingMgmtState: window hook', () => {
     expect((global as any).window.__ringMgmtState.mode).toBe('field');
   });
 
-  it('publishRingMgmtState field mode sets columns to [LOOT, BENCH, HEALTH, COMBAT]', () => {
+  it('publishRingMgmtState field mode sets columns to [BENCH, HEALTH, COMBAT] (#423)', () => {
     publishRingMgmtState('field', { bench: { n: 1, max: 5 } });
-    expect((global as any).window.__ringMgmtState.columns).toEqual(['LOOT', 'BENCH', 'HEALTH', 'COMBAT']);
+    expect((global as any).window.__ringMgmtState.columns).toEqual(['BENCH', 'HEALTH', 'COMBAT']);
   });
 
   it('publishRingMgmtState sanctum mode sets columns to [SPIRIT, BENCH, HEALTH, COMBAT]', () => {
@@ -1112,11 +1111,12 @@ describe('#396 fusion mode: COLUMN_LABELS and publishRingMgmtState', () => {
     expect(COLUMN_LABELS.fusion[0]).toBe('FUSE');
   });
 
-  it('fusion mode shares the three right-hand columns with sanctum and field', () => {
-    // #396 convergence contract: BENCH/HEALTH/COMBAT identical across all three modes.
+  it('fusion mode shares the three right-hand columns with sanctum indices 1-3', () => {
+    // #396/#423 convergence contract: BENCH/HEALTH/COMBAT identical across all three modes.
     const shared = COLUMN_LABELS.sanctum.slice(1);
     expect(COLUMN_LABELS.fusion.slice(1)).toEqual(shared);
-    expect(COLUMN_LABELS.field.slice(1)).toEqual(shared);
+    // #423 — field IS the three shared columns (no left column).
+    expect(COLUMN_LABELS.field).toEqual(shared);
   });
 
   it('publishRingMgmtState fusion mode sets columns to [FUSE, BENCH, HEALTH, COMBAT]', () => {
@@ -1143,11 +1143,11 @@ describe('#396 fusion mode: COLUMN_LABELS and publishRingMgmtState', () => {
     }
   });
 
-  it('all three modes (sanctum/field/fusion) define exactly 4 columns', () => {
-    // Regression: no mode may drop or add a column silently.
+  it('sanctum and fusion define 4 columns; field defines 3 columns (#423)', () => {
+    // #423 — field mode lost its LOOT left column; WON/DISCARD/ghost now live in BHC.
     expect(COLUMN_LABELS.sanctum).toHaveLength(4);
-    expect(COLUMN_LABELS.field).toHaveLength(4);
     expect(COLUMN_LABELS.fusion).toHaveLength(4);
+    expect(COLUMN_LABELS.field).toHaveLength(3);
   });
 
 });

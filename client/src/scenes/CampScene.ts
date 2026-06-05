@@ -19,6 +19,7 @@ import { type DifficultyTier } from '../../../shared/types';
 import { Player } from '../objects/world/Player';
 import { InteractionZone } from '../objects/world/InteractionZone';
 import { BlinkController } from '../objects/world/BlinkController';
+import { DiscardConfirm } from '../objects/ui/DiscardConfirm';
 import { getTalisman } from '../../../shared/talismans';
 import { FOREST_SCREENS } from '../../../shared/world/forest';
 import { restAtCamp, summonSanctum as summonSanctumHelper } from '../net/campActions';
@@ -206,6 +207,8 @@ export class CampScene extends DualCameraScene {
   private swapManager: SlotSwapManager | null = null;
   /** #395 — the unified overlay class instance while the ringwall overlay is open. */
   private sanctumOverlay: RingManagementOverlay | null = null;
+  /** #423 — shared discard-confirm dialog for the sanctum DISCARD slot. */
+  private sanctumDiscard_: DiscardConfirm | null = null;
   // #78 ④ — last-computed Thumb passive reminder (recomputed every refreshPools),
   // mirrored into __campState and surfaced as the Thumb hover tooltip (EPIC #302).
   private stakedPassive: { name: string | null; effect: string } | null = null;
@@ -830,6 +833,43 @@ export class CampScene extends DualCameraScene {
         this.adoptPanel(c, this.sanctumGrid, COL_RELIQUARY_X, 148);
         this.sanctumGrid.setVisibleRows(RINGWALL_VISIBLE_ROWS);
 
+        // SPIRIT ghost (#423) — always-visible ghost cell at index reliquaryCount
+        // when the reliquary pool is below cap. Click with selection = move to reliquary.
+        {
+          const campS = window.__campState;
+          const reliqCount: number = campS?.reliquaryCount ??
+            (campS?.rings ?? []).filter(
+              (r: RingData) => r.in_carry === 0 && !(r as { escrowed?: number }).escrowed && r.heart_slot !== 1,
+            ).length;
+          const reliqCap: number = campS?.reliquaryCap ?? 0;
+          if (reliqCount < reliqCap) {
+            const G_NUM_COLS = 3;
+            const G_CARD_W = 72;
+            const G_CARD_H = 88;
+            const G_COL_GAP = 80;
+            const G_ROW_GAP = 96;
+            const rawPhY = Math.ceil(reliqCount / G_NUM_COLS) * G_ROW_GAP + G_CARD_H / 2;
+            const SPIRIT_VISIBLE_ROWS = RINGWALL_VISIBLE_ROWS;
+            const GHOST_VISIBLE_BOTTOM = SPIRIT_VISIBLE_ROWS * G_ROW_GAP;
+            if (rawPhY < GHOST_VISIBLE_BOTTOM) {
+              const nextCol = reliqCount % G_NUM_COLS;
+              const phX = nextCol * G_COL_GAP + G_CARD_W / 2;
+              const spiritGhost = this.add
+                .rectangle(phX, rawPhY, G_CARD_W, G_CARD_H, 0x1a2233)
+                .setScrollFactor(0)
+                .setStrokeStyle(2, 0x446688)
+                .setAlpha(0.7)
+                .setInteractive({ useHandCursor: true })
+                .on('pointerdown', () => {
+                  const sel = this.sanctumOverlay?.selection;
+                  if (!sel) return;
+                  void this.reliquaryMove(sel.ringId, 'reliquary');
+                });
+              this.sanctumGrid.getCardContainer().add(spiritGhost);
+            }
+          }
+        }
+
         // Live status echo, inside the modal above the bottom edge.
         c.add(
           crispCanvasText(
@@ -861,12 +901,56 @@ export class CampScene extends DualCameraScene {
       // ── onStatus: surface errors through the scene's status display ───────────
       onStatus: (msg) => this.setStatus(msg),
 
+      // ── onDiscardSlotClick: sanctum discard confirm (#423) ──────────────────
+      onDiscardSlotClick: (ov) => {
+        const sel = ov.selection;
+        if (!sel) return;
+        const campS = window.__campState;
+        const ring = sel.source === 'heart'
+          ? (campS?.heart_ring as RingData | null ?? null)
+          : this.rings.find((r) => r.id === sel.ringId) ?? null;
+        if (!this.sanctumDiscard_) this.sanctumDiscard_ = new DiscardConfirm(this);
+        this.sanctumDiscard_.open(ring, sel.ringId,
+          () => void this.deleteRingFromSanctum(sel.ringId, ov),
+          () => { ov.clearSelection(); },
+        );
+      },
+
+      // ── onBenchGhostClick: accept WON ring or move bench ring (#423) ─────────
+      onBenchGhostClick: async (ov) => {
+        const sel = ov.selection;
+        if (!sel) return;
+        const campS = window.__campState;
+        const pendingId = (campS?.player?.pending_ring_id as string | null | undefined) ?? null;
+        if (sel.ringId === pendingId) {
+          // Accept the WON ring to bench via PUT /api/rings/:id/accept
+          try {
+            const res = await apiFetch(`/api/rings/${sel.ringId}/accept`, { method: 'PUT', json: {} });
+            if (res.ok) {
+              ov.clearSelection();
+              await this.loadData();
+              this.afterReliquaryReload();
+            } else {
+              const body = await res.json().catch(() => ({}));
+              this.setStatus((body as { error?: string }).error ?? 'Accept failed');
+            }
+          } catch {
+            this.setStatus('Accept failed — network error');
+          }
+        } else {
+          await this.reliquaryMove(sel.ringId, 'spare');
+        }
+      },
+
       // ── onBeforeDestroy: release the adopted sanctumGrid before the container
       // is destroyed so destroy(true) does not reclaim the reusable panel.
       onBeforeDestroy: (c) => {
         this.sanctumGrid.setVisibleRows(0);
         this.sanctumGrid.setMaskOrigin(null, null);
         this.releasePanel(c, this.sanctumGrid);
+        // Clear the discard confirm dialog if open.
+        this.sanctumDiscard_?.dismiss();
+        this.sanctumDiscard_ = null;
       },
     });
 
@@ -1664,6 +1748,23 @@ export class CampScene extends DualCameraScene {
     await this.loadData();
     this.afterReliquaryReload();
     return true;
+  }
+
+  /**
+   * #423 — Permanently delete a ring via DELETE /api/rings/:id and reload.
+   * Used by the sanctum discard confirm flow (DISCARD slot in BHC).
+   */
+  private async deleteRingFromSanctum(ringId: string, ov: RingManagementOverlay): Promise<void> {
+    try {
+      await apiFetch(`/api/rings/${ringId}`, { method: 'DELETE' });
+    } catch {
+      this.setStatus('Discard failed — network error');
+      ov.clearSelection();
+      return;
+    }
+    ov.clearSelection();
+    await this.loadData();
+    this.afterReliquaryReload();
   }
 
   /**

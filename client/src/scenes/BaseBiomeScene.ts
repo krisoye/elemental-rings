@@ -19,6 +19,7 @@ import { WanderingNpc } from '../objects/world/WanderingNpc';
 import { RingManagementOverlay, type RingManagementOverlayOpts } from '../objects/ui/RingManagementOverlayClass';
 import type { OverlayData } from '../objects/ui/RingManagementOverlayClass';
 import type { RingData } from '../objects/InventoryGrid';
+import { DiscardConfirm } from '../objects/ui/DiscardConfirm';
 import { showTransientText } from '../objects/ui/toast';
 import { addDomLabel, setDomLabelText } from '../objects/ui/DomLabel';
 import { apiFetch, fetchMe, getToken } from '../net/api';
@@ -319,6 +320,25 @@ export abstract class BaseBiomeScene extends DualCameraScene {
       onFuse: async (ringId1, ringId2, ov) => {
         const err = await this.doShrineFuse(ringId1, ringId2, filterElement, ov);
         if (err) ov.setStatusMessage(err);
+      },
+      // #423 — DISCARD slot in BHC is now available in fusion mode too.
+      onDiscardSlotClick: (ov) => {
+        const sel = ov.selection;
+        if (!sel) return;
+        // Look up the ring from the shrine overlay's own data (no getRingData on grid).
+        const meData = (window as any).__campState;
+        const ring: RingData | null =
+          (meData?.rings as RingData[] | undefined)?.find((r: RingData) => r.id === sel.ringId) ?? null;
+        const discard = new DiscardConfirm(this);
+        discard.open(ring, sel.ringId,
+          async () => {
+            try {
+              await apiFetch(`/api/rings/${sel.ringId}`, { method: 'DELETE' });
+            } catch { /* silent */ }
+            void this.openShrineFusion(filterElement);
+          },
+          () => { ov.clearSelection(); },
+        );
       },
       onRender: (c) => {
         this.routeToUi(c);
