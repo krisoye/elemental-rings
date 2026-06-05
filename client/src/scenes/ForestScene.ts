@@ -148,9 +148,15 @@ export class ForestScene extends BaseBiomeScene {
    * `behind` uses 'non-empty' so walls and trunks physically block movement.
    * `in-front` uses the default 'property' mode — none of the roof/canopy tiles
    *  carry a `collides` property, so they produce zero collision (player walks under).
+   *
+   * Exception: forest_snow_gate has ts_snow bridge tiles in `behind` that must be
+   * walkable. Those tiles carry no `collides` property; the obstacle tiles in that
+   * map (berry_and_trees, terrain_plains_fantasy) are tagged `collides: true` in
+   * the map JSON, so 'property' mode handles both correctly.
    */
   protected tileLayerCollisionMode(layerName: string): 'property' | 'non-empty' {
-    if (this.is16pxScreen() && layerName === 'behind') return 'non-empty';
+    if (this.is16pxScreen() && layerName === 'behind' && this.screenId !== 'forest_snow_gate')
+      return 'non-empty';
     return super.tileLayerCollisionMode(layerName);
   }
 
