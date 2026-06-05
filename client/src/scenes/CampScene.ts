@@ -711,7 +711,10 @@ export class CampScene extends DualCameraScene {
     this.sanctumOverlay = new RingManagementOverlay(this, 'sanctum', {
       // ── resolveMove: delegate to CampScene's existing reliquaryMove ──────────
       resolveMove: async (ringId, from, to) => {
+        // #421 — reliquaryMove surfaces its own errors; report committed so the
+        // shared SlotSwapManager clears the selection as before.
         await this.reliquaryMove(ringId, to, from);
+        return true;
       },
 
       // ── onBenchGridSelect: route bench card clicks through onGridSelectionChanged ─
@@ -2718,7 +2721,7 @@ export class CampScene extends DualCameraScene {
     this.fusionOverlay?.close();
 
     const overlayOpts: RingManagementOverlayOpts = {
-      resolveMove: async () => { /* fusion overlay does not use swap moves */ },
+      resolveMove: async () => { /* fusion overlay does not use swap moves */ return true; },
       onRecharge: (ov) => {
         // Delegate recharge to the standard handler and refresh the overlay.
         void this.doRechargeAll(false).then(() => {

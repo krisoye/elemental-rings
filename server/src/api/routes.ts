@@ -506,16 +506,13 @@ apiRouter.post('/api/spirit/blink', requireAuth, (req: Request, res: Response): 
  */
 apiRouter.put('/api/loadout', requireAuth, (req: Request, res: Response): void => {
   const playerId = req.playerId as string;
-  // EPIC #378 — spare-grid gate: count spare rings and reject if the spare max is
-  // already exceeded. Uses getSpareIds for accuracy (spare is independent of battle
-  // slot occupancy). This is the belt-and-suspenders outer check; assertSpareWithinMax
-  // inside saveLoadout is the authoritative guard.
-  const spareCount = getSpareIds(playerId).length;
-  const spareMax = getSpareRingMax(playerId);
-  if (spareCount > spareMax) {
-    fail(res, 400, `spare grid exceeded: ${spareCount} spare > ${spareMax} spare_ring_max`);
-    return;
-  }
+  // #421 — no outer spare-grid pre-check here. A static `getSpareIds > spareMax`
+  // gate rejects every loadout mutation while the bench is over capacity, which
+  // deadlocks the very moves that resolve an overflow (slotting a WON ring, or a
+  // bench→slot swap that drains the bench). The delta-aware `assertSpareWithinMax`
+  // inside `saveLoadout` is the authoritative guard — it throws only when a move
+  // would actually leave the spare grid over capacity, and the try/catch below
+  // surfaces that as a 400.
   const body = req.body ?? {};
   const VALID_SLOTS = new Set(['thumb', 'a1', 'a2', 'd1', 'd2']);
   const partial: Record<string, string | null> = {};

@@ -36,6 +36,8 @@ export class BattleHandOverlay {
   private heartRing: RingData | null = null;
   private loadout: Record<string, string | null> = {};
   private pendingRingId_: string | null = null; private spareRingMax_: number | undefined;
+  /** #421 — last surfaced API error message, re-applied to the overlay after a failed-move refresh. */
+  private lastApiError_: string | null = null;
 
   constructor(
     scene: Phaser.Scene,
@@ -92,19 +94,28 @@ export class BattleHandOverlay {
   private makeOpts(): RingManagementOverlayOpts {
     return {
       resolveMove: async (id, from, to, ov) => {
+        this.lastApiError_ = null;
+        let ok: boolean;
         if (to === 'heart') {
-          from === 'spare'
+          ok = from === 'spare'
             ? await this.apiPut('/api/heart-slot', { ringId: id, releaseTo: 'spare' })
             : await this.apiPut('/api/heart-slot', { releaseTo: from });
         } else if (from === 'heart') {
-          await this.apiPut('/api/heart-slot', { releaseTo: to });
+          ok = await this.apiPut('/api/heart-slot', { releaseTo: to });
         } else if (from === 'spare') {
-          await this.apiPut('/api/loadout', { [to]: id });
+          ok = await this.apiPut('/api/loadout', { [to]: id });
         } else {
-          await this.apiPut('/api/loadout', { [to]: id, [from]: this.loadout[to] ?? null });
+          ok = await this.apiPut('/api/loadout', { [to]: id, [from]: this.loadout[to] ?? null });
         }
-        ov.clearSelection();
+        // #421 — only release the held selection when the move actually committed.
+        // On failure keep it held so the player can retry against a different target.
+        if (ok) ov.clearSelection();
+        // Refresh so the UI re-renders fresh server data. The refresh rebuilds the
+        // modal and resets its status text, so re-apply any captured error AFTER it
+        // (otherwise the rejection message is wiped before the player can read it).
         await this.refresh(ov);
+        if (!ok && this.lastApiError_) ov.setStatusMessage(this.lastApiError_);
+        return ok;
       },
       onRecharge: async () => {
         await this.apiPost('/api/spirit/recharge-all', {});
@@ -150,11 +161,46 @@ export class BattleHandOverlay {
     } catch { this.onStatus?.('Network error — please retry'); }
   }
 
-  private async apiPut(url: string, body: Record<string, unknown>): Promise<void> {
-    if (getToken()) try { await apiFetch(url, { method: 'PUT', json: body }); } catch { this.onStatus?.('Network error — please retry'); }
+  /**
+   * #421 — PUT a mutation and surface any 4xx/5xx to the player. Returns `true`
+   * when the server accepted the change (2xx) and `false` otherwise (network error
+   * or non-2xx). Callers MUST honour the boolean: a `false` means the move did not
+   * commit, so the selection must be kept held rather than silently cleared (the
+   * pre-#421 "card lights up, click target, deselects silently" deadlock symptom).
+   */
+  private async apiPut(url: string, body: Record<string, unknown>): Promise<boolean> {
+    if (!getToken()) return false;
+    try {
+      const res = await apiFetch(url, { method: 'PUT', json: body });
+      if (!res.ok) { await this.surfaceApiError(res); return false; }
+      return true;
+    } catch { this.onStatus?.('Network error — please retry'); return false; }
   }
-  private async apiPost(url: string, body: Record<string, unknown>): Promise<void> {
-    if (getToken()) try { await apiFetch(url, { method: 'POST', json: body }); } catch { this.onStatus?.('Network error — please retry'); }
+  private async apiPost(url: string, body: Record<string, unknown>): Promise<boolean> {
+    if (!getToken()) return false;
+    try {
+      const res = await apiFetch(url, { method: 'POST', json: body });
+      if (!res.ok) { await this.surfaceApiError(res); return false; }
+      return true;
+    } catch { this.onStatus?.('Network error — please retry'); return false; }
+  }
+
+  /**
+   * Parse a non-2xx response body and surface a player-friendly message via
+   * `onStatus`. Maps the server's terse `spare grid full` to the same wording
+   * CampScene uses (CampScene.ts:1593) so the overflow case reads identically in
+   * both the field overlay and the camp sanctum.
+   */
+  private async surfaceApiError(res: Response): Promise<void> {
+    const body = (await res.json().catch(() => ({}))) as { error?: string };
+    const serverMsg = body.error ?? '';
+    const message = /spare grid full/i.test(serverMsg)
+      ? 'Bench is full — discard a ring or move one to a battle slot first'
+      : serverMsg || 'Something went wrong — please retry';
+    // Capture for re-application after a failed-move refresh (resolveMove), and
+    // forward to any scene-level status sink the host wired up.
+    this.lastApiError_ = message;
+    this.onStatus?.(message);
   }
   private async deleteRing(id: string): Promise<void> {
     await apiFetch(`/api/rings/${id}`, { method: 'DELETE' });

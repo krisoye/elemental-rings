@@ -69,7 +69,7 @@ export interface RingManagementOverlayOpts {
     from: SwapSlot,
     to: SwapSlot,
     overlay: RingManagementOverlay,
-  ) => Promise<void>;
+  ) => Promise<boolean>;
 
   /** Called when `[RECHARGE]` is clicked. */
   onRecharge: (overlay: RingManagementOverlay) => void;
@@ -577,6 +577,16 @@ export class RingManagementOverlay {
    * `onFuse` callback when the server rejects the combine request.
    */
   setFuseStatus(msg: string): void {
+    this.setStatus(msg);
+  }
+
+  /**
+   * Surface a status/error message in the overlay's status bar. #421 — field
+   * adapters call this AFTER a failed-move `refresh()` (which rebuilds the modal
+   * and resets the status text) so a rejected move's error survives the re-render
+   * instead of being wiped.
+   */
+  setStatusMessage(msg: string): void {
     this.setStatus(msg);
   }
 
