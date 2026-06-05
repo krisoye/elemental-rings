@@ -56,6 +56,11 @@ const FOREST_HANDAUTHORED_TILESETS: ReadonlyArray<readonly [string, string]> = [
   ['terrain_forest_modern', 'assets/terrain/terrain_forest_modern.png'],
   ['terrain_forest_deepwoods', 'assets/terrain/terrain_forest_deepwoods.png'],
   ['tileset_village_main_b', 'assets/structures/tileset_village_main_b.png'],
+  // Snow tilesets — forest_snow_gate (the biome-transition screen) mixes forest
+  // terrain with the snow palette. Keys match the tileset names declared in the
+  // map JSON (autoTile_snow / ts_snow) so buildTilesets() can resolve them.
+  ['autoTile_snow', 'assets/terrain/autotile_snow_16.png'],
+  ['ts_snow', 'assets/terrain/terrain_snow_main.png'],
 ];
 
 /**
