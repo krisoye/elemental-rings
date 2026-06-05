@@ -147,6 +147,12 @@ apiRouter.post('/auth/register', async (req: Request, res: Response): Promise<vo
   try {
     const passwordHash = await bcrypt.hash(password, BCRYPT_ROUNDS);
     const playerId = createPlayer(username, passwordHash);
+    // E2E_TEST_ROUTES: bench-fill tests buy up to spare_ring_max rings (270 GP at
+    // 30 GP each). The 200 GP starter budget falls short; add 300 GP so every E2E
+    // registration has enough headroom. Never activates in production.
+    if (process.env.E2E_TEST_ROUTES === '1') {
+      addGold(playerId, 300);
+    }
     const token = signToken({ playerId, username });
     res.status(201).json({ token, playerId });
   } catch (err: unknown) {
@@ -1069,13 +1075,6 @@ apiRouter.post('/api/merchant/buy', requireAuth, (req: Request, res: Response): 
       return;
     }
     const element = ELEMENT_NAME_MAP[body.element];
-    // E2E_TEST_ROUTES: top up gold before each ring buy so E2E bench-fill loops
-    // can purchase the full spare_ring_max (9) rings without the 200 GP starter
-    // budget running short. This has no effect in production (route not mounted).
-    if (process.env.E2E_TEST_ROUTES === '1') {
-      const price = ringBuyPrice(element);
-      addGold(playerId, price); // ensure at least one ring's worth of gold
-    }
     const result = merchantBuyRing(playerId, element);
     if (!result.ok) {
       fail(res, 400, result.reason);
@@ -1154,6 +1153,10 @@ if (process.env.E2E_TEST_ROUTES === '1') {
     // Constant placeholder hash — login is never exercised against E2E players,
     // so a real bcrypt hash is pure waste here.
     const playerId = createPlayer(username, 'e2e-no-hash');
+    // E2E bench-fill tests (reliquary-modal, manage-battle-rings) buy spare_ring_max
+    // (9) rings at 30 GP each = 270 GP. Default 200 GP is not enough; add 300 to
+    // give a comfortable headroom without changing the schema default.
+    addGold(playerId, 300);
     const token = signToken({ playerId, username });
     res.json({ token, playerId });
   });
