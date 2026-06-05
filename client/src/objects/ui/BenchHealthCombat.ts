@@ -253,7 +253,7 @@ export class BenchHealthCombat extends Phaser.GameObjects.Container {
         def.y - LABEL_ABOVE_Y_OFFSET,
         def.label,
         11,
-        def.slot === 'thumb' ? '#ffcc44' : '#cccccc',
+        '#cccccc',
         true,
       );
 

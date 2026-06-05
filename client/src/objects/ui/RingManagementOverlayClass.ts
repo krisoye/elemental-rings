@@ -388,7 +388,7 @@ export class RingManagementOverlay {
     const hpLbl = this.scene.add
       .text(HP_X, HP_Y, hpText, {
         fontSize: '11px',
-        color: heartRing ? '#ff99aa' : '#777777',
+        color: heartRing ? '#cccccc' : '#777777',
       })
       .setScrollFactor(0)
       .setOrigin(0.5);
