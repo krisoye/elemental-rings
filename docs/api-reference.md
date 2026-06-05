@@ -183,11 +183,13 @@ Recharge one ring using spirit. `uses` defaults to a full top-off. Spends `SPIRI
 ### POST /api/spirit/recharge-all
 
 **Auth required:** yes (requireAuth only)
-**Request body:** none
+**Request body:** `{ includeReliquary?: boolean }` (optional)
 **Response (success):** `{ rings: Ring[], spirit_current: number }` — HTTP 200
 **Response (error):** 401 — auth failure
 
 Recharge every carried ring in slot priority order (Thumb → A1 → A2 → D1 → D2 → spares), stopping when spirit reaches 0. Returns the full updated ring list and remaining spirit.
+
+When `includeReliquary: true` is passed, also recharges resting Reliquary rings (`in_carry=0, heart_slot=0, escrowed=0`) after all carried rings, most-depleted first. Intended for Sanctum use only — field and Fusion overlays omit this flag. Spirit spending stops at 0 regardless.
 
 ---
 
