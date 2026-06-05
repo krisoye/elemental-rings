@@ -9,6 +9,10 @@ import {
   clearRingMgmtState,
   isPickupBlockedByFullBench,
 } from '../objects/ui/RingManagementOverlay';
+import {
+  RingManagementOverlay,
+  type OverlayData,
+} from '../objects/ui/RingManagementOverlayClass';
 import { FusionPanel } from '../objects/FusionPanel';
 import { DifficultyModal } from '../objects/DifficultyModal';
 import { ELEMENT_NAMES, CANVAS_W, CANVAS_H, THUMB_PASSIVE_INFO, SLOT_KEYS } from '../Constants';
@@ -200,6 +204,8 @@ export class CampScene extends DualCameraScene {
    * stroke. Cleared after every completed move and on overlay close.
    */
   private swapManager: SlotSwapManager | null = null;
+  /** #395 — the unified overlay class instance while the ringwall overlay is open. */
+  private sanctumOverlay: RingManagementOverlay | null = null;
   // #78 ④ — last-computed Thumb passive reminder (recomputed every refreshPools),
   // mirrored into __campState and surfaced as the Thumb hover tooltip (EPIC #302).
   private stakedPassive: { name: string | null; effect: string } | null = null;
@@ -635,8 +641,14 @@ export class CampScene extends DualCameraScene {
   /** Close the open overlay, releasing any adopted panels first. */
   private closeModalOverlay(): void {
     if (!this.overlay) return;
-    // Release adopted reusable panels back to the scene root (off-screen) so the
-    // container destroy doesn't take them with it.
+    // #395 — the ringwall overlay is owned by RingManagementOverlay. Delegate to its
+    // close() method which fires onBeforeDestroy (releases sanctumGrid) → destroys
+    // the container → calls the onCloseCb (nulls this.overlay / etc.).
+    if (this.sanctumOverlay) {
+      this.sanctumOverlay.close();
+      return;
+    }
+    // All non-ringwall overlays: destroy the container directly.
     this.overlayOnClose?.();
     // #118: the overlay container lives at the scene root. Clear its main-camera
     // ignore flag before destroying it (mirrors the ignore() in beginOverlay).
@@ -688,26 +700,181 @@ export class CampScene extends DualCameraScene {
    * target section/slot. Reuses the exact reusable panel instances.
    */
   private openRingwallOverlay(): void {
-    const c = this.beginModalOverlay('ringwall', 'RELIQUARY', () => {
-      // #85 Fix 2A — tear down the wheel handler + scroll hooks/masks before the
-      // grids are released back off-screen (a stale mask on a parked grid would
-      // clip nothing but leak a Graphics object).
+    // #395 P1-A — delegate to RingManagementOverlay in 'sanctum' mode. The overlay
+    // class owns the single SlotSwapManager; CampScene receives a reference to it via
+    // getSwap() and assigns it to this.swapManager so all existing swap-consumer
+    // methods (onRingClicked, onBattleSlotClicked, etc.) continue to work unchanged.
+    if (this.overlay) return; // guard against double-open (mirroring beginModalOverlay)
+
+    this.sanctumOverlay = new RingManagementOverlay(this, 'sanctum', {
+      // ── resolveMove: delegate to CampScene's existing reliquaryMove ──────────
+      resolveMove: async (ringId, from, to) => {
+        await this.reliquaryMove(ringId, to, from);
+      },
+
+      // ── onRecharge: recharge-all via API ─────────────────────────────────────
+      onRecharge: () => {
+        void this.doRechargeAll();
+      },
+
+      // ── renderLeft: build the SPIRIT left column into the overlay container ──
+      // Adds: live stats header, shard button, divider, SPIRIT label+counter,
+      // sanctumGrid (adopted reusable panel), and the deselect zone.
+      renderLeft: (c) => {
+        // Deselect zone — click empty panel space to deselect. Inserted at index 1
+        // (above backdrop, below everything interactive) so the [×] close button wins.
+        const deselectZone = this.add
+          .rectangle(CANVAS_W / 2, CANVAS_H / 2, MODAL_W, MODAL_H, 0x000000, 0.001)
+          .setScrollFactor(0)
+          .setName('reliquary-deselect-zone')
+          .setInteractive()
+          .on('pointerdown', () => this.clearReliquarySelection());
+        c.addAt(deselectZone, 1);
+
+        // Three-part live stats header (EPIC #302). Left: Spirit+difficulty;
+        // center: ♥ cur/max; right: Total XP | Avg Battle XP. All crispCanvasText.
+        this.reliquaryHeaderLeft = crispCanvasText(
+          this.add
+            .text(COL_RELIQUARY_X, 92, '', { fontSize: '14px', color: '#ffdd66' })
+            .setOrigin(0, 0).setScrollFactor(0).setName('reliquary-header-left'),
+        );
+        this.reliquaryHeaderCenter = crispCanvasText(
+          this.add
+            .text(CANVAS_W / 2, 92, '', { fontSize: '14px', color: '#ff8888' })
+            .setOrigin(0.5, 0).setScrollFactor(0).setName('reliquary-header-center'),
+        );
+        this.reliquaryHeaderRight = crispCanvasText(
+          this.add
+            .text(CONTENT_RIGHT, 92, '', { fontSize: '13px', color: '#aaccff' })
+            .setOrigin(1, 0).setScrollFactor(0).setName('reliquary-header-right'),
+        );
+        c.add([this.reliquaryHeaderLeft, this.reliquaryHeaderCenter, this.reliquaryHeaderRight]);
+
+        // #182 — "Add Shard" button (right-aligned at y=128); only if shards > 0.
+        const reliquaryShards: number = window.__campState?.reliquaryShards ?? 0;
+        if (reliquaryShards > 0) {
+          c.add(
+            crispCanvasText(
+              this.add
+                .text(
+                  CONTENT_RIGHT, 128,
+                  `[Add Shard (+10)] (${reliquaryShards} available)`,
+                  { fontSize: '11px', color: '#ffcc44' },
+                )
+                .setOrigin(1, 0).setScrollFactor(0).setName('add-shard-btn')
+                .setInteractive({ useHandCursor: true })
+                .on('pointerdown', () => void this.doExpandReliquary()),
+            ),
+          );
+        }
+
+        // Thin divider beneath the header.
+        c.add(
+          this.add.rectangle(CANVAS_W / 2, 118, CONTENT_RIGHT - CONTENT_LEFT, 1, 0x6082aa)
+            .setScrollFactor(0),
+        );
+
+        // SPIRIT ↓ column label — clicking with a carried ring selected drops it
+        // back to the Reliquary/spirit pool.
+        const reliquaryLabel = crispCanvasText(
+          this.add
+            .text(COL_RELIQUARY_X, 128, 'SPIRIT  ↓', { fontSize: '13px', color: '#cccccc' })
+            .setScrollFactor(0).setName('reliquary-label')
+            .setInteractive({ useHandCursor: true })
+            .on('pointerdown', () => void this.onReliquaryDropClicked()),
+        );
+        c.add(reliquaryLabel);
+
+        // SPIRIT n/max counter, right of the label.
+        this.spiritCounter = crispCanvasText(
+          this.add
+            .text(COL_RELIQUARY_X + 90, 128, '', { fontSize: '12px', color: '#ffdd66' })
+            .setScrollFactor(0).setName('spirit-counter'),
+        );
+        c.add(this.spiritCounter);
+
+        // BENCH ↓ drop-label (middle column, interactive).
+        // #395 — BENCH column is at COL_SPARE_X so __campLoadoutScroll target matches
+        // the legacy E2E hook address (loadoutGrid → BHC bench grid).
+        const spareLabel = crispCanvasText(
+          this.add
+            .text(COL_SPARE_X, 128, 'BENCH  ↓', { fontSize: '13px', color: '#88ccaa' })
+            .setScrollFactor(0).setName('spare-label')
+            .setInteractive({ useHandCursor: true })
+            .on('pointerdown', () => void this.onSpareDropClicked()),
+        );
+        c.add(spareLabel);
+
+        // Adopt the reusable SPIRIT (Reliquary) grid. The BENCH grid is created
+        // fresh by BenchHealthCombat; loadoutGrid is no longer adopted here.
+        this.adoptPanel(c, this.sanctumGrid, COL_RELIQUARY_X, 148);
+        this.sanctumGrid.setVisibleRows(RINGWALL_VISIBLE_ROWS);
+
+        // Live status echo, inside the modal above the bottom edge.
+        c.add(
+          crispCanvasText(
+            this.add
+              .text(CONTENT_LEFT, 478, this.statusText.text, { fontSize: '12px', color: '#ff8888' })
+              .setName('overlay-status').setScrollFactor(0),
+          ),
+        );
+      },
+
+      // ── getThumbTooltip ───────────────────────────────────────────────────────
+      getThumbTooltip: () => this.thumbPassiveTooltipText(),
+
+      // ── onSlotClick: route HEALTH / COMBAT slot clicks to CampScene handlers ─
+      onSlotClick: async (slot) => {
+        if (slot === 'heart') await this.onHeartCardClicked();
+        else await this.onBattleSlotClicked(slot as 'thumb' | LoadoutSlot);
+      },
+
+      // ── onRender: wire the fresh container into CampScene's overlay tracking ─
+      onRender: (c) => {
+        this.overlay = c;
+        this.overlayName = 'ringwall';
+        this.overlayOnClose = null; // sanctumOverlay owns close; no overlayOnClose needed
+        this.routeToUi(c);
+        window.__sanctumOverlayOpen = 'ringwall';
+      },
+
+      // ── onStatus: surface errors through the scene's status display ───────────
+      onStatus: (msg) => this.setStatus(msg),
+
+      // ── onBeforeDestroy: release the adopted sanctumGrid before the container
+      // is destroyed so destroy(true) does not reclaim the reusable panel.
+      onBeforeDestroy: (c) => {
+        this.sanctumGrid.setVisibleRows(0);
+        this.sanctumGrid.setMaskOrigin(null, null);
+        this.releasePanel(c, this.sanctumGrid);
+      },
+    });
+
+    // Build OverlayData from the current /api/me cache.
+    const s = window.__campState;
+    const data: OverlayData = {
+      player: s ? {
+        spirit_current: s.spirit_current,
+        spirit_max: s.spirit_max,
+        aggregate_xp: s.aggregate_xp,
+        carry_cap: this.carryCap,
+        spare_ring_max: s.spare_ring_max,
+        heart_ring: (s.heart_ring as RingData | null) ?? null,
+        pending_ring_id: (s.player?.pending_ring_id as string | null | undefined) ?? null,
+      } : null,
+      rings: this.rings,
+      loadout: this.loadout,
+    };
+
+    // Open the overlay. renderLeft fires synchronously inside open(). After open()
+    // returns, this.overlay is set (via onRender) and this.sanctumGrid is adopted.
+    this.sanctumOverlay.open(data, () => {
+      // ── onClose callback — fires after the overlay container is destroyed ────
+      // sanctumGrid was already released by onBeforeDestroy before container destroy.
       this.input.off('wheel', this.onRingwallWheel, this);
-      this.sanctumGrid.setVisibleRows(0);
-      this.sanctumGrid.setMaskOrigin(null, null);
-      this.loadoutGrid.setVisibleRows(0);
-      this.loadoutGrid.setMaskOrigin(null, null);
       window.__campSanctumScroll = undefined;
       window.__campLoadoutScroll = undefined;
-      this.releasePanel(c, this.sanctumGrid);
-      this.releasePanel(c, this.loadoutGrid);
-      // EPIC #302 — detach the Thumb passive hover tooltip (removes the pointer
-      // listeners + destroys the lazy label) before the overlay container is
-      // destroyed. Safe when never attached.
-      this.thumbTooltipDetach?.();
-      this.thumbTooltipDetach = null;
-      // The header + counters + heart card + COMBAT cluster live inside the overlay
-      // container — the container destroy reclaims them, so just drop the stale refs.
+      // Drop all overlay-container-scoped refs.
       this.reliquaryHeaderLeft = null;
       this.reliquaryHeaderCenter = null;
       this.reliquaryHeaderRight = null;
@@ -716,236 +883,52 @@ export class CampScene extends DualCameraScene {
       this.benchCounter = null;
       this.combatCards.clear();
       this.statusLockLabel = null;
-      this.swapManager?.clear();
-      clearRingMgmtState(); // #389
+      // Clear swap manager and E2E hooks.
+      this.swapManager = null;
       window.__campHitTestRing = undefined;
       window.__reliquaryMove = undefined;
       window.__reliquarySelect = undefined;
       window.__reliquaryLocked = undefined;
       window.__reliquaryFull = undefined;
-      // #395 — destroy the per-open swap controller when the overlay closes.
-      this.swapManager = null;
-    }, { width: MODAL_W, height: MODAL_H });
-
-    // #395 — create the swap controller once per overlay open (not in buildPanels).
-    // One controller per open overlay: cleared + nulled on the close callback above.
-    this.swapManager = new SlotSwapManager({
-      validSlots: ['reliquary', 'spare', 'thumb', 'a1', 'a2', 'd1', 'd2', 'heart'],
-      resolveMove: (ringId, from, to) => this.reliquaryMove(ringId, to, from),
-      onAfter: () => { /* reliquaryMove already reloads /api/me + re-renders. */ },
+      // Clear overlay tracking (the container is already destroyed by the overlay class).
+      this.overlay = null;
+      this.overlayName = null;
+      this.overlayOnClose = null;
+      this.sanctumOverlay = null;
+      window.__sanctumOverlayOpen = null;
+      if (this.fusionPanel.isOpen()) this.fusionPanel.close();
     });
 
-    // Clicking empty modal space (the panel background, behind all content)
-    // deselects. The backdrop already swallows clicks outside the modal.
-    // Insert it just above the backdrop (index 1) rather than on top: a
-    // full-modal interactive rect added last would out-prioritise the [×] close
-    // button (and every other control) in container input hit-testing, swallowing
-    // their clicks. Below all interactive content, empty-space clicks still fall
-    // through the non-interactive panel to reach it, while controls win their own.
-    const deselectZone = this.add
-      .rectangle(CANVAS_W / 2, CANVAS_H / 2, MODAL_W, MODAL_H, 0x000000, 0.001)
-      .setScrollFactor(0)
-      .setName('reliquary-deselect-zone')
-      .setInteractive()
-      .on('pointerdown', () => this.clearReliquarySelection());
-    c.addAt(deselectZone, 1);
+    // #395 — the overlay class owns the single SlotSwapManager. Expose it via
+    // this.swapManager so all existing swap-consumer methods (onRingClicked, etc.)
+    // continue to work without modification.
+    this.swapManager = this.sanctumOverlay.getSwap();
 
-    // ── Three-part live stats header (EPIC #302) ──────────────────────────────
-    // Left: Spirit + difficulty (left-aligned to the SPIRIT column). Center: the
-    // equipped Heart ring's HP (♥ cur/max). Right: total ring XP + average battle
-    // XP, right-aligned to the content edge. Each is its own Text object so the
-    // segments stay anchored independently as values change. All read from the
-    // authoritative /api/me snapshot — never computed client-side.
-    // #382 — header texts are added to the overlay container c → crispCanvasText.
-    this.reliquaryHeaderLeft = crispCanvasText(
-      this.add
-        .text(COL_RELIQUARY_X, 92, '', { fontSize: '14px', color: '#ffdd66' })
-        .setOrigin(0, 0)
-        .setScrollFactor(0)
-        .setName('reliquary-header-left'),
-    );
-    this.reliquaryHeaderCenter = crispCanvasText(
-      this.add
-        .text(CANVAS_W / 2, 92, '', { fontSize: '14px', color: '#ff8888' })
-        .setOrigin(0.5, 0)
-        .setScrollFactor(0)
-        .setName('reliquary-header-center'),
-    );
-    this.reliquaryHeaderRight = crispCanvasText(
-      this.add
-        .text(CONTENT_RIGHT, 92, '', { fontSize: '13px', color: '#aaccff' })
-        .setOrigin(1, 0)
-        .setScrollFactor(0)
-        .setName('reliquary-header-right'),
-    );
-    c.add([this.reliquaryHeaderLeft, this.reliquaryHeaderCenter, this.reliquaryHeaderRight]);
-    // #182 — "Add Shard" expansion button: only shown when player has ≥ 1 shard.
-    // EPIC #302 — moved to y=128 (the column-label row, right-aligned) so it no
-    // longer overlaps the right header segment now occupying (CONTENT_RIGHT, 92).
-    const reliquaryShards: number = window.__campState?.reliquaryShards ?? 0;
-    if (reliquaryShards > 0) {
-      // #382 — Container child → crispCanvasText.
-      c.add(
-        crispCanvasText(
-          this.add
-            .text(
-              CONTENT_RIGHT,
-              128,
-              `[Add Shard (+10)] (${reliquaryShards} available)`,
-              { fontSize: '11px', color: '#ffcc44' },
-            )
-            .setOrigin(1, 0)
-            .setScrollFactor(0)
-            .setName('add-shard-btn')
-            .setInteractive({ useHandCursor: true })
-            .on('pointerdown', () => void this.doExpandReliquary()),
-        ),
-      );
-    }
-    // Thin divider beneath the header separating it from the columns.
-    c.add(
-      this.add.rectangle(CANVAS_W / 2, 118, CONTENT_RIGHT - CONTENT_LEFT, 1, 0x6082aa).setScrollFactor(0),
-    );
-
-    // ── Left column — SPIRIT (the not-carried Reliquary pool) ─────────────────
-    // EPIC #302 — SPIRIT ↓ label (these rings drive the spirit pool). The whole
-    // label row stays interactive: clicking it with a carried ring selected drops
-    // that ring back to the Reliquary/spirit pool (replaces the old dropzone).
-    // #382 — all column-header labels are Container (c) children → crispCanvasText.
-    const reliquaryLabel = crispCanvasText(
-      this.add
-        .text(COL_RELIQUARY_X, 128, 'SPIRIT  ↓', { fontSize: '13px', color: '#cccccc' })
-        .setScrollFactor(0)
-        .setName('reliquary-label')
-        .setInteractive({ useHandCursor: true })
-        .on('pointerdown', () => void this.onReliquaryDropClicked()),
-    );
-    c.add(reliquaryLabel);
-    // #389 — SPIRIT n/max counter (reliquaryCount/reliquaryCap), right of the label.
-    this.spiritCounter = crispCanvasText(
-      this.add
-        .text(COL_RELIQUARY_X + 90, 128, '', { fontSize: '12px', color: '#ffdd66' })
-        .setScrollFactor(0)
-        .setName('spirit-counter'),
-    );
-    c.add(this.spiritCounter);
-
-    // ── Middle column — BENCH (#389; carried, not battle-slotted) ─────────────
-    // NAMING: player-facing "Bench" replaces the old "Spares"; the code/DB/API
-    // identifiers stay `spare_*`. The label row is interactive: clicking it with a
-    // selected ring drops the ring into the Bench (spare) pool.
-    const spareLabel = crispCanvasText(
-      this.add
-        .text(COL_SPARE_X, 128, 'BENCH  ↓', { fontSize: '13px', color: '#88ccaa' })
-        .setScrollFactor(0)
-        .setName('spare-label')
-        .setInteractive({ useHandCursor: true })
-        .on('pointerdown', () => void this.onSpareDropClicked()),
-    );
-    c.add(spareLabel);
-    // #389 — BENCH n/max counter (benchSpareCount/spare_ring_max), right of label.
-    this.benchCounter = crispCanvasText(
-      this.add
-        .text(COL_SPARE_X + 84, 128, '', { fontSize: '12px', color: '#aaffaa' })
-        .setScrollFactor(0)
-        .setName('bench-counter'),
-    );
-    c.add(this.benchCounter);
-
-    // ── HEALTH column header (#347) ───────────────────────────────────────────
-    // Sits between BENCH and COMBAT, above the relocated Heart card.
-    c.add(
-      crispCanvasText(
-        this.add
-          .text(HEART_CARD_X, 128, 'HEALTH', { fontSize: '13px', color: '#ff99aa' })
-          .setScrollFactor(0)
-          .setName('health-label'),
-      ),
-    );
-
-    // ── Right column — COMBAT (#347) ──────────────────────────────────────────
-    // Left edge lines up with the A1/D1 card left edge (BATTLEHAND_RING_X = 724).
-    c.add(
-      crispCanvasText(
-        this.add
-          .text(BATTLEHAND_RING_X, 128, 'COMBAT', { fontSize: '13px', color: '#cc88ff' })
-          .setScrollFactor(0)
-          .setName('battle-hand-label'),
-      ),
-    );
-
-    // Adopt the reusable grids into the overlay at their column positions.
-    //   Reliquary/SPIRIT (left): 3-col scrollable grid, y=148
-    //   Bench (middle): 3-col scrollable grid, y=148
-    // #389 — the COMBAT cluster (STATUS + A1/A2/D1/D2) is built fresh below as
-    // overlay-scoped RingCards (replacing the retired StakePanel + LoadoutPanel).
-    this.adoptPanel(c, this.sanctumGrid, COL_RELIQUARY_X, 148);
-    this.adoptPanel(c, this.loadoutGrid, COL_SPARE_X, 148);
-
-    // #347 — Heart slot card renders in the HEALTH column (driven by HEART_CARD_X).
-    // #389 — the COMBAT cluster (STATUS thumb left-aligned above the 2×2 A1/A2 ·
-    // D1/D2) is built as overlay-scoped RingCards (replacing StakePanel +
-    // LoadoutPanel). The four-column header (SPIRIT | BENCH | HEALTH | COMBAT)
-    // reads cleanly without per-row ATTACK/DEFENSE labels.
-    this.buildHeartCard(c);
-    this.buildCombatCluster(c);
-
-    // Cap the grids at their visible-row windows. Clipping is now done by
-    // visibility-windowing (cards outside the window are hidden), not GeometryMask.
-    this.sanctumGrid.setVisibleRows(RINGWALL_VISIBLE_ROWS);
-    this.loadoutGrid.setVisibleRows(RINGWALL_VISIBLE_ROWS);
-    // Mouse wheel over a scrollable grid scrolls it; elsewhere is a no-op.
+    // Mouse wheel over a scrollable grid scrolls it.
     this.input.on('wheel', this.onRingwallWheel, this);
 
-    // E2E scroll hooks — same scrollBy path as the arrows/wheel.
+    // E2E scroll hooks.
     window.__campSanctumScroll = (delta: number): void => {
       this.sanctumGrid.scrollBy(delta);
       this.publishScrollState();
     };
     window.__campLoadoutScroll = (delta: number): void => {
-      this.loadoutGrid.scrollBy(delta);
+      this.sanctumOverlay?.getBenchGrid()?.scrollBy(delta);
       this.publishScrollState();
     };
     this.publishScrollState();
 
-    // Refresh the lock state of the Reliquary cards (cap-full) and render the
-    // live header from the cached snapshot.
+    // Apply Reliquary lock state and render the live header.
     this.applyReliquaryLockState();
     this.renderReliquaryHeader();
 
-    // Live status echo (errors from carry / assign), inside the modal above the
-    // bottom edge.
-    // #382 — Container child → crispCanvasText.
-    c.add(
-      crispCanvasText(
-        this.add
-          .text(CONTENT_LEFT, 478, this.statusText.text, { fontSize: '12px', color: '#ff8888' })
-          .setName('overlay-status')
-          .setScrollFactor(0),
-      ),
-    );
-
-    // EPIC #302 — the permanent passive strip is replaced by a hover tooltip on
-    // the STATUS (Thumb) card. attachTooltip reads the live passive text lazily on
-    // each hover so it always reflects the current staked ring; detach() is wired in
-    // the overlay's onClose callback. The STATUS card bg is already interactive (it
-    // owns the stake click); the tooltip listeners coexist with that click.
-    this.thumbTooltipDetach = attachTooltip(
-      this,
-      this.combatCards.get('thumb')!.bg,
-      () => this.thumbPassiveTooltipText(),
-      { maxWidth: 220 },
-    );
-
-    // #118 — hit-test probe switched to uiCam. Ring cards live under the overlay
-    // container, which cameras.main ignores and uiCam renders. uiCam does not
-    // follow or scroll, so the card's world-transform position (tx, ty) is its
-    // exact render position in uiCam space — no scroll dance needed. The probe is
-    // a straight uiCam hitTest at that position.
+    // E2E programmatic select + move hooks.
     window.__campHitTestRing = (ringId: string): { found: boolean; hit: boolean } => {
-      const bg = this.sanctumGrid.getCardBg(ringId) ?? this.loadoutGrid.getCardBg(ringId);
+      const bg = this.sanctumGrid.getCardBg(ringId)
+        ?? this.sanctumOverlay?.getBenchGrid()?.getCardBg(ringId)
+        ?? null;
       if (!bg) return { found: false, hit: false };
-      const m = bg.getWorldTransformMatrix(); // render-space position
+      const m = bg.getWorldTransformMatrix();
       const out: Phaser.GameObjects.GameObject[] = [];
       this.input.manager.hitTest(
         { x: m.tx, y: m.ty } as unknown as Phaser.Input.Pointer,
@@ -955,10 +938,6 @@ export class CampScene extends DualCameraScene {
       );
       return { found: true, hit: out.indexOf(bg) !== -1 };
     };
-
-    // #154 — programmatic select+move hooks so E2E does not depend on pixel
-    // hit-testing. __reliquarySelect picks up a ring from a section; __reliquaryMove
-    // performs a complete move (select → target) in one call.
     window.__reliquarySelect = (
       ringId: string,
       source: 'reliquary' | 'spare' | 'battle',
@@ -1168,9 +1147,15 @@ export class CampScene extends DualCameraScene {
         this.reliquaryHeaderRight.setText(`Total XP: ${totalXp}  |  Avg Battle XP: ${avgXp}`);
       }
     }
-    // EPIC #302 — keep the Heart card + COMBAT cluster painted in sync.
-    this.renderHeartCard();
-    this.renderCombatCluster();
+    // #395 — HEALTH + COMBAT columns are now owned by BenchHealthCombat inside the
+    // overlay class. Rebuild BHC with the latest data so strokes and ring content stay
+    // in sync. Falls back to the old CampScene-owned renders if sanctumOverlay is null.
+    if (this.sanctumOverlay) {
+      this.sanctumOverlay.refreshBhc(this.makeSanctumData());
+    } else {
+      this.renderHeartCard();
+      this.renderCombatCluster();
+    }
     // #389 — paint the converged SPIRIT + BENCH counters and publish the structure
     // reporter (replacing the removed LOADOUT badge). Both read /api/me-computed
     // fields mirrored into __campState; the Bench count excludes the pending WON
@@ -1202,6 +1187,29 @@ export class CampScene extends DualCameraScene {
         this.overlay,
       );
     }
+  }
+
+  /**
+   * #395 — Build an OverlayData snapshot from the current /api/me cache. Used to
+   * pass live data to the sanctum RingManagementOverlay (refreshBhc / open).
+   */
+  private makeSanctumData(): OverlayData {
+    const s = window.__campState;
+    return {
+      player: s
+        ? {
+            spirit_current: s.spirit_current,
+            spirit_max: s.spirit_max,
+            aggregate_xp: s.aggregate_xp,
+            carry_cap: this.carryCap,
+            spare_ring_max: s.spare_ring_max,
+            heart_ring: (s.heart_ring as RingData | null) ?? null,
+            pending_ring_id: (s.player?.pending_ring_id as string | null | undefined) ?? null,
+          }
+        : null,
+      rings: this.rings,
+      loadout: this.loadout,
+    };
   }
 
   /**
@@ -1444,10 +1452,14 @@ export class CampScene extends DualCameraScene {
       this.sanctumGrid.clearSelection();
       this.loadoutGrid.clearSelection();
     }
-    // #389 — the heart card + COMBAT cluster paint their own selection stroke from
-    // the live swap source (renderHeartCard / renderCombatCluster).
-    this.renderHeartCard();
-    this.renderCombatCluster();
+    // #395 — HEALTH + COMBAT strokes are owned by BHC; repaint via refreshBhc.
+    // Falls back to the old per-card repaint when the overlay class is not active.
+    if (this.sanctumOverlay) {
+      this.sanctumOverlay.refreshBhc(this.makeSanctumData());
+    } else {
+      this.renderHeartCard();
+      this.renderCombatCluster();
+    }
   }
 
   /**
@@ -1691,10 +1703,13 @@ export class CampScene extends DualCameraScene {
   private clearSelectionHighlights(): void {
     this.sanctumGrid.clearSelection();
     this.loadoutGrid.clearSelection();
-    // #389 — re-paint the heart card + COMBAT cluster so their selection strokes
-    // clear in step with the swap manager (both read the live selection source).
-    this.renderHeartCard();
-    this.renderCombatCluster();
+    // #395 — HEALTH + COMBAT strokes are owned by BHC when sanctumOverlay is active.
+    if (this.sanctumOverlay) {
+      this.sanctumOverlay.refreshBhc(this.makeSanctumData());
+    } else {
+      this.renderHeartCard();
+      this.renderCombatCluster();
+    }
   }
 
   /** Re-render header + lock state after a Reliquary modal reload. */
@@ -1732,7 +1747,10 @@ export class CampScene extends DualCameraScene {
    * pointer's plain x/y compares directly.
    */
   private gridUnderPointer(pointer: Phaser.Input.Pointer): InventoryGrid | null {
-    for (const grid of [this.sanctumGrid, this.loadoutGrid]) {
+    // #395 — when the sanctum overlay is active, scroll targets are sanctumGrid (SPIRIT)
+    // and BHC's bench grid. Fall back to loadoutGrid for non-overlay contexts.
+    const benchGrid = this.sanctumOverlay?.getBenchGrid() ?? this.loadoutGrid;
+    for (const grid of [this.sanctumGrid, benchGrid]) {
       const m = grid.getWorldTransformMatrix();
       const { width, height } = grid.getMaskSize();
       if (
@@ -1757,9 +1775,13 @@ export class CampScene extends DualCameraScene {
     window.__campState.sanctumScrollRow = this.sanctumGrid.getScrollRow();
     window.__campState.sanctumTotalRows = this.sanctumGrid.getTotalRows();
     window.__campState.sanctumVisibleRows = this.sanctumGrid.getVisibleRows();
-    window.__campState.loadoutScrollRow = this.loadoutGrid.getScrollRow();
-    window.__campState.loadoutTotalRows = this.loadoutGrid.getTotalRows();
-    window.__campState.loadoutVisibleRows = this.loadoutGrid.getVisibleRows();
+    // #395 — when the sanctum overlay is active, the BENCH (loadout) grid is owned
+    // by BenchHealthCombat inside the overlay class. Mirror its scroll state;
+    // fall back to the legacy loadoutGrid when the overlay is closed.
+    const benchGrid = this.sanctumOverlay?.getBenchGrid() ?? this.loadoutGrid;
+    window.__campState.loadoutScrollRow = benchGrid.getScrollRow();
+    window.__campState.loadoutTotalRows = benchGrid.getTotalRows();
+    window.__campState.loadoutVisibleRows = benchGrid.getVisibleRows();
   }
 
   /**

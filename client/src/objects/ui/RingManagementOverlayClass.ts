@@ -90,6 +90,19 @@ export interface RingManagementOverlayOpts {
    * hosts to route the container to the UI camera.
    */
   onRender?: (container: Phaser.GameObjects.Container) => void;
+
+  /**
+   * Called when the overlay has a status message to surface (e.g. a network error
+   * or validation rejection). The adapter decides how to display it.
+   */
+  onStatus?: (msg: string) => void;
+
+  /**
+   * Called just before the overlay container is destroyed, while it is still alive.
+   * Use this to remove any adopted (externally-owned) children from the container so
+   * `destroy(true)` does not take them with it (e.g. CampScene's `sanctumGrid`).
+   */
+  onBeforeDestroy?: (container: Phaser.GameObjects.Container) => void;
 }
 
 /**
@@ -214,6 +227,41 @@ export class RingManagementOverlay {
    */
   getSpareGrid(): InventoryGrid | null {
     return this.spareGrid;
+  }
+
+  /**
+   * E2E bridge — exposes the BenchHealthCombat's bench InventoryGrid (sanctum mode).
+   * Null in field mode or when the overlay is closed. Used by `__campLoadoutScroll`.
+   */
+  getBenchGrid(): InventoryGrid | null {
+    return this.bhc?.getBenchGrid() ?? null;
+  }
+
+  /**
+   * Rebuild only the BenchHealthCombat right half with new data, without re-running
+   * `renderLeft`. Used by CampScene's `renderReliquaryHeader` to keep BENCH / HEALTH
+   * / COMBAT columns in sync after each swap without full overlay re-render.
+   */
+  refreshBhc(data: OverlayData): void {
+    if (!this.bhc || !this.container) return;
+    this.storeData(data);
+    const me: BenchHealthCombatMe = {
+      player: {
+        spare_ring_max: this.managePlayer?.spare_ring_max,
+        pending_ring_id: this.pendingRingId,
+        heart_ring: this.heartRing ?? null,
+      },
+      rings: this.allRings,
+      loadout: this.manageLoadout,
+    };
+    this.bhc.build(me, this.swap.selection?.source ?? null);
+    const spareMax = this.managePlayer?.spare_ring_max ?? 0;
+    const benchN = benchSpareCount(this.allRings, this.manageLoadout, this.pendingRingId);
+    publishRingMgmtState(
+      this.mode,
+      { bench: { n: benchN, max: spareMax } },
+      this.container,
+    );
   }
 
   // ── Private ───────────────────────────────────────────────────────────────
@@ -423,6 +471,7 @@ export class RingManagementOverlay {
 
   private setStatus(msg: string): void {
     if (this.statusText) this.statusText.setText(msg);
+    this.opts.onStatus?.(msg);
   }
 
   private teardown(fireCb = false): void {
@@ -437,6 +486,9 @@ export class RingManagementOverlay {
     this.domLabels.forEach((l) => l.destroy());
     this.domLabels = [];
     if (this.container) {
+      // Notify the adapter to release any externally-owned children (e.g.
+      // CampScene's sanctumGrid) before the container is destroyed.
+      this.opts.onBeforeDestroy?.(this.container);
       this.container.destroy(true);
       this.container = null;
     }

@@ -10,12 +10,9 @@ import type { SwapSlot } from './ui/SlotSwapManager';
 
 /**
  * #395 — Field ring-management adapter (≤200 lines). Wraps `RingManagementOverlay`
- * in `'field'` mode. All render/swap logic lives in the overlay class; this adapter:
- *   - fetches /api/me and delegates to the overlay
- *   - publishes E2E hooks (`__battleHandOpen`, `__heartCardState`,
- *     `__discardConfirmOpen`, `__encounterDiscardRing`)
- *   - owns the discard-confirm flow (field-specific)
- *   - relays `open()` / `close()` / `isOpen()` so call sites are unchanged
+ * in `'field'` mode. All render/swap logic lives in the overlay class; this adapter
+ * fetches /api/me, publishes E2E hooks, owns the discard-confirm flow, and relays
+ * `open()` / `close()` / `isOpen()` so call sites are unchanged.
  */
 
 type BattleSlot = SlotKey;
@@ -137,6 +134,7 @@ export class BattleHandOverlay {
         await this.refresh(ov);
       },
       onRender: (c) => this.onModalRender?.(c),
+      onStatus: (msg) => this.onStatus?.(msg), // P2-B: surface network errors
     };
   }
 
@@ -147,14 +145,14 @@ export class BattleHandOverlay {
       this.cache(d); ov.refresh(d);
       const h = d.player?.heart_ring ?? null;
       setHCS(h ? { equipped: true, element: h.element, currentUses: h.current_uses, maxUses: h.max_uses } : { equipped: false });
-    } catch { /* network error */ }
+    } catch { this.onStatus?.('Network error — please retry'); }
   }
 
   private async apiPut(url: string, body: Record<string, unknown>): Promise<void> {
-    if (getToken()) try { await apiFetch(url, { method: 'PUT', json: body }); } catch { /**/ }
+    if (getToken()) try { await apiFetch(url, { method: 'PUT', json: body }); } catch { this.onStatus?.('Network error — please retry'); }
   }
   private async apiPost(url: string, body: Record<string, unknown>): Promise<void> {
-    if (getToken()) try { await apiFetch(url, { method: 'POST', json: body }); } catch { /**/ }
+    if (getToken()) try { await apiFetch(url, { method: 'POST', json: body }); } catch { this.onStatus?.('Network error — please retry'); }
   }
   private async deleteRing(id: string): Promise<void> {
     await apiFetch(`/api/rings/${id}`, { method: 'DELETE' });

@@ -5,6 +5,7 @@ import { InventoryGrid, type RingData } from '../InventoryGrid';
 import { RingCard } from './RingCard';
 import { attachTooltip } from './Tooltip';
 import { addDomLabel, crispCanvasText } from './DomLabel';
+import { benchSpareCount } from './RingManagementOverlay';
 
 /**
  * #395 — Shared right-half view component for all ring-management overlay modes
@@ -99,20 +100,21 @@ export class BenchHealthCombat extends Phaser.GameObjects.Container {
     const spareMax = me.player?.spare_ring_max ?? 0;
 
     // ── BENCH grid ──────────────────────────────────────────────────────────
-    const slottedIds = new Set(
+    // #395 review — use the canonical benchSpareCount predicate (same as CampScene
+    // and RingManagementOverlay) to avoid divergence if the server schema changes.
+    const benchN = benchSpareCount(me.rings, loadout, pendingId);
+    const benchFull = benchN >= spareMax && spareMax >= 0;
+
+    const battleSlotIds = new Set(
       (SLOT_KEYS as readonly string[]).map((k) => loadout[k]).filter(Boolean) as string[],
     );
-    if (heartRing) slottedIds.add(heartRing.id);
-    if (pendingId) slottedIds.add(pendingId);
-
     const benchRings = me.rings.filter(
       (r) =>
         r.in_carry === 1 &&
-        !slottedIds.has(r.id) &&
+        !battleSlotIds.has(r.id) &&
+        r.id !== pendingId &&
         !(r as { pending?: number }).pending,
     );
-    const benchN = benchRings.length;
-    const benchFull = benchN >= spareMax && spareMax >= 0;
 
     const benchGrid = new InventoryGrid(
       this.scene,
