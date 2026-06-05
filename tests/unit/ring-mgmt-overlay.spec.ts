@@ -24,6 +24,7 @@ import {
   publishRingMgmtState,
   clearRingMgmtState,
   COLUMN_LABELS,
+  isPickupBlockedByFullBench,
   type RingMgmtMode,
   type RingMgmtCounters,
 } from '../../client/src/objects/ui/RingManagementOverlay';
@@ -799,6 +800,297 @@ describe('#389 CampScene COMBAT cluster: local-space coordinate constants (Phase
       src,
       'CampScene.ts COMBAT column x constants must reference BATTLEHAND_RING_X (local-space origin)',
     ).toContain('BATTLEHAND_RING_X');
+  });
+
+});
+
+// ===========================================================================
+// Class 9 — isPickupBlockedByFullBench: symmetric-swap guard (#395)
+// ===========================================================================
+
+describe('#395 isPickupBlockedByFullBench: symmetric-swap invariants', () => {
+
+  // ── Basic gate ─────────────────────────────────────────────────────────────
+
+  it('returns false when bench is NOT full (gate fires first regardless of other args)', () => {
+    // The guard is a no-op when the bench has room — no pick-up can overflow it.
+    expect(isPickupBlockedByFullBench('reliquary', null, false)).toBe(false);
+    expect(isPickupBlockedByFullBench('reliquary', 'spare', false)).toBe(false);
+    expect(isPickupBlockedByFullBench('reliquary', 'reliquary', false)).toBe(false);
+  });
+
+  // ── Net one-way: old blocking behaviour ────────────────────────────────────
+
+  it('blocks reliquary pick-up when bench full and nothing is selected (old guard parity)', () => {
+    // The OLD guard blocked every reliquary pick-up at full bench. The symmetric
+    // guard must still block the case where the pick-up WOULD overflow the bench:
+    // nothing selected yet, so a reliquary ring dropped into spare = net +1. Block.
+    expect(isPickupBlockedByFullBench('reliquary', null, true)).toBe(true);
+  });
+
+  it('blocks reliquary pick-up when bench full and a non-bench ring is already selected', () => {
+    // If a battle-slot ring is already held (source 'a1'), dropping a reliquary ring
+    // into spare later would still be a net +1 onto the bench. Block.
+    expect(isPickupBlockedByFullBench('reliquary', 'a1', true)).toBe(true);
+    expect(isPickupBlockedByFullBench('reliquary', 'thumb', true)).toBe(true);
+    expect(isPickupBlockedByFullBench('reliquary', 'heart', true)).toBe(true);
+    expect(isPickupBlockedByFullBench('reliquary', 'd2', true)).toBe(true);
+  });
+
+  // ── Net-zero swap: the key new behaviour ───────────────────────────────────
+
+  it('allows reliquary pick-up when bench full but a spare ring is already selected (net-zero)', () => {
+    // A spare ring is held (will leave the bench on drop). Picking up a reliquary
+    // ring is the "receive" side of a net-zero swap: one leaves, one enters = 0 delta.
+    // The old guard incorrectly blocked this. The new guard must NOT block it.
+    expect(isPickupBlockedByFullBench('reliquary', 'spare', true)).toBe(false);
+  });
+
+  it('allows picking up FROM the bench itself (spare) even when bench is full', () => {
+    // Picking up a spare ring never makes the bench MORE full — you are removing one.
+    // This must not be blocked regardless of what is currently selected.
+    expect(isPickupBlockedByFullBench('spare', null, true)).toBe(false);
+    expect(isPickupBlockedByFullBench('spare', 'a1', true)).toBe(false);
+    expect(isPickupBlockedByFullBench('spare', 'spare', true)).toBe(false);
+    expect(isPickupBlockedByFullBench('spare', 'reliquary', true)).toBe(false);
+  });
+
+  // ── Adversarial pick-up orders ─────────────────────────────────────────────
+
+  it('order A (spare first, reliquary second) — second pick-up is ALLOWED (net-zero)', () => {
+    // Order A: player picks up a spare (bench → -1), then picks up a reliquary ring
+    // (will go to bench on drop → +1). Net change = 0. The second pick-up is ALLOWED.
+    // Step 1: pick up spare (currentSel = null, bench was at cap but we just took one).
+    // Guard is called for the SECOND pick-up (reliquary), when currentSel = 'spare'.
+    expect(isPickupBlockedByFullBench('reliquary', 'spare', true)).toBe(false);
+  });
+
+  it('order B (reliquary first at full bench) — first pick-up is BLOCKED', () => {
+    // Order B: player tries to pick up a reliquary ring when bench is full and
+    // nothing is held yet. This would net +1 into the bench. Block it.
+    expect(isPickupBlockedByFullBench('reliquary', null, true)).toBe(true);
+  });
+
+  it('order B with a bench ring already selected — ALLOWED (player re-picked a bench ring)', () => {
+    // A bench ring was already selected (the reliquary → spare pick-up found it later).
+    // The guard is evaluated for 'reliquary' source with currentSel='spare' → allowed.
+    expect(isPickupBlockedByFullBench('reliquary', 'spare', true)).toBe(false);
+  });
+
+  // ── Non-reliquary non-bench sources ───────────────────────────────────────
+
+  it('battle-slot pick-up at full bench: blocked when nothing selected (net +1 if dropped to spare)', () => {
+    // If the player selects a battle-slot ring then drops it onto spare at full bench
+    // — that would net +1. Block the pick-up.
+    expect(isPickupBlockedByFullBench('a1', null, true)).toBe(true);
+    expect(isPickupBlockedByFullBench('thumb', null, true)).toBe(true);
+    expect(isPickupBlockedByFullBench('heart', null, true)).toBe(true);
+  });
+
+  it('battle-slot pick-up at full bench: allowed when a bench ring is held (net-zero)', () => {
+    // The player already holds a spare ring. Picking up a battle-slot ring and then
+    // dropping the spare somewhere is a net-zero trade. Allow the pick-up.
+    expect(isPickupBlockedByFullBench('a1', 'spare', true)).toBe(false);
+    expect(isPickupBlockedByFullBench('thumb', 'spare', true)).toBe(false);
+  });
+
+  // ── Symmetry assertion ────────────────────────────────────────────────────
+
+  it('symmetric: two reliquary pick-ups both blocked when bench full and no bench ring held', () => {
+    // Neither order of two reliquary pick-ups is allowed without an intermediate
+    // bench pick-up. Both calls must return true (each would net +1 independently).
+    expect(isPickupBlockedByFullBench('reliquary', null, true)).toBe(true);
+    expect(isPickupBlockedByFullBench('reliquary', 'reliquary', true)).toBe(true);
+  });
+
+});
+
+// ===========================================================================
+// Class 10 — BenchHealthCombat contract: source-level assertions (#395)
+// ===========================================================================
+
+describe('#395 BenchHealthCombat: architectural contract (source scan)', () => {
+
+  it('BenchHealthCombat.ts exists at client/src/objects/ui/BenchHealthCombat.ts', () => {
+    // #395 acceptance criterion: the shared right-half component must exist.
+    const exists = fs.existsSync(path.join(CLIENT_SRC, 'objects/ui/BenchHealthCombat.ts'));
+    expect(
+      exists,
+      'BenchHealthCombat.ts must exist — #395 requires the shared right-half component',
+    ).toBe(true);
+  });
+
+  it('BenchHealthCombat.ts exports a class BenchHealthCombat', () => {
+    const src = readClientSrc('objects/ui/BenchHealthCombat.ts');
+    if (src === null) return;
+    expect(
+      src,
+      'BenchHealthCombat.ts must export class BenchHealthCombat',
+    ).toMatch(/export class BenchHealthCombat/);
+  });
+
+  it('BenchHealthCombat carries isBenchHealthCombat = true runtime tag (E2E assertion target)', () => {
+    // #395 — E2E scripts assert the same class renders both field and sanctum.
+    // The runtime tag must be present so Playwright can identify the instance.
+    const src = readClientSrc('objects/ui/BenchHealthCombat.ts');
+    if (src === null) return;
+    expect(
+      src,
+      'BenchHealthCombat must declare readonly isBenchHealthCombat = true for E2E identification',
+    ).toContain('isBenchHealthCombat');
+  });
+
+  it('BenchHealthCombat does NOT declare a private scene field (Container.scene conflict guard)', () => {
+    // #395 — Phaser.GameObjects.Container has a public `scene` property. Declaring
+    // `private scene` in a subclass causes a TypeScript error. Verify the fix is stable.
+    const src = readClientSrc('objects/ui/BenchHealthCombat.ts');
+    if (src === null) return;
+    const nonCommentLines = src.split('\n').filter((l) => {
+      const t = l.trim();
+      return !t.startsWith('//') && !t.startsWith('*') && !t.startsWith('/*');
+    });
+    const codeOnly = nonCommentLines.join('\n');
+    expect(
+      codeOnly,
+      'BenchHealthCombat must not declare `private scene` — Container already has a public .scene',
+    ).not.toMatch(/private\s+(?:readonly\s+)?scene\s*:/);
+  });
+
+  it('BenchHealthCombat exposes getBenchGrid(), getHeartCard(), getCombatCard() accessors', () => {
+    // #395 — the overlay adapter and E2E scripts need these accessors to drive
+    // scroll routing and stroke updates without full rebuilds.
+    const src = readClientSrc('objects/ui/BenchHealthCombat.ts');
+    if (src === null) return;
+    expect(src, 'must expose getBenchGrid()').toContain('getBenchGrid');
+    expect(src, 'must expose getHeartCard()').toContain('getHeartCard');
+    expect(src, 'must expose getCombatCard(slot)').toContain('getCombatCard');
+  });
+
+  it('BenchHealthCombat has a single [RECHARGE] button (not [Recharge] / [Recharge All] pair)', () => {
+    // #395 acceptance criterion: consolidate to one [RECHARGE] button in both modes.
+    const src = readClientSrc('objects/ui/BenchHealthCombat.ts');
+    if (src === null) return;
+    // The button text must be [RECHARGE], not the old variants.
+    expect(src, 'must use [RECHARGE] (not [Recharge])').not.toContain("'[Recharge]'");
+    expect(src, 'must use [RECHARGE] (not [Recharge All])').not.toContain("'[Recharge All]'");
+    expect(src, 'must render the [RECHARGE] label').toContain('[RECHARGE]');
+  });
+
+  it('RingManagementOverlayClass.ts exists and exports RingManagementOverlay class', () => {
+    // #395 — the Phaser class lives in the Class file; the pure module has no Phaser.
+    const exists = fs.existsSync(path.join(CLIENT_SRC, 'objects/ui/RingManagementOverlayClass.ts'));
+    expect(
+      exists,
+      'RingManagementOverlayClass.ts must exist — #395 splits Phaser class from pure helpers',
+    ).toBe(true);
+    const src = readClientSrc('objects/ui/RingManagementOverlayClass.ts');
+    if (src === null) return;
+    expect(
+      src,
+      'RingManagementOverlayClass.ts must export class RingManagementOverlay',
+    ).toMatch(/export class RingManagementOverlay/);
+  });
+
+  it('RingManagementOverlay.ts (pure module) does NOT import Phaser', () => {
+    // #395 architectural invariant: the pure module must never import Phaser.
+    // Unit tests rely on being able to load it in Node without a browser environment.
+    const src = readClientSrc('objects/ui/RingManagementOverlay.ts');
+    if (src === null) return;
+    const lines = src.split('\n').filter((l) => !l.trim().startsWith('//') && !l.trim().startsWith('*'));
+    const hasPhaser = lines.some((l) => /import\s+Phaser/.test(l) || /from\s+'phaser'/.test(l));
+    expect(
+      hasPhaser,
+      'RingManagementOverlay.ts (pure module) must not import Phaser — unit tests run in Node',
+    ).toBe(false);
+  });
+
+  it('BattleHandOverlay.ts imports RingManagementOverlay from RingManagementOverlayClass (not pure module)', () => {
+    // #395 — BattleHandOverlay is a Phaser consumer; it must import the class, not
+    // the pure module. Importing from the pure module would use the wrong export.
+    const src = readClientSrc('objects/BattleHandOverlay.ts');
+    if (src === null) return;
+    expect(
+      src,
+      'BattleHandOverlay.ts must import RingManagementOverlay from RingManagementOverlayClass',
+    ).toContain('RingManagementOverlayClass');
+  });
+
+  it('BattleHandOverlay.ts is ≤200 lines (thin adapter budget)', () => {
+    // #395 acceptance criterion: the field adapter must stay thin.
+    // Line count = number of lines as reported by editors / `wc -l` (trailing
+    // newline does not add an extra line).
+    const absPath = path.join(CLIENT_SRC, 'objects/BattleHandOverlay.ts');
+    if (!fs.existsSync(absPath)) return;
+    const src = fs.readFileSync(absPath, 'utf8');
+    const lineCount = src.split('\n').length - (src.endsWith('\n') ? 1 : 0);
+    expect(
+      lineCount,
+      `BattleHandOverlay.ts must be ≤200 lines — currently ${lineCount}`,
+    ).toBeLessThanOrEqual(200);
+  });
+
+});
+
+// ===========================================================================
+// Class 11 — isPickupBlockedByFullBench: exported from pure module (#395)
+// ===========================================================================
+
+describe('#395 isPickupBlockedByFullBench: export from pure module', () => {
+
+  it('is exported from RingManagementOverlay.ts (pure module)', () => {
+    // #395 — CampScene imports isPickupBlockedByFullBench from the pure module.
+    // Source-scan the pure module for the export.
+    const src = readClientSrc('objects/ui/RingManagementOverlay.ts');
+    if (src === null) return;
+    expect(
+      src,
+      'isPickupBlockedByFullBench must be exported from RingManagementOverlay.ts',
+    ).toContain('isPickupBlockedByFullBench');
+  });
+
+  it('CampScene.ts imports isPickupBlockedByFullBench from RingManagementOverlay', () => {
+    // #395 — CampScene uses the symmetric-swap guard.
+    const src = readClientSrc('scenes/CampScene.ts');
+    if (src === null) return;
+    expect(
+      src,
+      'CampScene.ts must import isPickupBlockedByFullBench from RingManagementOverlay',
+    ).toContain('isPickupBlockedByFullBench');
+  });
+
+  it('CampScene.ts does not contain the old asymmetric reliquary pick-up guard', () => {
+    // #395 — the old guard was:
+    //   if (source === 'reliquary' && window.__reliquaryLocked) { ... }
+    // It is replaced by isPickupBlockedByFullBench. Any residual guard string is an
+    // unconverted site that would block net-zero swaps.
+    const src = readClientSrc('scenes/CampScene.ts');
+    if (src === null) return;
+    const lines = src.split('\n').filter((l) => !l.trim().startsWith('//') && !l.trim().startsWith('*'));
+    const hasOldGuard = lines.some(
+      (l) => l.includes("source === 'reliquary'") && l.includes('__reliquaryLocked'),
+    );
+    expect(
+      hasOldGuard,
+      'CampScene.ts must not use the old asymmetric guard — replaced by isPickupBlockedByFullBench',
+    ).toBe(false);
+  });
+
+  it('CampScene.ts openRingwallOverlay creates SlotSwapManager per-open (not in buildPanels)', () => {
+    // #395 acceptance criterion: one SlotSwapManager instance per open overlay.
+    // The manager must be created inside openRingwallOverlay, not in buildPanels().
+    const src = readClientSrc('scenes/CampScene.ts');
+    if (src === null) return;
+    // The comment replacing the old buildPanels() creation must be present, or the
+    // new SwapManager construction must be inside openRingwallOverlay.
+    // We verify that the code does NOT construct SlotSwapManager inside buildPanels().
+    const buildPanelsMatch = src.match(/buildPanels\s*\([^)]*\)\s*\{([\s\S]*?)^\s*\}/m);
+    if (buildPanelsMatch) {
+      const body = buildPanelsMatch[1];
+      expect(
+        body.includes('new SlotSwapManager'),
+        'buildPanels() must not construct SlotSwapManager — it must be created per-open in openRingwallOverlay',
+      ).toBe(false);
+    }
   });
 
 });

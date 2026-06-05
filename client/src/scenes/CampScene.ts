@@ -7,6 +7,7 @@ import {
   benchSpareCount,
   publishRingMgmtState,
   clearRingMgmtState,
+  isPickupBlockedByFullBench,
 } from '../objects/ui/RingManagementOverlay';
 import { FusionPanel } from '../objects/FusionPanel';
 import { DifficultyModal } from '../objects/DifficultyModal';
@@ -722,7 +723,17 @@ export class CampScene extends DualCameraScene {
       window.__reliquarySelect = undefined;
       window.__reliquaryLocked = undefined;
       window.__reliquaryFull = undefined;
+      // #395 — destroy the per-open swap controller when the overlay closes.
+      this.swapManager = null;
     }, { width: MODAL_W, height: MODAL_H });
+
+    // #395 — create the swap controller once per overlay open (not in buildPanels).
+    // One controller per open overlay: cleared + nulled on the close callback above.
+    this.swapManager = new SlotSwapManager({
+      validSlots: ['reliquary', 'spare', 'thumb', 'a1', 'a2', 'd1', 'd2', 'heart'],
+      resolveMove: (ringId, from, to) => this.reliquaryMove(ringId, to, from),
+      onAfter: () => { /* reliquaryMove already reloads /api/me + re-renders. */ },
+    });
 
     // Clicking empty modal space (the panel background, behind all content)
     // deselects. The backdrop already swallows clicks outside the modal.
@@ -1289,11 +1300,17 @@ export class CampScene extends DualCameraScene {
       await this.applySwap(sel, { ringId, source });
       return;
     }
-    // Fresh pick-up (or re-pick from the same section). Reject a locked Reliquary
-    // card so the cap message is shown and nothing is selected.
-    if (source === 'reliquary' && window.__reliquaryLocked) {
+    // Fresh pick-up (or re-pick from the same section).
+    // #395 — Symmetric swap rule: only block a pick-up that would result in a net
+    // one-way increase in bench count when the bench is already full. A reliquary
+    // ring can always be picked up FIRST when the intent is to swap it with a spare
+    // ring (net-zero bench delta); the old `source === 'reliquary' && __reliquaryLocked`
+    // guard rejected ALL reliquary pick-ups at full bench regardless of direction.
+    const currentSel = this.swapManager?.selection?.source ?? null;
+    const benchFull = !!(window.__reliquaryLocked);
+    if (isPickupBlockedByFullBench(source, currentSel, benchFull)) {
       this.clearReliquarySelection();
-      this.setStatus('Loadout is full — select a carried ring (Thumb/Spare/Battle) first, then click a Reliquary ring to swap');
+      this.setStatus('Bench is full — pick up a bench ring first, then click a Reliquary ring to swap');
       return;
     }
     this.setSelection({ ringId, source });
@@ -2248,19 +2265,8 @@ export class CampScene extends DualCameraScene {
    * modal overlay containers when a zone is interacted with.
    */
   private buildPanels(): void {
-    // EPIC #291 WS I (#307) — the shared click-then-click swap state machine. Its
-    // `resolveMove` routes each completed move through reliquaryMove (the same PUT
-    // /api/carry|loadout|heart-slot calls as before, with the from-section as the
-    // `releaseFrom` hint for heart equips). reliquaryMove self-reloads /api/me and
-    // re-renders, so `onAfter` is a no-op. CampScene exposes every SwapSlot
-    // including 'reliquary'.
-    this.swapManager = new SlotSwapManager({
-      validSlots: ['reliquary', 'spare', 'thumb', 'a1', 'a2', 'd1', 'd2', 'heart'],
-      resolveMove: (ringId, from, to) => this.reliquaryMove(ringId, to, from),
-      onAfter: () => {
-        /* reliquaryMove already reloads /api/me + re-renders the header. */
-      },
-    });
+    // #395 — the swap controller is created per overlay open in openRingwallOverlay()
+    // (one controller per open overlay, created fresh on each open, cleared on close).
     // #154 — the two grids drive the universal-swap selection. Both are 3-column
     // (Reliquary and Spare). The Reliquary grid (sanctumGrid) selecting a card
     // picks it up as a 'reliquary' source; the Spare grid (loadoutGrid) as 'spare'.

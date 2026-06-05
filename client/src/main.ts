@@ -161,7 +161,7 @@ declare global {
     // the same structure in both modes, read the Spirit/Bench counters (n/max), and
     // confirm no card carries a Tier row. Cleared (undefined) when both are closed.
     __ringMgmtState?: {
-      mode: 'sanctum' | 'field';
+      mode: 'sanctum' | 'field' | 'fusion';
       columns: string[];
       counters: {
         spirit?: { n: number; max: number };

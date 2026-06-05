@@ -2141,3 +2141,55 @@ test('manage-battle-rings (#381 impl): empty-spare placeholder absent when nothi
 
   await ctx.close();
 });
+
+// ── #395 — BenchHealthCombat container present in field mode ─────────────────
+// The right-half (BENCH / HEALTH / COMBAT) is now rendered by the shared
+// BenchHealthCombat component in all modes. Verify the field overlay contains
+// a child with the isBenchHealthCombat=true runtime tag.
+test('manage-battle-rings (#395): BenchHealthCombat container is present in field mode', async ({ browser }) => {
+  const ctx = await browser.newContext();
+  await seedAuthToken(ctx);
+  const page = await ctx.newPage();
+  await loadForest(page);
+  await openBattleHand(page);
+
+  const hasBHC = await page.evaluate(() => {
+    const scene = (window as any).__game?.scene?.getScene('ForestScene') as any;
+    const modal = scene?.battleHand?.manageModal;
+    if (!modal) return false;
+    const walk = (c: any): boolean => {
+      for (const o of c.getAll ? c.getAll() : []) {
+        if (o.isBenchHealthCombat === true) return true;
+        if (o.getAll && walk(o)) return true;
+      }
+      return false;
+    };
+    return walk(modal);
+  });
+
+  expect(
+    hasBHC,
+    'Field overlay must contain a BenchHealthCombat component (isBenchHealthCombat=true)',
+  ).toBe(true);
+
+  await ctx.close();
+});
+
+// ── #395 — Single [RECHARGE] button replaces the old pair ────────────────────
+// #395 consolidates [Recharge] + [Recharge All] to a single [RECHARGE] button.
+test('manage-battle-rings (#395): single [RECHARGE] button present (no [Recharge All])', async ({ browser }) => {
+  const ctx = await browser.newContext();
+  await seedAuthToken(ctx);
+  const page = await ctx.newPage();
+  await loadForest(page);
+  await openBattleHand(page);
+
+  const texts = await modalTexts(page);
+  // The new single button.
+  expect(texts).toContain('[RECHARGE]');
+  // The old pair must be gone.
+  expect(texts.some((t) => t === '[Recharge]')).toBe(false);
+  expect(texts.some((t) => t === '[Recharge All]')).toBe(false);
+
+  await ctx.close();
+});
