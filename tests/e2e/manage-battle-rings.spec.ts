@@ -243,11 +243,11 @@ test('manage-battle-rings (#389/#423): __ringMgmtState reports field columns, Be
   await ctx.close();
 });
 
-// ── Scenario 1b — #352/#381: panel geometry, header, HP card above STATUS ─────
-// #381 updated: panel is now 760×500 (center 288, top 38). The modal gains a
-// three-part Spirit/♥/XP header, so Day/Gold/Food are still absent but Total XP
-// now appears in the header.
-test('manage-battle-rings (#352/#381): panel 760×500, ♥ HP label present and above STATUS', async ({ browser }) => {
+// ── Scenario 1b — #352/#381/#423: panel geometry, header, HP card above STATUS ─
+// #423 updated: the field panel narrowed from 760×500 to 560×500 (LOOT column
+// removed). Center x=612, right edge 892 (unchanged), left edge 332, top 38.
+// Day/Gold/Food are still absent. Card absolute positions (659/759/837) unmoved.
+test('manage-battle-rings (#352/#381/#423): field panel 560×500, ♥ HP label present and above STATUS', async ({ browser }) => {
   const ctx = await browser.newContext();
   await seedAuthToken(ctx);
   const page = await ctx.newPage();
@@ -273,14 +273,15 @@ test('manage-battle-rings (#352/#381): panel 760×500, ♥ HP label present and 
   // #352 §4 — ♥ cur/max label is present in the modal (above the HP card).
   expect(texts.some((t) => t === `♥ ${hp}`)).toBe(true);
 
-  // #381 §2 — panel is 760 wide, centered at (512, 288); top ≥ 38 (= 288−250).
+  // #423 §2 — field panel is 560 wide (MODAL_W_FIELD), centered at (612, 288);
+  // top ≥ 38 (= 288−250). Right edge stays at 892; left edge moved 132 → 332.
   const panelTopY = await page.evaluate(() => {
     const scene = (window as any).__game?.scene?.getScene('ForestScene') as any;
     const modal = scene?.battleHand?.manageModal;
     if (!modal) return null;
     const objs = (modal.getAll ? modal.getAll() : []) as any[];
     for (const o of objs) {
-      if (o.width === 760 && typeof o.strokeColor !== 'undefined') {
+      if (o.width === 560 && typeof o.strokeColor !== 'undefined') {
         return o.y - o.height / 2;
       }
     }
@@ -2103,14 +2104,12 @@ test('manage-battle-rings (#423 S2): bench ghost visible with no selection; no-o
     return false;
   });
 
-  // Ghost may be absent if bench is full — skip if so.
+  // Ghost may be absent if bench is full — skip if so. /api/me is fetched in
+  // Node test scope against API_URL (same pattern as every other test here).
+  const tok = await page.evaluate(() => localStorage.getItem('er_token') ?? '');
   const me = (await (
-    await page.evaluate(async () => {
-      const tok = localStorage.getItem('er_token') ?? '';
-      const r = await fetch(`${(window as any).__apiUrl ?? ''}/api/me`, { headers: { Authorization: `Bearer ${tok}` } });
-      return r.json();
-    })
-  )) as any;
+    await fetch(`${API_URL}/api/me`, { headers: { Authorization: `Bearer ${tok}` } })
+  ).json()) as any;
   const benchN = (me.rings ?? []).filter((r: any) => r.in_carry === 1 && !Object.values(me.loadout ?? {}).includes(r.id) && r.id !== me.player?.pending_ring_id).length;
   if (benchN >= (me.player?.spare_ring_max ?? 9)) {
     // Bench is full — ghost legitimately absent; skip assertions.
@@ -2137,7 +2136,10 @@ test('manage-battle-rings (#423 S2): bench ghost visible with no selection; no-o
   });
 
   if (ghostPos) {
-    await page.mouse.click(ghostPos.x, ghostPos.y);
+    // ghostPos is in logical canvas space (world transform of a scrollFactor-0
+    // rect) — convert to page coordinates before the real click.
+    const pagePt = await canvasCoords(page, ghostPos.x, ghostPos.y);
+    await page.mouse.click(pagePt.x, pagePt.y);
     const sel = await page.evaluate(() => {
       const scene = (window as any).__game?.scene?.getScene('ForestScene') as any;
       return scene?.battleHand?.swap?.selection ?? null;
