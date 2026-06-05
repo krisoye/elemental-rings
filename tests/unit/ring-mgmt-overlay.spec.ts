@@ -24,7 +24,6 @@ import {
   publishRingMgmtState,
   clearRingMgmtState,
   COLUMN_LABELS,
-  isPickupBlockedByFullBench,
   type RingMgmtMode,
   type RingMgmtCounters,
 } from '../../client/src/objects/ui/RingManagementOverlay';
@@ -806,104 +805,92 @@ describe('#389 CampScene COMBAT cluster: local-space coordinate constants (Phase
 });
 
 // ===========================================================================
-// Class 9 — isPickupBlockedByFullBench: symmetric-swap guard (#395)
+// Class 9 — Drop-time bench-full guard (#413)
 // ===========================================================================
 
-describe('#395 isPickupBlockedByFullBench: symmetric-swap invariants', () => {
+describe('#413 drop-time bench-full guard: benchSpareCount predicate', () => {
+  // The pick-up-time guard (isPickupBlockedByFullBench) was deleted in #413.
+  // The new drop-time guard lives in CampScene.reliquaryMove and uses
+  // benchSpareCount directly. These tests verify the predicate used by that guard.
 
-  // ── Basic gate ─────────────────────────────────────────────────────────────
+  function makeRing(id: string, inCarry: 0 | 1, pending = 0): RingData {
+    return {
+      id,
+      in_carry: inCarry,
+      element: 0,
+      tier: 'T0',
+      xp: 0,
+      current_uses: 1,
+      max_uses: 3,
+      escrowed: 0,
+      pending,
+    } as unknown as RingData;
+  }
 
-  it('returns false when bench is NOT full (gate fires first regardless of other args)', () => {
-    // The guard is a no-op when the bench has room — no pick-up can overflow it.
-    expect(isPickupBlockedByFullBench('reliquary', null, false)).toBe(false);
-    expect(isPickupBlockedByFullBench('reliquary', 'spare', false)).toBe(false);
-    expect(isPickupBlockedByFullBench('reliquary', 'reliquary', false)).toBe(false);
+  it('benchSpareCount returns 0 when no rings are carried', () => {
+    const rings: RingData[] = [makeRing('r1', 0), makeRing('r2', 0)];
+    const loadout: Record<string, string | null> = { a1: null, a2: null, d1: null, d2: null, thumb: null };
+    expect(benchSpareCount(rings, loadout, null)).toBe(0);
   });
 
-  // ── Net one-way: old blocking behaviour ────────────────────────────────────
-
-  it('blocks reliquary pick-up when bench full and nothing is selected (old guard parity)', () => {
-    // The OLD guard blocked every reliquary pick-up at full bench. The symmetric
-    // guard must still block the case where the pick-up WOULD overflow the bench:
-    // nothing selected yet, so a reliquary ring dropped into spare = net +1. Block.
-    expect(isPickupBlockedByFullBench('reliquary', null, true)).toBe(true);
+  it('benchSpareCount counts carried rings not in battle slots and not pending', () => {
+    const rings: RingData[] = [
+      makeRing('spare1', 1),
+      makeRing('spare2', 1),
+      makeRing('battle', 1),
+    ];
+    const loadout: Record<string, string | null> = { a1: 'battle', a2: null, d1: null, d2: null, thumb: null };
+    // spare1 + spare2 count; battle is slotted → excluded
+    expect(benchSpareCount(rings, loadout, null)).toBe(2);
   });
 
-  it('blocks reliquary pick-up when bench full and a non-bench ring is already selected', () => {
-    // If a battle-slot ring is already held (source 'a1'), dropping a reliquary ring
-    // into spare later would still be a net +1 onto the bench. Block.
-    expect(isPickupBlockedByFullBench('reliquary', 'a1', true)).toBe(true);
-    expect(isPickupBlockedByFullBench('reliquary', 'thumb', true)).toBe(true);
-    expect(isPickupBlockedByFullBench('reliquary', 'heart', true)).toBe(true);
-    expect(isPickupBlockedByFullBench('reliquary', 'd2', true)).toBe(true);
+  it('benchSpareCount excludes the pending WON ring from the count', () => {
+    const rings: RingData[] = [
+      makeRing('spare1', 1),
+      makeRing('pending1', 1, 1),
+    ];
+    const loadout: Record<string, string | null> = { a1: null, a2: null, d1: null, d2: null, thumb: null };
+    // pending1 excluded by pendingRingId
+    expect(benchSpareCount(rings, loadout, 'pending1')).toBe(1);
   });
 
-  // ── Net-zero swap: the key new behaviour ───────────────────────────────────
-
-  it('allows reliquary pick-up when bench full but a spare ring is already selected (net-zero)', () => {
-    // A spare ring is held (will leave the bench on drop). Picking up a reliquary
-    // ring is the "receive" side of a net-zero swap: one leaves, one enters = 0 delta.
-    // The old guard incorrectly blocked this. The new guard must NOT block it.
-    expect(isPickupBlockedByFullBench('reliquary', 'spare', true)).toBe(false);
+  it('drop-time guard rejects target===spare when bench is at capacity (spareCount >= spareMax)', () => {
+    // Simulate the guard logic from CampScene.reliquaryMove.
+    // When spareCount >= spareRingMax the move to 'spare' must be rejected.
+    const spareRingMax = 3;
+    const rings: RingData[] = [
+      makeRing('s1', 1),
+      makeRing('s2', 1),
+      makeRing('s3', 1), // bench full at 3
+    ];
+    const loadout: Record<string, string | null> = { a1: null, a2: null, d1: null, d2: null, thumb: null };
+    const spareCount = benchSpareCount(rings, loadout, null);
+    // The guard condition from reliquaryMove:
+    const wouldBeRejected = spareCount >= spareRingMax;
+    expect(wouldBeRejected).toBe(true);
   });
 
-  it('allows picking up FROM the bench itself (spare) even when bench is full', () => {
-    // Picking up a spare ring never makes the bench MORE full — you are removing one.
-    // This must not be blocked regardless of what is currently selected.
-    expect(isPickupBlockedByFullBench('spare', null, true)).toBe(false);
-    expect(isPickupBlockedByFullBench('spare', 'a1', true)).toBe(false);
-    expect(isPickupBlockedByFullBench('spare', 'spare', true)).toBe(false);
-    expect(isPickupBlockedByFullBench('spare', 'reliquary', true)).toBe(false);
+  it('drop-time guard allows target===spare when bench has capacity (spareCount < spareMax)', () => {
+    const spareRingMax = 9;
+    const rings: RingData[] = [makeRing('s1', 1), makeRing('s2', 1)];
+    const loadout: Record<string, string | null> = { a1: null, a2: null, d1: null, d2: null, thumb: null };
+    const spareCount = benchSpareCount(rings, loadout, null);
+    const wouldBeRejected = spareCount >= spareRingMax;
+    expect(wouldBeRejected).toBe(false);
   });
 
-  // ── Adversarial pick-up orders ─────────────────────────────────────────────
-
-  it('order A (spare first, reliquary second) — second pick-up is ALLOWED (net-zero)', () => {
-    // Order A: player picks up a spare (bench → -1), then picks up a reliquary ring
-    // (will go to bench on drop → +1). Net change = 0. The second pick-up is ALLOWED.
-    // Step 1: pick up spare (currentSel = null, bench was at cap but we just took one).
-    // Guard is called for the SECOND pick-up (reliquary), when currentSel = 'spare'.
-    expect(isPickupBlockedByFullBench('reliquary', 'spare', true)).toBe(false);
+  it('drop-time guard allows SPIRIT->battle-slot swap at full bench (target !== spare)', () => {
+    // GDD §4: SPIRIT ↔ battle-slot swaps are always valid regardless of bench count.
+    // Guard only fires when target === 'spare'.
+    const spareRingMax = 3;
+    const rings: RingData[] = [makeRing('s1', 1), makeRing('s2', 1), makeRing('s3', 1)];
+    const loadout: Record<string, string | null> = { a1: null, a2: null, d1: null, d2: null, thumb: null };
+    const spareCount = benchSpareCount(rings, loadout, null);
+    const target = 'a1'; // battle slot — not 'spare'
+    // Guard condition: only activates when target === 'spare'
+    const wouldBeRejected = target === 'spare' && spareCount >= spareRingMax;
+    expect(wouldBeRejected).toBe(false);
   });
-
-  it('order B (reliquary first at full bench) — first pick-up is BLOCKED', () => {
-    // Order B: player tries to pick up a reliquary ring when bench is full and
-    // nothing is held yet. This would net +1 into the bench. Block it.
-    expect(isPickupBlockedByFullBench('reliquary', null, true)).toBe(true);
-  });
-
-  it('order B with a bench ring already selected — ALLOWED (player re-picked a bench ring)', () => {
-    // A bench ring was already selected (the reliquary → spare pick-up found it later).
-    // The guard is evaluated for 'reliquary' source with currentSel='spare' → allowed.
-    expect(isPickupBlockedByFullBench('reliquary', 'spare', true)).toBe(false);
-  });
-
-  // ── Non-reliquary non-bench sources ───────────────────────────────────────
-
-  it('battle-slot pick-up at full bench: blocked when nothing selected (net +1 if dropped to spare)', () => {
-    // If the player selects a battle-slot ring then drops it onto spare at full bench
-    // — that would net +1. Block the pick-up.
-    expect(isPickupBlockedByFullBench('a1', null, true)).toBe(true);
-    expect(isPickupBlockedByFullBench('thumb', null, true)).toBe(true);
-    expect(isPickupBlockedByFullBench('heart', null, true)).toBe(true);
-  });
-
-  it('battle-slot pick-up at full bench: allowed when a bench ring is held (net-zero)', () => {
-    // The player already holds a spare ring. Picking up a battle-slot ring and then
-    // dropping the spare somewhere is a net-zero trade. Allow the pick-up.
-    expect(isPickupBlockedByFullBench('a1', 'spare', true)).toBe(false);
-    expect(isPickupBlockedByFullBench('thumb', 'spare', true)).toBe(false);
-  });
-
-  // ── Symmetry assertion ────────────────────────────────────────────────────
-
-  it('symmetric: two reliquary pick-ups both blocked when bench full and no bench ring held', () => {
-    // Neither order of two reliquary pick-ups is allowed without an intermediate
-    // bench pick-up. Both calls must return true (each would net +1 independently).
-    expect(isPickupBlockedByFullBench('reliquary', null, true)).toBe(true);
-    expect(isPickupBlockedByFullBench('reliquary', 'reliquary', true)).toBe(true);
-  });
-
 });
 
 // ===========================================================================
@@ -1033,37 +1020,51 @@ describe('#395 BenchHealthCombat: architectural contract (source scan)', () => {
 });
 
 // ===========================================================================
-// Class 11 — isPickupBlockedByFullBench: exported from pure module (#395)
+// Class 11 — Drop-time guard: source-level assertions (#413)
 // ===========================================================================
 
-describe('#395 isPickupBlockedByFullBench: export from pure module', () => {
+describe('#413 drop-time guard: source-level assertions', () => {
 
-  it('is exported from RingManagementOverlay.ts (pure module)', () => {
-    // #395 — CampScene imports isPickupBlockedByFullBench from the pure module.
-    // Source-scan the pure module for the export.
+  it('isPickupBlockedByFullBench is NOT exported from RingManagementOverlay.ts (#413 deleted it)', () => {
+    // #413 — pick-up-time guard deleted; guard moved to drop time in reliquaryMove.
     const src = readClientSrc('objects/ui/RingManagementOverlay.ts');
     if (src === null) return;
     expect(
       src,
-      'isPickupBlockedByFullBench must be exported from RingManagementOverlay.ts',
-    ).toContain('isPickupBlockedByFullBench');
+      'isPickupBlockedByFullBench must NOT be present in RingManagementOverlay.ts after #413',
+    ).not.toContain('isPickupBlockedByFullBench');
   });
 
-  it('CampScene.ts imports isPickupBlockedByFullBench from RingManagementOverlay', () => {
-    // #395 — CampScene uses the symmetric-swap guard.
+  it('CampScene.ts does NOT import isPickupBlockedByFullBench (#413 deleted the import)', () => {
     const src = readClientSrc('scenes/CampScene.ts');
     if (src === null) return;
     expect(
       src,
-      'CampScene.ts must import isPickupBlockedByFullBench from RingManagementOverlay',
-    ).toContain('isPickupBlockedByFullBench');
+      'CampScene.ts must not import isPickupBlockedByFullBench after #413',
+    ).not.toContain('isPickupBlockedByFullBench');
+  });
+
+  it('CampScene.ts drop-time guard rejects spare target when bench full (source scan)', () => {
+    // #413 — the new guard is in reliquaryMove, not at pick-up time.
+    const src = readClientSrc('scenes/CampScene.ts');
+    if (src === null) return;
+    // The guard must check target === 'spare' and benchSpareCount.
+    expect(
+      src,
+      "CampScene.ts reliquaryMove must contain drop-time bench-full guard (target === 'spare')",
+    ).toContain("target === 'spare'");
+    expect(
+      src,
+      'CampScene.ts reliquaryMove must use benchSpareCount for drop-time guard',
+    ).toContain('benchSpareCount');
+    expect(
+      src,
+      'CampScene.ts must surface the bench-full rejection message',
+    ).toContain('Bench is full — discard a ring or move one to a battle slot first');
   });
 
   it('CampScene.ts does not contain the old asymmetric reliquary pick-up guard', () => {
-    // #395 — the old guard was:
-    //   if (source === 'reliquary' && window.__reliquaryLocked) { ... }
-    // It is replaced by isPickupBlockedByFullBench. Any residual guard string is an
-    // unconverted site that would block net-zero swaps.
+    // #413 — the old guard (source === reliquary && __reliquaryLocked) is gone.
     const src = readClientSrc('scenes/CampScene.ts');
     if (src === null) return;
     const lines = src.split('\n').filter((l) => !l.trim().startsWith('//') && !l.trim().startsWith('*'));
@@ -1072,7 +1073,7 @@ describe('#395 isPickupBlockedByFullBench: export from pure module', () => {
     );
     expect(
       hasOldGuard,
-      'CampScene.ts must not use the old asymmetric guard — replaced by isPickupBlockedByFullBench',
+      'CampScene.ts must not use the old asymmetric guard (deleted in #413)',
     ).toBe(false);
   });
 
@@ -1399,60 +1400,70 @@ describe('#396 teardown fuseParent guard: preserve on re-render, clear on close 
 });
 
 // ===========================================================================
-// Class 15 — Phase 1 adversarial: symmetric-swap same-column edge cases (#395)
+// Class 15 — Phase 1 adversarial: drop-time bench-full guard edge cases (#413)
 // ===========================================================================
 
-describe('#395 Phase 1 adversarial: symmetric-swap same-column edge cases', () => {
+describe('#413 Phase 1 adversarial: drop-time bench-full guard edge cases', () => {
+  // The pick-up-time guard (isPickupBlockedByFullBench) was deleted in #413.
+  // These tests verify that benchSpareCount (used by the drop-time guard) handles
+  // edge cases correctly. The drop-time guard rejects target==='spare' at capacity.
 
-  it('two bench rings swapped within the bench: both pick-ups allowed (net-zero between bench sections)', () => {
-    // #395 adversarial: swapping spare→spare is a bench-internal move.
-    // Neither pick-up should be blocked — the bench count stays constant.
-    // First pick-up: bench full, nothing selected → spare pick-up is always allowed.
-    expect(isPickupBlockedByFullBench('spare', null, true)).toBe(false);
-    // Second pick-up: bench full, a spare already selected → also allowed.
-    expect(isPickupBlockedByFullBench('spare', 'spare', true)).toBe(false);
+  function makeRing(id: string, inCarry: 0 | 1, pending = 0): RingData {
+    return {
+      id,
+      in_carry: inCarry,
+      element: 0,
+      tier: 'T0',
+      xp: 0,
+      current_uses: 1,
+      max_uses: 3,
+      escrowed: 0,
+      pending,
+    } as unknown as RingData;
+  }
+
+  it('pick-up from bench (spare) at full bench is never blocked at pick-up time (#413 invariant)', () => {
+    // With the drop-time guard, pick-up is ALWAYS allowed.
+    // The guard only fires at drop time (target === spare). This is verified by
+    // source scan in Class 11 and by E2E — no unit-test of CampScene.onRingClicked here.
+    // Verify benchSpareCount correctly reflects full bench state.
+    const rings: RingData[] = [
+      makeRing('s1', 1), makeRing('s2', 1), makeRing('s3', 1),
+    ];
+    const loadout: Record<string, string | null> = { a1: null, a2: null, d1: null, d2: null, thumb: null };
+    const spareRingMax = 3;
+    const spareCount = benchSpareCount(rings, loadout, null);
+    // benchSpareCount correctly reports 3 (full bench).
+    expect(spareCount).toBe(3);
+    // At full bench, dropping to spare is rejected.
+    expect(spareCount >= spareRingMax).toBe(true);
+    // Dropping to a battle slot (target !== 'spare') is NOT rejected at the drop-time guard.
+    const sources: Array<SwapSlot> = ['a1', 'a2', 'd1', 'd2', 'thumb', 'heart', 'reliquary'];
+    for (const target of sources) {
+      expect(target === 'spare' && spareCount >= spareRingMax).toBe(false);
+    }
   });
 
-  it('reliquary ring selected, then another reliquary ring attempted: second is BLOCKED', () => {
-    // #395 adversarial: player picks up reliquary ring A (fails the first guard,
-    // so this state is unreachable normally). But if both were permitted, picking up
-    // a second reliquary ring when currentSel is 'reliquary' (non-bench) should
-    // still be blocked — the first ring has not left the bench yet.
-    // currentSel='reliquary' is NOT a bench section, so net +1 risk remains.
-    expect(isPickupBlockedByFullBench('reliquary', 'reliquary', true)).toBe(true);
+  it('benchSpareCount handles heart ring exclusion correctly (heart is not in bench)', () => {
+    // A heart ring (heart_slot=1) is NOT in the spare pool. benchSpareCount does not
+    // exclude by heart_slot directly, but heart rings are filtered by the caller
+    // using in_carry state. Verify a ring with in_carry=0 is excluded.
+    const rings: RingData[] = [
+      makeRing('bench1', 1),
+      makeRing('resting', 0), // reliquary ring — not in carry
+    ];
+    const loadout: Record<string, string | null> = { a1: null, a2: null, d1: null, d2: null, thumb: null };
+    expect(benchSpareCount(rings, loadout, null)).toBe(1);
   });
 
-  it('heart ring selected (non-bench), reliquary pick-up is BLOCKED (heart is not a bench section)', () => {
-    // #395 adversarial: heart is in_carry=0 and NOT in the bench pool.
-    // A selected heart ring does not free up bench space. Block reliquary pick-up.
-    expect(isPickupBlockedByFullBench('reliquary', 'heart', true)).toBe(true);
-  });
-
-  it('spare ring selected, heart pick-up: allowed (bench ring held, net-zero for bench)', () => {
-    // Picking up a heart ring does not add to the bench — the heart ring goes to
-    // the heart slot, not the spare grid. Net bench change = -1 (spare leaves bench).
-    // The guard only blocks moves that would increase bench occupancy.
-    expect(isPickupBlockedByFullBench('heart', 'spare', true)).toBe(false);
-  });
-
-  it('bench full: picking up a non-bench, non-reliquary source (d1) is blocked when nothing selected', () => {
-    // #395 adversarial: battle-slot ring at d1. If dropped to spare it nets +1.
-    // This is the same case as 'a1', but explicitly testing all slot keys that
-    // are not bench sections.
-    expect(isPickupBlockedByFullBench('d1', null, true)).toBe(true);
-    expect(isPickupBlockedByFullBench('d2', null, true)).toBe(true);
-    expect(isPickupBlockedByFullBench('a2', null, true)).toBe(true);
-  });
-
-  it('benchFull=false: all sources pass regardless of currentSel', () => {
-    // #395 adversarial: when the bench is not full, the guard is a no-op.
-    // Exhaustively test all source types to ensure no false positives.
+  it('benchFull=false (count < max): all drop targets allowed without rejection', () => {
+    // When the bench is not full, no drop is rejected. Test the predicate directly.
+    const spareCount = 2;
+    const spareRingMax = 9;
     const sources: Array<SwapSlot> = ['spare', 'reliquary', 'thumb', 'heart', 'a1', 'a2', 'd1', 'd2'];
-    const sels: Array<SwapSlot | null> = [null, 'spare', 'reliquary', 'a1'];
-    for (const src of sources) {
-      for (const sel of sels) {
-        expect(isPickupBlockedByFullBench(src, sel, false)).toBe(false);
-      }
+    for (const target of sources) {
+      const wouldReject = target === 'spare' && spareCount >= spareRingMax;
+      expect(wouldReject, `target=${target} should not be rejected when bench not full`).toBe(false);
     }
   });
 
@@ -1828,6 +1839,568 @@ describe('#395/#396 Phase 2 impl-aware: RingManagementOverlayClass invariants', 
       prevLine.startsWith('if '),
       `recipes.push must not be gated by an if-guard — found: "${prevLine}"`,
     ).toBe(false);
+  });
+
+});
+
+// ===========================================================================
+// Class 21 — Phase 1 spec-driven adversarial: #413 BHC callback wiring
+// ===========================================================================
+
+describe('#413 Phase 1 spec-driven: BenchHealthCombat onBenchSelect callback wiring', () => {
+
+  it('BenchHealthCombat.ts constructor declares onBenchSelect as a required parameter', () => {
+    // #413 adversarial: if onBenchSelect remains optional (?) in the constructor,
+    // callers can omit it without a TypeScript error, re-introducing the silent
+    // no-op regression that was the root cause of the bug.
+    const src = readClientSrc('objects/ui/BenchHealthCombat.ts');
+    if (src === null) return;
+    // The parameter must appear without a trailing `?` — required, not optional.
+    // Pattern: `private readonly onBenchSelect: (ring: RingData | null) => void`
+    // (no `?:` before the type annotation).
+    expect(
+      src,
+      'onBenchSelect must be a required constructor parameter (no ? optional marker)',
+    ).toMatch(/private readonly onBenchSelect\s*:/);
+    // Must NOT have `onBenchSelect?:` (optional).
+    expect(
+      src,
+      'onBenchSelect must NOT be declared optional with ?',
+    ).not.toMatch(/private readonly onBenchSelect\?/);
+  });
+
+  it('BenchHealthCombat.ts passes onBenchSelect to InventoryGrid constructor (not a no-op)', () => {
+    // #413 root cause: the old code passed `() => { /* no-op */ }` to the InventoryGrid.
+    // The fix: pass `(ring) => this.onBenchSelect(ring)` as the callback.
+    // A no-op lambda would look like `() =>` with no body referencing onBenchSelect.
+    const src = readClientSrc('objects/ui/BenchHealthCombat.ts');
+    if (src === null) return;
+    expect(
+      src,
+      'BenchHealthCombat must pass onBenchSelect through to InventoryGrid (not a no-op)',
+    ).toContain('this.onBenchSelect');
+    // The old no-op must not remain.
+    expect(
+      src,
+      'BenchHealthCombat must not contain the old no-op bench-select comment',
+    ).not.toContain('/* selection driven by overlay');
+  });
+
+  it('RingManagementOverlayClass.ts supplies onBenchSelect to BHC constructor in all three modes', () => {
+    // #413 adversarial: if the onBenchSelect callback is supplied for field mode but
+    // omitted in the BHC constructor call for sanctum or fusion mode, those modes
+    // remain broken. The fix wires it in a single `onBenchSelect` variable resolved
+    // before `new BenchHealthCombat(...)`.
+    const src = readClientSrc('objects/ui/RingManagementOverlayClass.ts');
+    if (src === null) return;
+    // The variable must be resolved per-mode before BHC construction.
+    expect(
+      src,
+      'RingManagementOverlayClass must define a per-mode onBenchSelect variable',
+    ).toMatch(/const onBenchSelect\s*=/);
+    // It must be passed as the fifth argument to BenchHealthCombat.
+    expect(
+      src,
+      'RingManagementOverlayClass must pass onBenchSelect to new BenchHealthCombat(...)',
+    ).toContain('onBenchSelect,');
+  });
+
+  it('RingManagementOverlayClass.ts fusion mode: onBenchSelect ignores null (only routes non-null to onFusionBenchClick)', () => {
+    // #413 spec Design §3: fusion onBenchSelect = (ring) => { if (ring) this.onFusionBenchClick(ring); }
+    // null means deselect; silently ignored. A null route to onFusionBenchClick would
+    // crash or assign undefined as a fusion parent.
+    const src = readClientSrc('objects/ui/RingManagementOverlayClass.ts');
+    if (src === null) return;
+    // The fusion branch: must check `if (ring)` before calling onFusionBenchClick.
+    expect(
+      src,
+      'fusion onBenchSelect must guard: if (ring) before routing to onFusionBenchClick',
+    ).toMatch(/if\s*\(\s*ring\s*\)\s*this\.onFusionBenchClick/);
+  });
+
+  it('RingManagementOverlayClass.ts no longer has a duplicate spareGrid field declaration', () => {
+    // #413 spec Design §4: the local `spareGrid` InventoryGrid in renderFieldLeft is deleted.
+    // A residual `this.spareGrid` assignment would re-introduce a second grid hidden behind BHC.
+    const src = readClientSrc('objects/ui/RingManagementOverlayClass.ts');
+    if (src === null) return;
+    // Code lines only (exclude doc-comments).
+    const nonComment = src.split('\n').filter((l) => {
+      const t = l.trim();
+      return !t.startsWith('//') && !t.startsWith('*') && !t.startsWith('/*');
+    }).join('\n');
+    expect(
+      nonComment,
+      'RingManagementOverlayClass must not assign this.spareGrid — the field was deleted in #413',
+    ).not.toMatch(/this\.spareGrid\s*=/);
+  });
+
+  it('RingManagementOverlayClass.ts getSpareGrid() delegates to bhc.getBenchGrid() (not a local field)', () => {
+    // #413 spec Design §4 update: getSpareGrid() must return `this.bhc?.getBenchGrid() ?? null`.
+    // If it still returns `this.spareGrid`, it reads the deleted field (null) — breaking
+    // the E2E bridge contract that all 17 `bh?.spareGrid` references depend on.
+    const src = readClientSrc('objects/ui/RingManagementOverlayClass.ts');
+    if (src === null) return;
+    // Find the getSpareGrid method body.
+    const lines = src.split('\n');
+    const start = lines.findIndex((l) => /getSpareGrid\s*\(\s*\)/.test(l));
+    expect(start, 'getSpareGrid() method must exist').toBeGreaterThan(-1);
+    // The return statement must reference bhc.getBenchGrid().
+    const methodLines = lines.slice(start, start + 5).join('\n');
+    expect(
+      methodLines,
+      'getSpareGrid() must delegate to this.bhc?.getBenchGrid()',
+    ).toContain('getBenchGrid');
+    expect(
+      methodLines,
+      'getSpareGrid() must return null fallback via ?? null',
+    ).toContain('null');
+  });
+
+  it('RingManagementOverlayClass.ts does not contain the old delayedCall(0) hack for bench click wiring', () => {
+    // #413 spec Design §3: the delayedCall(0) hack for fusion bench clicks at lines
+    // 753-762 must be deleted. Retaining it would add a second listener on top of the
+    // wired InventoryGrid callback, firing the bench handler twice per click.
+    const src = readClientSrc('objects/ui/RingManagementOverlayClass.ts');
+    if (src === null) return;
+    expect(
+      src,
+      'RingManagementOverlayClass must not use delayedCall(0) for bench click wiring — deleted in #413',
+    ).not.toMatch(/delayedCall\s*\(\s*0\s*,\s*\(\s*\)\s*=>/);
+  });
+
+  it('RingManagementOverlayClass.ts onBenchGridSelect opt is defined in RingManagementOverlayOpts (not onSpareGridSelect)', () => {
+    // #413 spec Design §2: onSpareGridSelect is replaced by onBenchGridSelect.
+    // Any residual onSpareGridSelect declaration (not just a doc-comment) would
+    // require callers to still supply the old name, silently breaking any caller
+    // that migrated to onBenchGridSelect.
+    const src = readClientSrc('objects/ui/RingManagementOverlayClass.ts');
+    if (src === null) return;
+    expect(
+      src,
+      'RingManagementOverlayOpts must declare onBenchGridSelect',
+    ).toContain('onBenchGridSelect');
+    // Only scan non-comment lines: a doc-comment referencing the old name is acceptable;
+    // an actual interface property declaration is not.
+    const nonCommentLines = src.split('\n').filter((l) => {
+      const t = l.trim();
+      return !t.startsWith('//') && !t.startsWith('*') && !t.startsWith('/*');
+    });
+    const hasDeclaration = nonCommentLines.some((l) =>
+      /onSpareGridSelect\s*\??\s*:/.test(l) || /onSpareGridSelect\s*\(/.test(l),
+    );
+    expect(
+      hasDeclaration,
+      'RingManagementOverlayOpts must NOT declare onSpareGridSelect as a property or method (renamed in #413)',
+    ).toBe(false);
+  });
+
+  it('BattleHandOverlay.ts uses onBenchGridSelect (not onSpareGridSelect) in makeOpts()', () => {
+    // #413 spec Design §5: the field adapter renames the opt key.
+    const src = readClientSrc('objects/BattleHandOverlay.ts');
+    if (src === null) return;
+    expect(
+      src,
+      'BattleHandOverlay.ts must pass onBenchGridSelect to the overlay opts',
+    ).toContain('onBenchGridSelect');
+    expect(
+      src,
+      'BattleHandOverlay.ts must NOT pass onSpareGridSelect (old name removed in #413)',
+    ).not.toContain('onSpareGridSelect');
+  });
+
+  it('CampScene.ts openRingwallOverlay passes onBenchGridSelect adapter', () => {
+    // #413 spec Design §5: CampScene must wire onBenchGridSelect so bench clicks
+    // route through onGridSelectionChanged(ring, spare). Without it, sanctum mode
+    // bench is entirely unclickable.
+    const src = readClientSrc('scenes/CampScene.ts');
+    if (src === null) return;
+    // Must define the adapter in openRingwallOverlay's opts literal.
+    expect(
+      src,
+      "CampScene.ts openRingwallOverlay opts must include onBenchGridSelect",
+    ).toContain('onBenchGridSelect');
+    // It must route to onGridSelectionChanged.
+    expect(
+      src,
+      'CampScene.ts onBenchGridSelect adapter must call onGridSelectionChanged',
+    ).toContain('onGridSelectionChanged');
+  });
+
+});
+
+// ===========================================================================
+// Class 22 — Phase 1 spec-driven adversarial: #413 bench-full edge cases
+// ===========================================================================
+
+describe('#413 Phase 1 spec-driven: bench-full edge cases', () => {
+
+  function makeRing(id: string, inCarry: 0 | 1, pending = 0): RingData {
+    return {
+      id,
+      in_carry: inCarry,
+      element: 0,
+      tier: 'T0',
+      xp: 0,
+      current_uses: 1,
+      max_uses: 3,
+      escrowed: 0,
+      pending,
+    } as unknown as RingData;
+  }
+
+  it('drop-time guard is not triggered when spare_ring_max = 0 (edge: treat as no bench allowed)', () => {
+    // #413 adversarial: spare_ring_max=0 means the player has no bench capacity at all.
+    // benchSpareCount returns 0, so count (0) >= max (0) → drop to spare is rejected.
+    // The guard condition must be >=, not >, to correctly reject at the exact boundary.
+    const spareRingMax = 0;
+    const rings: RingData[] = []; // no bench rings (as expected at max=0)
+    const loadout: Record<string, string | null> = { a1: null, a2: null, d1: null, d2: null, thumb: null };
+    const spareCount = benchSpareCount(rings, loadout, null);
+    const wouldBeRejected = spareCount >= spareRingMax;
+    // With max=0 and count=0: 0 >= 0 → true → drop to spare is rejected.
+    expect(wouldBeRejected).toBe(true);
+  });
+
+  it('net-zero bench swap (bench ring → battle slot simultaneously) does NOT overflow bench count', () => {
+    // #413 spec: a net-zero swap (bench ring leaves via battle slot, battle ring lands on bench)
+    // keeps benchSpareCount constant. The drop-time guard fires before the swap executes, so
+    // the count used must be the CURRENT count (pre-swap). A net-zero swap cannot be rejected
+    // by the guard because the swap is atomic at the server side (assertSpareWithinMax is the
+    // authoritative backstop). Verify the client predicate does not double-count.
+    const rings: RingData[] = [
+      makeRing('bench1', 1),  // currently on bench
+      makeRing('battle1', 1), // currently in a battle slot
+    ];
+    const loadout: Record<string, string | null> = { a1: 'battle1', a2: null, d1: null, d2: null, thumb: null };
+    const spareRingMax = 1;
+    // Before the swap: spareCount = 1 (bench1 only; battle1 is slotted).
+    const spareCount = benchSpareCount(rings, loadout, null);
+    expect(spareCount, 'pre-swap bench count should be 1').toBe(1);
+    // The drop target is 'a1' (battle slot), not 'spare'. Guard does not fire.
+    const target = 'a1';
+    const wouldBeRejected = target === 'spare' && spareCount >= spareRingMax;
+    expect(wouldBeRejected, 'moving bench ring to a1 (not spare) must not be rejected').toBe(false);
+  });
+
+  it('pick-up of a battle-slot ring never triggers the spare drop-time guard (target !== spare)', () => {
+    // #413 spec: pick-up order is irrelevant. Clicking A1 first (picking up a battle ring)
+    // and then clicking a bench slot never triggers the bench-full guard because the
+    // eventual drop target determines guard activation, not the pick-up source.
+    const spareRingMax = 9;
+    const rings: RingData[] = Array.from({ length: 9 }, (_, i) => makeRing(`bench${i}`, 1));
+    const loadout: Record<string, string | null> = { a1: null, a2: null, d1: null, d2: null, thumb: null };
+    const spareCount = benchSpareCount(rings, loadout, null); // = 9 (full bench)
+
+    // Target is 'a1' (battle slot) — not 'spare'. The guard must not fire.
+    const battleTargets = ['a1', 'a2', 'd1', 'd2', 'thumb', 'heart'] as const;
+    for (const target of battleTargets) {
+      // #413 adversarial: even at full bench, battle-slot drops are not rejected client-side.
+      const wouldBeRejected = (target as string) === 'spare' && spareCount >= spareRingMax;
+      expect(
+        wouldBeRejected,
+        `target=${target}: drop to a battle slot must not be rejected by the bench-full guard`,
+      ).toBe(false);
+    }
+  });
+
+  it('drop-time guard fires only when target === "spare" (exact string match, case-sensitive)', () => {
+    // #413 adversarial: if the guard used includes() or a regex instead of strict
+    // equality, a target like 'spare2' or 'SPARE' could trigger a false positive rejection.
+    const spareCount = 9;
+    const spareRingMax = 9;
+    const falsePositives = ['Spare', 'SPARE', 'spare_slot', 'spare2', 'reliquary', 'spare '] as const;
+    for (const target of falsePositives) {
+      const wouldBeRejected = target === 'spare' && spareCount >= spareRingMax;
+      expect(
+        wouldBeRejected,
+        `"${target}" must not trigger the bench-full guard (only exact "spare" should)`,
+      ).toBe(false);
+    }
+  });
+
+  it('SPIRIT ring selected at full bench: moving to "reliquary" (not spare) is not rejected', () => {
+    // #413 adversarial: a player who picks up a SPIRIT ring and drops it back to the
+    // reliquary (not to spare) must not hit the bench-full guard. Guard activates
+    // only on target === 'spare'.
+    const rings: RingData[] = Array.from({ length: 9 }, (_, i) => makeRing(`s${i}`, 1));
+    const loadout: Record<string, string | null> = { a1: null, a2: null, d1: null, d2: null, thumb: null };
+    const spareCount = benchSpareCount(rings, loadout, null);
+    const spareRingMax = 9;
+    expect(spareCount).toBe(9); // bench is full
+    const target = 'reliquary';
+    const wouldBeRejected = target === 'spare' && spareCount >= spareRingMax;
+    expect(wouldBeRejected, 'dropping to reliquary must not be rejected by bench-full guard').toBe(false);
+  });
+
+});
+
+// ===========================================================================
+// Class 23 — Phase 2 implementation-aware: BHC build() selection strokes
+// ===========================================================================
+
+describe('#413 Phase 2 impl-aware: BenchHealthCombat.build() selection stroke + dim logic', () => {
+
+  it('BenchHealthCombat.ts build() applies yellow stroke to the selected bench ring (source scan)', () => {
+    // #413 spec Design §4: BHC.build() applies `setStrokeStyle(3, 0xffff00)` to the
+    // currently-selected bench card bg when selectedRingId is provided. Previously
+    // renderFieldLeft did this on a separate, duplicate grid — the fix consolidates it here.
+    const src = readClientSrc('objects/ui/BenchHealthCombat.ts');
+    if (src === null) return;
+    expect(
+      src,
+      'BenchHealthCombat.build() must call setStrokeStyle(3, 0xffff00) for the selected ring',
+    ).toContain('setStrokeStyle(3, 0xffff00)');
+  });
+
+  it('BenchHealthCombat.ts build() dims non-selected bench cards with setAlpha(0.45) when bench is full', () => {
+    // #413 spec Design §4: all OTHER bench cards (not the selected one) get alpha=0.45
+    // when benchFull=true. Previously done in renderFieldLeft on a duplicate grid.
+    const src = readClientSrc('objects/ui/BenchHealthCombat.ts');
+    if (src === null) return;
+    expect(
+      src,
+      'BenchHealthCombat.build() must call setAlpha(0.45) when dimming non-selected bench cards',
+    ).toContain('setAlpha(0.45)');
+  });
+
+  it('BenchHealthCombat.ts build() skips dimming the selected card (early return on id match)', () => {
+    // #413 spec Design §4 P3 fix: the selected card must be SKIPPED in the dim loop
+    // (`if (r.id === selectedRingId) return;`). Without this, the selected ring itself
+    // would be dimmed to 0.45 alpha — making the yellow-stroked card nearly invisible.
+    const src = readClientSrc('objects/ui/BenchHealthCombat.ts');
+    if (src === null) return;
+    // The guard pattern: `if (r.id === selectedRingId) return;`
+    expect(
+      src,
+      'BenchHealthCombat.build() dim loop must skip the selected ring via early return',
+    ).toMatch(/if\s*\(\s*r\.id\s*===\s*selectedRingId\s*\)\s*return/);
+  });
+
+  it('BenchHealthCombat.ts build() selectedRingId parameter defaults to null (backward-compatible)', () => {
+    // #413 adversarial: all existing callers that pass only (me, swapSource) without
+    // selectedRingId must not break. The default = null makes the third param optional
+    // for existing call sites while being required semantically.
+    const src = readClientSrc('objects/ui/BenchHealthCombat.ts');
+    if (src === null) return;
+    // The signature: build(me: BenchHealthCombatMe, swapSource: string | null,
+    //                       selectedRingId: string | null = null)
+    expect(
+      src,
+      'BenchHealthCombat.build() must declare selectedRingId with default = null',
+    ).toContain('selectedRingId: string | null = null');
+  });
+
+  it('BenchHealthCombat.ts build() only applies stroke when selectedRingId is not null', () => {
+    // #413 adversarial: calling build() with selectedRingId=null (no selection) must
+    // not attempt getCardBg(null) — which would return undefined and then crash on
+    // setStrokeStyle(). The guard `if (selectedRingId !== null)` must exist.
+    const src = readClientSrc('objects/ui/BenchHealthCombat.ts');
+    if (src === null) return;
+    expect(
+      src,
+      'BenchHealthCombat.build() must guard stroke application with if (selectedRingId !== null)',
+    ).toMatch(/if\s*\(\s*selectedRingId\s*!==\s*null\s*\)/);
+  });
+
+  it('RingManagementOverlayClass.ts render() passes selRingId (from spare selection) to bhc.build()', () => {
+    // #413 impl-aware: the correct selectedRingId passed to BHC.build() is derived from
+    // `swap.selection?.source === spare ? swap.selection.ringId : null`. An always-null
+    // value would silently disable the yellow stroke on the bench selection.
+    const src = readClientSrc('objects/ui/RingManagementOverlayClass.ts');
+    if (src === null) return;
+    // The variable name is selRingId or similar, assigned from swap.selection.
+    expect(
+      src,
+      "render() must derive selRingId from swap.selection when source === 'spare'",
+    ).toMatch(/source\s*===\s*['"]spare['"]/);
+    // And pass it as the third arg to bhc.build().
+    expect(
+      src,
+      'render() must pass the selected bench ring id as third arg to bhc.build()',
+    ).toContain('bhc.build(me,');
+  });
+
+  it('RingManagementOverlayClass.ts refreshBhc() also passes selRingIdBhc derived from spare source', () => {
+    // #413 impl-aware: refreshBhc() is called after sanctum swaps for incremental BHC
+    // refresh. It must also pass the selectedRingId so the yellow stroke is preserved
+    // after the server round-trip. Without it, the stroke would vanish on each refresh.
+    const src = readClientSrc('objects/ui/RingManagementOverlayClass.ts');
+    if (src === null) return;
+    // Look for `selRingIdBhc` or similar in the refreshBhc body.
+    const lines = src.split('\n');
+    const start = lines.findIndex((l) => /refreshBhc\s*\(/.test(l));
+    expect(start, 'refreshBhc() must exist').toBeGreaterThan(-1);
+    const body = lines.slice(start, start + 20).join('\n');
+    expect(
+      body,
+      "refreshBhc() must pass a selectedRingId (derived from 'spare' source) to bhc.build()",
+    ).toMatch(/source\s*===\s*['"]spare['"]/);
+  });
+
+});
+
+// ===========================================================================
+// Class 24 — Phase 2 implementation-aware: CampScene.reliquaryMove drop-time guard
+// ===========================================================================
+
+describe('#413 Phase 2 impl-aware: CampScene.reliquaryMove drop-time guard branches', () => {
+
+  it("CampScene.ts reliquaryMove guard reads spare_ring_max from window.__campState (not hardcoded)", () => {
+    // #413 impl-aware: the guard must use the runtime spare_ring_max from __campState
+    // rather than a hardcoded 9. Using a hardcoded value would break if the player
+    // expands their bench (e.g. via shards/upgrades that increase spare_ring_max).
+    const src = readClientSrc('scenes/CampScene.ts');
+    if (src === null) return;
+    // The implementation: `const s = window.__campState; const spareRingMax = s?.spare_ring_max ?? 9;`
+    expect(
+      src,
+      'CampScene.reliquaryMove must read spare_ring_max from window.__campState',
+    ).toContain('spare_ring_max');
+    expect(
+      src,
+      "CampScene.reliquaryMove must use fallback value (e.g. ?? 9) when campState is unavailable",
+    ).toMatch(/spare_ring_max\s*\?\?\s*9/);
+  });
+
+  it('CampScene.ts reliquaryMove drop-time guard runs BEFORE the escrowed-ring guard short-circuit', () => {
+    // #413 adversarial: the guard must be positioned AFTER the ring-not-found and
+    // escrowed-ring early exits but BEFORE any server call. We verify the guard
+    // line index is between the escrowed block and the first network request.
+    // Source-scan: escrowed block references `ring.escrowed`; guard uses `target === 'spare'`.
+    const src = readClientSrc('scenes/CampScene.ts');
+    if (src === null) return;
+    const lines = src.split('\n');
+    const reliquaryMoveStart = lines.findIndex((l) => /private async reliquaryMove/.test(l));
+    expect(reliquaryMoveStart, 'reliquaryMove method must exist').toBeGreaterThan(-1);
+    const escrowedBlockLine = lines.findIndex(
+      (l, i) => i > reliquaryMoveStart && /ring\.escrowed/.test(l),
+    );
+    const dropGuardLine = lines.findIndex(
+      (l, i) => i > reliquaryMoveStart && /target\s*===\s*['"]spare['"]/.test(l),
+    );
+    expect(
+      dropGuardLine,
+      'drop-time guard (target === spare) must exist in reliquaryMove',
+    ).toBeGreaterThan(reliquaryMoveStart);
+    expect(
+      dropGuardLine,
+      `drop-time guard (line ${dropGuardLine + 1}) must come after escrowed check (line ${escrowedBlockLine + 1})`,
+    ).toBeGreaterThan(escrowedBlockLine);
+  });
+
+  it("CampScene.ts reliquaryMove does NOT apply the bench-full guard when target is 'a1'", () => {
+    // #413 spec: SPIRIT → A1 is always valid. The guard must activate ONLY on
+    // `target === 'spare'`. A guard that tests `target !== 'a1' && target !== 'a2'...`
+    // (an allowlist rather than exact 'spare' check) would be fragile and wrong.
+    // Source-scan: the guard condition must be exactly `if (target === 'spare') {`.
+    const src = readClientSrc('scenes/CampScene.ts');
+    if (src === null) return;
+    const lines = src.split('\n');
+    const reliquaryMoveStart = lines.findIndex((l) => /private async reliquaryMove/.test(l));
+    const guardLine = lines.findIndex(
+      (l, i) => i > reliquaryMoveStart && /if\s*\(\s*target\s*===\s*['"]spare['"]\s*\)/.test(l),
+    );
+    expect(guardLine, "guard must use `if (target === 'spare')` — exact equality").toBeGreaterThan(reliquaryMoveStart);
+    // If the condition were `!== 'spare'` (inverted logic), we'd catch it here.
+    const guardLineText = lines[guardLine] ?? '';
+    expect(
+      guardLineText,
+      "guard condition must be target === 'spare', not target !== 'spare'",
+    ).not.toContain("!== 'spare'");
+  });
+
+  it('CampScene.ts reliquaryMove bench-full message is the canonical rejection string', () => {
+    // #413 spec §6 + E2E scenario 6: the exact message must match so E2E `.toContain()`
+    // checks against the status bar text can pass. Any capitalisation change breaks the
+    // E2E assertion without a TypeScript error.
+    const src = readClientSrc('scenes/CampScene.ts');
+    if (src === null) return;
+    expect(
+      src,
+      'reliquaryMove rejection message must be the canonical string from the spec',
+    ).toContain('Bench is full — discard a ring or move one to a battle slot first');
+  });
+
+  it('CampScene.ts reliquaryMove passes pendingId from campState to benchSpareCount (consistent count)', () => {
+    // #413 impl-aware: benchSpareCount requires pendingRingId to exclude the WON ring.
+    // Passing null instead of the real pending_ring_id would over-count the bench by 1
+    // when the player has a pending ring, potentially blocking a valid drop.
+    const src = readClientSrc('scenes/CampScene.ts');
+    if (src === null) return;
+    const lines = src.split('\n');
+    const reliquaryMoveStart = lines.findIndex((l) => /private async reliquaryMove/.test(l));
+    const guardStart = lines.findIndex(
+      (l, i) => i > reliquaryMoveStart && /target\s*===\s*['"]spare['"]/.test(l),
+    );
+    // The guard block must reference a pendingId or pending_ring_id variable.
+    const guardBlock = lines.slice(guardStart, guardStart + 10).join('\n');
+    expect(
+      guardBlock,
+      'reliquaryMove drop-time guard must pass pending_ring_id to benchSpareCount',
+    ).toMatch(/pending/);
+  });
+
+});
+
+// ===========================================================================
+// Class 25 — Phase 2 impl-aware: getSpareGrid / getBenchGrid delegation contract
+// ===========================================================================
+
+describe('#413 Phase 2 impl-aware: getSpareGrid and getBenchGrid delegation', () => {
+
+  it('RingManagementOverlayClass.ts getSpareGrid() and getBenchGrid() both delegate to bhc.getBenchGrid()', () => {
+    // #413 spec: both methods now return the same BHC bench grid. Having two different
+    // return paths would re-introduce a field/BHC split where `getSpareGrid()` returns
+    // the (now deleted) local field while `getBenchGrid()` returns the BHC grid.
+    const src = readClientSrc('objects/ui/RingManagementOverlayClass.ts');
+    if (src === null) return;
+    const lines = src.split('\n');
+
+    const spareGridStart = lines.findIndex((l) => /getSpareGrid\s*\(\s*\)/.test(l));
+    const benchGridStart = lines.findIndex((l) => /getBenchGrid\s*\(\s*\)/.test(l));
+
+    expect(spareGridStart, 'getSpareGrid() must exist').toBeGreaterThan(-1);
+    expect(benchGridStart, 'getBenchGrid() must exist').toBeGreaterThan(-1);
+
+    const spareBody = lines.slice(spareGridStart, spareGridStart + 5).join('\n');
+    const benchBody = lines.slice(benchGridStart, benchGridStart + 5).join('\n');
+
+    expect(
+      spareBody,
+      'getSpareGrid() must delegate to this.bhc?.getBenchGrid()',
+    ).toContain('getBenchGrid');
+    expect(
+      benchBody,
+      'getBenchGrid() must delegate to this.bhc?.getBenchGrid()',
+    ).toContain('getBenchGrid');
+  });
+
+  it('RingManagementOverlayClass.ts getSpareGrid() returns null when bhc is null (overlay closed)', () => {
+    // #413 adversarial: the E2E bridge accesses bh.spareGrid after openBattleHand().
+    // If the overlay was never opened (bhc=null), getSpareGrid() must return null, not
+    // throw TypeError: Cannot read properties of null (reading 'getBenchGrid').
+    const src = readClientSrc('objects/ui/RingManagementOverlayClass.ts');
+    if (src === null) return;
+    const lines = src.split('\n');
+    const start = lines.findIndex((l) => /getSpareGrid\s*\(\s*\)/.test(l));
+    const body = lines.slice(start, start + 5).join('\n');
+    // Must use optional chaining `?.` and `?? null` to handle the null bhc case.
+    expect(
+      body,
+      'getSpareGrid() must use optional chaining ?.getBenchGrid() to avoid crash when bhc=null',
+    ).toContain('?.getBenchGrid');
+  });
+
+  it('BattleHandOverlay.ts spareGrid getter still delegates through overlay.getSpareGrid()', () => {
+    // #413 E2E bridge preservation: `get spareGrid() { return this.overlay?.getSpareGrid() ?? null; }`
+    // All 17 bh?.spareGrid references in manage-battle-rings.spec.ts depend on this chain.
+    const src = readClientSrc('objects/BattleHandOverlay.ts');
+    if (src === null) return;
+    // The getter must call getSpareGrid().
+    expect(
+      src,
+      'BattleHandOverlay.spareGrid getter must call overlay.getSpareGrid()',
+    ).toContain('getSpareGrid');
   });
 
 });

@@ -1,6 +1,5 @@
 import { SLOT_KEYS } from '../../Constants';
 import type { RingData } from '../InventoryGrid';
-import type { SwapSlot } from './SlotSwapManager';
 
 /**
  * Unified ring-management contract (EPIC #387 / #389 / #395).
@@ -109,47 +108,3 @@ export function clearRingMgmtState(): void {
   window.__ringMgmtState = undefined;
 }
 
-// ── Symmetric-swap helper (#395) ─────────────────────────────────────────────
-
-/**
- * Bench sections (pools that count toward the bench cap).
- * Used by the symmetric-swap pick-up guard: only a net one-way INTO the bench is
- * blocked at full-bench; a net-zero swap (one ring leaves and one enters) is always
- * allowed regardless of pick-up order.
- */
-const BENCH_SECTIONS = new Set<SwapSlot>(['spare']);
-/** Returns true when `s` is a section that counts toward the bench. */
-function isBenchSection(s: SwapSlot): boolean {
-  return BENCH_SECTIONS.has(s);
-}
-
-/**
- * Returns true when picking up `pickupSource` should be BLOCKED because the bench
- * is full and the move would be a net one-way increase into the bench.
- *
- * A net-zero swap (one bench ring already selected → drop target will displace it)
- * is always allowed regardless of pick-up order.
- *
- * The old guard (`if source === 'reliquary' && __reliquaryLocked`) rejected every
- * reliquary pick-up when bench was full, regardless of whether the player intended
- * to swap with a bench ring (net-zero). This replaces it.
- *
- * @param pickupSource   section the ring is being picked up FROM
- * @param currentSel     currently-selected ring's source (null = nothing selected)
- * @param benchFull      whether the bench is currently at or above spare_ring_max
- */
-export function isPickupBlockedByFullBench(
-  pickupSource: SwapSlot,
-  currentSel: SwapSlot | null,
-  benchFull: boolean,
-): boolean {
-  if (!benchFull) return false;
-  // If picking up FROM the bench itself, bench count won't increase — never blocked.
-  if (isBenchSection(pickupSource)) return false;
-  // If a bench ring is already held (will be displaced FROM bench on drop), this new
-  // pick-up is the "receive" side of a net-zero swap — allowed.
-  if (currentSel !== null && isBenchSection(currentSel)) return false;
-  // Picking up a non-bench ring when bench is full and nothing (or a non-bench ring)
-  // is selected: any drop into spare would overflow. Block it.
-  return true;
-}

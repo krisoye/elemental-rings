@@ -7,7 +7,6 @@ import {
   benchSpareCount,
   publishRingMgmtState,
   clearRingMgmtState,
-  isPickupBlockedByFullBench,
 } from '../objects/ui/RingManagementOverlay';
 import {
   RingManagementOverlay,
@@ -715,6 +714,12 @@ export class CampScene extends DualCameraScene {
         await this.reliquaryMove(ringId, to, from);
       },
 
+      // ── onBenchGridSelect: route bench card clicks through onGridSelectionChanged ─
+      onBenchGridSelect: (ring) => {
+        if (ring) this.onGridSelectionChanged(ring, 'spare');
+        else this.clearReliquarySelection();
+      },
+
       // ── onRecharge: Sanctum RECHARGE includes reliquary resting pool (#397) ──
       onRecharge: () => {
         void this.doRechargeAll(true);
@@ -1321,18 +1326,9 @@ export class CampScene extends DualCameraScene {
       return;
     }
     // Fresh pick-up (or re-pick from the same section).
-    // #395 — Symmetric swap rule: only block a pick-up that would result in a net
-    // one-way increase in bench count when the bench is already full. A reliquary
-    // ring can always be picked up FIRST when the intent is to swap it with a spare
-    // ring (net-zero bench delta); the old `source === 'reliquary' && __reliquaryLocked`
-    // guard rejected ALL reliquary pick-ups at full bench regardless of direction.
-    const currentSel = this.swapManager?.selection?.source ?? null;
-    const benchFull = !!(window.__reliquaryLocked);
-    if (isPickupBlockedByFullBench(source, currentSel, benchFull)) {
-      this.clearReliquarySelection();
-      this.setStatus('Bench is full — pick up a bench ring first, then click a Reliquary ring to swap');
-      return;
-    }
+    // #413 — Pick-up is never blocked; the bench-full guard fires at drop time in
+    // reliquaryMove when target === 'spare'. SPIRIT ↔ battle-slot swaps are always
+    // valid regardless of bench count (GDD §4 intent).
     this.setSelection({ ringId, source });
   }
 
@@ -1583,6 +1579,20 @@ export class CampScene extends DualCameraScene {
       this.setStatus('Ring is locked in a duel');
       this.clearReliquarySelection();
       return;
+    }
+
+    // #413 — Drop-time bench-full guard: reject any move that would overflow the bench.
+    // Pick-up time no longer blocks; only a drop with target === 'spare' at capacity is
+    // rejected. SPIRIT ↔ battle-slot swaps (target !== 'spare') are always valid.
+    if (target === 'spare') {
+      const s = window.__campState;
+      const spareRingMax = s?.spare_ring_max ?? 9;
+      const pendingId = (s?.player?.pending_ring_id as string | null | undefined) ?? null;
+      const spareCount = benchSpareCount(this.rings as RingData[], this.loadout, pendingId);
+      if (spareCount >= spareRingMax) {
+        this.setStatus('Bench is full — discard a ring or move one to a battle slot first');
+        return;
+      }
     }
 
     // EPIC #302 — Heart slot moves use the dedicated PUT /api/heart-slot endpoint
