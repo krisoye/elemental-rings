@@ -136,10 +136,15 @@ export class BattleHandOverlay {
         if (!sel) return;
         if (sel.ringId === this.pendingRingId_) {
           // WON ring → accept to bench via PUT /api/rings/:id/accept
-          const ok = await this.send('PUT', `/api/rings/${sel.ringId}/accept`, {});
+          let lastError = '';
+          const onErr = (m: string): void => { lastError = m; };
+          const ok = await this.send('PUT', `/api/rings/${sel.ringId}/accept`, {}, onErr);
           if (ok) { ov.clearSelection(); await this.refresh(ov); }
+          else if (lastError) ov.setStatusMessage(lastError);
         } else {
-          // Regular ring → move to bench (existing path)
+          // Regular ring → move to bench. Routes through ov.moveRingTo → swap.moveTo
+          // → resolveMove, which honours the #421 error-surfacing contract
+          // (hold selection on failure, re-apply the message after refresh).
           await ov.moveRingTo('spare');
         }
       },
@@ -170,7 +175,15 @@ export class BattleHandOverlay {
   }
 
   private async deleteRing(id: string): Promise<void> {
-    await apiFetch(`/api/rings/${id}`, { method: 'DELETE' });
+    try {
+      const res = await apiFetch(`/api/rings/${id}`, { method: 'DELETE' });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({})) as { error?: string };
+        this.onStatus?.(body.error ?? 'Could not discard ring');
+      }
+    } catch {
+      this.onStatus?.('Network error — could not discard ring');
+    }
     if (this.overlay) await this.refresh(this.overlay);
   }
 

@@ -309,7 +309,8 @@ export class RingManagementOverlay {
 
     const c = this.scene.add.container(0, 0).setDepth(2000);
     // Field mode: no LOOT column — panel narrows from 760 to 560px, right-aligned
-    // to the same right edge (CANVAS_W/2 + MODAL_W/2 = 892).
+    // to the same right edge as the 760-wide panel: CANVAS_W/2 + MODAL_W/2 = 892.
+    // panelCenterX = 512 + (760-560)/2 = 612; right edge = 612 + 560/2 = 892 ✓
     const MODAL_W_FIELD = 560;
     const modalW = this.mode === 'field' ? MODAL_W_FIELD : MODAL_W;
     const panelCenterX = this.mode === 'field'
@@ -363,6 +364,10 @@ export class RingManagementOverlay {
     // Field mode has no left column — WON/DISCARD/ghost now live in BHC.
 
     // ── WON/DISCARD/ghost callbacks for BHC (#423) ────────────────────────────
+    // pendingWonRing is published here on CLICK only (not at render time): the
+    // open-time publication that E2E waits on (carry.spec.ts) is owned by
+    // EncounterScene.ts, which sets __encounterState.pendingWonRing BEFORE the
+    // overlay opens. No test reads it between overlay open and WON click.
     const onWonSelect = (): void => {
       const pendingId = this.pendingRingId;
       if (!pendingId) return;

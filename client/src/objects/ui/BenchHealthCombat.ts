@@ -157,28 +157,23 @@ export class BenchHealthCombat extends Phaser.GameObjects.Container {
     // ── Bench ghost placeholder (#423) ─────────────────────────────────────────
     // Always-visible ghost at the next open bench cell when the bench is below cap.
     // Removes the old emptySpareActionable gate; the ghost is now passive until clicked.
+    // Added unconditionally to the card container — the InventoryGrid scroll mask
+    // hides off-screen cells naturally, so no visibility guard is needed.
     if (benchN < spareMax) {
       const GHOST_NUM_COLS = 3;
       const GHOST_CARD_H = 88; // CARD_H in InventoryGrid (not exported)
-      const GHOST_CONTENT_TOP_Y = 148;
-      const GHOST_MODAL_BOTTOM = 538;
-      const GHOST_VISIBLE_ROWS = 3;
-      const rawPhY = Math.ceil(benchRings.length / GHOST_NUM_COLS) * GRID_ROW_GAP + GHOST_CARD_H / 2;
-      const maxLocalY = GHOST_MODAL_BOTTOM - GHOST_CONTENT_TOP_Y - GHOST_CARD_H / 2 - 4;
-      const phY = Math.min(rawPhY, maxLocalY);
-      const GHOST_VISIBLE_BOTTOM_LOCAL = GHOST_VISIBLE_ROWS * GRID_ROW_GAP;
-      if (phY < GHOST_VISIBLE_BOTTOM_LOCAL) {
-        const nextCol = benchRings.length % GHOST_NUM_COLS;
-        const phX = nextCol * GRID_COL_GAP + GRID_CARD_W / 2;
-        const ph = this.scene.add
-          .rectangle(phX, phY, GRID_CARD_W, GHOST_CARD_H, 0x2a2a33)
-          .setScrollFactor(0)
-          .setStrokeStyle(2, 0x665544)
-          .setAlpha(0.7)
-          .setInteractive({ useHandCursor: true })
-          .on('pointerdown', () => this.onBenchGhostClick?.());
-        benchGrid.getCardContainer().add(ph);
-      }
+      // Next open cell index = benchRings.length → row = floor(n/3), col = n%3.
+      const phY = Math.floor(benchRings.length / GHOST_NUM_COLS) * GRID_ROW_GAP + GHOST_CARD_H / 2;
+      const nextCol = benchRings.length % GHOST_NUM_COLS;
+      const phX = nextCol * GRID_COL_GAP + GRID_CARD_W / 2;
+      const ph = this.scene.add
+        .rectangle(phX, phY, GRID_CARD_W, GHOST_CARD_H, 0x2a2a33)
+        .setScrollFactor(0)
+        .setStrokeStyle(2, 0x665544)
+        .setAlpha(0.7)
+        .setInteractive({ useHandCursor: true })
+        .on('pointerdown', () => this.onBenchGhostClick?.());
+      benchGrid.getCardContainer().add(ph);
     }
 
     this.scene.add.existing(benchGrid);
@@ -251,6 +246,9 @@ export class BenchHealthCombat extends Phaser.GameObjects.Container {
 
     // ── WON slot (#423) — at (837, 193), right of STATUS in COMBAT row 1 ──────
     // Visible in all modes; shows a ghost rectangle when no pending ring exists.
+    // Pending WON ring is selected with source='spare' by convention (established
+    // in the original renderFieldLeft and preserved in onWonSelect). Do not change
+    // to 'pending' — SlotSwapManager has no such slot.
     const wonSel =
       pendingId !== null &&
       selectedRingId === pendingId &&

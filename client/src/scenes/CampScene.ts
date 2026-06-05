@@ -405,6 +405,10 @@ export class CampScene extends DualCameraScene {
       this.blink = null;
       this.zones.forEach((z) => z.destroy());
       this.zones = [];
+      // #423 — never leave an orphaned discard confirm (container + Y/N key
+      // listeners) behind on scene shutdown.
+      this.sanctumDiscard_?.dismiss();
+      this.sanctumDiscard_ = null;
     });
 
     // ── Initial data load ─────────────────────────────────────────────────
@@ -835,8 +839,12 @@ export class CampScene extends DualCameraScene {
 
         // SPIRIT ghost (#423) — always-visible ghost cell at index reliquaryCount
         // when the reliquary pool is below cap. Click with selection = move to reliquary.
+        // Added unconditionally to the card container — the InventoryGrid scroll mask
+        // hides off-screen cells naturally, so no visibility guard is needed.
         {
           const campS = window.__campState;
+          // Same count source as applyReliquaryLockState / renderReliquaryHeader:
+          // authoritative __campState.reliquaryCount with the resting-rings fallback.
           const reliqCount: number = campS?.reliquaryCount ??
             (campS?.rings ?? []).filter(
               (r: RingData) => r.in_carry === 0 && !(r as { escrowed?: number }).escrowed && r.heart_slot !== 1,
@@ -845,25 +853,22 @@ export class CampScene extends DualCameraScene {
           if (reliqCount < reliqCap) {
             const G_NUM_COLS = 3;
             const G_CARD_H = 88; // CARD_H in InventoryGrid (not exported)
-            const rawPhY = Math.ceil(reliqCount / G_NUM_COLS) * GRID_ROW_GAP + G_CARD_H / 2;
-            const SPIRIT_VISIBLE_ROWS = RINGWALL_VISIBLE_ROWS;
-            const GHOST_VISIBLE_BOTTOM = SPIRIT_VISIBLE_ROWS * GRID_ROW_GAP;
-            if (rawPhY < GHOST_VISIBLE_BOTTOM) {
-              const nextCol = reliqCount % G_NUM_COLS;
-              const phX = nextCol * GRID_COL_GAP + GRID_CARD_W / 2;
-              const spiritGhost = this.add
-                .rectangle(phX, rawPhY, GRID_CARD_W, G_CARD_H, 0x1a2233)
-                .setScrollFactor(0)
-                .setStrokeStyle(2, 0x446688)
-                .setAlpha(0.7)
-                .setInteractive({ useHandCursor: true })
-                .on('pointerdown', () => {
-                  const sel = this.sanctumOverlay?.selection;
-                  if (!sel) return;
-                  void this.reliquaryMove(sel.ringId, 'reliquary');
-                });
-              this.sanctumGrid.getCardContainer().add(spiritGhost);
-            }
+            // Next open cell index = reliqCount → row = floor(n/3), col = n%3.
+            const phY = Math.floor(reliqCount / G_NUM_COLS) * GRID_ROW_GAP + G_CARD_H / 2;
+            const nextCol = reliqCount % G_NUM_COLS;
+            const phX = nextCol * GRID_COL_GAP + GRID_CARD_W / 2;
+            const spiritGhost = this.add
+              .rectangle(phX, phY, GRID_CARD_W, G_CARD_H, 0x1a2233)
+              .setScrollFactor(0)
+              .setStrokeStyle(2, 0x446688)
+              .setAlpha(0.7)
+              .setInteractive({ useHandCursor: true })
+              .on('pointerdown', () => {
+                const sel = this.sanctumOverlay?.selection;
+                if (!sel) return;
+                void this.reliquaryMove(sel.ringId, 'reliquary');
+              });
+            this.sanctumGrid.getCardContainer().add(spiritGhost);
           }
         }
 
@@ -920,7 +925,9 @@ export class CampScene extends DualCameraScene {
         const campS = window.__campState;
         const pendingId = (campS?.player?.pending_ring_id as string | null | undefined) ?? null;
         if (sel.ringId === pendingId) {
-          // Accept the WON ring to bench via PUT /api/rings/:id/accept
+          // Accept the WON ring to bench via PUT /api/rings/:id/accept.
+          // Errors surface in the OVERLAY status bar (ov.setStatusMessage), not the
+          // scene status — the player is looking at the modal, not the room.
           try {
             const res = await apiFetch(`/api/rings/${sel.ringId}/accept`, { method: 'PUT', json: {} });
             if (res.ok) {
@@ -929,12 +936,14 @@ export class CampScene extends DualCameraScene {
               this.afterReliquaryReload();
             } else {
               const body = await res.json().catch(() => ({}));
-              this.setStatus((body as { error?: string }).error ?? 'Accept failed');
+              ov.setStatusMessage((body as { error?: string }).error ?? 'Accept failed');
             }
           } catch {
-            this.setStatus('Accept failed — network error');
+            ov.setStatusMessage('Accept failed — network error');
           }
         } else {
+          // Routes through reliquaryMove, which owns the #421 drop-time guard
+          // and error surfacing for sanctum moves.
           await this.reliquaryMove(sel.ringId, 'spare');
         }
       },

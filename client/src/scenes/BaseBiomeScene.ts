@@ -142,6 +142,8 @@ export abstract class BaseBiomeScene extends DualCameraScene {
   private activeZone: InteractionZone | null = null;
   /** #396 — the unified fusion overlay for the Fusion Shrine (lazy, per-open). */
   private shrineFusionOverlay: RingManagementOverlay | null = null;
+  /** #423 — shared discard-confirm dialog for the shrine-fusion DISCARD slot. */
+  private fusionDiscard_: DiscardConfirm | null = null;
   /** Centers of Anchorage locations (keyed by waystoneId), for compass + spawn logic. */
   private anchorageMarkers: Map<string, { center: { x: number; y: number } }> = new Map();
   /** Campfire graphics markers keyed by anchorage id (#191). */
@@ -329,12 +331,16 @@ export abstract class BaseBiomeScene extends DualCameraScene {
         // never window.__campState, which is CampScene-owned and stale in biome scenes.
         const ring: RingData | null =
           meData.rings.find((r: RingData) => r.id === sel.ringId) ?? null;
-        const discard = new DiscardConfirm(this);
-        discard.open(ring, sel.ringId,
+        // Single stored instance, routed to the UI camera like every other modal.
+        if (!this.fusionDiscard_) {
+          this.fusionDiscard_ = new DiscardConfirm(this, (c) => this.routeToUi(c));
+        }
+        this.fusionDiscard_.open(ring, sel.ringId,
           async () => {
             try {
               await apiFetch(`/api/rings/${sel.ringId}`, { method: 'DELETE' });
-            } catch { /* silent */ }
+            } catch { /* surface nothing — the reopened overlay shows fresh state */ }
+            ov.clearSelection();
             void this.openShrineFusion(filterElement);
           },
           () => { ov.clearSelection(); },
@@ -345,6 +351,10 @@ export abstract class BaseBiomeScene extends DualCameraScene {
       },
       onBeforeDestroy: (c) => {
         this.unignoreMain(c);
+        // #423 — never leave an orphaned discard confirm (container + Y/N key
+        // listeners) behind when the fusion overlay closes.
+        this.fusionDiscard_?.dismiss();
+        this.fusionDiscard_ = null;
       },
     };
 

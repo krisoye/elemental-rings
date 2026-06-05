@@ -858,3 +858,177 @@ test('reliquary (#413): full bench: SPIRIT-to-spare drop is rejected at drop tim
 
   await ctx.close();
 });
+
+// ── #423 helpers — real-pointer geometry for the sanctum overlay ──────────────
+
+/**
+ * Convert logical canvas coordinates (1024×576) to page coordinates via the canvas
+ * bounding rect — same helper as manage-battle-rings.spec.ts / anchorage-campfire.
+ */
+async function canvasCoords(
+  page: Page,
+  logicalX: number,
+  logicalY: number,
+): Promise<{ x: number; y: number }> {
+  const box = await page.locator('canvas').first().boundingBox();
+  if (!box) throw new Error('canvas element not found');
+  const scaleX = box.width / 1024;
+  const scaleY = box.height / 576;
+  return {
+    x: Math.round(box.x + logicalX * scaleX),
+    y: Math.round(box.y + logicalY * scaleY),
+  };
+}
+
+/** Real-pointer click at a logical canvas coordinate. */
+async function clickCanvas(page: Page, pt: { x: number; y: number }): Promise<void> {
+  const { x, y } = await canvasCoords(page, pt.x, pt.y);
+  await page.mouse.click(x, y);
+}
+
+// BHC geometry (BenchHealthCombat.ts): first bench cell center = grid origin
+// (370,148) + local card center (CARD_W/2=32, CARD_H/2=44).
+const BENCH_CELL0 = { x: 402, y: 192 } as const;
+// DISCARD slot in BHC: HEALTH column (659), row 2 (291).
+const DISCARD_SLOT = { x: 659, y: 291 } as const;
+// SPIRIT grid origin (CampScene COL_RELIQUARY_X=152, top y=148); InventoryGrid
+// cell geometry CARD_W=64, COL_GAP=72, ROW_GAP=92, CARD_H=88.
+const SPIRIT_GRID_ORIGIN = { x: 152, y: 148 } as const;
+
+// ── Scenario 15 (#423 S3): DISCARD slot opens confirm and deletes the ring ────
+// The DISCARD slot now lives in the shared BenchHealthCombat at (659,291) and is
+// available in sanctum mode for the first time. Select a bench ring with a real
+// click, real-click DISCARD, confirm with the Y key, and verify the server
+// deleted the ring. Gestures via real pointer/keys; hooks for state readback only.
+test('reliquary (#423 S3): DISCARD slot at (659,291) opens confirm and deletes ring', async ({
+  browser,
+}) => {
+  const token = await registerAndToken();
+  // Seed one resting ring and carry it so it lands on the bench (cell 0).
+  await seedRestingRings(token, 1);
+  const me = await getMe(token);
+  const slotted = BATTLE_SLOTS.map((s) => (me.loadout as any)[s]).filter(Boolean) as string[];
+  const benchRing = me.rings.find((r: any) => r.in_carry === 0)?.id as string;
+  expect(benchRing, 'a resting ring must exist to seed the bench').toBeDefined();
+  await putCarry(token, [...slotted, benchRing]);
+
+  const ctx = await browser.newContext();
+  await ctx.addInitScript(`localStorage.setItem('er_token', ${JSON.stringify(token)})`);
+  const page = await ctx.newPage();
+  await loadSanctum(page);
+  await openReliquary(page);
+
+  // Real-click the bench ring (cell 0) to select it. Readback via the scene's
+  // swap manager (TypeScript-private, JS-runtime-accessible — reads only).
+  await clickCanvas(page, BENCH_CELL0);
+  await page.waitForFunction(
+    (id) => ((window as any).__scene as any)?.swapManager?.selection?.ringId === id,
+    benchRing,
+    { timeout: 5000 },
+  );
+
+  // Real-click the DISCARD slot → confirm dialog opens.
+  await clickCanvas(page, DISCARD_SLOT);
+  await page.waitForFunction(() => (window as any).__discardConfirmOpen === true, {
+    timeout: 5000,
+  });
+
+  // Ring is NOT yet deleted (confirm pending).
+  let after = await getMe(token);
+  expect(after.rings.some((r: any) => r.id === benchRing)).toBe(true);
+
+  // Press Y → confirm the discard.
+  await page.keyboard.press('y');
+  await page.waitForFunction(() => (window as any).__discardConfirmOpen === false, {
+    timeout: 5000,
+  });
+
+  // Server deleted the ring.
+  await page.waitForTimeout(500); // allow DELETE + reload round-trip
+  after = await getMe(token);
+  expect(
+    after.rings.some((r: any) => r.id === benchRing),
+    'ring must be permanently deleted after Y-confirm',
+  ).toBe(false);
+
+  await ctx.close();
+});
+
+// ── Scenario 16 (#423 S4): SPIRIT ghost visible below cap; click moves ring ───
+// The SPIRIT grid shows an always-visible ghost cell at index reliquaryCount when
+// the pool is below cap. Selecting a bench ring and real-clicking the ghost moves
+// the ring to the reliquary (in_carry=0).
+test('reliquary (#423 S4): SPIRIT ghost visible below cap; click moves ring to reliquary', async ({
+  browser,
+}) => {
+  const token = await registerAndToken();
+  await seedRestingRings(token, 1);
+  const me = await getMe(token);
+  const slotted = BATTLE_SLOTS.map((s) => (me.loadout as any)[s]).filter(Boolean) as string[];
+  const benchRing = me.rings.find((r: any) => r.in_carry === 0)?.id as string;
+  expect(benchRing).toBeDefined();
+  await putCarry(token, [...slotted, benchRing]);
+
+  // Reliquary pool count AFTER carrying the bench ring (it left the pool).
+  const me2 = await getMe(token);
+  const reliqCount: number =
+    me2.player.reliquaryCount ??
+    me2.rings.filter((r: any) => r.in_carry === 0 && !r.escrowed && r.heart_slot !== 1).length;
+  const reliqCap: number = me2.player.reliquaryCap ?? 20;
+  expect(reliqCount, 'test requires a below-cap reliquary').toBeLessThan(reliqCap);
+  // Ghost must land in the visible 3-row window for a real click (fresh players do).
+  expect(reliqCount, 'test requires the ghost within the visible rows').toBeLessThan(9);
+
+  const ctx = await browser.newContext();
+  await ctx.addInitScript(`localStorage.setItem('er_token', ${JSON.stringify(token)})`);
+  const page = await ctx.newPage();
+  await loadSanctum(page);
+  await openReliquary(page);
+
+  // Readback: the spirit ghost rectangle (fill 0x1a2233) exists in the scene graph.
+  const ghostPresent = await page.evaluate(() => {
+    const scene = (window as any).__scene as any;
+    const walk = (c: any): boolean => {
+      for (const o of c.getAll ? c.getAll() : []) {
+        if (o.type === 'Rectangle' && o.fillColor === 0x1a2233 && o.input?.cursor === 'pointer') {
+          return true;
+        }
+        if (o.getAll && walk(o)) return true;
+      }
+      return false;
+    };
+    return walk({ getAll: () => scene.children.getAll() });
+  });
+  expect(ghostPresent, 'SPIRIT ghost must be present when reliquary is below cap').toBe(true);
+
+  // Real-click the bench ring to select it, then real-click the ghost.
+  await clickCanvas(page, BENCH_CELL0);
+  await page.waitForFunction(
+    (id) => ((window as any).__scene as any)?.swapManager?.selection?.ringId === id,
+    benchRing,
+    { timeout: 5000 },
+  );
+  // Ghost cell at index reliqCount: local (n%3)*72+32, floor(n/3)*92+44.
+  const ghostLogical = {
+    x: SPIRIT_GRID_ORIGIN.x + (reliqCount % 3) * 72 + 32,
+    y: SPIRIT_GRID_ORIGIN.y + Math.floor(reliqCount / 3) * 92 + 44,
+  };
+  await clickCanvas(page, ghostLogical);
+
+  // The ring moved to the reliquary (in_carry=0) — server-authoritative.
+  await page.waitForFunction(
+    async (id) => {
+      const r = await fetch('http://localhost:2568/api/me', {
+        headers: { Authorization: `Bearer ${localStorage.getItem('er_token')}` },
+      });
+      const d = await r.json();
+      return d.rings.find((x: any) => x.id === id)?.in_carry === 0;
+    },
+    benchRing,
+    { timeout: 8000 },
+  );
+  const final = await getMe(token);
+  expect(final.rings.find((r: any) => r.id === benchRing)?.in_carry).toBe(0);
+
+  await ctx.close();
+});
