@@ -101,6 +101,33 @@ async function setSpirit(token: string, spirit: number): Promise<void> {
   if (!res.ok) throw new Error(`setSpirit failed (${res.status})`);
 }
 
+/**
+ * Read the name of whichever InteractionZone is currently active on the scene.
+ * `activeZone` is a private TypeScript field but JS does not enforce that; the
+ * field is accessible at runtime via `__scene` (the scene publishes itself).
+ * Returns null when no zone is active.
+ */
+async function readActiveZone(page: Page): Promise<string | null> {
+  return page.evaluate(() => {
+    const scene = (window as any).__scene as any;
+    return (scene?.activeZone?.name as string | undefined) ?? null;
+  });
+}
+
+/**
+ * Position the player at a specific world coordinate and wait one frame
+ * for updateActiveZone() to process the new position.
+ */
+async function setPlayerPos(page: Page, x: number, y: number): Promise<void> {
+  await page.evaluate(({ x, y }) => {
+    const player = (window as any).__player as any;
+    if (!player?.setPosition) throw new Error('__player not available');
+    player.setPosition(x, y);
+  }, { x, y });
+  // updateActiveZone() runs every frame (~16ms); 100ms is comfortably past one frame.
+  await page.waitForTimeout(100);
+}
+
 // Anchorage zone id on the forest_anchorage screen.
 // The Tiled `anchorage` object on forest_anchorage.json has waystoneId='forest_entry',
 // so the campfire InteractionZone is named 'forest_entry' in __zoneCenters.
@@ -289,6 +316,246 @@ test.describe('campfire close gestures — adversarial QA (#417)', () => {
     const modal = await page.evaluate(() => (window as any).__campfireModal);
     expect(modal, 'modal must be null after double-click on X').toBeNull();
     expect(errors, 'double-click on X must not throw').toHaveLength(0);
+
+    await ctx.close();
+  });
+});
+
+// ── Phase 2 — implementation-aware tests (#417) ──────────────────────────────
+//
+// These tests target the internal priority decision tree introduced in
+// BaseBiomeScene.updateActiveZone() to fix the campfire zone being swallowed by
+// the larger sanctum_return rectangle. They use __scene.activeZone (a private
+// TypeScript field accessible at runtime) and __sanctumZones to assert which
+// zone the priority logic selected, and E-key outcomes to confirm the selection
+// drives the right interaction.
+//
+// Zone geometry on forest_anchorage:
+//   - campfire zone ('forest_entry'): 16×16, centered at the campfire graphic
+//   - sanctum_return: 64×64, the campfire 16×16 is fully nested inside it
+//   - body.center.y = sprite.y + 8 (body offset: y+2, halfHeight: 6 → +8 total)
+//
+test.describe('updateActiveZone() priority — impl-aware (#417)', () => {
+  // ── Test P1: campfire zone wins when both campfire and sanctum_return overlap ─
+  test('campfire zone wins priority over sanctum_return when both overlap', async ({ browser }) => {
+    // #417 impl-aware: the pre-fix code gave sanctum_return unconditional priority
+    // (line: `const ret = overlapping.find(z => z.name === 'sanctum_return')`).
+    // The fix adds `const campfire = overlapping.find(z => this.campfires.has(z.name))`
+    // and uses `campfire ?? ret ?? null` as the priority. This test verifies the
+    // campfire branch wins when the player stands at the campfire zone center (which
+    // is geometrically inside the sanctum_return rectangle).
+    const ctx: BrowserContext = await browser.newContext({ hasTouch: true });
+    await seedAuthToken(ctx);
+    const page = await ctx.newPage();
+    await waitForForest(page, 'forest_anchorage');
+
+    // Read campfire zone center from __zoneCenters.
+    const zoneCenter = await page.evaluate((id: string) => {
+      const centers = (window as any).__zoneCenters as Record<string, { x: number; y: number }>;
+      return centers?.[id] ?? null;
+    }, ANCHORAGE_ZONE);
+    if (!zoneCenter) throw new Error(`zone center not found for ${ANCHORAGE_ZONE}`);
+
+    // Position player so body center is inside the campfire zone.
+    // body.center.y = sprite.y + 8, so sprite.y = zoneCenter.y - 8 lands body center at zone center.
+    await setPlayerPos(page, zoneCenter.x, zoneCenter.y - 8);
+
+    // Both 'forest_entry' (campfire, 16×16) and 'sanctum_return' (64×64) must overlap.
+    const overlapping = await page.evaluate(() =>
+      (window as any).__sanctumZones as string[] | undefined,
+    );
+    expect(overlapping, 'precondition: both campfire and sanctum_return must overlap').toContain('forest_entry');
+    expect(overlapping, 'precondition: sanctum_return must also overlap at campfire center').toContain('sanctum_return');
+
+    // Priority tree must select the campfire zone as activeZone.
+    const activeZone = await readActiveZone(page);
+    expect(activeZone, 'campfire zone must win priority — not sanctum_return').toBe('forest_entry');
+
+    await ctx.close();
+  });
+
+  // ── Test P2: only sanctum_return overlapping → sanctum_return wins ──────────
+  test('sanctum_return wins when player is in sanctum_return but outside campfire zone', async ({ browser }) => {
+    // #417 impl-aware: `ret` is evaluated only when `campfire` is undefined
+    // (`const ret = campfire ? undefined : ...`). When the player stands inside
+    // sanctum_return but outside the nested 16×16 campfire zone, campfire must be
+    // undefined and sanctum_return must be selected. Verifies the fallback branch
+    // is not accidentally disabled by the fix.
+    const ctx: BrowserContext = await browser.newContext({ hasTouch: true });
+    await seedAuthToken(ctx);
+    const page = await ctx.newPage();
+    await waitForForest(page, 'forest_anchorage');
+
+    // Read campfire zone center and compute a position inside sanctum_return (64×64)
+    // but outside the campfire zone (16×16). Move 20px west of campfire center —
+    // well past the campfire's 8px half-extent, still inside sanctum_return's 32px.
+    const zoneCenter = await page.evaluate((id: string) => {
+      const centers = (window as any).__zoneCenters as Record<string, { x: number; y: number }>;
+      return centers?.[id] ?? null;
+    }, ANCHORAGE_ZONE);
+    if (!zoneCenter) throw new Error(`zone center not found for ${ANCHORAGE_ZONE}`);
+
+    // 20px west of campfire center stays inside the 64×64 sanctum_return zone
+    // (which spans ±32px) but is outside the 16×16 campfire zone (±8px).
+    await setPlayerPos(page, zoneCenter.x - 20, zoneCenter.y - 8);
+
+    const overlapping = await page.evaluate(() =>
+      (window as any).__sanctumZones as string[] | undefined,
+    );
+
+    // If sanctum_return doesn't overlap here the position math needs adjusting —
+    // skip rather than hard-fail so CI doesn't break on map geometry changes.
+    if (!overlapping?.includes('sanctum_return')) {
+      test.skip();
+      return;
+    }
+
+    // Campfire zone must NOT overlap (body is 20px west of its center).
+    expect(overlapping, 'campfire zone must NOT overlap at 20px offset').not.toContain('forest_entry');
+
+    const activeZone = await readActiveZone(page);
+    expect(activeZone, 'sanctum_return must win when campfire zone does not overlap').toBe('sanctum_return');
+
+    await ctx.close();
+  });
+
+  // ── Test P3: campfires.has() lookup — non-campfire zone does not steal priority
+  test('a non-campfire zone overlapping alongside campfire zone does not steal priority', async ({ browser }) => {
+    // #417 impl-aware: `campfire = overlapping.find(z => this.campfires.has(z.name))`.
+    // Only zones whose names are in the `campfires` Map win level-1 priority.
+    // A zone with an arbitrary name (e.g. `sanctum_return`, `biome_exit`) that
+    // also happens to overlap must NOT be selected as the campfire-priority zone —
+    // it must fall through to the nearest-distance loop. This test confirms the
+    // lookup is keyed on campfires.has() (only campfire zone names) not on any zone.
+    //
+    // Verification strategy: position player at the campfire center so campfire AND
+    // sanctum_return both overlap. Assert activeZone is 'forest_entry' (campfire),
+    // not 'sanctum_return'. 'sanctum_return' is the non-campfire zone here; if the
+    // fix accidentally used `overlapping[0]` instead of `.find(z => campfires.has(z.name))`
+    // the result would depend on array order and could silently select sanctum_return.
+    const ctx: BrowserContext = await browser.newContext({ hasTouch: true });
+    await seedAuthToken(ctx);
+    const page = await ctx.newPage();
+    await waitForForest(page, 'forest_anchorage');
+
+    const zoneCenter = await page.evaluate((id: string) => {
+      const centers = (window as any).__zoneCenters as Record<string, { x: number; y: number }>;
+      return centers?.[id] ?? null;
+    }, ANCHORAGE_ZONE);
+    if (!zoneCenter) throw new Error(`zone center not found for ${ANCHORAGE_ZONE}`);
+
+    await setPlayerPos(page, zoneCenter.x, zoneCenter.y - 8);
+
+    // sanctum_return is the non-campfire zone present in the overlap set.
+    const overlapping = await page.evaluate(() =>
+      (window as any).__sanctumZones as string[] | undefined,
+    );
+    expect(overlapping, 'sanctum_return must be in overlap set as the non-campfire zone').toContain('sanctum_return');
+
+    const activeZone = await readActiveZone(page);
+    // campfires.has('sanctum_return') is false → it must NOT win level-1 priority.
+    // campfires.has('forest_entry') is true → it must win.
+    expect(activeZone, 'campfires.has() must select only campfire-named zones — sanctum_return must not win').toBe('forest_entry');
+
+    await ctx.close();
+  });
+
+  // ── Test P4: body offset math — sprite.y = zoneCenter.y - 8 lands body inside zone
+  test('player body center lands inside the 16x16 campfire zone when sprite.y = zoneCenter.y - 8', async ({ browser }) => {
+    // #417 impl-aware: openCampfireModal helper uses sprite.y = zc.y - 8.
+    // Derivation: body.y = sprite.y - 16 + 18 = sprite.y + 2; body.halfHeight = 6;
+    // body.center.y = sprite.y + 2 + 6 = sprite.y + 8.
+    // So sprite.y = zc.y - 8 → body.center.y = zc.y (exactly at zone center).
+    // This test verifies the offset is correct: the campfire zone (16×16, ±8px)
+    // must be in __sanctumZones after applying the offset, confirming the body
+    // center is inside the zone boundaries. If the offset were wrong (e.g. -14),
+    // the body would be outside the 8px half-extent and E would not open the modal.
+    const ctx: BrowserContext = await browser.newContext({ hasTouch: true });
+    await seedAuthToken(ctx);
+    const page = await ctx.newPage();
+    await waitForForest(page, 'forest_anchorage');
+
+    const zoneCenter = await page.evaluate((id: string) => {
+      const centers = (window as any).__zoneCenters as Record<string, { x: number; y: number }>;
+      return centers?.[id] ?? null;
+    }, ANCHORAGE_ZONE);
+    if (!zoneCenter) throw new Error(`zone center not found for ${ANCHORAGE_ZONE}`);
+
+    // Apply the exact body-offset formula from openCampfireModal helper.
+    await setPlayerPos(page, zoneCenter.x, zoneCenter.y - 8);
+
+    const overlapping = await page.evaluate(() =>
+      (window as any).__sanctumZones as string[] | undefined,
+    );
+    expect(
+      overlapping,
+      `body offset formula (sprite.y = zc.y - 8) must land body.center.y at zone center (${zoneCenter.y}), placing it inside the 16×16 campfire zone`,
+    ).toContain(ANCHORAGE_ZONE);
+
+    // Confirm the active zone is the campfire, completing the chain.
+    const activeZone = await readActiveZone(page);
+    expect(activeZone, 'activeZone must be campfire after correct body offset').toBe(ANCHORAGE_ZONE);
+
+    await ctx.close();
+  });
+
+  // ── Test P5: fetchAndReopenCampfireModal guard — ESC during swap prevents ghost reopen
+  test('ESC issued after placeholder but before swap completes leaves modal null after 1500ms', async ({ browser }) => {
+    // #417 impl-aware: openCampfireModal() builds a placeholder modal (food=0, spirit=0)
+    // synchronously, then fires fetchAndReopenCampfireModal() async. That async path:
+    //   1. calls campfireModal.close() → sets campfireModal=null, overlayOpen=false
+    //   2. sets overlayOpen=true
+    //   3. constructs a new CampfireModal
+    // Guard at step 1: `if (!res.ok || !this.campfireModal?.isOpen()) return` — if ESC
+    // already called close() before the fetch resolved, campfireModal is null →
+    // isOpen() is false → the guard returns early, skipping steps 2-3.
+    // This test verifies that contract: ESC on the placeholder → null; 1500ms later
+    // (past any realistic GET /api/me round-trip) → still null.
+    const ctx: BrowserContext = await browser.newContext({ hasTouch: true });
+    await seedAuthToken(ctx);
+    const page = await ctx.newPage();
+    await waitForForest(page, 'forest_anchorage');
+
+    // Position player at campfire zone.
+    const zoneCenter = await page.evaluate((id: string) => {
+      const centers = (window as any).__zoneCenters as Record<string, { x: number; y: number }>;
+      return centers?.[id] ?? null;
+    }, ANCHORAGE_ZONE);
+    if (!zoneCenter) throw new Error(`zone center not found for ${ANCHORAGE_ZONE}`);
+
+    await setPlayerPos(page, zoneCenter.x, zoneCenter.y - 8);
+
+    // Wait for activeZone to be campfire before pressing E.
+    await page.waitForFunction(
+      (id) => ((window as any).__scene as any)?.activeZone?.name === id,
+      ANCHORAGE_ZONE,
+      { timeout: 3000 },
+    );
+
+    await page.keyboard.press('e');
+
+    // Wait for the PLACEHOLDER modal (not the real one — don't wait for __campfireRest).
+    // The placeholder sets __campfireModal immediately in the CampfireModal constructor.
+    await page.waitForFunction(
+      () => (window as any).__campfireModal != null,
+      { timeout: 5000 },
+    );
+
+    // ESC immediately — fires before fetchAndReopenCampfireModal completes (~network RTT).
+    // In E2E fast mode, localhost /api/me responds in <50ms, so this race is tight.
+    // The guard `!campfireModal?.isOpen()` must catch either ordering.
+    await page.keyboard.press('Escape');
+    await page.waitForTimeout(200);
+
+    const afterEsc = await page.evaluate(() => (window as any).__campfireModal);
+    expect(afterEsc, 'ESC must close the placeholder modal immediately').toBeNull();
+
+    // 1500ms later — well past any GET /api/me round-trip on localhost.
+    // fetchAndReopenCampfireModal's `!campfireModal?.isOpen()` guard must have fired
+    // and returned early, preventing ghost reopen.
+    await page.waitForTimeout(1500);
+    const afterWait = await page.evaluate(() => (window as any).__campfireModal);
+    expect(afterWait, 'no ghost reopen 1500ms after ESC — fetchAndReopenCampfireModal guard must have fired').toBeNull();
 
     await ctx.close();
   });
