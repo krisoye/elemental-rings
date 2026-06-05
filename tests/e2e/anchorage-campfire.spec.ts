@@ -110,11 +110,9 @@ async function openCampfireModal(page: Page, waystoneId: string): Promise<void> 
     if (!zc) throw new Error(`zone center missing for ${id} (available: ${Object.keys(zoneCenters).join(', ')})`);
     const player = (window as any).__player;
     if (!player?.setPosition) throw new Error('__player not available');
-    // Player body offset: (2, 18) size: (12, 12).
-    // body.center = (sprite.x, sprite.y + 8 + 12/2) = (sprite.x, sprite.y + 14).
-    // Wait — Phaser body.center.y = body.y + body.halfHeight = (sprite.y - origin*h + offset.y) + halfH
-    // Sprite origin (0.5, 0.5), h=32 → sprite.y is center, sprite top = sprite.y - 16.
-    // body.y = sprite.y - 16 + 18 = sprite.y + 2. body.center.y = sprite.y + 2 + 6 = sprite.y + 8.
+    // Player body offset: (2, 18) size: (12, 12). Sprite origin (0.5, 0.5), h=32.
+    // body.y = sprite.y - 16 + 18 = sprite.y + 2. body.halfHeight = 6.
+    // body.center.y = body.y + body.halfHeight = sprite.y + 2 + 6 = sprite.y + 8.
     // To land body center at zc.y: set sprite.y = zc.y - 8.
     player.setPosition(zc.x, zc.y - 8);
   }, waystoneId);
