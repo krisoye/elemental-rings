@@ -554,12 +554,13 @@ export class CampScene extends DualCameraScene {
 
   /**
    * Map an anchor waystone id to the biome scene that contains it (#82, 8E). The
-   * Swamp is a distinct scene; every Forest anchor — including the hidden alcove
-   * (`forest_hidden_*`, now a Forest screen rather than its own scene) — routes to
-   * the unified ForestScene, which selects the matching screen.
+   * Swamp and Snow are distinct scenes; every Forest anchor — including the hidden
+   * alcove (`forest_hidden_*`, now a Forest screen rather than its own scene) —
+   * routes to the unified ForestScene, which selects the matching screen.
    */
   private static biomeSceneForAnchor(anchorId: string): string {
     if (anchorId.startsWith('swamp')) return 'SwampScene';
+    if (anchorId.startsWith('snow')) return 'SnowScene';
     return 'ForestScene';
   }
 
