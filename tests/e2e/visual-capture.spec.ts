@@ -77,6 +77,7 @@ test('visual-capture', async ({ browser }) => {
       // ── screen:<screen_id> ────────────────────────────────────────────────
       // enterForestScreen internally waits for __forestScreenId, __waystones, __zoneCenters.
       const screenId = rawTarget.slice('screen:'.length);
+      if (!screenId) throw new Error('CAPTURE_TARGET screen: requires a screen_id, e.g. screen:forest_anchorage');
       await page.goto(BASE);
       await page.waitForFunction(() => (window as any).__activeScene === 'CampScene', { timeout: 15000 });
       await enterForestScreen(page, screenId);
