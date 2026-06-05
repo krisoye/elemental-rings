@@ -1897,13 +1897,20 @@ export abstract class BaseBiomeScene extends DualCameraScene {
     const px = body.center.x;
     const py = body.center.y;
     const overlapping = this.zones.filter((z) => z.contains(px, py));
-    // With SANCTUM_OFFSET=0 the sanctum_return door is co-located with its anchor
-    // Anchorage zone; the return door is the actionable E target there, so it wins.
-    const ret = overlapping.find((z) => z.name === 'sanctum_return');
-    let nearest: InteractionZone | null = ret ?? null;
-    let best = ret ? -Infinity : Infinity;
+    // Priority (highest first):
+    //   1. Campfire zone — the 16×16 campfire zone sits inside the 64×64
+    //      sanctum_return rectangle, so campfire must win to let E open the
+    //      campfire modal (#417 live regression fix).
+    //   2. sanctum_return — wins over every other zone when no campfire overlaps
+    //      (original intent: the door is the actionable E target at an anchorage).
+    //   3. Nearest of remaining zones.
+    const campfire = overlapping.find((z) => this.campfires.has(z.name));
+    const ret = campfire ? undefined : overlapping.find((z) => z.name === 'sanctum_return');
+    const priority = campfire ?? ret ?? null;
+    let nearest: InteractionZone | null = priority;
+    let best = priority ? -Infinity : Infinity;
     for (const z of overlapping) {
-      if (z === ret) continue;
+      if (z === priority) continue;
       const d = z.distanceSqTo(px, py);
       if (d < best) {
         best = d;
