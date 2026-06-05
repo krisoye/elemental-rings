@@ -842,11 +842,13 @@ export class RingManagementOverlay {
       this.container = null;
     }
     this.statusText = null;
+    // Always clear fusion parent references (both on close and on refresh).
+    // If we don't clear them on refresh, stale references to deleted rings remain
+    // after a successful fusion, causing the [FUSE] button to stay active.
+    this.fuseParent1 = null;
+    this.fuseParent2 = null;
     if (fireCb) {
       this.swap.clear();
-      // Reset fusion parent selections on close so a re-open starts fresh.
-      this.fuseParent1 = null;
-      this.fuseParent2 = null;
       clearRingMgmtState();
       const cb = this.onCloseCb;
       this.onCloseCb = undefined;
