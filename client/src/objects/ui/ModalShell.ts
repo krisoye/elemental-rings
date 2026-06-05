@@ -123,6 +123,8 @@ export function createOverlay(scene: Phaser.Scene, opts: ModalShellOpts): ModalS
   container.add([backdrop, panel, title, closeBtn]);
 
   let statusText: Phaser.GameObjects.Text | null = null;
+  let statusTween: Phaser.Tweens.Tween | null = null;
+
   if (opts.withStatus) {
     // #382 — Container child → crispCanvasText.
     statusText = crispCanvasText(
@@ -134,15 +136,33 @@ export function createOverlay(scene: Phaser.Scene, opts: ModalShellOpts): ModalS
     container.add(statusText);
   }
 
+  // Kill the status tween when the container is destroyed so it can never
+  // fire onComplete against a destroyed statusText texture (#400 regression:
+  // fetchAndReopenCampfireModal destroys the placeholder modal while a status
+  // tween is still running, causing Frame.updateUVs to throw on a null texture
+  // source and freeze Phaser's render loop for the session).
+  container.once(Phaser.GameObjects.Events.DESTROY, () => {
+    statusTween?.destroy();
+    statusTween = null;
+  });
+
   const setStatus = (msg: string, color = '#ff8888'): void => {
     if (!statusText) return;
     statusText.setColor(color).setText(msg);
-    scene.tweens.add({
+    statusTween?.destroy();
+    statusTween = scene.tweens.add({
       targets: statusText,
       alpha: { from: 1, to: 0 },
       delay: 2000,
       duration: 600,
-      onComplete: () => statusText?.setAlpha(1).setText(''),
+      onComplete: () => {
+        statusTween = null;
+        // Guard: statusText may be destroyed if the modal was closed before
+        // the tween completed (e.g. fetchAndReopenCampfireModal placeholder swap).
+        if (statusText && !statusText.isDestroyed) {
+          statusText.setAlpha(1).setText('');
+        }
+      },
     });
   };
 
