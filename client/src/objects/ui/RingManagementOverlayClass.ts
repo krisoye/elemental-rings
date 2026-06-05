@@ -504,11 +504,9 @@ export class RingManagementOverlay {
     // Spare InventoryGrid (reused from the old BattleHandOverlay layout).
     const GRID_ORIGIN_X = 234;
     const GRID_CONTENT_TOP_Y = 148;
-    // 2 visible rows keeps the spare grid within the 500px modal frame; the ▲/▼
-    // arrows + mouse wheel scroll the third+ rows on demand. The E2E harness
-    // (spareGridInfo) counts visible cards — 2 visible rows × 3 cols = 6 cells max
-    // before scrolling, matching the reliquary-modal.spec fixture expectations.
-    const RINGWALL_VISIBLE_ROWS = 2;
+    // 3 visible rows (spare_ring_max=9; 9 rings = 3 rows of 3). Rows 4+ scroll via
+    // ▲/▼ arrows or mouse wheel. Matches the original BattleHandOverlay design intent.
+    const RINGWALL_VISIBLE_ROWS = 3;
 
     const spareGrid = new InventoryGrid(
       this.scene,

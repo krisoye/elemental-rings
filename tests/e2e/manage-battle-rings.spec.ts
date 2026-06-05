@@ -476,8 +476,8 @@ test('manage-battle-rings (#381): 4×2 cluster renders and the 3-col spare Inven
   await page.goto(URL);
   await page.waitForFunction(() => (window as any).__activeScene === 'CampScene', { timeout: 10000 });
   const tok = await page.evaluate(() => localStorage.getItem('er_token') ?? '');
-  // Seed 7 spares so multiple grid rows are populated.
-  await seedSpares(tok, 7);
+  // Seed 6 spares (2 full rows of 3) — deterministic regardless of WON-ring state.
+  await seedSpares(tok, 6);
 
   await enterForestScreen(page, 'forest_anchorage');
   await page.waitForFunction(
@@ -520,14 +520,11 @@ test('manage-battle-rings (#381): 4×2 cluster renders and the 3-col spare Inven
   expect(Math.abs(labelXs.STATUS - 759)).toBeLessThanOrEqual(1);
   expect(labelXs.HP).toBe(659);
 
-  // The spare InventoryGrid shows the seeded spares. After the M-1 fix the WON
-  // (pending) ring is excluded from availableRings, so if the fresh player has a
-  // pending ring it appears in its own WON card and the spare grid shows 6 rings
-  // (ceil(6/3)=2 rows). If no pending ring exists all 7 appear (ceil(7/3)=3 rows).
-  // Assert the grid is populated with at least 2 rows and at least 6 cells.
+  // The spare InventoryGrid shows the 6 seeded spares: 2 full rows of 3.
+  // RINGWALL_VISIBLE_ROWS=3 so all 6 are visible without scrolling.
   const grid = await spareGridInfo(page);
-  expect(grid.rows).toBe(2);    // pending ring excluded → 6 spares → ceil(6/3) = 2 rows
-  expect(grid.cells).toBe(6);   // 6 visible spares after WON ring excluded
+  expect(grid.rows).toBe(2);    // 6 rings → ceil(6/3) = 2 rows
+  expect(grid.cells).toBe(6);   // all 6 visible (within 3-row window)
 
   await ctx.close();
 });
