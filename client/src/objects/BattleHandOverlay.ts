@@ -107,7 +107,7 @@ export class BattleHandOverlay {
         await this.refresh(ov);
       },
       onRecharge: async () => {
-        await this.apiPost('/api/spirit/recharge-all');
+        await this.apiPost('/api/spirit/recharge-all', {});
         if (this.overlay) await this.refresh(this.overlay);
       },
       getThumbTooltip: () => {

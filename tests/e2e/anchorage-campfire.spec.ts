@@ -372,8 +372,8 @@ test('campfire: X closes without prior action (#400)', async ({ browser }) => {
 // Gesture inputs use real Playwright APIs (keyboard/mouse); __* hooks are used
 // only for reading scene state or triggering server-side actions.
 
-test.describe('#400 QA adversarial: close-gesture edge cases', () => {
-  test('ESC while campfire modal open does not set overlayOpen=false prematurely (BlinkController stays gated)', async ({ browser }) => {
+// ── #400 QA adversarial: close-gesture edge cases ────────────────────────────
+test('(#400 QA) ESC while campfire modal open does not set overlayOpen=false prematurely (BlinkController stays gated)', async ({ browser }) => {
     // #400 adversarial: Bug A — ESC fell through to closeBattleHand() which set
     // overlayOpen=false while the modal stayed visible. BlinkController reads overlayOpen
     // via its getModalOpen lambda; a premature false ungates blink gestures on the
@@ -408,9 +408,9 @@ test.describe('#400 QA adversarial: close-gesture edge cases', () => {
     }
 
     await ctx.close();
-  });
+});
 
-  test('ESC pressed twice rapidly: second ESC is a no-op, overlayOpen stays false', async ({ browser }) => {
+test('(#400 QA) ESC pressed twice rapidly: second ESC is a no-op, overlayOpen stays false', async ({ browser }) => {
     // #400 adversarial: double-ESC race. After Fix A the first ESC closes the campfire
     // modal. The second ESC (within the same event loop turn) must not hit the
     // overlayOpen branch and call closeBattleHand(), which would toggle overlayOpen back
@@ -442,9 +442,9 @@ test.describe('#400 QA adversarial: close-gesture edge cases', () => {
     }
 
     await ctx.close();
-  });
+});
 
-  test('Bug B exact repro: X then immediate second real mouse click does not reopen modal after rest', async ({ browser }) => {
+test('(#400 QA) Bug B exact repro: X then immediate second real mouse click does not reopen modal after rest', async ({ browser }) => {
     // #400 adversarial: exact Bug B repro sequence with real mouse input.
     // 1. Rest → modal in post-action state.
     // 2. X click 1 → modal closes (CampfireModal.close(), overlayOpen=false).
@@ -512,9 +512,9 @@ test.describe('#400 QA adversarial: close-gesture edge cases', () => {
     }
 
     await ctx.close();
-  });
+});
 
-  test('__blink on anchorage zone does not reopen modal after X-close following summon', async ({ browser }) => {
+test('(#400 QA) __blink on anchorage zone does not reopen modal after X-close following summon', async ({ browser }) => {
     // #400 adversarial: same Bug B path via Summon. After summon the onSummonSuccess
     // callback refreshes the Sanctum zone position — if that callback inadvertently
     // clears overlayOpen, BlinkController becomes ungated before the user closes.
@@ -548,9 +548,9 @@ test.describe('#400 QA adversarial: close-gesture edge cases', () => {
     expect(afterWait).toBeNull();
 
     await ctx.close();
-  });
+});
 
-  test('ESC after rest action: ESC is still the active close gesture post-action', async ({ browser }) => {
+test('(#400 QA) ESC after rest action: ESC is still the active close gesture post-action', async ({ browser }) => {
     // #400 adversarial: spec requires ESC to work in all modal states. After a Rest
     // completes (status line shows "Rested!"), ESC must close the modal. Before Fix A,
     // ESC in this state would corrupt overlayOpen but leave the modal visible — and
@@ -573,9 +573,9 @@ test.describe('#400 QA adversarial: close-gesture edge cases', () => {
     expect(modalAfter).toBeNull();
 
     await ctx.close();
-  });
+});
 
-  test('open→ESC→re-approach cycle: modal reopens cleanly without stale overlayOpen lock', async ({ browser }) => {
+test('(#400 QA) open→ESC→re-approach cycle: modal reopens cleanly without stale overlayOpen lock', async ({ browser }) => {
     // #400 adversarial: fix regression guard. A naive Fix A might clear campfireModal
     // but leave overlayOpen=true (failing to call the onClose callback). This would
     // cause openCampfireModal's campfireModal?.isOpen() guard to pass (null.isOpen()
@@ -610,9 +610,9 @@ test.describe('#400 QA adversarial: close-gesture edge cases', () => {
     expect(afterReopen).not.toBeNull();
 
     await ctx.close();
-  });
+});
 
-  test('ESC does not close merchant modal when only campfire modal is open (branch isolation)', async ({ browser }) => {
+test('(#400 QA) ESC does not close merchant modal when only campfire modal is open (branch isolation)', async ({ browser }) => {
     // #400 adversarial: ESC handler branch ordering guard. Fix A inserts the
     // campfireModal branch between merchantModal and overworldMap. If the insertion
     // is in the wrong position (e.g. after the overlayOpen branch), the overlayOpen
@@ -647,5 +647,4 @@ test.describe('#400 QA adversarial: close-gesture edge cases', () => {
     expect(merchantAfter).toBe(false);
 
     await ctx.close();
-  });
 });

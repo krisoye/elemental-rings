@@ -627,6 +627,8 @@ export abstract class BaseBiomeScene extends DualCameraScene {
     this.input.keyboard!.on('keydown-ESC', () => {
       if (this.merchantModal?.isOpen()) {
         this.merchantModal.close();
+      } else if (this.campfireModal?.isOpen()) {
+        this.campfireModal.close();
       } else if (this.overworldMap?.isOpen()) {
         this.overworldMap.hide();
         this.overworldMap = null;
