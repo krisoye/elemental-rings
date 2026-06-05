@@ -13,6 +13,9 @@ import { defineConfig } from '@playwright/test';
 //   auth, camp, carry, compass, difficulty, fusion, overworld-transition,
 //   reliquary-cap, sanctum-movement, sanctum-summon, sanctum-zones, spare-carry,
 //   spirit, swamp, talisman, teleport, waystones
+// Visual capture specs — run on demand via `--project visual`. Never in CI.
+const VISUAL_SPECS = ['visual-capture.spec.ts'];
+
 const PVP_SPECS = [
   'client-battle-flow.spec.ts',
   'client-connect.spec.ts',
@@ -125,6 +128,14 @@ export default defineConfig({
       // parallelize; 2 workers keeps PvP pressure moderate on the server.
       fullyParallel: true,
       workers: 2,
+    },
+    {
+      name: 'visual',
+      testMatch: VISUAL_SPECS,
+      // On-demand only — single worker to avoid port contention.
+      // Driven by CAPTURE_TARGET + CAPTURE_OUT env vars; see visual-capture.spec.ts.
+      fullyParallel: false,
+      workers: 1,
     },
     {
       name: 'solo',
