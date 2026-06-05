@@ -458,12 +458,15 @@ apiRouter.post('/api/spirit/recharge', requireAuth, (req: Request, res: Response
 
 /**
  * POST /api/spirit/recharge-all — recharge every carried ring in priority order
- * (Thumb→A1→A2→D1→D2→spares), stopping when spirit hits 0 (#41). No body.
- * Requires auth.
+ * (Thumb→A1→A2→D1→D2→spares), stopping when spirit hits 0 (#41). Optional body
+ * flag `includeReliquary: true` extends recharge to the resting Reliquary pool
+ * (after all carried rings) — Option A, single route (#397). Requires auth.
  */
 apiRouter.post('/api/spirit/recharge-all', requireAuth, (req: Request, res: Response): void => {
   const playerId = req.playerId as string;
-  const spiritRemaining = rechargeAllWithSpirit(playerId);
+  // #397 — forward includeReliquary flag to extend recharge to the resting pool.
+  const includeReliquary = req.body?.includeReliquary === true;
+  const spiritRemaining = rechargeAllWithSpirit(playerId, includeReliquary);
   res.status(200).json({
     rings: getRingsByOwner(playerId),
     spirit_current: spiritRemaining,

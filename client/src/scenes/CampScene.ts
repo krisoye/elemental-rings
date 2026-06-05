@@ -344,7 +344,9 @@ export class CampScene extends DualCameraScene {
     window.__campGoEncounter = (): void => this.goToEncounter();
     window.__campSleep = (): void => void this.doSleep();
     window.__campRecharge = (ringId: string): Promise<void> => this.doRechargeById(ringId);
-    window.__campRechargeAll = (): Promise<void> => this.doRechargeAll();
+    // #397 — hook proxies Sanctum RECHARGE; passes includeReliquary=true so E2E
+    // tests assert reliquary ring restoration without a separate hook.
+    window.__campRechargeAll = (): Promise<void> => this.doRechargeAll(true);
     window.__campAddToLoadout = (ringId: string): Promise<void> => this.moveToCarry(ringId, true);
     window.__campLeaveAtSanctum = (ringId: string): Promise<void> => this.moveToCarry(ringId, false);
     window.__campOpenFusion = (): void => this.openFusionPanel();
@@ -712,9 +714,9 @@ export class CampScene extends DualCameraScene {
         await this.reliquaryMove(ringId, to, from);
       },
 
-      // ── onRecharge: recharge-all via API ─────────────────────────────────────
+      // ── onRecharge: Sanctum RECHARGE includes reliquary resting pool (#397) ──
       onRecharge: () => {
-        void this.doRechargeAll();
+        void this.doRechargeAll(true);
       },
 
       // ── renderLeft: build the SPIRIT left column into the overlay container ──
@@ -2676,14 +2678,21 @@ export class CampScene extends DualCameraScene {
     await this.loadData();
   }
 
-  /** POST /api/spirit/recharge-all — fill carried rings in priority order. */
-  async doRechargeAll(): Promise<void> {
+  /**
+   * POST /api/spirit/recharge-all — fill carried rings in priority order.
+   *
+   * When `includeReliquary` is `true` (Sanctum RECHARGE path — #397), also
+   * recharges resting Reliquary rings after all carried rings. Field and Fusion
+   * RECHARGE leave this flag absent (existing behavior).
+   */
+  async doRechargeAll(includeReliquary?: boolean): Promise<void> {
     if (!getToken()) {
       this.scene.start('LoginScene');
       return;
     }
     try {
-      const res = await apiFetch('/api/spirit/recharge-all', { method: 'POST' });
+      const body = includeReliquary ? { includeReliquary: true } : undefined;
+      const res = await apiFetch('/api/spirit/recharge-all', { method: 'POST', json: body });
       if (!res.ok) {
         this.setStatus(`Recharge-all failed (${res.status})`);
         return;

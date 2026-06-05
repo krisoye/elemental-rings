@@ -420,6 +420,13 @@ const selectAggregateRingXp = db.prepare(
 const selectReliquaryMaxUsesSum = db.prepare(
   `SELECT COALESCE(SUM(max_uses), 0) AS uses_sum FROM rings WHERE owner_id = ? AND in_carry = 0 AND heart_slot = 0`,
 );
+// #397 — resting rings eligible for Sanctum RECHARGE (in_carry=0, heart_slot=0,
+// escrowed=0). Ordered most-depleted first, then stable by id, to match spare ordering.
+const selectReliquaryResting = db.prepare(
+  `SELECT * FROM rings
+   WHERE owner_id = ? AND in_carry = 0 AND heart_slot = 0 AND escrowed = 0
+   ORDER BY (max_uses - current_uses) DESC, id ASC`,
+);
 // EPIC #279 — read the player's difficulty tier for the spirit_max multiplier.
 const selectPlayerDifficulty = db.prepare(`SELECT difficulty FROM players WHERE id = ?`);
 const updateSpiritCurrent = db.prepare(
@@ -1670,11 +1677,16 @@ export const rechargeRingWithSpirit = db.transaction(
 
 /**
  * Recharge every carried ring in priority order (Thumb → A1 → A2 → D1 → D2,
- * then spares most-depleted first), stopping when spirit reaches 0. Returns the
- * remaining spirit after the operation.
+ * then heart ring, then spares most-depleted first), stopping when spirit reaches
+ * 0. Returns the remaining spirit after the operation.
+ *
+ * When `includeReliquary` is `true` (Sanctum RECHARGE path — #397), the resting
+ * pool (`in_carry=0, heart_slot=0, escrowed=0`) is recharged last, after all
+ * carried rings, most-depleted first. When false/absent, behavior is byte-identical
+ * to the pre-#397 implementation (carried rings only; reliquary rings untouched).
  */
 export const rechargeAllWithSpirit = db.transaction(
-  (playerId: string): number => {
+  (playerId: string, includeReliquary = false): number => {
     const loadout = selectLoadout.get(playerId) as LoadoutRow | undefined;
     const carried = selectCarryByOwner.all(playerId) as RingRow[];
     const byId = new Map(carried.map((r) => [r.id, r]));
@@ -1709,6 +1721,18 @@ export const rechargeAllWithSpirit = db.transaction(
         return dbf !== da ? dbf - da : a.id.localeCompare(b.id);
       });
     ordered.push(...spares);
+
+    // #397 — Sanctum RECHARGE: append resting pool after all carried rings.
+    // The SQL already orders most-depleted first, then stable by id.
+    if (includeReliquary) {
+      const resting = selectReliquaryResting.all(playerId) as RingRow[];
+      for (const r of resting) {
+        if (!seen.has(r.id)) {
+          ordered.push(r);
+          seen.add(r.id);
+        }
+      }
+    }
 
     let spirit = getSpiritAndFood(playerId).spirit_current;
     for (const ring of ordered) {
