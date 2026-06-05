@@ -59,12 +59,6 @@ export class SnowScene extends BaseBiomeScene {
     return ['ground', 'behind', 'in-front'];
   }
 
-  /** `behind` uses non-empty collision (trunks/rocks block movement). */
-  protected tileLayerCollisionMode(layerName: string): 'property' | 'non-empty' {
-    if (layerName === 'behind') return 'non-empty';
-    return super.tileLayerCollisionMode(layerName);
-  }
-
   protected tileLayerDepth(layerName: string): number {
     if (layerName === 'behind') return 2;
     if (layerName === 'in-front') return 5;
