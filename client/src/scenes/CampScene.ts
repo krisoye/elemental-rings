@@ -52,7 +52,7 @@ const MODAL_LEFT = CANVAS_W / 2 - MODAL_W / 2; // 132
 const CONTENT_LEFT = MODAL_LEFT + 20; // 152
 const CONTENT_RIGHT = CANVAS_W / 2 + MODAL_W / 2 - 20; // 872
 const COL_RELIQUARY_X = CONTENT_LEFT; // 152
-const COL_SPARE_X = 392;              // Middle column — Bench 3×3 grid (offset +20px from SPIRIT for visual separation)
+const COL_SPARE_X = 474;              // BENCH column header x — BENCH_GRID_X(370) + 104 (midpoint of 3-col grid)
 // COMBAT cluster left edge, right-aligned to CONTENT_RIGHT (2-col width=148).
 const BATTLEHAND_RING_X = CONTENT_RIGHT - 148; // 724 — COMBAT column left edge
 
