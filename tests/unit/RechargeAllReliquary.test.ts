@@ -407,3 +407,123 @@ describe('#397 rechargeAllWithSpirit: no reliquary rings — idempotent', () => 
   });
 
 });
+
+// ===========================================================================
+// Class 6 — Phase 2 impl-aware: rechargeAllWithSpirit transaction + edge branches
+// ===========================================================================
+
+describe('#397 Phase 2 impl-aware: rechargeAllWithSpirit implementation branches', () => {
+
+  test('spirit update is atomic: spirit_current in DB matches spirit-after-recharge return value', () => {
+    // #397 Phase 2 adversarial: the impl computes a local `spirit` variable,
+    // applies uses, then writes the delta back with:
+    //   updateSpiritDeduct.run(getSpiritAndFood(p).spirit_current - spirit, p)
+    // If the delta is 0 (all rings already full), spirit_current must be unchanged.
+    const p = makePlayer();
+    makeRing(p, { inCarry: 1, currentUses: 3, maxUses: 3 }); // full — no spirit spent
+    setSpirit(p, 7);
+
+    const remaining = repo.rechargeAllWithSpirit(p, false);
+
+    // All rings full → delta = 0 → no deduction.
+    expect(remaining).toBe(7);
+    expect(getSpirit(p)).toBe(7);
+  });
+
+  test('return value equals the spirit remaining in the DB after the call', () => {
+    // #397 Phase 2 adversarial: the return value is the local `spirit` counter
+    // not a fresh DB read. Verify they agree so callers can use the return value
+    // as a reliable remaining-spirit indicator.
+    const p = makePlayer();
+    makeRing(p, { inCarry: 1, currentUses: 0, maxUses: 4 }); // deficit=4
+    setSpirit(p, 6);
+
+    const remaining = repo.rechargeAllWithSpirit(p, false);
+
+    // deficit=4, spirit=6 → 4 uses restored, 2 spirit remains.
+    expect(remaining).toBe(2);
+    expect(getSpirit(p)).toBe(2);
+    expect(remaining).toBe(getSpirit(p));
+  });
+
+  test('heart ring is recharged after battle-slot rings but before spares (priority order)', () => {
+    // #397 Phase 2 adversarial: the heart ring is folded in after the battle hand
+    // but before spares. Spirit just enough for the heart ring but not the spare.
+    const p = makePlayer();
+    const heartRing = makeRing(p, { inCarry: 0, currentUses: 1, maxUses: 3 }); // deficit=2
+    const spareRing = makeRing(p, { inCarry: 1, currentUses: 0, maxUses: 3 }); // deficit=3
+    // Mark heartRing as heart_slot=1 and update the pointer.
+    dbInstance.prepare(`UPDATE rings SET heart_slot = 1 WHERE id = ?`).run(heartRing);
+    dbInstance.prepare(`UPDATE players SET heart_ring_id = ? WHERE id = ?`).run(heartRing, p);
+    setSpirit(p, 2); // enough for heart (2 uses) but not spare (3 more uses)
+
+    repo.rechargeAllWithSpirit(p, false);
+
+    expect(getUses(heartRing)).toBe(3); // fully restored
+    expect(getUses(spareRing)).toBe(0); // no spirit left
+    expect(getSpirit(p)).toBe(0);
+  });
+
+  test('includeReliquary=true with spirit=0 returns 0 immediately without touching any ring', () => {
+    // #397 Phase 2 adversarial: the main loop breaks on `if (spirit <= 0)`.
+    // With spirit=0 from the start, no ring must be touched.
+    const p = makePlayer();
+    const carryRing = makeRing(p, { inCarry: 1, currentUses: 0, maxUses: 3 }); // deficit=3
+    const relRing = makeRing(p, { inCarry: 0, currentUses: 0, maxUses: 3 });   // deficit=3
+    setSpirit(p, 0);
+
+    const remaining = repo.rechargeAllWithSpirit(p, true);
+
+    expect(remaining).toBe(0);
+    expect(getUses(carryRing)).toBe(0); // untouched
+    expect(getUses(relRing)).toBe(0);   // untouched
+    expect(getSpirit(p)).toBe(0);
+  });
+
+  test('seen Set prevents double-recharging a ring that appears in both loadout and carry list', () => {
+    // #397 Phase 2 adversarial: the impl builds `ordered` by iterating the loadout
+    // slots then appending spare rings from `carried`. A ring already added from a
+    // loadout slot must not appear a second time in the spares list (the seen Set
+    // guards this). If the Set is broken, the ring would receive double uses.
+    const p = makePlayer();
+    const battleRing = makeRing(p, { inCarry: 1, currentUses: 0, maxUses: 3 }); // deficit=3
+    dbInstance.prepare(`UPDATE loadout SET thumb = ? WHERE player_id = ?`).run(battleRing, p);
+    setSpirit(p, 10); // more than enough to expose double-recharge
+
+    repo.rechargeAllWithSpirit(p, false);
+
+    // Must be exactly 3 (max_uses), not 6 (double-recharged).
+    expect(getUses(battleRing)).toBe(3);
+  });
+
+  test('multiple reliquary rings with the same deficit are both recharged when spirit allows', () => {
+    // #397 Phase 2 adversarial: two rings with identical deficit must both be
+    // recharged when there is enough spirit (not just the first one picked by
+    // the sort). Spirit = deficit of both rings combined.
+    const p = makePlayer();
+    const relA = makeRing(p, { inCarry: 0, currentUses: 1, maxUses: 3 }); // deficit=2
+    const relB = makeRing(p, { inCarry: 0, currentUses: 1, maxUses: 3 }); // deficit=2
+    setSpirit(p, 4); // exactly enough for both
+
+    repo.rechargeAllWithSpirit(p, true);
+
+    expect(getUses(relA)).toBe(3);
+    expect(getUses(relB)).toBe(3);
+    expect(getSpirit(p)).toBe(0);
+  });
+
+  test('SPIRIT_PER_RING_USE = 1: one spirit restores exactly one use (constant sanity)', () => {
+    // #397 Phase 2 adversarial: if SPIRIT_PER_RING_USE were changed to 2 but the
+    // local test constant stayed at 1, all test spirit/use counts would be wrong.
+    // This test locks the constant to 1 so any deviation is caught immediately.
+    const p = makePlayer();
+    const ring = makeRing(p, { inCarry: 1, currentUses: 2, maxUses: 3 }); // deficit=1
+    setSpirit(p, 1);
+
+    const remaining = repo.rechargeAllWithSpirit(p, false);
+
+    expect(getUses(ring)).toBe(3);  // 1 use restored
+    expect(remaining).toBe(0);     // exactly 1 spirit spent
+  });
+
+});

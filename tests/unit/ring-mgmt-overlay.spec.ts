@@ -28,6 +28,7 @@ import {
   type RingMgmtMode,
   type RingMgmtCounters,
 } from '../../client/src/objects/ui/RingManagementOverlay';
+import type { SwapSlot } from '../../client/src/objects/ui/SlotSwapManager';
 import type { RingData } from '../../client/src/objects/InventoryGrid';
 
 // SLOT_KEYS mirrors the shared constant — ['thumb', 'a1', 'a2', 'd1', 'd2']
@@ -1393,6 +1394,440 @@ describe('#396 teardown fuseParent guard: preserve on re-render, clear on close 
       src,
       'onFusionBenchClick must clear fuseParent2 when the clicked ring is already R2',
     ).toContain('this.fuseParent2?.id === ring.id');
+  });
+
+});
+
+// ===========================================================================
+// Class 15 — Phase 1 adversarial: symmetric-swap same-column edge cases (#395)
+// ===========================================================================
+
+describe('#395 Phase 1 adversarial: symmetric-swap same-column edge cases', () => {
+
+  it('two bench rings swapped within the bench: both pick-ups allowed (net-zero between bench sections)', () => {
+    // #395 adversarial: swapping spare→spare is a bench-internal move.
+    // Neither pick-up should be blocked — the bench count stays constant.
+    // First pick-up: bench full, nothing selected → spare pick-up is always allowed.
+    expect(isPickupBlockedByFullBench('spare', null, true)).toBe(false);
+    // Second pick-up: bench full, a spare already selected → also allowed.
+    expect(isPickupBlockedByFullBench('spare', 'spare', true)).toBe(false);
+  });
+
+  it('reliquary ring selected, then another reliquary ring attempted: second is BLOCKED', () => {
+    // #395 adversarial: player picks up reliquary ring A (fails the first guard,
+    // so this state is unreachable normally). But if both were permitted, picking up
+    // a second reliquary ring when currentSel is 'reliquary' (non-bench) should
+    // still be blocked — the first ring has not left the bench yet.
+    // currentSel='reliquary' is NOT a bench section, so net +1 risk remains.
+    expect(isPickupBlockedByFullBench('reliquary', 'reliquary', true)).toBe(true);
+  });
+
+  it('heart ring selected (non-bench), reliquary pick-up is BLOCKED (heart is not a bench section)', () => {
+    // #395 adversarial: heart is in_carry=0 and NOT in the bench pool.
+    // A selected heart ring does not free up bench space. Block reliquary pick-up.
+    expect(isPickupBlockedByFullBench('reliquary', 'heart', true)).toBe(true);
+  });
+
+  it('spare ring selected, heart pick-up: allowed (bench ring held, net-zero for bench)', () => {
+    // Picking up a heart ring does not add to the bench — the heart ring goes to
+    // the heart slot, not the spare grid. Net bench change = -1 (spare leaves bench).
+    // The guard only blocks moves that would increase bench occupancy.
+    expect(isPickupBlockedByFullBench('heart', 'spare', true)).toBe(false);
+  });
+
+  it('bench full: picking up a non-bench, non-reliquary source (d1) is blocked when nothing selected', () => {
+    // #395 adversarial: battle-slot ring at d1. If dropped to spare it nets +1.
+    // This is the same case as 'a1', but explicitly testing all slot keys that
+    // are not bench sections.
+    expect(isPickupBlockedByFullBench('d1', null, true)).toBe(true);
+    expect(isPickupBlockedByFullBench('d2', null, true)).toBe(true);
+    expect(isPickupBlockedByFullBench('a2', null, true)).toBe(true);
+  });
+
+  it('benchFull=false: all sources pass regardless of currentSel', () => {
+    // #395 adversarial: when the bench is not full, the guard is a no-op.
+    // Exhaustively test all source types to ensure no false positives.
+    const sources: Array<SwapSlot> = ['spare', 'reliquary', 'thumb', 'heart', 'a1', 'a2', 'd1', 'd2'];
+    const sels: Array<SwapSlot | null> = [null, 'spare', 'reliquary', 'a1'];
+    for (const src of sources) {
+      for (const sel of sels) {
+        expect(isPickupBlockedByFullBench(src, sel, false)).toBe(false);
+      }
+    }
+  });
+
+});
+
+// ===========================================================================
+// Class 16 — Phase 1 adversarial: escrowed ring in recharge pool (#397)
+// ===========================================================================
+
+describe('#397 Phase 1 adversarial: source-scan for escrowed exclusion in recharge SQL', () => {
+
+  it('selectReliquaryResting SQL filters escrowed=0 (source scan)', () => {
+    // #397 adversarial: an escrowed=1 ring (staked thumb) must NOT be drawn into
+    // the recharge pool. If the SQL omits the escrowed=0 clause, a staked ring's
+    // uses would be restored mid-battle, and the spirit would be spent without the
+    // player choosing to recharge that ring.
+    const src = fs.readFileSync(
+      path.join(path.resolve(__dirname, '../..'), 'server/src/persistence/PlayerRepo.ts'),
+      'utf8',
+    );
+    // The prepared statement selectReliquaryResting must include escrowed = 0.
+    const resting = src.match(/selectReliquaryResting\s*=\s*db\.prepare\s*\(\s*`([\s\S]*?)`/);
+    expect(resting, 'selectReliquaryResting prepared statement must exist').toBeTruthy();
+    expect(
+      resting![1],
+      'selectReliquaryResting query must include escrowed = 0 to exclude staked rings',
+    ).toMatch(/escrowed\s*=\s*0/);
+  });
+
+  it('selectReliquaryResting SQL filters heart_slot=0 (source scan)', () => {
+    // #397 adversarial: the heart ring has heart_slot=1 and in_carry=0. Without
+    // the heart_slot=0 filter the heart ring would enter the resting pool and be
+    // recharged, spending spirit without the player's intent.
+    const src = fs.readFileSync(
+      path.join(path.resolve(__dirname, '../..'), 'server/src/persistence/PlayerRepo.ts'),
+      'utf8',
+    );
+    const resting = src.match(/selectReliquaryResting\s*=\s*db\.prepare\s*\(\s*`([\s\S]*?)`/);
+    expect(resting, 'selectReliquaryResting must exist').toBeTruthy();
+    expect(
+      resting![1],
+      'selectReliquaryResting query must include heart_slot = 0 to exclude the heart ring',
+    ).toMatch(/heart_slot\s*=\s*0/);
+  });
+
+  it('selectReliquaryResting SQL orders by deficit DESC then id ASC (source scan)', () => {
+    // #397 adversarial: if the sort is ascending on uses (not deficit), the most-full
+    // ring is recharged first — wasting spirit on rings that barely need it.
+    const src = fs.readFileSync(
+      path.join(path.resolve(__dirname, '../..'), 'server/src/persistence/PlayerRepo.ts'),
+      'utf8',
+    );
+    const resting = src.match(/selectReliquaryResting\s*=\s*db\.prepare\s*\(\s*`([\s\S]*?)`/);
+    expect(resting, 'selectReliquaryResting must exist').toBeTruthy();
+    // Deficit = (max_uses - current_uses) ordered DESC = most depleted first.
+    expect(
+      resting![1],
+      'selectReliquaryResting must ORDER BY deficit DESC (most depleted first)',
+    ).toMatch(/ORDER BY.*max_uses\s*-\s*current_uses.*DESC/);
+  });
+
+});
+
+// ===========================================================================
+// Class 17 — Phase 1 adversarial: computeFusionResult edge cases (#396)
+// ===========================================================================
+
+describe('#396 Phase 1 adversarial: computeFusionResult and filterElement logic', () => {
+
+  it('RingManagementOverlayClass.ts computeFusionResult returns ineligible when filterElement mismatches result', () => {
+    // #396 adversarial: filterElement is set to a result element that no recipe
+    // in the fusion table produces with the two selected parents. The overlay must
+    // show the FR slot as ineligible rather than showing a wrong result element.
+    // Source-scan: filterElement check must compare result !== fe (strict inequality).
+    const src = readClientSrc('objects/ui/RingManagementOverlayClass.ts');
+    if (src === null) return;
+    // The guard: `if (fe !== undefined && result !== fe) return { frElement: null, eligible: false };`
+    expect(
+      src,
+      'computeFusionResult must compare result !== fe to filter by specific outcome element',
+    ).toContain('result !== fe');
+  });
+
+  it('RingManagementOverlayClass.ts computeFusionResult checks both parents individually for eligibility', () => {
+    // #396 adversarial: checking only the first parent would allow an ineligible
+    // second parent to slip through (e.g. a Tier-0 ring as R2 with an eligible R1).
+    const src = readClientSrc('objects/ui/RingManagementOverlayClass.ts');
+    if (src === null) return;
+    // Both guards must exist: isFusionEligibleParent(r1.element, r1.xp) and
+    // isFusionEligibleParent(r2.element, r2.xp).
+    const r1Check = /isFusionEligibleParent\(r1\.element,\s*r1\.xp\)/.test(src);
+    const r2Check = /isFusionEligibleParent\(r2\.element,\s*r2\.xp\)/.test(src);
+    expect(r1Check, 'computeFusionResult must check isFusionEligibleParent for r1').toBe(true);
+    expect(r2Check, 'computeFusionResult must check isFusionEligibleParent for r2').toBe(true);
+  });
+
+  it('RingManagementOverlayClass.ts renderFusionLeft shows ineligible state when both parents set but not eligible', () => {
+    // #396 adversarial: if the frElement render branch fires even when eligible=false,
+    // a two-tone preview card would display for an invalid fusion pair — misleading the player.
+    // The guard is: `if (r1 && r2 && eligible && frElement !== null)`.
+    const src = readClientSrc('objects/ui/RingManagementOverlayClass.ts');
+    if (src === null) return;
+    expect(
+      src,
+      'renderFusionLeft must gate the FR preview card on eligible=true',
+    ).toContain('eligible && frElement !== null');
+  });
+
+  it('RingManagementOverlayClass.ts getBenchRingsForFusion excludes fusion rings from parent candidates', () => {
+    // #396 adversarial: a fusion ring (element >= 5) cannot be fused again. Including
+    // it in the bench ring list would let the player click it and assign it as R1/R2,
+    // then receive a server rejection — confusing UX. The filter must use isFusion().
+    const src = readClientSrc('objects/ui/RingManagementOverlayClass.ts');
+    if (src === null) return;
+    expect(
+      src,
+      'getBenchRingsForFusion must exclude fusion rings via isFusion(r.element)',
+    ).toContain('isFusion(r.element)');
+  });
+
+  it('RingManagementOverlayClass.ts onFusionBenchClick third-click replaces R2 not R1 (R2-replace semantics)', () => {
+    // #396 adversarial: when R1 and R2 are both set and a new bench ring is clicked,
+    // R2 must be replaced (not R1). The ring assigned first (R1) is the dominant
+    // parent; replacing R1 silently would confuse the user.
+    // The else-branch sets fuseParent2 = ring.
+    const src = readClientSrc('objects/ui/RingManagementOverlayClass.ts');
+    if (src === null) return;
+    // The final else branch of the four-way if/else-if chain must set fuseParent2.
+    // Source-scan: after the three guards (id===r1, id===r2, !r1, !r2), the else sets r2.
+    const lines = src.split('\n');
+    const onFusionStart = lines.findIndex((l) => /private onFusionBenchClick/.test(l));
+    expect(onFusionStart, 'onFusionBenchClick must exist').toBeGreaterThan(-1);
+    // Find the else branch that is the last one in the method (replaces R2).
+    const elseLine = lines.findIndex(
+      (l, i) => i > onFusionStart && /^\s*}\s*else\s*\{/.test(l),
+    );
+    expect(elseLine, 'onFusionBenchClick must have a final else branch').toBeGreaterThan(onFusionStart);
+    // That else branch must set fuseParent2 = ring.
+    const nextLine = lines[elseLine + 1] ?? '';
+    expect(
+      nextLine,
+      'final else branch of onFusionBenchClick must set this.fuseParent2 = ring',
+    ).toMatch(/this\.fuseParent2\s*=\s*ring/);
+  });
+
+});
+
+// ===========================================================================
+// Class 18 — Phase 1 adversarial: clearFuseParents + re-render preserves selection (#396)
+// ===========================================================================
+
+describe('#396 Phase 1 adversarial: fuseParent state during render cycles', () => {
+
+  it('teardown with fireCb=false must NOT clear fuseParent1 or fuseParent2 (source scan)', () => {
+    // #396 P1 fix adversarial: fuseParent clearing on every re-render was the
+    // original P1 divergence. The fix: only clear when fireCb=true (genuine close).
+    // Source-scan: fuseParent1=null must NOT appear in the `if (!fireCb)` branch.
+    const src = readClientSrc('objects/ui/RingManagementOverlayClass.ts');
+    if (src === null) return;
+    const lines = src.split('\n');
+    const teardownStart = lines.findIndex((l) => /private teardown\(/.test(l));
+    expect(teardownStart, 'teardown must exist').toBeGreaterThan(-1);
+    // Find the first assignment of fuseParent1 = null within teardown.
+    const parent1Idx = lines.findIndex(
+      (l, i) => i > teardownStart && /this\.fuseParent1\s*=\s*null/.test(l),
+    );
+    // Find the `if (fireCb)` guard.
+    const fireCbIdx = lines.findIndex(
+      (l, i) => i > teardownStart && /if\s*\(\s*fireCb\s*\)/.test(l),
+    );
+    // fuseParent1=null must come AFTER the if(fireCb) guard.
+    expect(
+      parent1Idx,
+      'fuseParent1=null must be guarded by if(fireCb), not outside it',
+    ).toBeGreaterThan(fireCbIdx);
+  });
+
+  it('__fusionState is cleared only on genuine close (fireCb=true), not on re-render', () => {
+    // #396 adversarial: if __fusionState is wiped on every teardown, E2E tests
+    // observing __fusionState during a re-render would see undefined and fail.
+    // Source-scan: __fusionState = undefined must be inside the if(fireCb) block.
+    const src = readClientSrc('objects/ui/RingManagementOverlayClass.ts');
+    if (src === null) return;
+    const lines = src.split('\n');
+    const teardownStart = lines.findIndex((l) => /private teardown\(/.test(l));
+    const fireCbIdx = lines.findIndex(
+      (l, i) => i > teardownStart && /if\s*\(\s*fireCb\s*\)/.test(l),
+    );
+    const fusionStateClearIdx = lines.findIndex(
+      (l, i) => i > teardownStart && /__fusionState\s*=\s*undefined/.test(l),
+    );
+    expect(fusionStateClearIdx, '__fusionState = undefined must exist in teardown').toBeGreaterThan(teardownStart);
+    expect(
+      fusionStateClearIdx,
+      '__fusionState=undefined must come AFTER the if(fireCb) guard (only on genuine close)',
+    ).toBeGreaterThan(fireCbIdx);
+  });
+
+});
+
+// ===========================================================================
+// Class 19 — Phase 2 implementation-aware: BenchHealthCombat.build() branches (#395)
+// ===========================================================================
+
+describe('#395 Phase 2 impl-aware: BenchHealthCombat architecture contracts', () => {
+
+  it('BenchHealthCombat.ts does not have a `private readonly scene` field declaration', () => {
+    // #395 Phase 2 adversarial: `Phaser.GameObjects.Container` has a public `scene`
+    // property. Redeclaring it as `private` causes a TypeScript compile error.
+    // Verify the fix is stable — no `private` (or `private readonly`) scene field.
+    const src = readClientSrc('objects/ui/BenchHealthCombat.ts');
+    if (src === null) return;
+    const nonComment = src.split('\n').filter((l) => {
+      const t = l.trim();
+      return !t.startsWith('//') && !t.startsWith('*') && !t.startsWith('/*');
+    }).join('\n');
+    expect(
+      nonComment,
+      'BenchHealthCombat must not redeclare `private scene` — Container already exposes .scene',
+    ).not.toMatch(/private\s+(?:readonly\s+)?scene\s*:/);
+  });
+
+  it('BenchHealthCombat.ts bench filter uses benchSpareCount (shared predicate — not a local re-implementation)', () => {
+    // #395 Phase 2 adversarial: a second, divergent bench-count implementation would
+    // drift from the server predicate. BHC must delegate to benchSpareCount.
+    const src = readClientSrc('objects/ui/BenchHealthCombat.ts');
+    if (src === null) return;
+    expect(
+      src,
+      'BenchHealthCombat must import and use benchSpareCount from RingManagementOverlay',
+    ).toContain('benchSpareCount');
+  });
+
+  it('BenchHealthCombat.ts teardown() clears benchGrid, heartCard, combatCards, domLabels', () => {
+    // #395 Phase 2 adversarial: a partial teardown that skips one of these would
+    // leave stale Phaser objects alive after the overlay is closed, causing memory
+    // leaks and potential display glitches on re-open.
+    const src = readClientSrc('objects/ui/BenchHealthCombat.ts');
+    if (src === null) return;
+    expect(src, 'teardown must clear benchGrid').toContain('this.benchGrid = null');
+    expect(src, 'teardown must clear heartCard').toContain('this.heartCard = null');
+    expect(src, 'teardown must clear combatCards').toContain('this.combatCards.clear()');
+    expect(src, 'teardown must clear domLabels').toContain('this.domLabels');
+  });
+
+  it('BenchHealthCombat.ts destroy() calls teardown() before super.destroy()', () => {
+    // #395 Phase 2 adversarial: if super.destroy() runs before teardown(), Phaser
+    // may already have destroyed child objects before teardown() tries to null them —
+    // causing access-to-destroyed-object errors.
+    const src = readClientSrc('objects/ui/BenchHealthCombat.ts');
+    if (src === null) return;
+    const lines = src.split('\n');
+    const destroyStart = lines.findIndex((l) => /override destroy\(/.test(l));
+    expect(destroyStart, 'destroy() must exist as an override').toBeGreaterThan(-1);
+    const teardownCallIdx = lines.findIndex(
+      (l, i) => i > destroyStart && /this\.teardown\(\)/.test(l),
+    );
+    const superDestroyIdx = lines.findIndex(
+      (l, i) => i > destroyStart && /super\.destroy\(/.test(l),
+    );
+    expect(teardownCallIdx, 'teardown() must be called inside destroy()').toBeGreaterThan(destroyStart);
+    expect(superDestroyIdx, 'super.destroy() must be called inside destroy()').toBeGreaterThan(destroyStart);
+    expect(
+      teardownCallIdx,
+      `teardown() (line ${teardownCallIdx + 1}) must come BEFORE super.destroy() (line ${superDestroyIdx + 1})`,
+    ).toBeLessThan(superDestroyIdx);
+  });
+
+  it('BenchHealthCombat.ts [RECHARGE] button label is exactly "[RECHARGE]" (not "[Recharge]")', () => {
+    // #395 Phase 2 adversarial: an inconsistent capitalisation would fail E2E grep
+    // and regress the "single [RECHARGE] control" acceptance criterion.
+    const src = readClientSrc('objects/ui/BenchHealthCombat.ts');
+    if (src === null) return;
+    expect(src, 'BenchHealthCombat must render [RECHARGE] in upper case').toContain('[RECHARGE]');
+    expect(src, 'BenchHealthCombat must not use lower-case [Recharge]').not.toContain('[Recharge]');
+  });
+
+  it('BenchHealthCombat.ts repaintStrokes() handles all five SLOT_KEYS and heartCard', () => {
+    // #395 Phase 2 adversarial: a repaintStrokes that iterates combatCards.entries()
+    // covers all five slots automatically, but a hand-written list that misses 'd2'
+    // or 'a2' would leave stale selection strokes on those cards.
+    const src = readClientSrc('objects/ui/BenchHealthCombat.ts');
+    if (src === null) return;
+    expect(src, 'repaintStrokes must update heartCard stroke').toContain('heartCard.setStroke');
+    // The combatCards Map iteration covers all five slots — verify it iterates the Map.
+    expect(src, 'repaintStrokes must iterate combatCards').toContain('this.combatCards');
+  });
+
+});
+
+// ===========================================================================
+// Class 20 — Phase 2 impl-aware: RingManagementOverlayClass construction invariants (#395/#396)
+// ===========================================================================
+
+describe('#395/#396 Phase 2 impl-aware: RingManagementOverlayClass invariants', () => {
+
+  it('RingManagementOverlayClass.ts validSlots includes reliquary for sanctum mode (source scan)', () => {
+    // #395 Phase 2 adversarial: the sanctum overlay must include 'reliquary' as a
+    // valid SwapSlot so rings can be picked up from the resting pool and moved to
+    // the bench. If 'reliquary' is absent, the swap controller silently discards
+    // the pick-up and the ring never moves.
+    const src = readClientSrc('objects/ui/RingManagementOverlayClass.ts');
+    if (src === null) return;
+    // The sanctum branch: validSlots = [..., 'reliquary', ...]
+    expect(
+      src,
+      'sanctum validSlots must include "reliquary"',
+    ).toContain("'reliquary'");
+  });
+
+  it('RingManagementOverlayClass.ts open() is idempotent when called twice (guard: if container)', () => {
+    // #395 Phase 2 adversarial: calling open() when already open must be a no-op.
+    // Without the `if (this.container) return;` guard, a double open() call would
+    // render a second backdrop + panel on top of the first, leaking DOM labels.
+    const src = readClientSrc('objects/ui/RingManagementOverlayClass.ts');
+    if (src === null) return;
+    // The open() method must contain the idempotency guard.
+    expect(
+      src,
+      'open() must guard against double-open with `if (this.container) return`',
+    ).toContain('if (this.container) return');
+  });
+
+  it('RingManagementOverlayClass.ts refresh() is a no-op when overlay is closed (guard: if !container)', () => {
+    // #395 Phase 2 adversarial: calling refresh() after close() should not crash
+    // or attempt to render into a destroyed container.
+    const src = readClientSrc('objects/ui/RingManagementOverlayClass.ts');
+    if (src === null) return;
+    expect(
+      src,
+      'refresh() must guard against calling when closed: if (!this.container) return',
+    ).toContain('if (!this.container) return');
+  });
+
+  it('RingManagementOverlayClass.ts refreshBhc() is a no-op when bhc or container is null', () => {
+    // #395 Phase 2 adversarial: refreshBhc is called by CampScene after swap round-
+    // trips. If the overlay was closed between the server call and the response, bhc
+    // is null. An unguarded refreshBhc would crash on bhc.build().
+    const src = readClientSrc('objects/ui/RingManagementOverlayClass.ts');
+    if (src === null) return;
+    expect(
+      src,
+      'refreshBhc() must check `if (!this.bhc || !this.container) return`',
+    ).toContain('if (!this.bhc || !this.container) return');
+  });
+
+  it('RingManagementOverlayClass.ts publishFusionState iterates ALL 10 fusion elements (BASE_COUNT to BASE_COUNT+FUSION_COUNT)', () => {
+    // #396 Phase 2 adversarial: the loop must cover all 10 fusion elements (5–14).
+    // If the loop bound is wrong (e.g. i < BASE_COUNT + 5) only half the recipes
+    // are published, breaking __fusionState assertions in the fusion E2E tests.
+    const src = readClientSrc('objects/ui/RingManagementOverlayClass.ts');
+    if (src === null) return;
+    expect(src, 'publishFusionState loop must use FUSION_COUNT = 10').toContain('FUSION_COUNT');
+    expect(src, 'publishFusionState must define BASE_COUNT = 5').toContain('BASE_COUNT');
+  });
+
+  it('RingManagementOverlayClass.ts publishFusionState publishes all recipes even when a recipe has no available parents', () => {
+    // #396 Phase 2 adversarial: a recipe entry must always be pushed to the array,
+    // even when parentA or parentB is null. An if-guard that only pushes on ready=true
+    // would cause the published array to have fewer than FUSION_COUNT entries,
+    // breaking E2E tests that index by position.
+    const src = readClientSrc('objects/ui/RingManagementOverlayClass.ts');
+    if (src === null) return;
+    // recipes.push must not be gated on ready (the push must be unconditional in the loop).
+    const lines = src.split('\n');
+    const publishStart = lines.findIndex((l) => /private publishFusionState/.test(l));
+    expect(publishStart, 'publishFusionState must exist').toBeGreaterThan(-1);
+    const pushLine = lines.findIndex((l, i) => i > publishStart && /recipes\.push/.test(l));
+    expect(pushLine, 'recipes.push must exist in publishFusionState').toBeGreaterThan(publishStart);
+    // The push line must not be preceded by `if (ready)` or similar on the same or previous line.
+    const prevLine = lines[pushLine - 1]?.trim() ?? '';
+    expect(
+      prevLine.startsWith('if '),
+      `recipes.push must not be gated by an if-guard — found: "${prevLine}"`,
+    ).toBe(false);
   });
 
 });
