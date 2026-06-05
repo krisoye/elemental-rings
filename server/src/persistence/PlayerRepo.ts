@@ -1988,7 +1988,12 @@ export const merchantBuyFood = db.transaction(
 /**
  * Buy a Tier 1 ring from the merchant. Deducts `ringBuyPrice(element)` gold.
  * Returns `{ ok: true, gold, ring }` or `{ ok: false, reason }`. 400-worthy
- * reasons: insufficient gold, carry cap exceeded, unknown element.
+ * reasons: insufficient gold, bench full with a pending ring, unknown element.
+ *
+ * #423 — purchases route through the same bench/WON overflow model as duel
+ * wins (`grantRing`): a purchase with a full bench mints the ring as the
+ * pending WON ring (`pending=1`, exactly one allowed) instead of overflowing
+ * the bench silently or hard-rejecting on the aggregate carry cap.
  */
 export const merchantBuyRing = db.transaction(
   (
@@ -2005,14 +2010,27 @@ export const merchantBuyRing = db.transaction(
       return { ok: false, reason: `Insufficient gold (need ${price}, have ${player.gold})` };
     }
 
-    // Carry cap check: use getCarryCap (XP-derived) so the limit stays in sync
-    // with packLoadout and the PUT /api/loadout validation.
-    const carried = (selectCarryByOwner.all(playerId) as RingRow[]).length;
-    if (carried >= getCarryCap(playerId)) {
-      return { ok: false, reason: 'Carry cap full' };
+    // #423 — bench-aware purchase routing (mirrors the grantRing WON-overflow model):
+    //   bench has room  → normal carried spare (pending=0)
+    //   bench full      → WON-slot overflow (pending=1), exactly one allowed
+    //   already pending → reject (resolve the existing won ring first)
+    // Replaces the old aggregate carry-cap check — the pending path intentionally
+    // allows the same one-ring overflow as duel wins. Rejection happens BEFORE the
+    // gold deduction so a refused purchase never costs anything.
+    const spareCount = getSpareIds(playerId).length; // includes any pending ring
+    const spareMax = getSpareRingMax(playerId);
+    let asPending = false;
+    if (spareCount >= spareMax) {
+      if (getPendingRingId(playerId) !== null) {
+        return {
+          ok: false,
+          reason: 'Bench full and a won ring is already pending — resolve it first',
+        };
+      }
+      asPending = true;
     }
 
-    // Deduct gold, create ring, mark it as carried.
+    // Deduct gold, create ring, mark it as carried (pending=1 when bench is full).
     updateGold.run(-price, playerId);
     const ringId = insertRingRow(
       playerId,
@@ -2023,6 +2041,7 @@ export const merchantBuyRing = db.transaction(
         maxUses: 3,
         currentUses: 3,
         escrowed: 0,
+        pending: asPending ? 1 : 0,
       }),
     );
     setRingCarry(ringId, 1);
