@@ -90,4 +90,9 @@ export class DiscardConfirm {
   isOpen(): boolean {
     return this.container !== null;
   }
+
+  /** Live confirm container (E2E bridge — tests find the yes/no buttons via getAll()). */
+  get container_(): Phaser.GameObjects.Container | null {
+    return this.container;
+  }
 }

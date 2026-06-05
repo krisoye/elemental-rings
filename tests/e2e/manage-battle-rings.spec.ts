@@ -2045,14 +2045,14 @@ test('manage-battle-rings (#381/#423 impl): bench ghost local y is within visibl
     return t;
   })();
 
-  // Seed exactly 3 spares (1 row) so the ghost lands in row 1 (phY = 1×96+44 = 140).
+  // Seed exactly 3 spares (1 row) so the ghost lands in row 1 (phY = 1×92+44 = 136).
   await seedSpares(tok, 3);
 
   const page = await ctx.newPage();
   await loadForest(page);
   await openBattleHand(page);
 
-  const GRID_VISIBLE_BOTTOM_LOCAL = 3 * 96; // RINGWALL_VISIBLE_ROWS * GRID_ROW_GAP = 288
+  const GRID_VISIBLE_BOTTOM_LOCAL = 3 * 92; // RINGWALL_VISIBLE_ROWS * GRID_ROW_GAP = 276
 
   const ghostInfo = await page.evaluate((visBottom) => {
     const scene = (window as any).__game?.scene?.getScene('ForestScene') as any;

@@ -48,7 +48,7 @@ export class BattleHandOverlay {
   get spareGrid()   { return this.overlay?.getSpareGrid() ?? null; }
   get swap()        { return this.overlay?.getSwap(); }
   get pendingRingId(): string | null { return this.pendingRingId_; }
-  get discardConfirm(): Phaser.GameObjects.Container | null { return null; }
+  get discardConfirm(): Phaser.GameObjects.Container | null { return this.discard_.container_; }
   async refreshManageData(): Promise<void> { if (this.overlay) await this.refresh(this.overlay); }
   renderManageModal(): void {
     if (!this.overlay?.isOpen()) return;
@@ -176,6 +176,7 @@ export class BattleHandOverlay {
 
   private doConfirm(ringId: string, source: SwapSlot | null, isPending: boolean): void {
     void this.deleteRing(ringId);
+    this.overlay?.clearSelection(); // mirror old dismissConfirm — never hold a deleted ring
     if (window.__encounterState && isPending) window.__encounterState.pendingWonRing = null;
   }
 }

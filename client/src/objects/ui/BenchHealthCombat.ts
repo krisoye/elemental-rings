@@ -1,7 +1,7 @@
 import Phaser from 'phaser';
 import { SLOT_KEYS } from '../../Constants';
 import type { SlotKey } from '../../Constants';
-import { InventoryGrid, type RingData } from '../InventoryGrid';
+import { InventoryGrid, type RingData, GRID_CARD_W, GRID_COL_GAP, GRID_ROW_GAP } from '../InventoryGrid';
 import { RingCard } from './RingCard';
 import { attachTooltip } from './Tooltip';
 import { addDomLabel, crispCanvasText } from './DomLabel';
@@ -159,22 +159,19 @@ export class BenchHealthCombat extends Phaser.GameObjects.Container {
     // Removes the old emptySpareActionable gate; the ghost is now passive until clicked.
     if (benchN < spareMax) {
       const GHOST_NUM_COLS = 3;
-      const GHOST_CARD_W = 72;  // GRID_CARD_W from InventoryGrid
-      const GHOST_CARD_H = 88;  // GRID_CARD_H from InventoryGrid
-      const GHOST_COL_GAP = 80; // GRID_COL_GAP from InventoryGrid
-      const GHOST_ROW_GAP = 96; // GRID_ROW_GAP from InventoryGrid
+      const GHOST_CARD_H = 88; // CARD_H in InventoryGrid (not exported)
       const GHOST_CONTENT_TOP_Y = 148;
       const GHOST_MODAL_BOTTOM = 538;
       const GHOST_VISIBLE_ROWS = 3;
-      const rawPhY = Math.ceil(benchRings.length / GHOST_NUM_COLS) * GHOST_ROW_GAP + GHOST_CARD_H / 2;
+      const rawPhY = Math.ceil(benchRings.length / GHOST_NUM_COLS) * GRID_ROW_GAP + GHOST_CARD_H / 2;
       const maxLocalY = GHOST_MODAL_BOTTOM - GHOST_CONTENT_TOP_Y - GHOST_CARD_H / 2 - 4;
       const phY = Math.min(rawPhY, maxLocalY);
-      const GHOST_VISIBLE_BOTTOM_LOCAL = GHOST_VISIBLE_ROWS * GHOST_ROW_GAP;
+      const GHOST_VISIBLE_BOTTOM_LOCAL = GHOST_VISIBLE_ROWS * GRID_ROW_GAP;
       if (phY < GHOST_VISIBLE_BOTTOM_LOCAL) {
         const nextCol = benchRings.length % GHOST_NUM_COLS;
-        const phX = nextCol * GHOST_COL_GAP + GHOST_CARD_W / 2;
+        const phX = nextCol * GRID_COL_GAP + GRID_CARD_W / 2;
         const ph = this.scene.add
-          .rectangle(phX, phY, GHOST_CARD_W, GHOST_CARD_H, 0x2a2a33)
+          .rectangle(phX, phY, GRID_CARD_W, GHOST_CARD_H, 0x2a2a33)
           .setScrollFactor(0)
           .setStrokeStyle(2, 0x665544)
           .setAlpha(0.7)

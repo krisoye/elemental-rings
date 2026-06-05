@@ -325,10 +325,10 @@ export abstract class BaseBiomeScene extends DualCameraScene {
       onDiscardSlotClick: (ov) => {
         const sel = ov.selection;
         if (!sel) return;
-        // Look up the ring from the shrine overlay's own data (no getRingData on grid).
-        const meData = (window as any).__campState;
+        // Look up the ring from the /api/me snapshot this overlay was opened with —
+        // never window.__campState, which is CampScene-owned and stale in biome scenes.
         const ring: RingData | null =
-          (meData?.rings as RingData[] | undefined)?.find((r: RingData) => r.id === sel.ringId) ?? null;
+          meData.rings.find((r: RingData) => r.id === sel.ringId) ?? null;
         const discard = new DiscardConfirm(this);
         discard.open(ring, sel.ringId,
           async () => {

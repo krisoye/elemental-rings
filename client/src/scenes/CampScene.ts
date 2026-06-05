@@ -1,5 +1,5 @@
 import Phaser from 'phaser';
-import { InventoryGrid, type RingData } from '../objects/InventoryGrid';
+import { InventoryGrid, type RingData, GRID_CARD_W, GRID_COL_GAP, GRID_ROW_GAP } from '../objects/InventoryGrid';
 import { RingCard, usePips } from '../objects/ui/RingCard';
 import { attachTooltip } from '../objects/ui/Tooltip';
 import { SlotSwapManager, type SwapSlot } from '../objects/ui/SlotSwapManager';
@@ -844,18 +844,15 @@ export class CampScene extends DualCameraScene {
           const reliqCap: number = campS?.reliquaryCap ?? 0;
           if (reliqCount < reliqCap) {
             const G_NUM_COLS = 3;
-            const G_CARD_W = 72;
-            const G_CARD_H = 88;
-            const G_COL_GAP = 80;
-            const G_ROW_GAP = 96;
-            const rawPhY = Math.ceil(reliqCount / G_NUM_COLS) * G_ROW_GAP + G_CARD_H / 2;
+            const G_CARD_H = 88; // CARD_H in InventoryGrid (not exported)
+            const rawPhY = Math.ceil(reliqCount / G_NUM_COLS) * GRID_ROW_GAP + G_CARD_H / 2;
             const SPIRIT_VISIBLE_ROWS = RINGWALL_VISIBLE_ROWS;
-            const GHOST_VISIBLE_BOTTOM = SPIRIT_VISIBLE_ROWS * G_ROW_GAP;
+            const GHOST_VISIBLE_BOTTOM = SPIRIT_VISIBLE_ROWS * GRID_ROW_GAP;
             if (rawPhY < GHOST_VISIBLE_BOTTOM) {
               const nextCol = reliqCount % G_NUM_COLS;
-              const phX = nextCol * G_COL_GAP + G_CARD_W / 2;
+              const phX = nextCol * GRID_COL_GAP + GRID_CARD_W / 2;
               const spiritGhost = this.add
-                .rectangle(phX, rawPhY, G_CARD_W, G_CARD_H, 0x1a2233)
+                .rectangle(phX, rawPhY, GRID_CARD_W, G_CARD_H, 0x1a2233)
                 .setScrollFactor(0)
                 .setStrokeStyle(2, 0x446688)
                 .setAlpha(0.7)
