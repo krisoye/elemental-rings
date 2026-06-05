@@ -80,12 +80,14 @@ test('visual-capture', async ({ browser }) => {
       await page.goto(BASE);
       await page.waitForFunction(() => (window as any).__activeScene === 'CampScene', { timeout: 15000 });
       await enterForestScreen(page, screenId);
+      await page.waitForTimeout(1200); // allow Phaser tilemap render pipeline to settle
       await page.screenshot({ path: captureOut });
 
     } else if (rawTarget === 'camp') {
       // ── camp ──────────────────────────────────────────────────────────────
       await page.goto(BASE);
       await page.waitForFunction(() => (window as any).__activeScene === 'CampScene', { timeout: 15000 });
+      await page.waitForTimeout(1200); // allow CampScene first frame to settle
       await page.screenshot({ path: captureOut });
 
     } else if (rawTarget === 'battle:solo') {
