@@ -107,7 +107,7 @@ export class BattleHandOverlay {
         await this.refresh(ov);
       },
       onRecharge: async () => {
-        await this.apiPost('/api/spirit/recharge-all');
+        await this.apiPost('/api/spirit/recharge-all', {});
         if (this.overlay) await this.refresh(this.overlay);
       },
       getThumbTooltip: () => {
@@ -127,7 +127,7 @@ export class BattleHandOverlay {
         const sel = ov.selection;
         if (sel) this.openConfirm(sel.ringId, sel.source);
       },
-      onSpareGridSelect: async (ring, ov) => {
+      onBenchGridSelect: async (ring, ov) => {
         if (!ring) { ov.clearSelection(); await this.refresh(ov); return; }
         const sel = ov.selection;
         if (sel?.source === 'heart') { await this.apiPut('/api/heart-slot', { ringId: ring.id, releaseTo: 'spare' }); ov.clearSelection(); await this.refresh(ov); return; }

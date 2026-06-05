@@ -69,16 +69,18 @@ export class BenchHealthCombat extends Phaser.GameObjects.Container {
   private readonly domLabels: Phaser.GameObjects.DOMElement[] = [];
 
   /**
-   * @param scene          host Phaser scene
-   * @param onRecharge     fired when `[RECHARGE]` is clicked
-   * @param onSlotClick    fired when a HEALTH or COMBAT slot card is clicked
+   * @param scene           host Phaser scene
+   * @param onRecharge      fired when `[RECHARGE]` is clicked
+   * @param onSlotClick     fired when a HEALTH or COMBAT slot card is clicked
    * @param getThumbTooltip lazy supplier for the STATUS hover tooltip text
+   * @param onBenchSelect   fired when a bench card is clicked (ring | null for deselect)
    */
   constructor(
     scene: Phaser.Scene,
     private readonly onRecharge: () => void,
     private readonly onSlotClick: (slot: 'heart' | SlotKey) => void,
     private readonly getThumbTooltip: () => string,
+    private readonly onBenchSelect: (ring: RingData | null) => void,
   ) {
     super(scene, 0, 0);
     scene.add.existing(this);
@@ -88,10 +90,13 @@ export class BenchHealthCombat extends Phaser.GameObjects.Container {
    * (Re)build all sub-components from a fresh /api/me snapshot. Safe to call
    * repeatedly — tears down the previous state before building new.
    *
-   * @param me          latest /api/me payload
-   * @param swapSource  the currently-selected slot/section, or null (drives strokes)
+   * @param me              latest /api/me payload
+   * @param swapSource      the currently-selected slot/section, or null (drives strokes)
+   * @param selectedRingId  ring id currently selected from the bench (source = 'spare'),
+   *                        or null. When provided, the bench card bg gets a yellow stroke
+   *                        and all other bench cards are dimmed to 0.45 alpha.
    */
-  build(me: BenchHealthCombatMe, swapSource: string | null): void {
+  build(me: BenchHealthCombatMe, swapSource: string | null, selectedRingId: string | null = null): void {
     this.teardown();
 
     const loadout = me.loadout ?? {};
@@ -120,12 +125,26 @@ export class BenchHealthCombat extends Phaser.GameObjects.Container {
       this.scene,
       BENCH_GRID_X,
       BENCH_GRID_TOP_Y,
-      () => { /* selection driven by overlay's swap controller */ },
+      (ring) => this.onBenchSelect(ring),
       3,
     );
     benchGrid.setScrollFactor(0);
     benchGrid.populate(benchRings);
     benchGrid.setVisibleRows(RINGWALL_VISIBLE_ROWS);
+
+    // Apply yellow selection stroke to the currently-selected bench ring,
+    // and dim all other bench cards when the bench is full.
+    if (selectedRingId !== null) {
+      const selBg = benchGrid.getCardBg(selectedRingId);
+      if (selBg) selBg.setStrokeStyle(3, 0xffff00);
+    }
+    if (benchFull) {
+      benchRings.forEach((r) => {
+        const bg = benchGrid.getCardBg(r.id);
+        if (bg) bg.setAlpha(0.45);
+      });
+    }
+
     this.scene.add.existing(benchGrid);
     this.add(benchGrid);
     this.benchGrid = benchGrid;

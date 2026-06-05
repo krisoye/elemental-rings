@@ -24,7 +24,6 @@ import {
   publishRingMgmtState,
   clearRingMgmtState,
   COLUMN_LABELS,
-  isPickupBlockedByFullBench,
   type RingMgmtMode,
   type RingMgmtCounters,
 } from '../../client/src/objects/ui/RingManagementOverlay';
@@ -806,104 +805,92 @@ describe('#389 CampScene COMBAT cluster: local-space coordinate constants (Phase
 });
 
 // ===========================================================================
-// Class 9 — isPickupBlockedByFullBench: symmetric-swap guard (#395)
+// Class 9 — Drop-time bench-full guard (#413)
 // ===========================================================================
 
-describe('#395 isPickupBlockedByFullBench: symmetric-swap invariants', () => {
+describe('#413 drop-time bench-full guard: benchSpareCount predicate', () => {
+  // The pick-up-time guard (isPickupBlockedByFullBench) was deleted in #413.
+  // The new drop-time guard lives in CampScene.reliquaryMove and uses
+  // benchSpareCount directly. These tests verify the predicate used by that guard.
 
-  // ── Basic gate ─────────────────────────────────────────────────────────────
+  function makeRing(id: string, inCarry: 0 | 1, pending = 0): RingData {
+    return {
+      id,
+      in_carry: inCarry,
+      element: 0,
+      tier: 'T0',
+      xp: 0,
+      current_uses: 1,
+      max_uses: 3,
+      escrowed: 0,
+      pending,
+    } as unknown as RingData;
+  }
 
-  it('returns false when bench is NOT full (gate fires first regardless of other args)', () => {
-    // The guard is a no-op when the bench has room — no pick-up can overflow it.
-    expect(isPickupBlockedByFullBench('reliquary', null, false)).toBe(false);
-    expect(isPickupBlockedByFullBench('reliquary', 'spare', false)).toBe(false);
-    expect(isPickupBlockedByFullBench('reliquary', 'reliquary', false)).toBe(false);
+  it('benchSpareCount returns 0 when no rings are carried', () => {
+    const rings: RingData[] = [makeRing('r1', 0), makeRing('r2', 0)];
+    const loadout: Record<string, string | null> = { a1: null, a2: null, d1: null, d2: null, thumb: null };
+    expect(benchSpareCount(rings, loadout, null)).toBe(0);
   });
 
-  // ── Net one-way: old blocking behaviour ────────────────────────────────────
-
-  it('blocks reliquary pick-up when bench full and nothing is selected (old guard parity)', () => {
-    // The OLD guard blocked every reliquary pick-up at full bench. The symmetric
-    // guard must still block the case where the pick-up WOULD overflow the bench:
-    // nothing selected yet, so a reliquary ring dropped into spare = net +1. Block.
-    expect(isPickupBlockedByFullBench('reliquary', null, true)).toBe(true);
+  it('benchSpareCount counts carried rings not in battle slots and not pending', () => {
+    const rings: RingData[] = [
+      makeRing('spare1', 1),
+      makeRing('spare2', 1),
+      makeRing('battle', 1),
+    ];
+    const loadout: Record<string, string | null> = { a1: 'battle', a2: null, d1: null, d2: null, thumb: null };
+    // spare1 + spare2 count; battle is slotted → excluded
+    expect(benchSpareCount(rings, loadout, null)).toBe(2);
   });
 
-  it('blocks reliquary pick-up when bench full and a non-bench ring is already selected', () => {
-    // If a battle-slot ring is already held (source 'a1'), dropping a reliquary ring
-    // into spare later would still be a net +1 onto the bench. Block.
-    expect(isPickupBlockedByFullBench('reliquary', 'a1', true)).toBe(true);
-    expect(isPickupBlockedByFullBench('reliquary', 'thumb', true)).toBe(true);
-    expect(isPickupBlockedByFullBench('reliquary', 'heart', true)).toBe(true);
-    expect(isPickupBlockedByFullBench('reliquary', 'd2', true)).toBe(true);
+  it('benchSpareCount excludes the pending WON ring from the count', () => {
+    const rings: RingData[] = [
+      makeRing('spare1', 1),
+      makeRing('pending1', 1, 1),
+    ];
+    const loadout: Record<string, string | null> = { a1: null, a2: null, d1: null, d2: null, thumb: null };
+    // pending1 excluded by pendingRingId
+    expect(benchSpareCount(rings, loadout, 'pending1')).toBe(1);
   });
 
-  // ── Net-zero swap: the key new behaviour ───────────────────────────────────
-
-  it('allows reliquary pick-up when bench full but a spare ring is already selected (net-zero)', () => {
-    // A spare ring is held (will leave the bench on drop). Picking up a reliquary
-    // ring is the "receive" side of a net-zero swap: one leaves, one enters = 0 delta.
-    // The old guard incorrectly blocked this. The new guard must NOT block it.
-    expect(isPickupBlockedByFullBench('reliquary', 'spare', true)).toBe(false);
+  it('drop-time guard rejects target===spare when bench is at capacity (spareCount >= spareMax)', () => {
+    // Simulate the guard logic from CampScene.reliquaryMove.
+    // When spareCount >= spareRingMax the move to 'spare' must be rejected.
+    const spareRingMax = 3;
+    const rings: RingData[] = [
+      makeRing('s1', 1),
+      makeRing('s2', 1),
+      makeRing('s3', 1), // bench full at 3
+    ];
+    const loadout: Record<string, string | null> = { a1: null, a2: null, d1: null, d2: null, thumb: null };
+    const spareCount = benchSpareCount(rings, loadout, null);
+    // The guard condition from reliquaryMove:
+    const wouldBeRejected = spareCount >= spareRingMax;
+    expect(wouldBeRejected).toBe(true);
   });
 
-  it('allows picking up FROM the bench itself (spare) even when bench is full', () => {
-    // Picking up a spare ring never makes the bench MORE full — you are removing one.
-    // This must not be blocked regardless of what is currently selected.
-    expect(isPickupBlockedByFullBench('spare', null, true)).toBe(false);
-    expect(isPickupBlockedByFullBench('spare', 'a1', true)).toBe(false);
-    expect(isPickupBlockedByFullBench('spare', 'spare', true)).toBe(false);
-    expect(isPickupBlockedByFullBench('spare', 'reliquary', true)).toBe(false);
+  it('drop-time guard allows target===spare when bench has capacity (spareCount < spareMax)', () => {
+    const spareRingMax = 9;
+    const rings: RingData[] = [makeRing('s1', 1), makeRing('s2', 1)];
+    const loadout: Record<string, string | null> = { a1: null, a2: null, d1: null, d2: null, thumb: null };
+    const spareCount = benchSpareCount(rings, loadout, null);
+    const wouldBeRejected = spareCount >= spareRingMax;
+    expect(wouldBeRejected).toBe(false);
   });
 
-  // ── Adversarial pick-up orders ─────────────────────────────────────────────
-
-  it('order A (spare first, reliquary second) — second pick-up is ALLOWED (net-zero)', () => {
-    // Order A: player picks up a spare (bench → -1), then picks up a reliquary ring
-    // (will go to bench on drop → +1). Net change = 0. The second pick-up is ALLOWED.
-    // Step 1: pick up spare (currentSel = null, bench was at cap but we just took one).
-    // Guard is called for the SECOND pick-up (reliquary), when currentSel = 'spare'.
-    expect(isPickupBlockedByFullBench('reliquary', 'spare', true)).toBe(false);
+  it('drop-time guard allows SPIRIT->battle-slot swap at full bench (target !== spare)', () => {
+    // GDD §4: SPIRIT ↔ battle-slot swaps are always valid regardless of bench count.
+    // Guard only fires when target === 'spare'.
+    const spareRingMax = 3;
+    const rings: RingData[] = [makeRing('s1', 1), makeRing('s2', 1), makeRing('s3', 1)];
+    const loadout: Record<string, string | null> = { a1: null, a2: null, d1: null, d2: null, thumb: null };
+    const spareCount = benchSpareCount(rings, loadout, null);
+    const target = 'a1'; // battle slot — not 'spare'
+    // Guard condition: only activates when target === 'spare'
+    const wouldBeRejected = target === 'spare' && spareCount >= spareRingMax;
+    expect(wouldBeRejected).toBe(false);
   });
-
-  it('order B (reliquary first at full bench) — first pick-up is BLOCKED', () => {
-    // Order B: player tries to pick up a reliquary ring when bench is full and
-    // nothing is held yet. This would net +1 into the bench. Block it.
-    expect(isPickupBlockedByFullBench('reliquary', null, true)).toBe(true);
-  });
-
-  it('order B with a bench ring already selected — ALLOWED (player re-picked a bench ring)', () => {
-    // A bench ring was already selected (the reliquary → spare pick-up found it later).
-    // The guard is evaluated for 'reliquary' source with currentSel='spare' → allowed.
-    expect(isPickupBlockedByFullBench('reliquary', 'spare', true)).toBe(false);
-  });
-
-  // ── Non-reliquary non-bench sources ───────────────────────────────────────
-
-  it('battle-slot pick-up at full bench: blocked when nothing selected (net +1 if dropped to spare)', () => {
-    // If the player selects a battle-slot ring then drops it onto spare at full bench
-    // — that would net +1. Block the pick-up.
-    expect(isPickupBlockedByFullBench('a1', null, true)).toBe(true);
-    expect(isPickupBlockedByFullBench('thumb', null, true)).toBe(true);
-    expect(isPickupBlockedByFullBench('heart', null, true)).toBe(true);
-  });
-
-  it('battle-slot pick-up at full bench: allowed when a bench ring is held (net-zero)', () => {
-    // The player already holds a spare ring. Picking up a battle-slot ring and then
-    // dropping the spare somewhere is a net-zero trade. Allow the pick-up.
-    expect(isPickupBlockedByFullBench('a1', 'spare', true)).toBe(false);
-    expect(isPickupBlockedByFullBench('thumb', 'spare', true)).toBe(false);
-  });
-
-  // ── Symmetry assertion ────────────────────────────────────────────────────
-
-  it('symmetric: two reliquary pick-ups both blocked when bench full and no bench ring held', () => {
-    // Neither order of two reliquary pick-ups is allowed without an intermediate
-    // bench pick-up. Both calls must return true (each would net +1 independently).
-    expect(isPickupBlockedByFullBench('reliquary', null, true)).toBe(true);
-    expect(isPickupBlockedByFullBench('reliquary', 'reliquary', true)).toBe(true);
-  });
-
 });
 
 // ===========================================================================
@@ -1033,37 +1020,51 @@ describe('#395 BenchHealthCombat: architectural contract (source scan)', () => {
 });
 
 // ===========================================================================
-// Class 11 — isPickupBlockedByFullBench: exported from pure module (#395)
+// Class 11 — Drop-time guard: source-level assertions (#413)
 // ===========================================================================
 
-describe('#395 isPickupBlockedByFullBench: export from pure module', () => {
+describe('#413 drop-time guard: source-level assertions', () => {
 
-  it('is exported from RingManagementOverlay.ts (pure module)', () => {
-    // #395 — CampScene imports isPickupBlockedByFullBench from the pure module.
-    // Source-scan the pure module for the export.
+  it('isPickupBlockedByFullBench is NOT exported from RingManagementOverlay.ts (#413 deleted it)', () => {
+    // #413 — pick-up-time guard deleted; guard moved to drop time in reliquaryMove.
     const src = readClientSrc('objects/ui/RingManagementOverlay.ts');
     if (src === null) return;
     expect(
       src,
-      'isPickupBlockedByFullBench must be exported from RingManagementOverlay.ts',
-    ).toContain('isPickupBlockedByFullBench');
+      'isPickupBlockedByFullBench must NOT be present in RingManagementOverlay.ts after #413',
+    ).not.toContain('isPickupBlockedByFullBench');
   });
 
-  it('CampScene.ts imports isPickupBlockedByFullBench from RingManagementOverlay', () => {
-    // #395 — CampScene uses the symmetric-swap guard.
+  it('CampScene.ts does NOT import isPickupBlockedByFullBench (#413 deleted the import)', () => {
     const src = readClientSrc('scenes/CampScene.ts');
     if (src === null) return;
     expect(
       src,
-      'CampScene.ts must import isPickupBlockedByFullBench from RingManagementOverlay',
-    ).toContain('isPickupBlockedByFullBench');
+      'CampScene.ts must not import isPickupBlockedByFullBench after #413',
+    ).not.toContain('isPickupBlockedByFullBench');
+  });
+
+  it('CampScene.ts drop-time guard rejects spare target when bench full (source scan)', () => {
+    // #413 — the new guard is in reliquaryMove, not at pick-up time.
+    const src = readClientSrc('scenes/CampScene.ts');
+    if (src === null) return;
+    // The guard must check target === 'spare' and benchSpareCount.
+    expect(
+      src,
+      "CampScene.ts reliquaryMove must contain drop-time bench-full guard (target === 'spare')",
+    ).toContain("target === 'spare'");
+    expect(
+      src,
+      'CampScene.ts reliquaryMove must use benchSpareCount for drop-time guard',
+    ).toContain('benchSpareCount');
+    expect(
+      src,
+      'CampScene.ts must surface the bench-full rejection message',
+    ).toContain('Bench is full — discard a ring or move one to a battle slot first');
   });
 
   it('CampScene.ts does not contain the old asymmetric reliquary pick-up guard', () => {
-    // #395 — the old guard was:
-    //   if (source === 'reliquary' && window.__reliquaryLocked) { ... }
-    // It is replaced by isPickupBlockedByFullBench. Any residual guard string is an
-    // unconverted site that would block net-zero swaps.
+    // #413 — the old guard (source === reliquary && __reliquaryLocked) is gone.
     const src = readClientSrc('scenes/CampScene.ts');
     if (src === null) return;
     const lines = src.split('\n').filter((l) => !l.trim().startsWith('//') && !l.trim().startsWith('*'));
@@ -1072,7 +1073,7 @@ describe('#395 isPickupBlockedByFullBench: export from pure module', () => {
     );
     expect(
       hasOldGuard,
-      'CampScene.ts must not use the old asymmetric guard — replaced by isPickupBlockedByFullBench',
+      'CampScene.ts must not use the old asymmetric guard (deleted in #413)',
     ).toBe(false);
   });
 
@@ -1399,60 +1400,70 @@ describe('#396 teardown fuseParent guard: preserve on re-render, clear on close 
 });
 
 // ===========================================================================
-// Class 15 — Phase 1 adversarial: symmetric-swap same-column edge cases (#395)
+// Class 15 — Phase 1 adversarial: drop-time bench-full guard edge cases (#413)
 // ===========================================================================
 
-describe('#395 Phase 1 adversarial: symmetric-swap same-column edge cases', () => {
+describe('#413 Phase 1 adversarial: drop-time bench-full guard edge cases', () => {
+  // The pick-up-time guard (isPickupBlockedByFullBench) was deleted in #413.
+  // These tests verify that benchSpareCount (used by the drop-time guard) handles
+  // edge cases correctly. The drop-time guard rejects target==='spare' at capacity.
 
-  it('two bench rings swapped within the bench: both pick-ups allowed (net-zero between bench sections)', () => {
-    // #395 adversarial: swapping spare→spare is a bench-internal move.
-    // Neither pick-up should be blocked — the bench count stays constant.
-    // First pick-up: bench full, nothing selected → spare pick-up is always allowed.
-    expect(isPickupBlockedByFullBench('spare', null, true)).toBe(false);
-    // Second pick-up: bench full, a spare already selected → also allowed.
-    expect(isPickupBlockedByFullBench('spare', 'spare', true)).toBe(false);
+  function makeRing(id: string, inCarry: 0 | 1, pending = 0): RingData {
+    return {
+      id,
+      in_carry: inCarry,
+      element: 0,
+      tier: 'T0',
+      xp: 0,
+      current_uses: 1,
+      max_uses: 3,
+      escrowed: 0,
+      pending,
+    } as unknown as RingData;
+  }
+
+  it('pick-up from bench (spare) at full bench is never blocked at pick-up time (#413 invariant)', () => {
+    // With the drop-time guard, pick-up is ALWAYS allowed.
+    // The guard only fires at drop time (target === spare). This is verified by
+    // source scan in Class 11 and by E2E — no unit-test of CampScene.onRingClicked here.
+    // Verify benchSpareCount correctly reflects full bench state.
+    const rings: RingData[] = [
+      makeRing('s1', 1), makeRing('s2', 1), makeRing('s3', 1),
+    ];
+    const loadout: Record<string, string | null> = { a1: null, a2: null, d1: null, d2: null, thumb: null };
+    const spareRingMax = 3;
+    const spareCount = benchSpareCount(rings, loadout, null);
+    // benchSpareCount correctly reports 3 (full bench).
+    expect(spareCount).toBe(3);
+    // At full bench, dropping to spare is rejected.
+    expect(spareCount >= spareRingMax).toBe(true);
+    // Dropping to a battle slot (target !== 'spare') is NOT rejected at the drop-time guard.
+    const sources: Array<SwapSlot> = ['a1', 'a2', 'd1', 'd2', 'thumb', 'heart', 'reliquary'];
+    for (const target of sources) {
+      expect(target === 'spare' && spareCount >= spareRingMax).toBe(false);
+    }
   });
 
-  it('reliquary ring selected, then another reliquary ring attempted: second is BLOCKED', () => {
-    // #395 adversarial: player picks up reliquary ring A (fails the first guard,
-    // so this state is unreachable normally). But if both were permitted, picking up
-    // a second reliquary ring when currentSel is 'reliquary' (non-bench) should
-    // still be blocked — the first ring has not left the bench yet.
-    // currentSel='reliquary' is NOT a bench section, so net +1 risk remains.
-    expect(isPickupBlockedByFullBench('reliquary', 'reliquary', true)).toBe(true);
+  it('benchSpareCount handles heart ring exclusion correctly (heart is not in bench)', () => {
+    // A heart ring (heart_slot=1) is NOT in the spare pool. benchSpareCount does not
+    // exclude by heart_slot directly, but heart rings are filtered by the caller
+    // using in_carry state. Verify a ring with in_carry=0 is excluded.
+    const rings: RingData[] = [
+      makeRing('bench1', 1),
+      makeRing('resting', 0), // reliquary ring — not in carry
+    ];
+    const loadout: Record<string, string | null> = { a1: null, a2: null, d1: null, d2: null, thumb: null };
+    expect(benchSpareCount(rings, loadout, null)).toBe(1);
   });
 
-  it('heart ring selected (non-bench), reliquary pick-up is BLOCKED (heart is not a bench section)', () => {
-    // #395 adversarial: heart is in_carry=0 and NOT in the bench pool.
-    // A selected heart ring does not free up bench space. Block reliquary pick-up.
-    expect(isPickupBlockedByFullBench('reliquary', 'heart', true)).toBe(true);
-  });
-
-  it('spare ring selected, heart pick-up: allowed (bench ring held, net-zero for bench)', () => {
-    // Picking up a heart ring does not add to the bench — the heart ring goes to
-    // the heart slot, not the spare grid. Net bench change = -1 (spare leaves bench).
-    // The guard only blocks moves that would increase bench occupancy.
-    expect(isPickupBlockedByFullBench('heart', 'spare', true)).toBe(false);
-  });
-
-  it('bench full: picking up a non-bench, non-reliquary source (d1) is blocked when nothing selected', () => {
-    // #395 adversarial: battle-slot ring at d1. If dropped to spare it nets +1.
-    // This is the same case as 'a1', but explicitly testing all slot keys that
-    // are not bench sections.
-    expect(isPickupBlockedByFullBench('d1', null, true)).toBe(true);
-    expect(isPickupBlockedByFullBench('d2', null, true)).toBe(true);
-    expect(isPickupBlockedByFullBench('a2', null, true)).toBe(true);
-  });
-
-  it('benchFull=false: all sources pass regardless of currentSel', () => {
-    // #395 adversarial: when the bench is not full, the guard is a no-op.
-    // Exhaustively test all source types to ensure no false positives.
+  it('benchFull=false (count < max): all drop targets allowed without rejection', () => {
+    // When the bench is not full, no drop is rejected. Test the predicate directly.
+    const spareCount = 2;
+    const spareRingMax = 9;
     const sources: Array<SwapSlot> = ['spare', 'reliquary', 'thumb', 'heart', 'a1', 'a2', 'd1', 'd2'];
-    const sels: Array<SwapSlot | null> = [null, 'spare', 'reliquary', 'a1'];
-    for (const src of sources) {
-      for (const sel of sels) {
-        expect(isPickupBlockedByFullBench(src, sel, false)).toBe(false);
-      }
+    for (const target of sources) {
+      const wouldReject = target === 'spare' && spareCount >= spareRingMax;
+      expect(wouldReject, `target=${target} should not be rejected when bench not full`).toBe(false);
     }
   });
 

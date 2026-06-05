@@ -89,8 +89,11 @@ export interface RingManagementOverlayOpts {
   /** DISCARD slot clicked (field mode). */
   onDiscardSlotClick?: (overlay: RingManagementOverlay) => void;
 
-  /** Spare grid card selected (field mode — adapter routes swaps). */
-  onSpareGridSelect?: (ring: RingData | null, overlay: RingManagementOverlay) => void;
+  /**
+   * Bench grid card selected (field and sanctum modes — adapter routes swaps).
+   * Replaces the old `onSpareGridSelect`.
+   */
+  onBenchGridSelect?: (ring: RingData | null, overlay: RingManagementOverlay) => void;
 
   /**
    * Called with the freshly-built container after each render. Used by dual-camera
@@ -147,8 +150,6 @@ export class RingManagementOverlay {
   private domLabels: Phaser.GameObjects.DOMElement[] = [];
   /** Status text (errors). */
   private statusText: Phaser.GameObjects.Text | null = null;
-  /** Field mode — the spare InventoryGrid (bench, scrollable). */
-  private spareGrid: InventoryGrid | null = null;
   /** Fired when the overlay closes. */
   private onCloseCb?: () => void;
 
@@ -251,11 +252,12 @@ export class RingManagementOverlay {
   }
 
   /**
-   * E2E bridge — exposes the spare InventoryGrid (field mode). Null in sanctum mode
-   * or when the overlay is closed. Matches pre-#395 `battleHand.spareGrid`.
+   * E2E bridge — exposes the bench InventoryGrid for all modes. Delegates to
+   * BHC's bench grid (single source of truth after #413 consolidation). Null
+   * when the overlay is closed. Matches pre-#395 `battleHand.spareGrid` contract.
    */
   getSpareGrid(): InventoryGrid | null {
-    return this.spareGrid;
+    return this.bhc?.getBenchGrid() ?? null;
   }
 
   /**
@@ -283,7 +285,9 @@ export class RingManagementOverlay {
       rings: this.allRings,
       loadout: this.manageLoadout,
     };
-    this.bhc.build(me, this.swap.selection?.source ?? null);
+    const selRingIdBhc =
+      this.swap.selection?.source === 'spare' ? (this.swap.selection.ringId ?? null) : null;
+    this.bhc.build(me, this.swap.selection?.source ?? null, selRingIdBhc);
     const spareMax = this.managePlayer?.spare_ring_max ?? 0;
     const benchN = benchSpareCount(this.allRings, this.manageLoadout, this.pendingRingId);
     publishRingMgmtState(
@@ -357,11 +361,18 @@ export class RingManagementOverlay {
     }
 
     // ── Shared right half (BenchHealthCombat) ───────────────────────────────
+    // Per-mode bench-select callback wired into BHC (replaces the old no-op).
+    const onBenchSelect =
+      this.mode === 'fusion'
+        ? (ring: RingData | null) => { if (ring) this.onFusionBenchClick(ring); }
+        : (ring: RingData | null) => this.opts.onBenchGridSelect?.(ring, this);
+
     const bhc = new BenchHealthCombat(
       this.scene,
       () => this.opts.onRecharge(this),
       (slot) => this.onSlotClick(slot),
       () => this.opts.getThumbTooltip?.() ?? '',
+      onBenchSelect,
     );
     const me: BenchHealthCombatMe = {
       player: {
@@ -372,9 +383,17 @@ export class RingManagementOverlay {
       rings: this.allRings,
       loadout: this.manageLoadout,
     };
-    bhc.build(me, this.swap.selection?.source ?? null);
+    // Pass selected bench ring id so BHC can apply yellow stroke + dim inside build().
+    const selRingId =
+      this.swap.selection?.source === 'spare' ? (this.swap.selection.ringId ?? null) : null;
+    bhc.build(me, this.swap.selection?.source ?? null, selRingId);
     c.add(bhc);
     this.bhc = bhc;
+
+    // Field mode — attach empty-bench placeholder to BHC's bench grid now that BHC is built.
+    if (this.mode === 'field') {
+      this.attachEmptyBenchPlaceholder(bhc);
+    }
 
     // ♥ cur/max label with dark backing rect — added as direct children of the
     // modal container (not inside BenchHealthCombat) so the flat modal.getAll()
@@ -501,66 +520,57 @@ export class RingManagementOverlay {
       }),
     );
 
-    // Spare InventoryGrid — positioned at BENCH column origin (matches BenchHealthCombat).
-    const GRID_ORIGIN_X = 370;
-    const GRID_CONTENT_TOP_Y = 148;
-    // 3 visible rows (spare_ring_max=9; 9 rings = 3 rows of 3). Rows 4+ scroll via
-    // ▲/▼ arrows or mouse wheel. Matches the original BattleHandOverlay design intent.
-    const RINGWALL_VISIBLE_ROWS = 3;
+    // Empty-bench placeholder geometry is stored for attaching to BHC's bench grid
+    // after BHC is constructed (see render() below). We capture the needed values here.
+    this.pendingEmptyBenchPlaceholder = {
+      usedSpares: availableRings.length,
+      spareCapacity: spareMax,
+      selId: this.swap.selection?.ringId ?? null,
+      selSrc: this.swap.selection?.source ?? null,
+    };
+  }
 
-    const spareGrid = new InventoryGrid(
-      this.scene,
-      GRID_ORIGIN_X,
-      GRID_CONTENT_TOP_Y,
-      (ring) => this.opts.onSpareGridSelect?.(ring, this),
-      3,
-    );
-    spareGrid.setScrollFactor(0);
-    spareGrid.populate(availableRings);
-    spareGrid.setVisibleRows(RINGWALL_VISIBLE_ROWS);
-    const selId = this.swap.selection?.ringId ?? null;
-    const selSrc = this.swap.selection?.source ?? null;
-    if (selId !== null && selSrc === 'spare') {
-      const selBg = spareGrid.getCardBg(selId);
-      if (selBg) selBg.setStrokeStyle(3, 0xffff00);
-    }
-    if (benchFull) {
-      availableRings.forEach((r) => {
-        const bg = spareGrid.getCardBg(r.id);
-        if (bg) bg.setAlpha(0.45);
-      });
-    }
-    this.scene.add.existing(spareGrid);
-    c.add(spareGrid);
-    this.spareGrid = spareGrid;
+  /**
+   * Transient state set by `renderFieldLeft` so `render()` can attach the empty-bench
+   * placeholder to BHC's bench grid after BHC is built. Cleared after use.
+   */
+  private pendingEmptyBenchPlaceholder: {
+    usedSpares: number;
+    spareCapacity: number;
+    selId: string | null;
+    selSrc: string | null;
+  } | null = null;
 
-    // Empty-spare placeholder: interactive rect in spareGrid.getCardContainer() so it
-    // scrolls with the grid. Shown when something actionable is held (battle-slot,
-    // heart, or pending ring) and the bench has capacity. Mirrors the old BHO logic.
-    const usedSpares = availableRings.length;
-    const spareCapacity = spareMax;
+  /** Attach the empty-bench placeholder to the BHC bench grid (field mode only). */
+  private attachEmptyBenchPlaceholder(bhc: BenchHealthCombat): void {
+    const p = this.pendingEmptyBenchPlaceholder;
+    this.pendingEmptyBenchPlaceholder = null;
+    if (!p) return;
+    const { usedSpares, spareCapacity, selId, selSrc } = p;
     const emptySpareActionable = selId !== null && selSrc !== 'spare';
-    if (emptySpareActionable && usedSpares < spareCapacity) {
-      const GRID_CARD_H = 88;
-      const MODAL_BOTTOM = 538;
-      const NUM_COLS = 3;
-      const rawPhY = Math.ceil(usedSpares / NUM_COLS) * GRID_ROW_GAP + GRID_CARD_H / 2;
-      const maxLocalY = MODAL_BOTTOM - GRID_CONTENT_TOP_Y - GRID_CARD_H / 2 - 4;
-      const phY = Math.min(rawPhY, maxLocalY);
-      const GRID_VISIBLE_BOTTOM_LOCAL = RINGWALL_VISIBLE_ROWS * GRID_ROW_GAP;
-      if (phY < GRID_VISIBLE_BOTTOM_LOCAL) {
-        const nextCol = usedSpares % NUM_COLS;
-        const phX = nextCol * GRID_COL_GAP + GRID_CARD_W / 2;
-        const ph = this.scene.add
-          .rectangle(phX, phY, GRID_CARD_W, GRID_CARD_H, 0x2a2a33)
-          .setScrollFactor(0)
-          .setStrokeStyle(2, 0x665544)
-          .setAlpha(0.7)
-          .setInteractive({ useHandCursor: true })
-          .on('pointerdown', () => { void this.swap.moveTo('spare'); });
-        spareGrid.getCardContainer().add(ph);
-      }
-    }
+    if (!emptySpareActionable || usedSpares >= spareCapacity) return;
+    const GRID_CONTENT_TOP_Y = 148;
+    const GRID_VISIBLE_ROWS = 3;
+    const GRID_CARD_H = 88;
+    const MODAL_BOTTOM = 538;
+    const NUM_COLS = 3;
+    const rawPhY = Math.ceil(usedSpares / NUM_COLS) * GRID_ROW_GAP + GRID_CARD_H / 2;
+    const maxLocalY = MODAL_BOTTOM - GRID_CONTENT_TOP_Y - GRID_CARD_H / 2 - 4;
+    const phY = Math.min(rawPhY, maxLocalY);
+    const GRID_VISIBLE_BOTTOM_LOCAL = GRID_VISIBLE_ROWS * GRID_ROW_GAP;
+    if (phY >= GRID_VISIBLE_BOTTOM_LOCAL) return;
+    const grid = bhc.getBenchGrid();
+    if (!grid) return;
+    const nextCol = usedSpares % NUM_COLS;
+    const phX = nextCol * GRID_COL_GAP + GRID_CARD_W / 2;
+    const ph = this.scene.add
+      .rectangle(phX, phY, GRID_CARD_W, GRID_CARD_H, 0x2a2a33)
+      .setScrollFactor(0)
+      .setStrokeStyle(2, 0x665544)
+      .setAlpha(0.7)
+      .setInteractive({ useHandCursor: true })
+      .on('pointerdown', () => { void this.swap.moveTo('spare'); });
+    grid.getCardContainer().add(ph);
   }
 
   /**
@@ -745,21 +755,8 @@ export class RingManagementOverlay {
     // (sanctum-zones.spec.ts line 203) continue to work unchanged.
     this.publishFusionState();
 
-    // ── Wire bench card clicks for parent assignment ──────────────────────────
-    // BHC builds its bench grid synchronously in build(); after BHC is added to the
-    // container we can reach each bench card bg via getBenchGrid().getCardBg(id) and
-    // attach a secondary pointerdown handler for the fusion assignment logic.
-    const benchRings = this.getBenchRingsForFusion();
-    this.scene.time.delayedCall(0, () => {
-      const grid = this.bhc?.getBenchGrid();
-      if (!grid) return;
-      for (const ring of benchRings) {
-        const bg = grid.getCardBg(ring.id);
-        if (!bg) continue;
-        bg.setInteractive({ useHandCursor: true });
-        bg.on('pointerdown', () => this.onFusionBenchClick(ring));
-      }
-    });
+    // Bench card clicks for parent assignment are wired via the onBenchSelect callback
+    // passed to BHC in render(). The delayedCall(0) hack is no longer needed.
   }
 
   /**
@@ -897,13 +894,10 @@ export class RingManagementOverlay {
   }
 
   private teardown(fireCb = false): void {
+    this.pendingEmptyBenchPlaceholder = null;
     if (this.bhc) {
       this.bhc.destroy();
       this.bhc = null;
-    }
-    if (this.spareGrid) {
-      this.spareGrid.destroy();
-      this.spareGrid = null;
     }
     this.domLabels.forEach((l) => l.destroy());
     this.domLabels = [];
