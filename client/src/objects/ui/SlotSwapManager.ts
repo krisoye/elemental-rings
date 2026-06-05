@@ -35,8 +35,13 @@ export interface SwapConfig {
    * `to`. The host performs every server mutation here and resolves when the
    * round-trip is done (or has surfaced its own error). Never called when
    * `to === from` (that path deselects) or when `to` is not in {@link validSlots}.
+   *
+   * Returns `true` when the move was committed (the manager then clears the
+   * selection and runs `onAfter`) and `false` when it failed (#421 — the manager
+   * keeps the selection held so the player can retry against a different target
+   * without re-picking the ring).
    */
-  resolveMove(ringId: string, from: SwapSlot, to: SwapSlot): Promise<void>;
+  resolveMove(ringId: string, from: SwapSlot, to: SwapSlot): Promise<boolean>;
   /**
    * Run after a successful {@link resolveMove} (and after the selection is
    * cleared) — typically reload `/api/me` and re-render. May be async; the
@@ -71,8 +76,9 @@ export class SlotSwapManager {
    * Resolve the pending selection onto `target`. No-op when nothing is selected.
    * When `target === selection.source` the click is a re-click on the origin slot
    * and simply deselects. Otherwise, when `target` is a valid slot, the host's
-   * `resolveMove(ringId, source, target)` runs, the selection is cleared, and
-   * `onAfter()` runs.
+   * `resolveMove(ringId, source, target)` runs. Only when it resolves `true` is
+   * the selection cleared and `onAfter()` run; on `false` (#421) the selection is
+   * kept held so the player can retry.
    */
   async moveTo(target: SwapSlot): Promise<void> {
     const sel = this.current;
@@ -83,7 +89,8 @@ export class SlotSwapManager {
       return;
     }
     if (!this.config.validSlots.includes(target)) return;
-    await this.config.resolveMove(sel.ringId, sel.source, target);
+    const committed = await this.config.resolveMove(sel.ringId, sel.source, target);
+    if (!committed) return; // move rejected — keep the selection held for a retry
     this.clear();
     await this.config.onAfter();
   }

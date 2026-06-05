@@ -347,8 +347,8 @@ export class CampScene extends DualCameraScene {
     // #397 — hook proxies Sanctum RECHARGE; passes includeReliquary=true so E2E
     // tests assert reliquary ring restoration without a separate hook.
     window.__campRechargeAll = (): Promise<void> => this.doRechargeAll(true);
-    window.__campAddToLoadout = (ringId: string): Promise<void> => this.moveToCarry(ringId, true);
-    window.__campLeaveAtSanctum = (ringId: string): Promise<void> => this.moveToCarry(ringId, false);
+    window.__campAddToLoadout = async (ringId: string): Promise<void> => { await this.moveToCarry(ringId, true); };
+    window.__campLeaveAtSanctum = async (ringId: string): Promise<void> => { await this.moveToCarry(ringId, false); };
     window.__campOpenFusion = (): void => this.openFusionPanel();
     window.__campFuse = (ringId1: string, ringId2: string): Promise<string | null> =>
       this.doFuse(ringId1, ringId2);
@@ -711,7 +711,10 @@ export class CampScene extends DualCameraScene {
     this.sanctumOverlay = new RingManagementOverlay(this, 'sanctum', {
       // ── resolveMove: delegate to CampScene's existing reliquaryMove ──────────
       resolveMove: async (ringId, from, to) => {
-        await this.reliquaryMove(ringId, to, from);
+        // #421 — reliquaryMove surfaces its own errors and reports whether the
+        // mutation committed; propagate so the shared SlotSwapManager keeps the
+        // selection held when a sanctum move is rejected.
+        return await this.reliquaryMove(ringId, to, from);
       },
 
       // ── onBenchGridSelect: route bench card clicks through onGridSelectionChanged ─
@@ -959,10 +962,10 @@ export class CampScene extends DualCameraScene {
       ringId: string,
       source: 'reliquary' | 'spare' | 'battle',
     ): void => this.selectReliquaryRing(ringId, source);
-    window.__reliquaryMove = (
+    window.__reliquaryMove = async (
       ringId: string,
       target: 'reliquary' | 'spare' | 'thumb' | 'heart' | LoadoutSlot,
-    ): Promise<void> => this.reliquaryMove(ringId, target);
+    ): Promise<void> => { await this.reliquaryMove(ringId, target); };
   }
 
   /**
@@ -1564,21 +1567,27 @@ export class CampScene extends DualCameraScene {
    *   - within the loadout (Spare ↔ Battle Hand): PUT /api/loadout only — no
    *     carry change, so aggregate_xp is unchanged.
    * After the round-trip refreshPools rebuilds __campState and the header re-renders.
+   *
+   * #421 — returns `true` only when a mutation actually committed to the server.
+   * Every early-return rejection path (ring not found, escrowed, bench-full guard,
+   * failed carry/loadout/heart-slot round-trip) returns `false` so the shared
+   * SlotSwapManager keeps the player's selection held instead of silently clearing
+   * it (the Defect-2 symptom this fix removes from the field overlay).
    */
   private async reliquaryMove(
     ringId: string,
     target: SwapSlot,
     releaseFrom?: SwapSlot,
-  ): Promise<void> {
+  ): Promise<boolean> {
     const ring = this.ringMap.get(ringId);
     if (!ring) {
       this.setStatus('Ring not found');
-      return;
+      return false;
     }
     if (ring.escrowed) {
       this.setStatus('Ring is locked in a duel');
       this.clearReliquarySelection();
-      return;
+      return false;
     }
 
     // #413 — Drop-time bench-full guard: reject any move that would overflow the bench.
@@ -1591,15 +1600,14 @@ export class CampScene extends DualCameraScene {
       const spareCount = benchSpareCount(this.rings as RingData[], this.loadout, pendingId);
       if (spareCount >= spareRingMax) {
         this.setStatus('Bench is full — discard a ring or move one to a battle slot first');
-        return;
+        return false;
       }
     }
 
     // EPIC #302 — Heart slot moves use the dedicated PUT /api/heart-slot endpoint
     // (atomic equip/swap + spirit recompute), never the carry/loadout machinery.
     if (target === 'heart' || ring.heart_slot === 1) {
-      await this.heartSlotMove(ringId, target, releaseFrom);
-      return;
+      return this.heartSlotMove(ringId, target, releaseFrom);
     }
 
     const wasCarried = ring.in_carry === 1;
@@ -1612,12 +1620,12 @@ export class CampScene extends DualCameraScene {
         const ok = await this.putLoadout({ [inBattleSlot]: null });
         if (!ok) {
           this.clearReliquarySelection();
-          return;
+          return false;
         }
       }
-      await this.moveToCarry(ringId, false);
+      const moved = await this.moveToCarry(ringId, false);
       this.clearReliquarySelection();
-      return;
+      return moved;
     }
 
     if (target === 'spare') {
@@ -1627,19 +1635,19 @@ export class CampScene extends DualCameraScene {
         const ok = await this.carryRing(ringId);
         if (!ok) {
           this.clearReliquarySelection();
-          return;
+          return false;
         }
       } else if (inBattleSlot) {
         const ok = await this.putLoadout({ [inBattleSlot]: null });
         if (!ok) {
           this.clearReliquarySelection();
-          return;
+          return false;
         }
       }
       this.clearReliquarySelection();
       await this.loadData();
       this.afterReliquaryReload();
-      return;
+      return true;
     }
 
     // target is a named battle slot — carry the ring first if needed, then assign.
@@ -1647,13 +1655,15 @@ export class CampScene extends DualCameraScene {
       const ok = await this.carryRing(ringId);
       if (!ok) {
         this.clearReliquarySelection();
-        return;
+        return false;
       }
     }
-    await this.putLoadout({ [target]: ringId });
+    const assigned = await this.putLoadout({ [target]: ringId });
     this.clearReliquarySelection();
+    if (!assigned) return false;
     await this.loadData();
     this.afterReliquaryReload();
+    return true;
   }
 
   /**
@@ -1667,12 +1677,15 @@ export class CampScene extends DualCameraScene {
    *   - Unequip the heart (`ringId` is the current heart ring, `target` ≠ 'heart'):
    *     the heart slot is cleared and the ring is routed to `target`.
    * The releaseTo targets the server accepts: reliquary | spare | thumb | a1..d2.
+   *
+   * #421 — returns `true` when the heart-slot mutation committed, `false` when the
+   * round-trip failed, so {@link reliquaryMove} can propagate commit status.
    */
   private async heartSlotMove(
     ringId: string,
     target: SwapSlot,
     releaseFrom?: SwapSlot,
-  ): Promise<void> {
+  ): Promise<boolean> {
     // Build the { ringId?, releaseTo? } body. Equip vs unequip is decided by
     // whether the heart is the move target. 'heart' is never a valid releaseTo.
     let body: { ringId?: string; releaseTo?: string };
@@ -1688,11 +1701,12 @@ export class CampScene extends DualCameraScene {
     } catch {
       this.setStatus('Heart slot move failed');
       this.clearReliquarySelection();
-      return;
+      return false;
     }
     this.clearReliquarySelection();
     await this.loadData();
     this.afterReliquaryReload();
+    return true;
   }
 
   /**
@@ -2555,12 +2569,14 @@ export class CampScene extends DualCameraScene {
    * Used by the legacy __campAddToLoadout / __campLeaveAtSanctum E2E hooks and by
    * the Reliquary modal's "leave at Reliquary" path.
    */
-  private async moveToCarry(ringId: string, inCarry: boolean): Promise<void> {
+  private async moveToCarry(ringId: string, inCarry: boolean): Promise<boolean> {
+    // #421 — returns `true` only when the carry change committed to the server, so
+    // reliquaryMove can propagate commit status to the shared SlotSwapManager.
     const carried = new Set(this.rings.filter((r) => r.in_carry === 1).map((r) => r.id));
     if (inCarry) {
       if (carried.size >= this.carryCap) {
         this.setStatus('Loadout is full — leave a ring at the Reliquary first');
-        return;
+        return false;
       }
       carried.add(ringId);
     } else {
@@ -2569,7 +2585,9 @@ export class CampScene extends DualCameraScene {
     if (await this.putCarry(Array.from(carried), false)) {
       await this.loadData();
       this.afterReliquaryReload();
+      return true;
     }
+    return false;
   }
 
   /**
@@ -2718,7 +2736,7 @@ export class CampScene extends DualCameraScene {
     this.fusionOverlay?.close();
 
     const overlayOpts: RingManagementOverlayOpts = {
-      resolveMove: async () => { /* fusion overlay does not use swap moves */ },
+      resolveMove: async () => { /* fusion overlay does not use swap moves */ return true; },
       onRecharge: (ov) => {
         // Delegate recharge to the standard handler and refresh the overlay.
         void this.doRechargeAll(false).then(() => {
@@ -2728,7 +2746,7 @@ export class CampScene extends DualCameraScene {
       onFuse: async (ringId1, ringId2, ov) => {
         const err = await this.doFuse(ringId1, ringId2);
         if (err) {
-          ov.setFuseStatus(err);
+          ov.setStatusMessage(err);
         }
         // On success, clear the stale parent selections BEFORE re-rendering so
         // deleted rings do not appear in R1/R2 after the refresh.

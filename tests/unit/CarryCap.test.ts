@@ -752,6 +752,114 @@ describe('saveLoadout — pending lifecycle (#380 Phase 1)', () => {
 });
 
 // ---------------------------------------------------------------------------
+// #421 — saveLoadout permits resolving a pending WON ring overflow
+//
+// NOTE: these tests call saveLoadout directly and would still pass if the outer
+// spare-count gate removed by #421 were accidentally re-added to the Express
+// route. The HTTP route layer (PUT /api/loadout) is covered separately in
+// tests/integration/loadout-route.test.ts, which mounts the production apiRouter
+// and asserts the overflow-resolution PUT returns 200.
+// ---------------------------------------------------------------------------
+
+describe('saveLoadout — pending WON ring overflow resolution (#421)', () => {
+  test('saveLoadout permits slotting the pending ring into a battle slot when bench is exactly at capacity', () => {
+    // #421 regression: with a full bench (spare_ring_max rings) PLUS a pending WON
+    // ring, getSpareIds reports spare_ring_max + 1 — the genuine overflow state that
+    // grantRing intentionally produces. The (now-removed) outer route gate rejected
+    // EVERY loadout mutation here. The delta-aware guard inside saveLoadout must let
+    // the WON ring move OUT of spare into a battle slot, which DRAINS the overflow.
+    const p = makePlayer(dbInstance);
+    const max = repo.getSpareRingMax(p);
+    // 4 battle-slot rings, leaving a1 EMPTY so the WON ring has a free destination
+    // (slotting into a free slot genuinely drains the overflow by one).
+    const slotRings = [
+      makeRing(dbInstance, p, { inCarry: 1 }),
+      makeRing(dbInstance, p, { inCarry: 1 }),
+      makeRing(dbInstance, p, { inCarry: 1 }),
+      makeRing(dbInstance, p, { inCarry: 1 }),
+    ];
+    (['thumb', 'a2', 'd1', 'd2'] as const).forEach((slot, i) => {
+      assignSlot(dbInstance, p, slot, slotRings[i]);
+    });
+    // Fill the bench to exactly spare_ring_max with normal spare rings.
+    for (let i = 0; i < max; i++) makeRing(dbInstance, p, { inCarry: 1 });
+    // The WON ring: in_carry=1, pending=1 — pushes spare to max + 1.
+    const wonRingId = repo.grantRing(p, ElementEnum.FIRE);
+    // Confirm we are in the overflow state the bug is about.
+    expect(repo.getSpareIds(p).length).toBe(max + 1);
+    expect(repo.getPendingRingId(p)).toBe(wonRingId);
+    // Slotting the WON ring into the empty a1 slot: it leaves spare, nothing is
+    // displaced back → spare drops from max+1 to max. This must NOT throw.
+    expect(() => repo.saveLoadout(p, { a1: wonRingId })).not.toThrow();
+    // Overflow resolved: the pending flag is cleared, bench back at max.
+    expect(repo.getPendingRingId(p)).toBeNull();
+    expect(repo.getSpareIds(p).length).toBe(max);
+  });
+
+  test('saveLoadout still rejects clearing a slot to null when bench is at capacity (genuine overflow)', () => {
+    // #421 guard: the inner assertSpareWithinMax remains authoritative. A move that
+    // would actually push the spare grid over capacity (clearing a slot, dumping its
+    // ring onto a full bench) must still be rejected — the fix only removes the
+    // redundant outer gate, it does not weaken overflow protection.
+    const p = makePlayer(dbInstance);
+    const max = repo.getSpareRingMax(p);
+    const slotRing = makeRing(dbInstance, p, { inCarry: 1 });
+    assignSlot(dbInstance, p, 'a1', slotRing);
+    // Fill the bench to exactly spare_ring_max (no pending ring this time).
+    for (let i = 0; i < max; i++) makeRing(dbInstance, p, { inCarry: 1 });
+    expect(repo.getSpareIds(p).length).toBe(max);
+    // Clearing a1 would move slotRing onto the full bench → max + 1 → must throw.
+    expect(() => repo.saveLoadout(p, { a1: null })).toThrow(/spare grid full/);
+  });
+
+  test('saveLoadout at overflow rejects even net-zero-delta moves (spare already above max)', () => {
+    // #421 adversarial (case A — inner guard is still authoritative):
+    // At overflow (spare = max+1), assertSpareWithinMax({addingToSpare:[], removingFromSpare:[]})
+    // computes spareCountAfter = max+1 > max → throws. This means EVERY mutation at overflow
+    // is blocked UNLESS removingFromSpare drains the overflow (e.g. slotting the pending ring
+    // from spare into an empty battle slot → spare drops from max+1 to max).
+    // The removed outer gate was blocking overflow-draining moves too. The inner gate correctly
+    // allows drain and blocks preserve/increase.
+    const p = makePlayer(dbInstance);
+    const max = repo.getSpareRingMax(p);
+    // Place a ring in a1 slot.
+    const a1Ring = makeRing(dbInstance, p, { inCarry: 1 });
+    assignSlot(dbInstance, p, 'a1', a1Ring);
+    // Fill bench to max.
+    for (let i = 0; i < max; i++) makeRing(dbInstance, p, { inCarry: 1 });
+    // Grant WON ring → spare = max+1.
+    repo.grantRing(p, ElementEnum.FIRE);
+    expect(repo.getSpareIds(p).length).toBe(max + 1);
+    // Attempt to move a1Ring to a2: partial={a2: a1Ring}.
+    // saveLoadout sees: a2 key → oldVal=null, newVal=a1Ring; a1Ring is NOT in spare (it's in a1 slot).
+    // Delta: addingToSpare=[], removingFromSpare=[]. spareCountAfter = max+1 > max → throws.
+    // This is correct: the overflow must be drained by moving a spare-resident ring to a slot.
+    expect(() => repo.saveLoadout(p, { a2: a1Ring })).toThrow(/spare grid full/);
+  });
+
+  test('saveLoadout slot-to-slot swap at overflow succeeds when spare-resident ring changes slots', () => {
+    // #421 adversarial variant: at overflow, moving a ring that IS in spare into a battle slot
+    // (addingToSpare=[], removingFromSpare=[spareRing]) is net -1 → spare drops from max+1 to max.
+    // This is the canonical overflow-resolution path alongside slotting the pending ring.
+    const p = makePlayer(dbInstance);
+    const max = repo.getSpareRingMax(p);
+    // Seed max-1 spare rings.
+    for (let i = 0; i < max - 1; i++) makeRing(dbInstance, p, { inCarry: 1 });
+    // One ring in a1 slot (not spare).
+    const a1Ring = makeRing(dbInstance, p, { inCarry: 1 });
+    assignSlot(dbInstance, p, 'a1', a1Ring);
+    // One more spare ring → spare = max-1+1 = max (without pending).
+    const spareRing = makeRing(dbInstance, p, { inCarry: 1 });
+    // Grant WON ring → spare goes to max+1 (overflow).
+    repo.grantRing(p, ElementEnum.FIRE);
+    expect(repo.getSpareIds(p).length).toBe(max + 1);
+    // Moving a spare ring (not pending) to a2: removingFromSpare=[spareRing] → net -1 → max.
+    expect(() => repo.saveLoadout(p, { a2: spareRing })).not.toThrow();
+    expect(repo.getSpareIds(p).length).toBe(max);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Phase 2 — spareCountAfter with overlapping add+remove (#378 Phase 2)
 // ---------------------------------------------------------------------------
 

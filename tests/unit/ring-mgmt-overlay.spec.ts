@@ -1233,13 +1233,15 @@ describe('#396 Sub-B SpecConformance: FusionPanel retired', () => {
     ).toContain("mode === 'fusion'");
   });
 
-  it('Spec AC: RingManagementOverlayClass.ts exports setFuseStatus (overlay.setFuseStatus method)', () => {
+  it('Spec AC: RingManagementOverlayClass.ts exposes setStatusMessage (status surfacing for onFuse/rejected moves)', () => {
+    // #421 consolidated setFuseStatus into the generic setStatusMessage — both the
+    // fusion onFuse callbacks and rejected swap moves surface through it.
     const src = readClientSrc('objects/ui/RingManagementOverlayClass.ts');
     if (src === null) return;
     expect(
       src,
-      'RingManagementOverlayClass must expose setFuseStatus() for the onFuse callback to surface errors',
-    ).toContain('setFuseStatus');
+      'RingManagementOverlayClass must expose setStatusMessage() for adapters to surface errors',
+    ).toContain('setStatusMessage');
   });
 
   it('Spec AC: RingManagementOverlayOpts declares onFuse and filterElement options', () => {
@@ -2401,6 +2403,377 @@ describe('#413 Phase 2 impl-aware: getSpareGrid and getBenchGrid delegation', ()
       src,
       'BattleHandOverlay.spareGrid getter must call overlay.getSpareGrid()',
     ).toContain('getSpareGrid');
+  });
+
+});
+
+// ===========================================================================
+// Class 26 — #421 __ringMgmtStatus window hook lifecycle (source-scan)
+// ===========================================================================
+
+describe('#421 __ringMgmtStatus window hook lifecycle (source-scan)', () => {
+
+  it('RingManagementOverlayClass.ts sets __ringMgmtStatus to "" (empty string) after each render', () => {
+    // #421 adversarial: the status bar is rebuilt (text wiped) on every render()/refresh().
+    // The hook must be reset to '' so E2E tests always see a fresh empty value until
+    // a post-refresh error is re-applied via setStatusMessage(). If the hook is NOT
+    // reset, a stale error message from a previous render would be observable to E2E
+    // tests that poll __ringMgmtStatus immediately after a render.
+    const src = readClientSrc('objects/ui/RingManagementOverlayClass.ts');
+    if (src === null) return;
+    // The implementation: `(window as unknown as Record<string, unknown>).__ringMgmtStatus = '';`
+    // This must appear within the render path (not just inside setStatusMessage).
+    expect(
+      src,
+      'RingManagementOverlayClass must reset __ringMgmtStatus to "" during render',
+    ).toContain("__ringMgmtStatus = ''");
+  });
+
+  it('RingManagementOverlayClass.ts sets __ringMgmtStatus to undefined inside the if(fireCb) close block', () => {
+    // #421 adversarial: on genuine overlay close (fireCb=true), the hook must be cleared
+    // to undefined so E2E tests can detect the overlay is closed (undefined ≠ '' means
+    // "overlay is gone", not just "no current error"). A close that leaves '' behind
+    // would cause E2E tests opening a fresh overlay to misread a stale empty-string state
+    // as a valid open-overlay hook value.
+    const src = readClientSrc('objects/ui/RingManagementOverlayClass.ts');
+    if (src === null) return;
+    const lines = src.split('\n');
+    const teardownStart = lines.findIndex((l) => /private teardown\(/.test(l));
+    expect(teardownStart, 'teardown method must exist').toBeGreaterThan(-1);
+    const fireCbLineIdx = lines.findIndex(
+      (l, i) => i > teardownStart && /if\s*\(\s*fireCb\s*\)/.test(l),
+    );
+    expect(fireCbLineIdx, 'teardown must contain if(fireCb) guard').toBeGreaterThan(teardownStart);
+    const statusClearIdx = lines.findIndex(
+      (l, i) => i > teardownStart && /__ringMgmtStatus\s*=\s*undefined/.test(l),
+    );
+    expect(statusClearIdx, '__ringMgmtStatus = undefined must exist in teardown').toBeGreaterThan(teardownStart);
+    expect(
+      statusClearIdx,
+      `__ringMgmtStatus=undefined (line ${statusClearIdx + 1}) must come AFTER if(fireCb) (line ${fireCbLineIdx + 1}) — only cleared on genuine close`,
+    ).toBeGreaterThan(fireCbLineIdx);
+  });
+
+  it('RingManagementOverlayClass.ts setStatusMessage writes to __ringMgmtStatus via setStatus (delegation chain)', () => {
+    // #421 adversarial: setStatusMessage must propagate to the status text AND to the
+    // window hook so Playwright can read it. If setStatusMessage updates the Phaser text
+    // but forgets to write to __ringMgmtStatus, the E2E assertion in S2 (waitForFunction
+    // __ringMgmtStatus.includes('Bench is full')) would never resolve.
+    // Verify the delegation: setStatusMessage → setStatus (private helper that both
+    // updates the Phaser text AND sets the window hook).
+    const src = readClientSrc('objects/ui/RingManagementOverlayClass.ts');
+    if (src === null) return;
+    // Find the CLASS METHOD definition — not the doc-comment in RingManagementOverlayOpts.
+    // The method signature is `setStatusMessage(msg: string): void {` (no leading spaces
+    // before the method name in the class body, unlike the interface doc-comment which
+    // contains `overlay.setStatusMessage(msg)`). Use a regex that matches the line start.
+    const lines = src.split('\n');
+    // Find the method definition: must start with optional whitespace then `setStatusMessage(`
+    // but NOT have `overlay.` prefix (which is the doc-comment case).
+    const methodStart = lines.findIndex(
+      (l) => /^\s+setStatusMessage\s*\(\s*msg\s*:/.test(l),
+    );
+    expect(methodStart, 'setStatusMessage class method must exist').toBeGreaterThan(-1);
+    const methodBody = lines.slice(methodStart, methodStart + 5).join('\n');
+    expect(
+      methodBody,
+      'setStatusMessage must delegate to this.setStatus(msg) for hook + Phaser text update',
+    ).toContain('this.setStatus');
+  });
+
+  it('RingManagementOverlayClass.ts private setStatus writes to __ringMgmtStatus (hook feeds E2E)', () => {
+    // #421 adversarial: the private setStatus method must write to __ringMgmtStatus so
+    // that all paths that call setStatus (direct + via setStatusMessage) update the hook.
+    // An implementation that writes the hook only in setStatusMessage would break the
+    // direct CampScene.setStatus path.
+    const src = readClientSrc('objects/ui/RingManagementOverlayClass.ts');
+    if (src === null) return;
+    // The hook assignment in the setStatus body: `__ringMgmtStatus = msg`
+    expect(
+      src,
+      'private setStatus must write to __ringMgmtStatus so the E2E hook is always current',
+    ).toMatch(/__ringMgmtStatus\s*=\s*msg/);
+  });
+
+  it('BattleHandOverlay.ts resolveMove re-applies lastError via setStatusMessage AFTER refresh()', () => {
+    // #421 adversarial: the rejected-move flow is:
+    //   1. resolveMove → apiMutate → 400 → onErr(m) captures lastError
+    //   2. refresh() rebuilds the modal → __ringMgmtStatus resets to ''
+    //   3. setStatusMessage(lastError) → re-applies the error after refresh
+    // If step 3 is omitted (or called BEFORE step 2), the error is wiped by the refresh
+    // and the player never sees it — the "silent deselect" bug with a message would resurface.
+    // Source-scan: in BattleHandOverlay resolveMove, setStatusMessage call must come
+    // AFTER the await refresh() call.
+    const src = readClientSrc('objects/BattleHandOverlay.ts');
+    if (src === null) return;
+    const lines = src.split('\n');
+    const resolveMoveStart = lines.findIndex((l) => /resolveMove\s*:/.test(l));
+    expect(resolveMoveStart, 'resolveMove opt must exist in BattleHandOverlay').toBeGreaterThan(-1);
+    const refreshLineIdx = lines.findIndex(
+      (l, i) => i > resolveMoveStart && /await this\.refresh\(/.test(l),
+    );
+    const setStatusLineIdx = lines.findIndex(
+      (l, i) => i > resolveMoveStart && /setStatusMessage\s*\(\s*lastError\s*\)/.test(l),
+    );
+    expect(refreshLineIdx, 'resolveMove must contain await this.refresh()').toBeGreaterThan(resolveMoveStart);
+    expect(setStatusLineIdx, 'resolveMove must call ov.setStatusMessage(lastError)').toBeGreaterThan(resolveMoveStart);
+    expect(
+      setStatusLineIdx,
+      `setStatusMessage (line ${setStatusLineIdx + 1}) must come AFTER refresh (line ${refreshLineIdx + 1}) — error must survive the rebuild`,
+    ).toBeGreaterThan(refreshLineIdx);
+  });
+
+});
+
+// ===========================================================================
+// Class 27 — #421 SlotSwapManager.moveTo boolean gate (pure TS unit tests)
+// ===========================================================================
+
+describe('#421 SlotSwapManager.moveTo boolean gate', () => {
+  // SlotSwapManager is pure TypeScript with no Phaser dependency — importable directly.
+  // We import it lazily inside tests to avoid top-level import ordering issues.
+
+  it('moveTo resolveMove=false: selection remains held and onAfter is NOT called', async () => {
+    // #421 adversarial: the core fix — when the server rejects a move, the manager
+    // must NOT clear the selection and must NOT call onAfter. Pre-fix the selection was
+    // cleared unconditionally, creating the "card lights up, click target, deselects" UX bug.
+    const { SlotSwapManager } = await import('../../client/src/objects/ui/SlotSwapManager');
+    let afterCallCount = 0;
+    const manager = new SlotSwapManager({
+      validSlots: ['spare', 'a1', 'a2', 'd1', 'd2', 'thumb', 'heart', 'reliquary'],
+      resolveMove: async (_ringId, _from, _to) => false, // server rejection
+      onAfter: async () => { afterCallCount++; },
+    });
+    manager.select('ring_abc', 'spare');
+    await manager.moveTo('a1');
+    // Selection must still be held (ringId and source unchanged).
+    expect(manager.selection, 'selection must remain held after rejected move').not.toBeNull();
+    expect(manager.selection?.ringId).toBe('ring_abc');
+    expect(manager.selection?.source).toBe('spare');
+    // onAfter must not have been called — no re-render on rejection.
+    expect(afterCallCount, 'onAfter must NOT be called on rejection').toBe(0);
+  });
+
+  it('moveTo resolveMove=true: selection is cleared and onAfter IS called', async () => {
+    // #421 happy path: when the server commits the move, the manager clears the selection
+    // and triggers the host's onAfter re-render. Both must fire.
+    const { SlotSwapManager } = await import('../../client/src/objects/ui/SlotSwapManager');
+    let afterCallCount = 0;
+    const manager = new SlotSwapManager({
+      validSlots: ['spare', 'a1', 'a2', 'd1', 'd2', 'thumb', 'heart', 'reliquary'],
+      resolveMove: async () => true,
+      onAfter: async () => { afterCallCount++; },
+    });
+    manager.select('ring_xyz', 'spare');
+    await manager.moveTo('a1');
+    expect(manager.selection, 'selection must be cleared after committed move').toBeNull();
+    expect(afterCallCount, 'onAfter must be called once after committed move').toBe(1);
+  });
+
+  it('moveTo on the same slot as source deselects WITHOUT calling resolveMove', async () => {
+    // #421 spec: re-clicking the origin slot is a "cancel" gesture — no server round-trip,
+    // just deselect. resolveMove must not be invoked for same-source clicks.
+    const { SlotSwapManager } = await import('../../client/src/objects/ui/SlotSwapManager');
+    let resolveCalled = false;
+    const manager = new SlotSwapManager({
+      validSlots: ['spare', 'a1', 'a2', 'd1', 'd2', 'thumb', 'heart', 'reliquary'],
+      resolveMove: async () => { resolveCalled = true; return true; },
+      onAfter: async () => {},
+    });
+    manager.select('ring_123', 'a1');
+    await manager.moveTo('a1'); // same as source
+    expect(manager.selection, 'clicking origin slot must deselect').toBeNull();
+    expect(resolveCalled, 'resolveMove must NOT be called for same-slot click').toBe(false);
+  });
+
+  it('moveTo with no active selection is a no-op', async () => {
+    // #421 adversarial: calling moveTo() without a prior select() (or after a clear())
+    // must be a complete no-op — no resolveMove, no onAfter, no throw.
+    const { SlotSwapManager } = await import('../../client/src/objects/ui/SlotSwapManager');
+    let resolveCalled = false;
+    const manager = new SlotSwapManager({
+      validSlots: ['spare', 'a1'],
+      resolveMove: async () => { resolveCalled = true; return true; },
+      onAfter: async () => {},
+    });
+    // No select() called — selection is null.
+    await expect(manager.moveTo('a1')).resolves.toBeUndefined();
+    expect(resolveCalled, 'resolveMove must not fire when nothing is selected').toBe(false);
+  });
+
+  it('moveTo to a slot not in validSlots is a no-op (keeps selection held)', async () => {
+    // #421 adversarial: a click on a slot the manager does not recognise must be ignored.
+    // validSlots is host-configurable (e.g. field overlay excludes 'reliquary').
+    // A stray click on an excluded slot must not deselect or invoke resolveMove.
+    const { SlotSwapManager } = await import('../../client/src/objects/ui/SlotSwapManager');
+    let resolveCalled = false;
+    const manager = new SlotSwapManager({
+      validSlots: ['spare', 'a1'], // 'reliquary' excluded
+      resolveMove: async () => { resolveCalled = true; return true; },
+      onAfter: async () => {},
+    });
+    manager.select('ring_999', 'spare');
+    await manager.moveTo('reliquary' as any); // excluded slot
+    expect(manager.selection, 'selection must still be held for invalid target').not.toBeNull();
+    expect(resolveCalled, 'resolveMove must not be called for excluded slot').toBe(false);
+  });
+
+  it('moveTo resolveMove=false does not call onAfter even if resolveMove resolves quickly', async () => {
+    // #421 adversarial: concurrent rapid double-tap — verifies no re-entrancy issue
+    // where a fast false-returning resolveMove might race with onAfter cleanup.
+    // Specifically: two sequential moveTo calls on the same manager while first is in-flight.
+    const { SlotSwapManager } = await import('../../client/src/objects/ui/SlotSwapManager');
+    let afterCallCount = 0;
+    // resolveMove alternates true/false per call.
+    let callNum = 0;
+    const manager = new SlotSwapManager({
+      validSlots: ['spare', 'a1', 'a2'],
+      resolveMove: async () => { callNum++; return callNum % 2 === 1; }, // first=true, second=false
+      onAfter: async () => { afterCallCount++; },
+    });
+    manager.select('ring_A', 'spare');
+    // First moveTo resolves true → clears selection, calls onAfter.
+    await manager.moveTo('a1');
+    expect(manager.selection).toBeNull();
+    expect(afterCallCount).toBe(1);
+    // Re-select and attempt a move that resolves false.
+    manager.select('ring_B', 'spare');
+    await manager.moveTo('a2');
+    expect(manager.selection, 'second rejected move keeps selection held').not.toBeNull();
+    expect(afterCallCount, 'onAfter not called for rejected second move').toBe(1);
+  });
+
+});
+
+// ===========================================================================
+// Class 28 — #421 apiMutate contract (source-scan — api.ts uses browser globals)
+// ===========================================================================
+
+describe('#421 apiMutate contract: source-scan verification', () => {
+  // api.ts depends on localStorage and window.location which are unavailable in Node.
+  // All checks here are source-scans rather than live imports — they verify the contract
+  // documented in the JSDoc comment is actually implemented in the code.
+
+  it('apiMutate returns {ok:false, error:null} when no token is present (no-token fast path)', () => {
+    // #421 adversarial: an unauthenticated request must never reach the server.
+    // The check `if (!getToken()) return { ok: false, error: null }` must be first.
+    // Without this guard, an expired session would fire an unauthenticated PUT that
+    // the server rejects with 401 — the client would silently deselect (pre-fix behavior).
+    const src = readClientSrc('net/api.ts');
+    if (src === null) return;
+    // The guard must precede the fetch call.
+    const lines = src.split('\n');
+    const apiMutateStart = lines.findIndex((l) => /async function apiMutate/.test(l));
+    expect(apiMutateStart, 'apiMutate function must exist').toBeGreaterThan(-1);
+    const noTokenGuard = lines.findIndex(
+      (l, i) => i > apiMutateStart && /if\s*\(\s*!getToken\s*\(\s*\)\s*\)/.test(l),
+    );
+    const fetchCall = lines.findIndex(
+      (l, i) => i > apiMutateStart && /apiFetch\s*\(/.test(l),
+    );
+    expect(noTokenGuard, 'apiMutate must have a !getToken() early return').toBeGreaterThan(apiMutateStart);
+    expect(fetchCall, 'apiMutate must call apiFetch').toBeGreaterThan(apiMutateStart);
+    expect(
+      noTokenGuard,
+      `!getToken() guard (line ${noTokenGuard + 1}) must come BEFORE apiFetch call (line ${fetchCall + 1})`,
+    ).toBeLessThan(fetchCall);
+  });
+
+  it('apiMutate returns {ok:true, error:null} on res.ok=true (no error parsing on success)', () => {
+    // #421 adversarial: a 2xx response must immediately return ok=true without
+    // attempting to parse an error body (which would waste bandwidth and silently
+    // swallow a 200 with a body that happens to contain an "error" key).
+    const src = readClientSrc('net/api.ts');
+    if (src === null) return;
+    expect(
+      src,
+      'apiMutate must return {ok: true, error: null} on res.ok',
+    ).toContain('{ ok: true, error: null }');
+  });
+
+  it('apiMutate returns {ok:false, error:null} from the catch block (network failure path)', () => {
+    // #421 adversarial: a network failure (fetch throws) must be caught and surfaced
+    // as {ok:false, error:null} — not re-thrown. Re-throwing would crash the caller
+    // (BattleHandOverlay.send) and leave the game in an unrecoverable state.
+    const src = readClientSrc('net/api.ts');
+    if (src === null) return;
+    const lines = src.split('\n');
+    const apiMutateStart = lines.findIndex((l) => /async function apiMutate/.test(l));
+    // The catch block must return {ok: false, error: null}.
+    const catchLine = lines.findIndex((l, i) => i > apiMutateStart && /catch\s*\{/.test(l));
+    expect(catchLine, 'apiMutate must have a catch block').toBeGreaterThan(apiMutateStart);
+    const catchBody = lines.slice(catchLine, catchLine + 4).join('\n');
+    expect(
+      catchBody,
+      'catch block must return {ok: false, error: null} — network failures must not propagate',
+    ).toContain('{ ok: false, error: null }');
+  });
+
+  it('apiMutate extracts body.error from non-2xx response (error message passthrough)', () => {
+    // #421 adversarial: a 400 response with `{ error: "spare grid full" }` must surface
+    // the message so the client can map it to the user-visible string. If the response
+    // body is not parsed, the caller only knows the move failed — not why — and cannot
+    // show "Bench is full" to the player.
+    const src = readClientSrc('net/api.ts');
+    if (src === null) return;
+    // The pattern: `const parsed = await res.json().catch(() => ({}))` + `parsed.error ?? null`
+    expect(
+      src,
+      'apiMutate must parse res.json() to extract the server error message',
+    ).toContain('res.json()');
+    expect(
+      src,
+      'apiMutate must access parsed.error for the error message',
+    ).toContain('parsed.error');
+  });
+
+  it('apiMutate res.json() parse failure falls back to null (not an exception)', () => {
+    // #421 adversarial: a 400 response whose body is not valid JSON (e.g. HTML error page
+    // from a proxy) must not crash apiMutate. The `.catch(() => ({}))` guard ensures
+    // the parse failure returns an empty object, so `parsed.error ?? null` yields null.
+    const src = readClientSrc('net/api.ts');
+    if (src === null) return;
+    // The implementation: `await res.json().catch(() => ({}))`
+    expect(
+      src,
+      'apiMutate must guard res.json() with .catch(() => ({})) to handle non-JSON error bodies',
+    ).toMatch(/res\.json\(\)\.catch\(/);
+  });
+
+  it('BattleHandOverlay.send maps "spare grid full" server message to canonical bench-full string', () => {
+    // #421 adversarial: the server returns "spare grid full" (internal naming); the
+    // client must translate this to the player-visible "Bench is full — discard a ring
+    // or move one to a battle slot first". A case-insensitive regex match is used.
+    // If the translation is missing, the player sees a raw server error string.
+    const src = readClientSrc('objects/BattleHandOverlay.ts');
+    if (src === null) return;
+    // The translation: /spare grid full/i.test(r.error ?? '') ? 'Bench is full...'
+    expect(
+      src,
+      'BattleHandOverlay.send must detect "spare grid full" (case-insensitive)',
+    ).toMatch(/spare grid full/i);
+    expect(
+      src,
+      'BattleHandOverlay.send must map it to the canonical bench-full player message',
+    ).toContain('Bench is full — discard a ring or move one to a battle slot first');
+  });
+
+  it('BattleHandOverlay.send returns the server error as-is for unknown error messages', () => {
+    // #421 adversarial: for server errors that are NOT "spare grid full" (e.g. "Ring
+    // is locked in a duel", "No loadout for player"), the message must pass through
+    // verbatim — not be replaced by the generic bench-full string.
+    // The ternary: `r.error || 'Network error — please retry'` handles the passthrough.
+    const src = readClientSrc('objects/BattleHandOverlay.ts');
+    if (src === null) return;
+    // The fallback: `r.error || 'Network error — please retry'`
+    expect(
+      src,
+      'BattleHandOverlay.send must fall back to r.error (verbatim) for non-bench-full errors',
+    ).toContain('r.error ||');
+    expect(
+      src,
+      'BattleHandOverlay.send must have a final network-error fallback string',
+    ).toContain('Network error — please retry');
   });
 
 });

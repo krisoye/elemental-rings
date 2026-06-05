@@ -161,9 +161,9 @@ Accept the WON (pending) ring as a regular spare ring. Clears `rings.pending` on
 **Auth required:** yes (requireAuth only)
 **Request body:** `{ thumb?: string | null, a1?: string | null, a2?: string | null, d1?: string | null, d2?: string | null }` (partial — only provided keys are updated)
 **Response (success):** `{ loadout: Loadout }` — HTTP 200
-**Response (error):** 400 — carry cap exceeded message | 400 — `"Invalid value for slot <key>"` | 400 — message from `saveLoadout`
+**Response (error):** 400 — `"spare grid full (n > max)"` when the post-move spare count would exceed `spare_ring_max` | 400 — `"Invalid value for slot <key>"` | 400 — message from `saveLoadout`
 
-Update one or more battle-hand loadout slots. Unknown keys are silently ignored; slot values must be a ring id string or `null`. Rejects if the player's carried ring count already exceeds the XP-derived carry cap.
+Update one or more battle-hand loadout slots. Unknown keys are silently ignored; slot values must be a ring id string or `null`. Rejection is delta-aware: moves that drain the spare grid (e.g. slotting a bench ring into an empty battle slot) are permitted even when the bench is at capacity; only moves that would push the spare count above `spare_ring_max` (e.g. clearing a slot while the bench is full) are rejected.
 
 ---
 

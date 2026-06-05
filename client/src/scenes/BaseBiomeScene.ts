@@ -313,12 +313,12 @@ export abstract class BaseBiomeScene extends DualCameraScene {
     const meData = await this.fetchMeAsOverlayData();
 
     const overlayOpts: RingManagementOverlayOpts = {
-      resolveMove: async () => { /* shrine fusion overlay does not use swap moves */ },
+      resolveMove: async () => { /* shrine fusion overlay does not use swap moves */ return true; },
       onRecharge: () => { /* no recharge action in shrine context */ },
       filterElement,
       onFuse: async (ringId1, ringId2, ov) => {
         const err = await this.doShrineFuse(ringId1, ringId2, filterElement, ov);
-        if (err) ov.setFuseStatus(err);
+        if (err) ov.setStatusMessage(err);
       },
       onRender: (c) => {
         this.routeToUi(c);
