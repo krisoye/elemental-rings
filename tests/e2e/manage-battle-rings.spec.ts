@@ -655,11 +655,11 @@ test('manage-battle-rings: clicking DISCARD with nothing selected does not open 
   await ctx.close();
 });
 
-// ── #381 E2E — right-section 4×2 cluster X-centres (559/659/759/837) ────────
-// #381 replaces the old 3-cluster 303/460/617/721 layout with a 4-column layout:
-//   Col 0 (WON/DISCARD): x=559, Col 1 (HP/STATUS): x=659,
-//   Col 2 (A1/D1): x=759, Col 3 (A2/D2): x=837.
-test('manage-battle-rings (#381): right-section cluster X-centres are 559/659/759/837', async ({ browser }) => {
+// ── #381/#394 E2E — column X-centres: LOOT(~195) | BENCH(~474) | HEALTH(659) | COMBAT(759/837) ──
+// #394 corrects column order: left-most is LOOT (WON/DISCARD x≈195), then BENCH grid
+// (header x≈474), then HEALTH (x=659), then COMBAT (x=759/837).
+// LOOT x-centre must be LESS THAN BENCH x-centre (ordering invariant).
+test('manage-battle-rings (#381/#394): column X-centres — LOOT leftmost, then BENCH, HEALTH(659), COMBAT(759/837)', async ({ browser }) => {
   const ctx = await browser.newContext();
   await seedAuthToken(ctx);
   const page = await ctx.newPage();
@@ -670,7 +670,7 @@ test('manage-battle-rings (#381): right-section cluster X-centres are 559/659/75
     const game = (window as any).__game;
     const result: Record<string, number> = {};
 
-    // #363 — STATUS/A1/A2/D1/D2 are DOM labels.
+    // #363 — STATUS/A1/A2/D1/D2/DISCARD are DOM labels; WON card and HP on canvas.
     const canvas: HTMLCanvasElement = game?.canvas;
     const canvasRect = canvas.getBoundingClientRect();
     const scaleX = canvasRect.width / 1024;
@@ -685,6 +685,10 @@ test('manage-battle-rings (#381): right-section cluster X-centres are 559/659/75
       if (text === 'A2') result.A2 = logicalX;
       if (text === 'D1') result.D1 = logicalX;
       if (text === 'D2') result.D2 = logicalX;
+      // DISCARD label is the canonical LOOT-column x-centre.
+      if (text === 'DISCARD') result.DISCARD = logicalX;
+      // Bench header label for ordering check.
+      if (text?.startsWith('Bench:')) result.BENCH_HEADER = logicalX;
     });
 
     // ♥ HP stays on canvas.
@@ -702,9 +706,17 @@ test('manage-battle-rings (#381): right-section cluster X-centres are 559/659/75
     return result;
   });
 
-  // #389 — HEALTH (HP) at x=659. DOM-measured → ±1px; canvas exact.
+  // #394 — LOOT column (WON/DISCARD) is leftmost: x≈195, well left of BENCH.
+  expect(positions.DISCARD, 'DISCARD DOM label not found').toBeDefined();
+  expect(Math.abs(positions.DISCARD - 195)).toBeLessThanOrEqual(2);
+  // #394 — BENCH header is centred over the 3-col grid: x≈474.
+  expect(positions.BENCH_HEADER, 'Bench: header DOM label not found').toBeDefined();
+  expect(Math.abs(positions.BENCH_HEADER - 474)).toBeLessThanOrEqual(2);
+  // #394 — ordering invariant: LOOT x-centre < BENCH header x-centre (column-order guard).
+  expect(positions.DISCARD).toBeLessThan(positions.BENCH_HEADER);
+  // HEALTH (HP) at x=659. DOM-measured → ±1px; canvas exact.
   expect(positions.HP).toBe(659);
-  // #389 — COMBAT cluster: STATUS left-aligned above A1/D1 at x=759; A2/D2 at x=837.
+  // COMBAT cluster: STATUS left-aligned above A1/D1 at x=759; A2/D2 at x=837.
   expect(Math.abs(positions.STATUS - 759)).toBeLessThanOrEqual(1);
   expect(Math.abs(positions.A1 - 759)).toBeLessThanOrEqual(1);
   expect(Math.abs(positions.A2 - 837)).toBeLessThanOrEqual(1);
@@ -1803,9 +1815,9 @@ test('manage-battle-rings (#381 adversarial): empty-spare placeholder absent whe
   await ctx.close();
 });
 
-// ── #381/#389 QA — modal panel bounds: no card center exceeds x=855 or y=538
-// Adversarial: the 760×500 panel spans x=132–892, y=38–538. #389 converged cluster
-// card centers sit at x∈{559,659,759,837} and y∈{193,291,389} (STATUS above the
+// ── #381/#389/#394 QA — modal panel bounds: no card center exceeds x=855 or y=538
+// Adversarial: the 760×500 panel spans x=132–892, y=38–538. #394 corrected cluster
+// card centers sit at x∈{195,659,759,837} and y∈{193,291,389} (STATUS above the
 // 2×2). The rightmost col (A2/D2) is at x=837; the bottom row (D1/D2) at y=389 →
 // bottom edge 434 < 538. Any wider/lower coordinate would overflow the panel.
 test('manage-battle-rings (#381 adversarial): no slot-card center x exceeds 855 or y exceeds 538', async ({ browser }) => {
