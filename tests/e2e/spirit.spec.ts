@@ -350,17 +350,45 @@ test('spirit: recharge-all returns remaining spirit and never goes negative', as
 //   4. includeReliquary=true with no depleted reliquary rings → spirit unchanged (idempotent).
 
 /**
- * Deploy carried rings into the Reliquary by setting the carry set to just the
- * given keepIds. All other rings the player owns (that are not escrowed) end up
- * resting (in_carry = 0, escrowed = 0) i.e. the reliquary.
+ * Deploy carried rings into the Reliquary by setting the carry set to only those
+ * that fit within the reliquary cap (9 rings max). This clears all battle slots
+ * and the heart ring, leaving the player with a minimized carry set. Rings that
+ * cannot fit in the reliquary remain carried.
  */
 async function moveAllToReliquary(token: string): Promise<void> {
+  // First, clear all loadout slots so no rings are slotted in battle.
+  const clearLoadoutRes = await fetch(`${API_URL}/api/loadout`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+    body: JSON.stringify({ thumb: null, a1: null, a2: null, d1: null, d2: null }),
+  });
+  if (!clearLoadoutRes.ok) throw new Error(`loadout clear failed (${clearLoadoutRes.status})`);
+
+  // Second, release the heart ring to reliquary if equipped.
+  const heartRes = await fetch(`${API_URL}/api/heart-slot`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+    body: JSON.stringify({ releaseTo: 'reliquary' }),
+  });
+  if (!heartRes.ok) throw new Error(`heart-slot release failed (${heartRes.status})`);
+
+  // Finally, minimize the carry set. The reliquary cap is 9, so we can move at
+  // most 9 rings there. Get the current ring list and move only as many as will fit.
+  const { rings } = await me(token);
+  const totalRings = rings.length;
+  // reliquary_cap = 9; if we carry (totalRings - 9) rings, the rest fit in reliquary.
+  const minCarryToFitReliquary = Math.max(0, totalRings - 9);
+  const ringsToKeepCarried = rings.slice(0, minCarryToFitReliquary).map((r) => r.id);
+
   const res = await fetch(`${API_URL}/api/carry`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-    body: JSON.stringify({ ringIds: [] }),
+    body: JSON.stringify({ ringIds: ringsToKeepCarried }),
   });
-  if (!res.ok) throw new Error(`carry clear failed (${res.status})`);
+  if (!res.ok) {
+    const errorText = await res.text();
+    throw new Error(`carry clear failed (${res.status}): ${errorText}`);
+  }
 }
 
 /**
