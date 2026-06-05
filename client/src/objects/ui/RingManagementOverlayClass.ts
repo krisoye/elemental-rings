@@ -12,6 +12,7 @@ import {
   isFusion,
   isFusionEligibleParent,
   fusionOf,
+  fusionParents,
 } from '../../../../shared/fusions';
 import { FusedCardFill } from '../fusedFill';
 import {
@@ -740,6 +741,11 @@ export class RingManagementOverlay {
     );
     c.add(fuseBtn);
 
+    // ── Publish __fusionState E2E hook ────────────────────────────────────────
+    // Mirrors the schema the old FusionPanel.ts published so existing E2E tests
+    // (sanctum-zones.spec.ts line 203) continue to work unchanged.
+    this.publishFusionState();
+
     // ── Wire bench card clicks for parent assignment ──────────────────────────
     // BHC builds its bench grid synchronously in build(); after BHC is added to the
     // container we can reach each bench card bg via getBenchGrid().getCardBg(id) and
@@ -772,6 +778,64 @@ export class RingManagementOverlay {
     const fe = this.opts.filterElement;
     if (fe !== undefined && result !== fe) return { frElement: null, eligible: false };
     return { frElement: result, eligible: true };
+  }
+
+  /**
+   * Publish `window.__fusionState` so E2E tests can observe which fusion recipes
+   * are currently ready (mirrors the old FusionPanel.ts hook schema).
+   *
+   * Schema:
+   * ```
+   * window.__fusionState = {
+   *   recipes: Array<{
+   *     parents: [elem0, elem1],
+   *     result: elem,
+   *     ready: boolean,
+   *     parentAId: string | null,
+   *     parentBId: string | null,
+   *   }>
+   * }
+   * ```
+   * A recipe is `ready` when the player's bench contains at least one
+   * fusion-eligible ring of each parent element.
+   */
+  private publishFusionState(): void {
+    // Build a map from element → highest-XP eligible ring (mirrors the old
+    // FusionPanel.computeAvailability which scanned ALL player rings, not just
+    // bench rings — Reliquary rings are also valid fusion parents).
+    const byElement = new Map<number, RingData>();
+    for (const r of this.allRings) {
+      if (!isFusionEligibleParent(r.element, r.xp)) continue;
+      const existing = byElement.get(r.element);
+      if (!existing || r.xp > existing.xp) byElement.set(r.element, r);
+    }
+
+    // Enumerate all 10 fusion elements (5-14) and build a recipe entry for each.
+    const BASE_COUNT = 5; // ElementEnum values 0-4 are the base elements
+    const FUSION_COUNT = 10; // elements 5-14
+    const recipes: {
+      parents: [number, number];
+      result: number;
+      ready: boolean;
+      parentAId: string | null;
+      parentBId: string | null;
+    }[] = [];
+    for (let i = BASE_COUNT; i < BASE_COUNT + FUSION_COUNT; i++) {
+      const pair = fusionParents(i);
+      if (!pair) continue;
+      const [ea, eb] = pair;
+      const parentA = byElement.get(ea) ?? null;
+      const parentB = byElement.get(eb) ?? null;
+      recipes.push({
+        parents: [ea, eb],
+        result: i,
+        ready: parentA !== null && parentB !== null,
+        parentAId: parentA?.id ?? null,
+        parentBId: parentB?.id ?? null,
+      });
+    }
+
+    (window as unknown as Record<string, unknown>).__fusionState = { recipes };
   }
 
   /**
@@ -859,6 +923,10 @@ export class RingManagementOverlay {
       this.fuseParent2 = null;
       this.swap.clear();
       clearRingMgmtState();
+      // Clear the fusion E2E hook so tests can detect the overlay is closed.
+      if (this.mode === 'fusion') {
+        (window as unknown as Record<string, unknown>).__fusionState = undefined;
+      }
       const cb = this.onCloseCb;
       this.onCloseCb = undefined;
       cb?.();

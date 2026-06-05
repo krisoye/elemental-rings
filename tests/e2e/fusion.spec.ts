@@ -370,11 +370,22 @@ test('fusion: bench-click assigns R1 on first click and R2 on second click (#396
   browser,
 }) => {
   const token = await registerPlayer();
+  // A fresh player has no Fire rings in carry (the starter Fire ring is in the
+  // Reliquary). Buy 2 Fire rings via the merchant so ringsOfElement(FIRE, 2) succeeds.
+  // Fire costs 30 GP each; the starter gold (500 GP) covers both easily.
+  for (let i = 0; i < 2; i++) {
+    const buyRes = await fetch(`${API_URL}/api/merchant/buy`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ item: 'ring', element: 'fire' }),
+    });
+    if (!buyRes.ok) throw new Error(`merchant buy fire ring ${i + 1} failed (${buyRes.status})`);
+  }
   const { rings } = await getMe(token);
   // Elevate two Fire rings to Tier 1 so they appear as eligible bench rings.
   // (The overlay does not gate on eligibility for parent-slot assignment — it assigns
   // any bench ring to R1/R2; eligibility only controls the FR preview and [FUSE] button.)
-  const fireRings = ringsOfElement(rings, FIRE, 2);
+  const fireRings = ringsOfElement(rings.filter((r: any) => r.in_carry === 1), FIRE, 2);
   await setRingXP(token, fireRings[0].id, TIER1_XP);
   await setRingXP(token, fireRings[1].id, TIER1_XP);
 
