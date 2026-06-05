@@ -16,8 +16,8 @@ import { benchSpareCount } from './RingManagementOverlay';
  * **HEALTH column** — equipped heart `RingCard` + single `[RECHARGE]` link below it.
  * **COMBAT column** — STATUS thumb card left-aligned above A1/A2 · D1/D2 (2×2).
  *
- * Canonical geometry (760×500 frame, matching #384):
- *   BENCH grid   origin (234, 148)   3-col × 3 visible rows
+ * Canonical geometry (760×500 frame, matching #384 / corrected #394):
+ *   BENCH grid   origin (370, 148)   3-col × 3 visible rows
  *   HEALTH card  center (659, 193)   70×90
  *   STATUS card  center (759, 193)   70×90
  *   A1 / A2      center (759/837, 291)
@@ -39,7 +39,7 @@ export interface BenchHealthCombatMe {
 }
 
 // ── Canonical geometry constants ──────────────────────────────────────────────
-const BENCH_GRID_X = 234;
+const BENCH_GRID_X = 370;
 const BENCH_GRID_TOP_Y = 148;
 const RINGWALL_VISIBLE_ROWS = 3;
 const COL_HEALTH_X = 659;
@@ -131,8 +131,9 @@ export class BenchHealthCombat extends Phaser.GameObjects.Container {
     this.benchGrid = benchGrid;
 
     // BENCH column header (DOM — crisp). #389: player-facing label uses "Bench:" (code keeps spare_*).
+    // +104 centres the label over the 3-col grid (col 0 at +32, col 2 at +176, midpoint +104).
     this.addDomLbl(
-      BENCH_GRID_X + 68,
+      BENCH_GRID_X + 104,
       BENCH_GRID_TOP_Y - 20,
       `Bench: ${benchN} / ${spareMax}`,
       12,

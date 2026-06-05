@@ -37,7 +37,7 @@ const MODAL_H = 500;
 const MODAL_TOP = CANVAS_H / 2 - MODAL_H / 2;   // 38 at 576 canvas
 
 // Left-column geometry (LOOT / WON / DISCARD in field mode).
-const COL0_X = 559;   // WON / DISCARD x-center
+const COL0_X = 195;   // WON / DISCARD x-center (leftmost column)
 const ROW0_Y = 193;
 const ROW1_Y = 291;
 const CARD_W = 70;
@@ -501,8 +501,8 @@ export class RingManagementOverlay {
       }),
     );
 
-    // Spare InventoryGrid (reused from the old BattleHandOverlay layout).
-    const GRID_ORIGIN_X = 234;
+    // Spare InventoryGrid — positioned at BENCH column origin (matches BenchHealthCombat).
+    const GRID_ORIGIN_X = 370;
     const GRID_CONTENT_TOP_Y = 148;
     // 3 visible rows (spare_ring_max=9; 9 rings = 3 rows of 3). Rows 4+ scroll via
     // ▲/▼ arrows or mouse wheel. Matches the original BattleHandOverlay design intent.
@@ -575,12 +575,13 @@ export class RingManagementOverlay {
 
   /**
    * Geometry for the FUSE left column. Modal left edge: CANVAS_W/2 - MODAL_W/2 = 132.
-   * BENCH grid starts at x=234. Two compact 50×70 parent cards fit side-by-side.
+   * BENCH grid starts at x=370. Two compact 50×70 parent cards fit side-by-side at ~195.
+   * R1 center=165, R2 center=230, column centre≈197 (well left of BENCH at 370).
    */
-  private static readonly FUSE_R1_X = 155;
-  private static readonly FUSE_R2_X = 210;
+  private static readonly FUSE_R1_X = 165;
+  private static readonly FUSE_R2_X = 230;
   private static readonly FUSE_PARENT_Y = 210;
-  private static readonly FUSE_RESULT_X = 183;
+  private static readonly FUSE_RESULT_X = 197;
   private static readonly FUSE_RESULT_Y = 325;
   private static readonly FUSE_BTN_Y = 420;
   private static readonly FUSE_CARD_W = 50;
