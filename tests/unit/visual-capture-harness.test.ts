@@ -404,6 +404,37 @@ describe('#409 visual-capture.spec.ts source-level assertions', () => {
     expect(src, 'RINGWALL y must be 56').toContain('56');
   });
 
+  it('visual-capture.spec.ts guards against empty screenId in screen: branch', () => {
+    // #409 adversarial: CAPTURE_TARGET=screen: (colon but no ID) must fail loudly.
+    // The current implementation dispatches on rawTarget.startsWith('screen:') — truthy
+    // for 'screen:' — then passes screenId='' to enterForestScreen. An empty screenId
+    // produces a silent waitForFunction timeout (waiting for __forestScreenId === '')
+    // rather than a clear error. The spec should validate that the extracted screenId is
+    // non-empty before calling enterForestScreen.
+    if (!fs.existsSync(VISUAL_CAPTURE_SPEC)) return;
+    const src = fs.readFileSync(VISUAL_CAPTURE_SPEC, 'utf-8');
+    // Accept any guard pattern: length check, explicit throw for empty id, or the
+    // top-level throw new Error fallthrough from the else branch (which only fires if
+    // startsWith('screen:') is false — it would NOT catch 'screen:' with empty ID).
+    // This test will FAIL if the implementation relies solely on the else-throw without
+    // an empty-ID guard inside the screen: branch.
+    const screenBranchStart = src.indexOf("startsWith('screen:')");
+    if (screenBranchStart === -1) return; // screen branch not found — skip
+    const screenBranchBody = src.slice(screenBranchStart);
+    const hasEmptyIdGuard =
+      screenBranchBody.includes('screenId.length') ||
+      screenBranchBody.includes('!screenId') ||
+      screenBranchBody.includes("screenId === ''") ||
+      screenBranchBody.includes('screenId.trim()') ||
+      screenBranchBody.includes('if (!screenId)') ||
+      screenBranchBody.includes('if (screenId)');
+    expect(
+      hasEmptyIdGuard,
+      "screen: branch must guard against empty screenId — CAPTURE_TARGET='screen:' must fail loudly, " +
+        "not pass '' to enterForestScreen and hang for 8 seconds",
+    ).toBe(true);
+  });
+
   it('visual-capture.spec.ts does not reference screenshot-overlays.spec.ts', () => {
     // #409 adversarial: the new harness must not import or reference the deleted spec.
     // Any cross-reference would be a dead import after deletion.
