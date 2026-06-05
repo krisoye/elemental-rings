@@ -1259,3 +1259,140 @@ describe('#396 Sub-B SpecConformance: FusionPanel retired', () => {
   });
 
 });
+
+// ===========================================================================
+// Class 14 — #396 P1 fix: teardown fuseParent guard + clearFuseParents (#396)
+// ===========================================================================
+
+describe('#396 teardown fuseParent guard: preserve on re-render, clear on close + success', () => {
+
+  it('Spec AC: teardown() assigns fuseParent1/2 = null INSIDE the if (fireCb) block only', () => {
+    // P1 fix: fuseParent1/2 must be cleared only when fireCb=true (genuine close
+    // or explicit clearFuseParents() on success). Clearing on every re-render
+    // (fireCb=false) erases the user's R1/R2 selection on each render cycle.
+    const src = readClientSrc('objects/ui/RingManagementOverlayClass.ts');
+    if (src === null) return;
+
+    // Line-based analysis: find the teardown method, then find the if (fireCb)
+    // guard line within it, and confirm that fuseParent1/2 = null lines come
+    // AFTER (i.e. have a higher line number than) the if (fireCb) line.
+    const lines = src.split('\n');
+
+    // Find the teardown method start (private teardown).
+    const teardownStart = lines.findIndex((l) => /private teardown\(/.test(l));
+    expect(teardownStart, 'teardown method must exist').toBeGreaterThan(-1);
+
+    // Find `if (fireCb)` within the teardown body (after teardownStart).
+    const fireCbLineIdx = lines.findIndex(
+      (l, i) => i > teardownStart && /if\s*\(\s*fireCb\s*\)/.test(l),
+    );
+    expect(fireCbLineIdx, 'teardown must contain `if (fireCb)` guard').toBeGreaterThan(teardownStart);
+
+    // Find both fuseParent1 = null assignments (must be AFTER fireCb guard).
+    const parent1LineIdx = lines.findIndex(
+      (l, i) => i > teardownStart && /this\.fuseParent1\s*=\s*null/.test(l),
+    );
+    const parent2LineIdx = lines.findIndex(
+      (l, i) => i > teardownStart && /this\.fuseParent2\s*=\s*null/.test(l),
+    );
+    expect(parent1LineIdx, 'this.fuseParent1 = null must exist in teardown').toBeGreaterThan(teardownStart);
+    expect(parent2LineIdx, 'this.fuseParent2 = null must exist in teardown').toBeGreaterThan(teardownStart);
+
+    expect(
+      parent1LineIdx,
+      `fuseParent1=null (line ${parent1LineIdx + 1}) must come AFTER if (fireCb) (line ${fireCbLineIdx + 1})`,
+    ).toBeGreaterThan(fireCbLineIdx);
+    expect(
+      parent2LineIdx,
+      `fuseParent2=null (line ${parent2LineIdx + 1}) must come AFTER if (fireCb) (line ${fireCbLineIdx + 1})`,
+    ).toBeGreaterThan(fireCbLineIdx);
+  });
+
+  it('Spec AC: RingManagementOverlayClass.ts exports clearFuseParents() public method', () => {
+    // Fix Option A: a dedicated public method so adapters can clear parents before
+    // ov.refresh() on fusion success without accessing private fields.
+    const src = readClientSrc('objects/ui/RingManagementOverlayClass.ts');
+    if (src === null) return;
+    expect(
+      src,
+      'RingManagementOverlayClass must expose clearFuseParents() for adapters to call on success',
+    ).toContain('clearFuseParents');
+    // Must be public (no leading `private` keyword on the same line).
+    const methodMatch = src.match(/(\w+)\s+clearFuseParents\s*\(\s*\)/);
+    if (methodMatch) {
+      expect(
+        methodMatch[1],
+        'clearFuseParents must be a public method (not private)',
+      ).not.toBe('private');
+    }
+  });
+
+  it('Spec AC: CampScene.ts calls ov.clearFuseParents() before ov.refresh() in onFuse success path', () => {
+    // P1 fix: the success branch must clear parents first so the stale deleted
+    // ring IDs are gone before re-render uses them to repopulate R1/R2.
+    const src = readClientSrc('scenes/CampScene.ts');
+    if (src === null) return;
+    expect(
+      src,
+      'CampScene onFuse must call ov.clearFuseParents() to wipe stale deleted-ring references',
+    ).toContain('clearFuseParents');
+
+    // Line-based check: in the onFuse callback, clearFuseParents must appear
+    // on an earlier line than the ov.refresh call that follows it.
+    const lines = src.split('\n');
+    const onFuseLineIdx = lines.findIndex((l) => /onFuse\s*:\s*async/.test(l));
+    expect(onFuseLineIdx, 'onFuse callback must exist in CampScene.ts').toBeGreaterThan(-1);
+
+    // Find clearFuseParents and ov.refresh within the onFuse callback body
+    // (after the onFuse line definition).
+    const clearLineIdx = lines.findIndex(
+      (l, i) => i > onFuseLineIdx && /clearFuseParents/.test(l),
+    );
+    const refreshLineIdx = lines.findIndex(
+      (l, i) => i > onFuseLineIdx && /ov\.refresh\s*\(/.test(l),
+    );
+    expect(clearLineIdx, 'clearFuseParents call must appear after onFuse definition').toBeGreaterThan(onFuseLineIdx);
+    expect(refreshLineIdx, 'ov.refresh call must appear after onFuse definition').toBeGreaterThan(onFuseLineIdx);
+    expect(
+      clearLineIdx,
+      `clearFuseParents (line ${clearLineIdx + 1}) must come BEFORE ov.refresh (line ${refreshLineIdx + 1})`,
+    ).toBeLessThan(refreshLineIdx);
+  });
+
+  it('Spec AC: onFusionBenchClick sets fuseParent1 on first click (empty R1)', () => {
+    // Source-scan: the bench-click handler must assign to fuseParent1 when it is null.
+    const src = readClientSrc('objects/ui/RingManagementOverlayClass.ts');
+    if (src === null) return;
+    expect(
+      src,
+      'onFusionBenchClick must assign this.fuseParent1 when slot is empty',
+    ).toContain('this.fuseParent1 = ring');
+  });
+
+  it('Spec AC: onFusionBenchClick sets fuseParent2 on second click (R1 filled, R2 empty)', () => {
+    // Source-scan: the bench-click handler must assign to fuseParent2 when R1 is
+    // occupied and R2 is null.
+    const src = readClientSrc('objects/ui/RingManagementOverlayClass.ts');
+    if (src === null) return;
+    expect(
+      src,
+      'onFusionBenchClick must assign this.fuseParent2 when R1 is filled but R2 is empty',
+    ).toContain('this.fuseParent2 = ring');
+  });
+
+  it('Spec AC: onFusionBenchClick clears the correct slot when bench ring matches an assigned parent', () => {
+    // Clicking a ring that IS already assigned as R1 must clear R1 (not R2).
+    // The handler checks `this.fuseParent1?.id === ring.id` first.
+    const src = readClientSrc('objects/ui/RingManagementOverlayClass.ts');
+    if (src === null) return;
+    expect(
+      src,
+      'onFusionBenchClick must clear fuseParent1 when the clicked ring is already R1',
+    ).toContain('this.fuseParent1?.id === ring.id');
+    expect(
+      src,
+      'onFusionBenchClick must clear fuseParent2 when the clicked ring is already R2',
+    ).toContain('this.fuseParent2?.id === ring.id');
+  });
+
+});

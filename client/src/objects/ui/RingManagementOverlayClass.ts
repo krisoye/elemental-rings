@@ -823,6 +823,16 @@ export class RingManagementOverlay {
     this.opts.onStatus?.(msg);
   }
 
+  /**
+   * Clear both fusion parent selections. Called explicitly by adapters (e.g.
+   * CampScene.onFuse) immediately before `ov.refresh()` on a successful fusion
+   * so stale deleted-ring references do not survive the re-render.
+   */
+  clearFuseParents(): void {
+    this.fuseParent1 = null;
+    this.fuseParent2 = null;
+  }
+
   private teardown(fireCb = false): void {
     if (this.bhc) {
       this.bhc.destroy();
@@ -842,12 +852,11 @@ export class RingManagementOverlay {
       this.container = null;
     }
     this.statusText = null;
-    // Always clear fusion parent references (both on close and on refresh).
-    // If we don't clear them on refresh, stale references to deleted rings remain
-    // after a successful fusion, causing the [FUSE] button to stay active.
-    this.fuseParent1 = null;
-    this.fuseParent2 = null;
     if (fireCb) {
+      // Clear fusion parent selections only on genuine close — a re-render
+      // (fireCb=false) must preserve the user's R1/R2 choices between renders.
+      this.fuseParent1 = null;
+      this.fuseParent2 = null;
       this.swap.clear();
       clearRingMgmtState();
       const cb = this.onCloseCb;

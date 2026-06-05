@@ -2719,8 +2719,12 @@ export class CampScene extends DualCameraScene {
         if (err) {
           ov.setFuseStatus(err);
         }
-        // On success, doFuse calls loadData() + refreshes __campState; refresh overlay.
-        if (!err && ov.isOpen()) ov.refresh(this.buildOverlayData());
+        // On success, clear the stale parent selections BEFORE re-rendering so
+        // deleted rings do not appear in R1/R2 after the refresh.
+        if (!err && ov.isOpen()) {
+          ov.clearFuseParents();
+          ov.refresh(this.buildOverlayData());
+        }
       },
       onRender: (c) => {
         // Route to uiCam so it renders at 1:1 (mirrors old FusionPanel pattern).
