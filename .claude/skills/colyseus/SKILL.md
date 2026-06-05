@@ -290,6 +290,67 @@ test('FIRE+WATER PARRY triggers rally', async ({ browser }) => {
 
 ---
 
+## Playwright Input Rules (Phase 2+ — Phaser client)
+
+Phaser renders all UI to a `<canvas>`. There are no DOM buttons — `page.click('selector')` cannot target game objects. Real browser input uses `page.mouse.click(x, y)` and `page.keyboard.press()`.
+
+### Core rule: hooks for setup/readback; real input for the gesture under test
+
+| Use case | Correct method |
+|---|---|
+| Reach a server precondition (spend food, drain spirit, seed data) | `page.evaluate(() => (window as any).__campfireRest())` ✓ |
+| Read scene state for assertions (`overlayOpen`, `__campfireModal`, etc.) | `page.evaluate(() => (window as any).__scene.overlayOpen)` ✓ |
+| **Gesture whose correctness you are asserting** (ESC closes modal, ✕ click, button press) | `page.keyboard.press('Escape')` / `page.mouse.click(x, y)` ✓ |
+| **Gesture whose correctness you are asserting** | `page.evaluate(() => (window as any).__scene.campfireModal.close())` ✗ |
+
+`__*` hooks bypass Phaser's `processDownEvents` dispatch, depth-ordering, the scene-level `POINTER_DOWN` event chain, and all gating logic (e.g. `BlinkController.getModalOpen()`). A hook-triggered action cannot detect bugs in the input pipeline. This is the class of bug that kept #400 undetected across two PRs — tests called `modal.close()` directly and never exercised the ESC handler or the ✕ button's pointer path.
+
+### Canvas coordinate helper
+
+Canvas logical size is 1024×576 (`CANVAS_W`/`CANVAS_H` in `client/src/Constants.ts`). The browser may scale it via CSS — always derive page coords from the canvas bounding box:
+
+```typescript
+async function canvasCoords(
+  page: Page,
+  logicalX: number,
+  logicalY: number,
+): Promise<{ x: number; y: number }> {
+  const box = await page.locator('canvas').first().boundingBox();
+  if (!box) throw new Error('canvas not found');
+  return {
+    x: Math.round(box.x + logicalX * (box.width / 1024)),
+    y: Math.round(box.y + logicalY * (box.height / 576)),
+  };
+}
+```
+
+### Common modal logical coordinates
+
+`ModalShell.createOverlay` positions elements relative to panel center `(512, 288)`:
+
+| Modal | Element | Logical X | Logical Y |
+|---|---|---|---|
+| Any modal (width W, height H) | ✕ close button | `512 + W/2 − 18` | `288 − H/2 + 16` |
+| CampfireModal (420×280) | ✕ close button | 704 | 164 |
+| CampfireModal (420×280) | \[Rest — 25 food\] | 512 | 268 |
+| CampfireModal (420×280) | \[Summon Sanctum\] | 512 | 308 |
+
+For other modals read `opts.width`/`opts.height` from the `createOverlay` call in the component's source.
+
+### `waitForFunction` guard for hook-based modal detection
+
+`window.__campfireModal` (and similar hooks) starts as `undefined` — not `null` — before any modal opens. Use loose `!= null`, not strict `!== null`:
+
+```typescript
+// Correct — waits until the constructor assigns an object:
+await page.waitForFunction(() => (window as any).__campfireModal != null, { timeout: 5000 });
+
+// Wrong — resolves immediately because `undefined !== null` is true:
+await page.waitForFunction(() => (window as any).__campfireModal !== null, { timeout: 5000 });
+```
+
+---
+
 ## Common Gotchas
 
 - **@Schema fields must be initialized** — `= 0`, `= ''`, `= false`, `= new ArraySchema()`. Uninitialised fields are undefined and won't diff correctly.
