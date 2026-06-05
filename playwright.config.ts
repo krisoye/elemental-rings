@@ -67,6 +67,7 @@ const SOLO_SPECS = [
   'spare-ring-scroll.spec.ts',  // #194
   'merchant-qty-scroll.spec.ts', // #193
   'anchorage-campfire.spec.ts',  // #191
+  'anchorage-campfire-qa.spec.ts', // #417 QA adversarial close-gesture tests
   'spirit.spec.ts',
   'swamp.spec.ts',
   'talisman.spec.ts',
