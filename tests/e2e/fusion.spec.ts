@@ -276,20 +276,21 @@ test('fusion: CampScene Fuse button creates a Steam ring in the inventory', asyn
     { timeout: 8000 },
   );
 
-  // Open the fusion modal and confirm the Fire+Water recipe is ready.
+  // Open the fusion overlay via the E2E hook.
   await page.waitForFunction(
     () => typeof (window as any).__campOpenFusion === 'function',
     { timeout: 5000 },
   );
   await page.evaluate(() => (window as any).__campOpenFusion());
+
+  // #396 — the unified overlay publishes __ringMgmtState (not __fusionState).
+  // Wait until the fusion overlay is open and reports the expected columns.
   await page.waitForFunction(
     () => {
-      const fs = (window as any).__fusionState;
-      if (!fs) return false;
-      const steam = fs.recipes.find(
-        (r: any) => r.parents[0] === 0 && r.parents[1] === 1,
-      );
-      return steam?.ready === true;
+      const s = (window as any).__ringMgmtState;
+      return s?.mode === 'fusion' &&
+        Array.isArray(s?.columns) &&
+        s.columns[0] === 'FUSE';
     },
     { timeout: 5000 },
   );
@@ -320,6 +321,42 @@ test('fusion: CampScene Fuse button creates a Steam ring in the inventory', asyn
   expect(steam).toBeTruthy();
   expect(steam.max_uses).toBe(FUSED_MAX_USES);
   expect(steam.xp).toBe(FUSED_XP);
+
+  await ctx.close();
+});
+
+// ── Scenario 6: Fusion overlay structural assertions (#396) ──────────────────
+// Verifies that opening __campOpenFusion presents the unified 760×500 overlay with
+// FUSE/BENCH/HEALTH/COMBAT columns (same class/structure as field and sanctum modes).
+test('fusion: overlay opens at 760×500 with FUSE/BENCH/HEALTH/COMBAT columns (#396)', async ({
+  browser,
+}) => {
+  const token = await registerPlayer();
+  const ctx = await browser.newContext();
+  await ctx.addInitScript(`localStorage.setItem('er_token', ${JSON.stringify(token)})`);
+  const page = await ctx.newPage();
+  await page.goto(URL);
+
+  await page.waitForFunction(
+    () => typeof (window as any).__campOpenFusion === 'function',
+    { timeout: 8000 },
+  );
+  await page.evaluate(() => (window as any).__campOpenFusion());
+
+  // #396 — window.__ringMgmtState must be published with fusion mode columns.
+  const state = await page.waitForFunction(
+    () => {
+      const s = (window as any).__ringMgmtState;
+      if (!s || s.mode !== 'fusion') return null;
+      return s;
+    },
+    { timeout: 5000 },
+  );
+  const ringMgmtState = await state.jsonValue();
+
+  expect(ringMgmtState).toBeTruthy();
+  expect((ringMgmtState as any).mode).toBe('fusion');
+  expect((ringMgmtState as any).columns).toEqual(['FUSE', 'BENCH', 'HEALTH', 'COMBAT']);
 
   await ctx.close();
 });

@@ -1094,3 +1094,168 @@ describe('#395 isPickupBlockedByFullBench: export from pure module', () => {
   });
 
 });
+
+// ===========================================================================
+// Class 12 — fusion mode: COLUMN_LABELS and publishRingMgmtState (#396)
+// ===========================================================================
+
+describe('#396 fusion mode: COLUMN_LABELS and publishRingMgmtState', () => {
+
+  it('fusion mode has 4 columns: FUSE, BENCH, HEALTH, COMBAT', () => {
+    // #396 acceptance criterion: the fusion left column label is FUSE.
+    expect(COLUMN_LABELS.fusion).toEqual(['FUSE', 'BENCH', 'HEALTH', 'COMBAT']);
+  });
+
+  it('fusion mode left column is FUSE (index 0)', () => {
+    expect(COLUMN_LABELS.fusion[0]).toBe('FUSE');
+  });
+
+  it('fusion mode shares the three right-hand columns with sanctum and field', () => {
+    // #396 convergence contract: BENCH/HEALTH/COMBAT identical across all three modes.
+    const shared = COLUMN_LABELS.sanctum.slice(1);
+    expect(COLUMN_LABELS.fusion.slice(1)).toEqual(shared);
+    expect(COLUMN_LABELS.field.slice(1)).toEqual(shared);
+  });
+
+  it('publishRingMgmtState fusion mode sets columns to [FUSE, BENCH, HEALTH, COMBAT]', () => {
+    publishRingMgmtState('fusion', { bench: { n: 2, max: 9 } });
+    expect((global as any).window.__ringMgmtState.columns).toEqual(['FUSE', 'BENCH', 'HEALTH', 'COMBAT']);
+  });
+
+  it('publishRingMgmtState fusion mode sets mode to "fusion"', () => {
+    publishRingMgmtState('fusion', { bench: { n: 0, max: 5 } });
+    expect((global as any).window.__ringMgmtState.mode).toBe('fusion');
+  });
+
+  it('fusion mode columns are an independent copy (not a reference to COLUMN_LABELS)', () => {
+    // Anti-drift: mutating the published state must not corrupt the canonical table.
+    publishRingMgmtState('fusion', { bench: { n: 0, max: 5 } });
+    const stored: string[] = (global as any).window.__ringMgmtState.columns;
+    stored.push('EXTRA');
+    expect(COLUMN_LABELS.fusion).not.toContain('EXTRA');
+  });
+
+  it('fusion mode does not contain "Spare" or "Spares" in any column label', () => {
+    for (const col of COLUMN_LABELS.fusion) {
+      expect(col.toLowerCase()).not.toContain('spare');
+    }
+  });
+
+  it('all three modes (sanctum/field/fusion) define exactly 4 columns', () => {
+    // Regression: no mode may drop or add a column silently.
+    expect(COLUMN_LABELS.sanctum).toHaveLength(4);
+    expect(COLUMN_LABELS.field).toHaveLength(4);
+    expect(COLUMN_LABELS.fusion).toHaveLength(4);
+  });
+
+});
+
+// ===========================================================================
+// Class 13 — Sub-B conformance: FusionPanel retired, unified overlay in place (#396)
+// ===========================================================================
+
+describe('#396 Sub-B SpecConformance: FusionPanel retired', () => {
+
+  it('Spec AC: FusionPanel.ts is deleted — no file at client/src/objects/FusionPanel.ts', () => {
+    // #396 acceptance criterion: the standalone FusionPanel must not exist.
+    const exists = fs.existsSync(path.join(CLIENT_SRC, 'objects/FusionPanel.ts'));
+    expect(
+      exists,
+      'FusionPanel.ts must be deleted — #396 replaces it with fusion mode in RingManagementOverlay',
+    ).toBe(false);
+  });
+
+  it('Spec AC: no file in client/src imports FusionPanel (all importers cleaned up)', () => {
+    // #396 adversarial: a missed import of the deleted file causes a runtime crash.
+    function walkTs(dir: string): string[] {
+      if (!fs.existsSync(dir)) return [];
+      return fs.readdirSync(dir, { withFileTypes: true }).flatMap((e) => {
+        const full = path.join(dir, e.name);
+        if (e.isDirectory()) return walkTs(full);
+        return e.isFile() && e.name.endsWith('.ts') ? [full] : [];
+      });
+    }
+    const violations = walkTs(CLIENT_SRC).filter((f) => {
+      const src = fs.readFileSync(f, 'utf8');
+      return /^\s*import\s[^;]*FusionPanel/.test(src);
+    });
+    expect(
+      violations.map((f) => path.relative(CLIENT_SRC, f)),
+      'All FusionPanel imports must be removed — file is deleted',
+    ).toHaveLength(0);
+  });
+
+  it('Spec AC: CampScene.ts does not instantiate FusionPanel (new FusionPanel)', () => {
+    const src = readClientSrc('scenes/CampScene.ts');
+    if (src === null) return;
+    expect(
+      src,
+      'CampScene.ts must not use new FusionPanel() — replaced by RingManagementOverlay fusion mode',
+    ).not.toContain('new FusionPanel(');
+  });
+
+  it('Spec AC: BaseBiomeScene.ts does not instantiate FusionPanel', () => {
+    const src = readClientSrc('scenes/BaseBiomeScene.ts');
+    if (src === null) return;
+    expect(
+      src,
+      'BaseBiomeScene.ts must not use new FusionPanel() — replaced by RingManagementOverlay fusion mode',
+    ).not.toContain('new FusionPanel(');
+  });
+
+  it('Spec AC: CampScene.ts still has window.__campOpenFusion hook', () => {
+    // #396 preservation: the E2E hook must still fire when openFusionPanel() is called.
+    const src = readClientSrc('scenes/CampScene.ts');
+    if (src === null) return;
+    expect(
+      src,
+      'CampScene.ts must define window.__campOpenFusion so E2E tests can open the fusion overlay',
+    ).toContain('__campOpenFusion');
+  });
+
+  it('Spec AC: CampScene.ts window.__campFusedFills hook preserved', () => {
+    const src = readClientSrc('scenes/CampScene.ts');
+    if (src === null) return;
+    expect(
+      src,
+      'CampScene.ts must set window.__campFusedFills — used by E2E to observe fusion card fills',
+    ).toContain('__campFusedFills');
+  });
+
+  it('Spec AC: RingManagementOverlayClass.ts includes fusion mode in the left-column branch', () => {
+    const src = readClientSrc('objects/ui/RingManagementOverlayClass.ts');
+    if (src === null) return;
+    expect(
+      src,
+      'RingManagementOverlayClass.ts must handle fusion mode in renderLeft dispatch',
+    ).toContain("mode === 'fusion'");
+  });
+
+  it('Spec AC: RingManagementOverlayClass.ts exports setFuseStatus (overlay.setFuseStatus method)', () => {
+    const src = readClientSrc('objects/ui/RingManagementOverlayClass.ts');
+    if (src === null) return;
+    expect(
+      src,
+      'RingManagementOverlayClass must expose setFuseStatus() for the onFuse callback to surface errors',
+    ).toContain('setFuseStatus');
+  });
+
+  it('Spec AC: RingManagementOverlayOpts declares onFuse and filterElement options', () => {
+    const src = readClientSrc('objects/ui/RingManagementOverlayClass.ts');
+    if (src === null) return;
+    expect(src, 'RingManagementOverlayOpts must declare onFuse').toContain('onFuse');
+    expect(src, 'RingManagementOverlayOpts must declare filterElement').toContain('filterElement');
+  });
+
+  it('Spec AC: BaseBiomeScene.ts does NOT import FusionPanel', () => {
+    const src = readClientSrc('scenes/BaseBiomeScene.ts');
+    if (src === null) return;
+    const importLines = src.split('\n').filter((l) => l.trim().startsWith('import'));
+    const hasFusionPanelImport = importLines.some((l) => l.includes('FusionPanel'));
+    expect(
+      hasFusionPanelImport,
+      'BaseBiomeScene.ts must not import FusionPanel — it was replaced by RingManagementOverlay fusion mode',
+    ).toBe(false);
+  });
+
+});

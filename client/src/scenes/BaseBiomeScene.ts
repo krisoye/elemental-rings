@@ -16,7 +16,8 @@ import { OverworldMapModal } from '../objects/OverworldMapModal';
 import { placeDecoration, type DecorationHandle } from '../objects/world/Decoration';
 import { MONSTER_OW_REGISTRY } from '../objects/world/NpcSpriteRegistry';
 import { WanderingNpc } from '../objects/world/WanderingNpc';
-import { FusionPanel } from '../objects/FusionPanel';
+import { RingManagementOverlay, type RingManagementOverlayOpts } from '../objects/ui/RingManagementOverlayClass';
+import type { OverlayData } from '../objects/ui/RingManagementOverlayClass';
 import type { RingData } from '../objects/InventoryGrid';
 import { showTransientText } from '../objects/ui/toast';
 import { addDomLabel, setDomLabelText } from '../objects/ui/DomLabel';
@@ -138,10 +139,8 @@ export abstract class BaseBiomeScene extends DualCameraScene {
   private wasd!: { W: Phaser.Input.Keyboard.Key; A: Phaser.Input.Keyboard.Key; S: Phaser.Input.Keyboard.Key; D: Phaser.Input.Keyboard.Key };
   private zones: InteractionZone[] = [];
   private activeZone: InteractionZone | null = null;
-  /** #231 — the Fusion Shrine crafting modal (lazy, single instance per scene). */
-  private shrineFusion: FusionPanel | null = null;
-  /** #231 — the fusion element the shrine modal is currently pre-filtered to. */
-  private shrineFusionFilter: number | undefined = undefined;
+  /** #396 — the unified fusion overlay for the Fusion Shrine (lazy, per-open). */
+  private shrineFusionOverlay: RingManagementOverlay | null = null;
   /** Centers of Anchorage locations (keyed by waystoneId), for compass + spawn logic. */
   private anchorageMarkers: Map<string, { center: { x: number; y: number } }> = new Map();
   /** Campfire graphics markers keyed by anchorage id (#191). */
@@ -301,29 +300,50 @@ export abstract class BaseBiomeScene extends DualCameraScene {
   }
 
   /**
-   * #231 — Open the Fusion crafting modal pre-filtered to a single fusion element
-   * (the unsealed Shrine's craft action). Fetches the player's current ring
-   * inventory from /api/me, then opens a {@link FusionPanel} showing only the
-   * recipe whose result matches `filterElement`. The server (POST
-   * /api/fusion/combine) remains the sole authority on what fuses.
+   * #396 — Open the unified fusion overlay (RingManagementOverlay in fusion mode)
+   * pre-filtered to a single fusion element. Fetches the player's current /api/me
+   * snapshot, then opens the overlay with `filterElement` restricting the FUSE column
+   * to the recipe whose result matches. The server (POST /api/fusion/combine) remains
+   * the sole authority on what fuses.
    */
   protected async openShrineFusion(filterElement: number): Promise<void> {
-    this.shrineFusion ??= new FusionPanel(
-      this,
-      (ringId1, ringId2) => this.doShrineFuse(ringId1, ringId2),
-      (container) => {
-        if (container) this.unignoreMain(container);
+    // Close any existing overlay first.
+    this.shrineFusionOverlay?.close();
+
+    const meData = await this.fetchMeAsOverlayData();
+
+    const overlayOpts: RingManagementOverlayOpts = {
+      resolveMove: async () => { /* shrine fusion overlay does not use swap moves */ },
+      onRecharge: () => { /* no recharge action in shrine context */ },
+      filterElement,
+      onFuse: async (ringId1, ringId2, ov) => {
+        const err = await this.doShrineFuse(ringId1, ringId2, filterElement, ov);
+        if (err) ov.setFuseStatus(err);
       },
-    );
-    this.shrineFusionFilter = filterElement;
-    const rings = await this.fetchRings();
-    this.shrineFusion.open(rings, filterElement);
-    const fc = this.shrineFusion.getContainer();
-    if (fc) this.routeToUi(fc);
+      onRender: (c) => {
+        this.routeToUi(c);
+      },
+      onBeforeDestroy: (c) => {
+        this.unignoreMain(c);
+      },
+    };
+
+    this.shrineFusionOverlay = new RingManagementOverlay(this, 'fusion', overlayOpts);
+    this.shrineFusionOverlay.open(meData, () => {
+      this.shrineFusionOverlay = null;
+    });
   }
 
-  /** POST /api/fusion/combine for the shrine modal; reopens on success (#231). */
-  private async doShrineFuse(ringId1: string, ringId2: string): Promise<string | null> {
+  /**
+   * POST /api/fusion/combine for the shrine overlay; on success reopens with
+   * the refreshed inventory (#231 / #396).
+   */
+  private async doShrineFuse(
+    ringId1: string,
+    ringId2: string,
+    filterElement: number,
+    _ov: RingManagementOverlay,
+  ): Promise<string | null> {
     if (!getToken()) return 'Not authenticated';
     try {
       const res = await apiFetch('/api/fusion/combine', {
@@ -334,25 +354,32 @@ export abstract class BaseBiomeScene extends DualCameraScene {
         const body = await res.json().catch(() => ({}));
         return (body as { error?: string }).error ?? `Fusion failed (${res.status})`;
       }
-      // Success: reopen the panel with the refreshed inventory so the new ring
-      // shows and the consumed parents disappear.
-      if (this.shrineFusionFilter !== undefined) {
-        void this.openShrineFusion(this.shrineFusionFilter);
-      }
+      // Success: reopen the overlay with the refreshed inventory.
+      void this.openShrineFusion(filterElement);
       return null;
     } catch {
       return 'Fusion failed (network error)';
     }
   }
 
-  /** Fetch the player's current ring inventory from /api/me (#231). */
-  private async fetchRings(): Promise<RingData[]> {
-    if (!getToken()) return [];
+  /** Fetch the full /api/me payload and return it as `OverlayData`. */
+  private async fetchMeAsOverlayData(): Promise<OverlayData> {
+    if (!getToken()) return { player: null, rings: [], loadout: {} };
     try {
-      const body = await fetchMe<{ rings: RingData[] }>();
-      return body.rings ?? [];
+      const body = await fetchMe<{ player: any; rings: RingData[]; loadout: Record<string, string | null> }>();
+      return {
+        player: body.player
+          ? {
+              spare_ring_max: body.player.spare_ring_max,
+              pending_ring_id: body.player.pending_ring_id ?? null,
+              heart_ring: body.player.heart_ring ?? null,
+            }
+          : null,
+        rings: body.rings ?? [],
+        loadout: body.loadout ?? {},
+      };
     } catch {
-      return [];
+      return { player: null, rings: [], loadout: {} };
     }
   }
   /** NPC detection radius (px). Subclasses may shrink it (e.g. the foggy Swamp). */

@@ -12,8 +12,8 @@ import {
 import {
   RingManagementOverlay,
   type OverlayData,
+  type RingManagementOverlayOpts,
 } from '../objects/ui/RingManagementOverlayClass';
-import { FusionPanel } from '../objects/FusionPanel';
 import { DifficultyModal } from '../objects/DifficultyModal';
 import { ELEMENT_NAMES, CANVAS_W, CANVAS_H, THUMB_PASSIVE_INFO, SLOT_KEYS } from '../Constants';
 import { type DifficultyTier } from '../../../shared/types';
@@ -143,7 +143,8 @@ export class CampScene extends DualCameraScene {
   // ── Reusable inventory panels (parked off-screen, shown in overlays) ───────
   private sanctumGrid!: InventoryGrid;
   private loadoutGrid!: InventoryGrid;
-  private fusionPanel!: FusionPanel;
+  /** #396 — fusion overlay (replaces standalone FusionPanel; null when closed). */
+  private fusionOverlay: RingManagementOverlay | null = null;
   // EPIC #279 — Settings → difficulty selector. Self-contained modal (FusionPanel
   // lifecycle shape); opened by the persistent Settings button on uiRoot.
   private difficultyModal!: DifficultyModal;
@@ -660,9 +661,8 @@ export class CampScene extends DualCameraScene {
     this.overlayName = null;
     this.overlayOnClose = null;
     window.__sanctumOverlayOpen = null;
-    // #118: the FusionPanel's onClose callback clears its own container's
-    // main-camera ignore flag before destroying it.
-    if (this.fusionPanel.isOpen()) this.fusionPanel.close();
+    // #396: close the fusion overlay if it is open (replaces FusionPanel.close()).
+    if (this.fusionOverlay?.isOpen()) this.fusionOverlay.close();
   }
 
   /**
@@ -907,7 +907,7 @@ export class CampScene extends DualCameraScene {
       this.overlayOnClose = null;
       this.sanctumOverlay = null;
       window.__sanctumOverlayOpen = null;
-      if (this.fusionPanel.isOpen()) this.fusionPanel.close();
+      if (this.fusionOverlay?.isOpen()) this.fusionOverlay.close();
     });
 
     // #395 — the overlay class owns the single SlotSwapManager. Expose it via
@@ -2326,15 +2326,7 @@ export class CampScene extends DualCameraScene {
     // them again. They are still populated by loadData() while hidden.
     this.sanctumGrid.setVisible(false);
     this.loadoutGrid.setVisible(false);
-    this.fusionPanel = new FusionPanel(
-      this,
-      (ringId1, ringId2) => this.doFuse(ringId1, ringId2),
-      (container) => {
-        // #118: clear the container's main-camera ignore flag before FusionPanel
-        // destroys it (fires for both the panel's own [×] button and closeOverlay).
-        if (container) this.unignoreMain(container);
-      },
-    );
+    // #396 — FusionPanel retired; fusion overlay is created on-demand in openFusionPanel().
     // EPIC #279 — difficulty selector. On a confirmed tier change the server
     // returns the recomputed spirit_max; mirror it into __campState and re-render
     // both stats displays (the main stat line + the open Reliquary header, if any).
@@ -2704,17 +2696,64 @@ export class CampScene extends DualCameraScene {
     await this.loadData();
   }
 
-  // ── Fusion (#47) ─────────────────────────────────────────────────────────
+  // ── Fusion (#47 / #396) ──────────────────────────────────────────────────
 
-  /** Open the fusion modal with the current ring inventory snapshot. */
+  /**
+   * Open the fusion overlay (unified RingManagementOverlay in fusion mode).
+   * #396 — replaces `FusionPanel.open()`; `window.__campOpenFusion` still fires.
+   */
   private openFusionPanel(): void {
-    this.fusionPanel.open(this.rings);
-    // #118: the FusionPanel container stays at the scene root (so its E2E
-    // traversals are unchanged); tell cameras.main to ignore it so it renders
-    // at 1:1 via uiCam instead of the 2× world camera. Ignoring the container
-    // cascades to all its children.
-    const fc = this.fusionPanel.getContainer();
-    if (fc) this.routeToUi(fc);
+    // Close existing overlay first (idempotent — close() is safe when not open).
+    this.fusionOverlay?.close();
+
+    const overlayOpts: RingManagementOverlayOpts = {
+      resolveMove: async () => { /* fusion overlay does not use swap moves */ },
+      onRecharge: (ov) => {
+        // Delegate recharge to the standard handler and refresh the overlay.
+        void this.doRechargeAll(false).then(() => {
+          if (ov.isOpen()) ov.refresh(this.buildOverlayData());
+        });
+      },
+      onFuse: async (ringId1, ringId2, ov) => {
+        const err = await this.doFuse(ringId1, ringId2);
+        if (err) {
+          ov.setFuseStatus(err);
+        }
+        // On success, doFuse calls loadData() + refreshes __campState; refresh overlay.
+        if (!err && ov.isOpen()) ov.refresh(this.buildOverlayData());
+      },
+      onRender: (c) => {
+        // Route to uiCam so it renders at 1:1 (mirrors old FusionPanel pattern).
+        this.routeToUi(c);
+        window.__sanctumOverlayOpen = 'fusion';
+      },
+      onBeforeDestroy: (c) => {
+        this.unignoreMain(c);
+      },
+    };
+
+    this.fusionOverlay = new RingManagementOverlay(this, 'fusion', overlayOpts);
+    this.fusionOverlay.open(this.buildOverlayData(), () => {
+      this.fusionOverlay = null;
+      window.__sanctumOverlayOpen = null;
+    });
+  }
+
+  /**
+   * Build an `OverlayData` snapshot from the current /api/me cache. Shared by
+   * `openFusionPanel` and the `onFuse` refresh callback.
+   */
+  private buildOverlayData(): OverlayData {
+    const s = window.__campState;
+    return {
+      player: s ? {
+        spare_ring_max: s.spare_ring_max,
+        pending_ring_id: (s.player?.pending_ring_id as string | null | undefined) ?? null,
+        heart_ring: (s.heart_ring as RingData | null) ?? null,
+      } : null,
+      rings: this.rings,
+      loadout: this.loadout,
+    };
   }
 
   /**
@@ -2772,11 +2811,7 @@ export class CampScene extends DualCameraScene {
       }
       const { ring } = (await res.json()) as { ring: RingData };
       this.setStatus(`Fusion complete! ${ELEMENT_NAMES[ring.element] ?? 'New'} ring added`);
-      const wasOpen = this.fusionPanel.isOpen();
       await this.loadData();
-      // #118: reopen via openFusionPanel() so the freshly-created container is
-      // ignored by cameras.main and renders at 1:1 through uiCam.
-      if (wasOpen) this.openFusionPanel();
       return null;
     } catch {
       return 'Network error during fusion';
