@@ -133,13 +133,15 @@ export class BenchHealthCombat extends Phaser.GameObjects.Container {
     benchGrid.setVisibleRows(RINGWALL_VISIBLE_ROWS);
 
     // Apply yellow selection stroke to the currently-selected bench ring,
-    // and dim all other bench cards when the bench is full.
+    // and dim all OTHER bench cards when the bench is full (selected card stays
+    // at full alpha so the user can see which ring is held).
     if (selectedRingId !== null) {
       const selBg = benchGrid.getCardBg(selectedRingId);
       if (selBg) selBg.setStrokeStyle(3, 0xffff00);
     }
     if (benchFull) {
       benchRings.forEach((r) => {
+        if (r.id === selectedRingId) return; // keep selected card at full alpha
         const bg = benchGrid.getCardBg(r.id);
         if (bg) bg.setAlpha(0.45);
       });
