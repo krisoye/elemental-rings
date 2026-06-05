@@ -4,11 +4,12 @@
 
 Before setting out from camp, the player packs a **carry loadout** — up to `carry_cap` rings (default 10) chosen from their full inventory. Only these rings are available in the overworld and during battle.
 
-Of the carried rings, the player assigns **5 to the battle hand** before each encounter — these are the only rings usable during the duel:
+Of the carried rings, the player assigns **6 rings to their slots** before each encounter — one to the dedicated heart (HP) slot, and five to the battle hand:
 
 
 | Slot  | Button | Role |
 |-------|--------|------|
+| Heart | —      | HP slot: equipped ring's `current_uses` = duel starting HP. Destroyed on KO (§6.7). Not a battle-hand slot — cannot be pressed in combat. Equipped via the ring management screen. |
 | Thumb | —      | Staked ring: passive ability only (see §9). Never pressed in combat. |
 | A1    | A1     | Attack slot 1 |
 | A2    | A2     | Attack slot 2 |
@@ -18,7 +19,8 @@ Of the carried rings, the player assigns **5 to the battle hand** before each en
 **Button mapping is slot-locked:** the A1 button always fires whatever ring is in the A1 slot, regardless of element. There is no element-to-button locking. Ring identity (element, tier, fusion type) is visible on the HUD during battle.
 
 ### 6.2 Pre-Duel Setup
-- Each player assigns **5 rings to their slots** (Thumb, A1, A2, D1, D2) from their inventory
+- Each player assigns **6 rings to their slots** (Heart, Thumb, A1, A2, D1, D2) from their inventory
+- The **Heart ring provides HP** — its `current_uses` equals the player's starting hearts in the duel
 - The **Thumb ring is staked** (see Section 9) — it grants a passive ability but is never pressed in combat
 - Both players can see each other's element types and aggregate uses from detection range before committing
 - Once both players formally agree to duel, the battle begins
@@ -37,6 +39,8 @@ A player who lacks either condition cannot initiate via the E-key or double-clic
 **Why this rule:** The heart ring represents the player's literal hitpoints; the thumb ring represents their stake (risk). This prevents duels without skin in the game and removes the silent fallback behavior of assigning a default fire ring when the thumb slot was null.
 
 **Note on drained stakes:** A drained stake ring (uses = 0 but assigned to the thumb slot) **does not block** battle entry — the ring remains at risk even though its passive will not fire.
+
+**Starter inventory:** At game start, the player's battle-hand loadout is preset: Wind ring in the Heart slot (Tier 0 → 3 HP), Earth ring in the Thumb/STATUS slot, Wind × 2 in A1/A2 attack slots, and Earth × 2 in D1/D2 defense slots. This balanced starter kit provides immediate playability and teaches the triangle matchup by example (Wind neutral, Earth always safe). The player's reliquary contains additional rings for overworld foraging and ring fusion.
 
 ### 6.3 Turn Structure (Active Timed Block)
 Combat is an **active, reaction-timed** exchange — not a hidden simultaneous selection. One player holds **initiative** at any moment; the other is the **reactor**.
@@ -191,12 +195,17 @@ Neutrals are pure attrition exchanges — safe on hearts, with the gauge and use
 
 **Attack-ring exhaustion.** If both A1 and A2 are extinguished, the attacker cannot throw — they must recharge at least one ring (Option B, §6.3) before attacking. If they lack the spirit to recharge either, their only recourse is to forfeit (Option C, §6.3), losing the staked ring and a gold penalty.
 
-### 6.7 Hearts
-- Each player starts a duel with **3 hearts**
-- Hearts are lost when an attack lands uncontested (no-block or mistime), on a weak catch (block or parry with an element the attack beats), or via status effect damage
-- When all hearts are gone that player loses the duel
-- Hearts reset between duels
-- When a player's hearts reach 0 and the duel ends, their heart ring is permanently destroyed (broken)
+### 6.7 Hearts and HP Derivation
+
+**HP at duel start** is derived from the equipped heart ring's `current_uses`, capped at its `max_uses`. A Tier 0 heart ring has `max_uses = 3`, giving 3 HP at game start; a higher-tier heart ring grants more HP. For example, a Tier 1 heart ring with `max_uses = 4` provides 4 starting hearts in a duel.
+
+**Heart ring uses drain across duels.** A duel that ends with 2 hearts remaining saves the heart ring at 2 `current_uses`. The ring must be recharged (at the meditation circle or via field spirit) before it restores full HP. Uses are not automatically restored between duels — a drained heart ring blocks duel entry until recharged.
+
+**On KO (hearts reach 0):** the heart ring is permanently destroyed — removed from the player's inventory entirely. This is the harsh consequence of losing without forfeit.
+
+**On forfeit (hearts > 0, §6.3):** the heart ring is preserved at its remaining uses. This is the core strategic reason to forfeit: a heart ring with 4 or 5 pips (Tier 1+) represents a significant investment. Losing it to a KO is permanent; forfeiting costs the staked Thumb ring and 25 gold but saves the heart ring for the next duel. A player holding a high-tier heart ring may choose to cut losses early rather than risk permanent destruction.
+
+**Hearts are lost** when an attack lands uncontested (no-block or mistime), on a weak catch (block or parry with an element the attack beats), or via status effect damage. When all hearts are gone that player loses the duel.
 
 ### 6.8 Post-Battle Loadout Management
 
