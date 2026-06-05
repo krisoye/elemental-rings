@@ -570,16 +570,20 @@ describe('#363/#389 carve-out invariant: scrollable per-card labels stay canvas 
   // #363 adversarial: if the overlayTitle / spare HEADER label is NOT migrated to DOM
   // (i.e. stays canvas while spec says it should be DOM), then the spec conformance
   // test ensures the migrated labels use addDomLabel.  This is a two-sided guard.
-  it('BattleHandOverlay.ts imports or calls addDomLabel for screen-fixed overlay labels', () => {
-    const src = readClientSrc('objects/BattleHandOverlay.ts');
-    if (src === null) return;
+  // #395 update: BattleHandOverlay is now a thin adapter; rendering (and addDomLabel
+  // calls) live in RingManagementOverlayClass.ts. The check is relaxed to cover either.
+  it('BattleHandOverlay.ts or RingManagementOverlayClass.ts imports or calls addDomLabel for screen-fixed overlay labels', () => {
+    const bhoSrc = readClientSrc('objects/BattleHandOverlay.ts');
+    const classSrc = readClientSrc('objects/ui/RingManagementOverlayClass.ts');
     // The overlay title and spare HEADER are screen-fixed (setScrollFactor(0))
     // and not inside a scrolling container — spec says they must be DOM.
-    // After #363 implementation, addDomLabel must appear in BattleHandOverlay.
+    // #395: the rendering is in the class file, not the adapter.
+    const hasAddDomLabel = (bhoSrc?.includes('addDomLabel') ?? false) ||
+                           (classSrc?.includes('addDomLabel') ?? false);
     expect(
-      src,
-      'BattleHandOverlay.ts must call addDomLabel for screen-fixed labels (overlay title, spare HEADER)',
-    ).toContain('addDomLabel');
+      hasAddDomLabel,
+      'Screen-fixed overlay labels must use addDomLabel — check BattleHandOverlay.ts or RingManagementOverlayClass.ts',
+    ).toBe(true);
   });
 
 });
@@ -1419,16 +1423,20 @@ describe('#389 Phase 1+2: BattleHandOverlay field-mode reliquary-target disabled
     expect(src, "RingManagementOverlay must define RingMgmtMode with 'field'").toContain("'field'");
   });
 
-  it('BattleHandOverlay.ts publishes window.__ringMgmtState (calls publishRingMgmtState)', () => {
+  it('field-mode render path calls publishRingMgmtState (BattleHandOverlay or RingManagementOverlayClass)', () => {
     // #389 E2E introspection requirement: the field overlay must publish its structure
     // to __ringMgmtState so cross-mode structural assertions can verify column parity.
-    // Without this call the Scenario 1c E2E test would wait forever for the hook.
-    const src = readClientSrc('objects/BattleHandOverlay.ts');
-    if (src === null) return;
+    // #395 update: BattleHandOverlay is now a thin adapter; publishRingMgmtState is
+    // called from RingManagementOverlayClass.ts (shared render method). Either location
+    // satisfies the contract.
+    const bhoSrc = readClientSrc('objects/BattleHandOverlay.ts');
+    const classSrc = readClientSrc('objects/ui/RingManagementOverlayClass.ts');
+    const hasPublish = (bhoSrc?.includes('publishRingMgmtState') ?? false) ||
+                       (classSrc?.includes('publishRingMgmtState') ?? false);
     expect(
-      src,
-      'BattleHandOverlay.ts must call publishRingMgmtState to expose field-mode state to E2E',
-    ).toContain('publishRingMgmtState');
+      hasPublish,
+      'publishRingMgmtState must be called from the field render path (BattleHandOverlay or RingManagementOverlayClass)',
+    ).toBe(true);
   });
 
   it('BattleHandOverlay.ts calls clearRingMgmtState on close (hook cleanup)', () => {
@@ -1730,19 +1738,30 @@ describe('#364 Phase 2: crispCanvasText call-site coverage across target files',
     expect(callCount, 'BattleScene.ts must have at least 3 crispCanvasText calls (battle labels, banners, feedback)').toBeGreaterThanOrEqual(3);
   });
 
-  it('BattleHandOverlay.ts imports addDomLabel; per-card crisp labels live in InventoryGrid', () => {
+  it('field overlay render path imports addDomLabel; per-card crisp labels live in InventoryGrid', () => {
     // #363/#364 used both helpers in BattleHandOverlay. #381/#389 migrated the
     // scrolling per-card labels to the shared InventoryGrid → RingCard, so the
     // overlay now keeps addDomLabel for its screen-fixed chrome while crispCanvasText
     // for per-card labels is owned by InventoryGrid/RingCard.
-    const src = readClientSrc('objects/BattleHandOverlay.ts');
-    if (src === null) return;
-    expect(src, 'BattleHandOverlay.ts must import addDomLabel').toContain('addDomLabel');
-    const importLine = src.split('\n').find((l) => l.includes('addDomLabel') && l.includes('import'));
+    // #395 update: BattleHandOverlay is a thin adapter; addDomLabel calls live in
+    // RingManagementOverlayClass.ts (shared render). Check either location.
+    const bhoSrc = readClientSrc('objects/BattleHandOverlay.ts');
+    const classSrc = readClientSrc('objects/ui/RingManagementOverlayClass.ts');
+    const combinedHasAddDomLabel = (bhoSrc?.includes('addDomLabel') ?? false) ||
+                                   (classSrc?.includes('addDomLabel') ?? false);
     expect(
-      importLine?.includes('DomLabel') ?? false,
-      'BattleHandOverlay.ts must import addDomLabel from DomLabel',
+      combinedHasAddDomLabel,
+      'Field overlay render path must use addDomLabel (check BattleHandOverlay.ts or RingManagementOverlayClass.ts)',
     ).toBe(true);
+
+    // Verify the class file imports addDomLabel from DomLabel (not elsewhere).
+    if (classSrc !== null) {
+      const importLine = classSrc.split('\n').find((l) => l.includes('addDomLabel') && l.includes('import'));
+      expect(
+        importLine?.includes('DomLabel') ?? false,
+        'RingManagementOverlayClass.ts must import addDomLabel from DomLabel',
+      ).toBe(true);
+    }
 
     // #389 — the carve-out (canvas, not DOM, for scrollable per-card labels) now
     // lives in InventoryGrid, whose cards are RingCards that wrap their labels in

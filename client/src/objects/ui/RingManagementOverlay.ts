@@ -1,61 +1,49 @@
 import { SLOT_KEYS } from '../../Constants';
 import type { RingData } from '../InventoryGrid';
+import type { SwapSlot } from './SlotSwapManager';
 
 /**
- * Unified ring-management contract (EPIC #387 / #389).
+ * Unified ring-management contract (EPIC #387 / #389 / #395).
  *
  * The field "Manage Battle Rings" overlay (`BattleHandOverlay`) and the Sanctum
  * "Reliquary" overlay (`CampScene.openRingwallOverlay`) were two divergent
- * implementations of overlapping ring-management UI. #389 converges them onto a
- * single shared structure:
+ * implementations of overlapping ring-management UI. This module converges them:
  *
  * ```
  *  sanctum:  SPIRIT (n/max)  | BENCH (n/max) | HEALTH | COMBAT
  *  field:    LOOT (WON/DISC) | BENCH (n/max) | HEALTH | COMBAT
+ *  fusion:   FUSE            | BENCH (n/max) | HEALTH | COMBAT
  * ```
  *
- * The three right-hand columns — BENCH (an `InventoryGrid` of carried, non-
- * battle-slotted rings), HEALTH (the equipped heart `RingCard`), and COMBAT (the
- * STATUS thumb card left-aligned above the 2×2 A1/A2 · D1/D2 cluster) — are the
- * SAME component structure and card geometry in both modes (the anti-drift
- * payload). Only the left column is mode-specific.
- *
- * This module owns the convergence contract that both controllers share:
- *   - the canonical Bench / Spirit counter computations (mirroring the server),
- *   - the shared column-header labels and player-facing "Bench" naming, and
- *   - the `window.__ringMgmtState` structure reporter used by the cross-mode E2E
- *     assertions.
- *
- * No server behaviour changes here — every move still maps to the existing
- * routes; the field mode simply disables the spirit/reliquary target (a ring
- * cannot be banked to the resting pool away from the Sanctum).
- */
-
-export type RingMgmtMode = 'sanctum' | 'field';
-
-/**
- * Player-facing column header labels (left → right). The mode-specific LEFT
- * column is SPIRIT (sanctum, the resting pool) or LOOT (field, the WON +
- * DISCARD pair); the three shared columns are identical in both modes.
+ * The three right-hand columns (BENCH, HEALTH, COMBAT) are rendered by the shared
+ * `BenchHealthCombat` component in all modes. Only the left column is mode-specific.
  *
  * NAMING (#389): the carried-rings column is labelled **"Bench"** to the player
- * (replacing the old "Spares"); the code/DB/API identifiers stay `spare_*`.
+ * (replacing the old "Spares"); code/DB/API identifiers stay `spare_*`.
+ *
+ * ARCHITECTURE: this module is **pure TypeScript** — no Phaser import. Unit tests
+ * rely on this invariant. The overlay class lives in `RingManagementOverlayClass.ts`.
+ */
+
+// #395 — 'fusion' added for Sub-B (rendering wired in Sub-B; mode type extended here).
+export type RingMgmtMode = 'sanctum' | 'field' | 'fusion';
+
+/**
+ * Player-facing column header labels (left → right). Mode-specific LEFT column:
+ * SPIRIT (sanctum), LOOT (field), FUSE (fusion). Three shared right columns are
+ * identical across all modes.
  */
 export const COLUMN_LABELS: Record<RingMgmtMode, readonly string[]> = {
   sanctum: ['SPIRIT', 'BENCH', 'HEALTH', 'COMBAT'],
-  field: ['LOOT', 'BENCH', 'HEALTH', 'COMBAT'],
+  field:   ['LOOT',   'BENCH', 'HEALTH', 'COMBAT'],
+  fusion:  ['FUSE',   'BENCH', 'HEALTH', 'COMBAT'],
 } as const;
 
 /**
  * The canonical Bench count — rings carried (`in_carry=1`), NOT occupying any
- * battle-hand slot, and NOT the pending WON ring (its one-allowed overflow slot
- * is excluded). Mirrors the server `assertSpareWithinMax` predicate exactly, so
- * the Bench counter never disagrees with the lock state. `spare_*` is retained
- * in every identifier — only the player-facing label reads "Bench".
- *
- * @param rings        every owned ring (`/api/me` rings list)
- * @param loadout      slot → ringId map (battle-hand assignments)
- * @param pendingRingId the pending WON ring id, or null
+ * battle-hand slot, and NOT the pending WON ring. Mirrors the server's
+ * `assertSpareWithinMax` predicate exactly. `spare_*` is retained in every
+ * identifier — only the player-facing label reads "Bench".
  */
 export function benchSpareCount(
   rings: RingData[],
@@ -86,12 +74,8 @@ export interface RingMgmtCounters {
 const TIER_ROW_RE = /^T\d/;
 
 /**
- * Recursively scan a Phaser display object (typically the open overlay container)
- * for any text child whose content reads like a Tier row (`T0`/`T1`/…). #389
- * permanently dropped the Tier row from every `RingCard` surface, so a genuine
- * runtime scan — rather than a hardcoded `false` — gives the E2E layer real
- * regression protection: if a future edit reintroduces a Tier label anywhere in
- * the overlay, the reporter flips to `true` and the structural assertions fail.
+ * Recursively scan a Phaser display object for any text child whose content reads
+ * like a Tier row (`T0`/`T1`/…). Gives E2E real regression protection.
  */
 export function scanForTierRow(root: { getAll?: () => unknown[] } | null | undefined): boolean {
   if (!root || typeof root.getAll !== 'function') return false;
@@ -104,11 +88,8 @@ export function scanForTierRow(root: { getAll?: () => unknown[] } | null | undef
 }
 
 /**
- * Publish the converged ring-management structure to `window.__ringMgmtState` so
- * the cross-mode E2E assertions can verify, per mode: the rendered column set,
- * the Spirit/Bench counter values (`n/max`), and — via a genuine runtime scan of
- * the open overlay container — that no card carries a Tier row. Call once per
- * render; pass the live counters and the overlay container for the open mode.
+ * Publish the converged ring-management structure to `window.__ringMgmtState`.
+ * Call once per render; pass the live counters and the overlay container.
  */
 export function publishRingMgmtState(
   mode: RingMgmtMode,
@@ -119,14 +100,56 @@ export function publishRingMgmtState(
     mode,
     columns: [...COLUMN_LABELS[mode]],
     counters,
-    // #389 — real scan (not a hardcoded constant): the Tier row was dropped from
-    // every RingCard surface, so this stays false unless a regression reintroduces
-    // a `T{n}` label somewhere in the overlay.
     anyCardHasTierRow: scanForTierRow(overlayRoot),
   };
 }
 
-/** Clear the structure reporter when both overlays are closed. */
+/** Clear the structure reporter when the overlay closes. */
 export function clearRingMgmtState(): void {
   window.__ringMgmtState = undefined;
+}
+
+// ── Symmetric-swap helper (#395) ─────────────────────────────────────────────
+
+/**
+ * Bench sections (pools that count toward the bench cap).
+ * Used by the symmetric-swap pick-up guard: only a net one-way INTO the bench is
+ * blocked at full-bench; a net-zero swap (one ring leaves and one enters) is always
+ * allowed regardless of pick-up order.
+ */
+const BENCH_SECTIONS = new Set<SwapSlot>(['spare']);
+/** Returns true when `s` is a section that counts toward the bench. */
+function isBenchSection(s: SwapSlot): boolean {
+  return BENCH_SECTIONS.has(s);
+}
+
+/**
+ * Returns true when picking up `pickupSource` should be BLOCKED because the bench
+ * is full and the move would be a net one-way increase into the bench.
+ *
+ * A net-zero swap (one bench ring already selected → drop target will displace it)
+ * is always allowed regardless of pick-up order.
+ *
+ * The old guard (`if source === 'reliquary' && __reliquaryLocked`) rejected every
+ * reliquary pick-up when bench was full, regardless of whether the player intended
+ * to swap with a bench ring (net-zero). This replaces it.
+ *
+ * @param pickupSource   section the ring is being picked up FROM
+ * @param currentSel     currently-selected ring's source (null = nothing selected)
+ * @param benchFull      whether the bench is currently at or above spare_ring_max
+ */
+export function isPickupBlockedByFullBench(
+  pickupSource: SwapSlot,
+  currentSel: SwapSlot | null,
+  benchFull: boolean,
+): boolean {
+  if (!benchFull) return false;
+  // If picking up FROM the bench itself, bench count won't increase — never blocked.
+  if (isBenchSection(pickupSource)) return false;
+  // If a bench ring is already held (will be displaced FROM bench on drop), this new
+  // pick-up is the "receive" side of a net-zero swap — allowed.
+  if (currentSel !== null && isBenchSection(currentSel)) return false;
+  // Picking up a non-bench ring when bench is full and nothing (or a non-bench ring)
+  // is selected: any drop into spare would overflow. Block it.
+  return true;
 }

@@ -17,7 +17,7 @@
 - **Battle hand and spare grid are independent pools.** Clearing a battle slot does **not** free spare capacity — the spare-grid cap counts only rings that are carried AND not in any battle slot. An empty battle slot is simply an empty battle slot; it has no effect on how many spare rings the player may hold.
 - **WON ring overflow:** when a player wins a ring but the spare grid is already at `spare_ring_max`, the ring is added to carry as a **pending** ring (one allowed overflow slot). The player must resolve this — by discarding a spare, assigning the ring to a slot, or discarding the won ring — before the pending flag is cleared. `pending_ring_id` in `/api/me` is the authoritative identifier for an unresolved WON ring; it replaces the former `er_pending_ring` client-side key.
 - Combined with the default Reliquary cap (§4.1.1), the total rings held at any time is bounded at **23** (14 carried + 9 resting) at default settings. See §12.2.
-- Rings in the Reliquary recharge uses on the game day timer
+- Rings in the Reliquary recharge uses on the game day timer. At the Sanctum, the RECHARGE action also restores uses on resting Reliquary rings (recharged last, most-depleted first within the group).
 - Rings on your person do **not** recharge in the field — only at camp (sleep or paid recharge)
 - Rings in the Reliquary do **not** earn XP — battle use is the only XP source (see §4.4)
 

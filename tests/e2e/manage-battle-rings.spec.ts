@@ -476,8 +476,8 @@ test('manage-battle-rings (#381): 4×2 cluster renders and the 3-col spare Inven
   await page.goto(URL);
   await page.waitForFunction(() => (window as any).__activeScene === 'CampScene', { timeout: 10000 });
   const tok = await page.evaluate(() => localStorage.getItem('er_token') ?? '');
-  // Seed 7 spares so multiple grid rows are populated.
-  await seedSpares(tok, 7);
+  // Seed 6 spares (2 full rows of 3) — deterministic regardless of WON-ring state.
+  await seedSpares(tok, 6);
 
   await enterForestScreen(page, 'forest_anchorage');
   await page.waitForFunction(
@@ -520,14 +520,11 @@ test('manage-battle-rings (#381): 4×2 cluster renders and the 3-col spare Inven
   expect(Math.abs(labelXs.STATUS - 759)).toBeLessThanOrEqual(1);
   expect(labelXs.HP).toBe(659);
 
-  // The spare InventoryGrid shows the seeded spares. After the M-1 fix the WON
-  // (pending) ring is excluded from availableRings, so if the fresh player has a
-  // pending ring it appears in its own WON card and the spare grid shows 6 rings
-  // (ceil(6/3)=2 rows). If no pending ring exists all 7 appear (ceil(7/3)=3 rows).
-  // Assert the grid is populated with at least 2 rows and at least 6 cells.
+  // The spare InventoryGrid shows the 6 seeded spares: 2 full rows of 3.
+  // RINGWALL_VISIBLE_ROWS=3 so all 6 are visible without scrolling.
   const grid = await spareGridInfo(page);
-  expect(grid.rows).toBe(2);    // pending ring excluded → 6 spares → ceil(6/3) = 2 rows
-  expect(grid.cells).toBe(6);   // 6 visible spares after WON ring excluded
+  expect(grid.rows).toBe(2);    // 6 rings → ceil(6/3) = 2 rows
+  expect(grid.cells).toBe(6);   // all 6 visible (within 3-row window)
 
   await ctx.close();
 });
@@ -2138,6 +2135,58 @@ test('manage-battle-rings (#381 impl): empty-spare placeholder absent when nothi
   });
 
   expect(placeholderFound).toBe(false);
+
+  await ctx.close();
+});
+
+// ── #395 — BenchHealthCombat container present in field mode ─────────────────
+// The right-half (BENCH / HEALTH / COMBAT) is now rendered by the shared
+// BenchHealthCombat component in all modes. Verify the field overlay contains
+// a child with the isBenchHealthCombat=true runtime tag.
+test('manage-battle-rings (#395): BenchHealthCombat container is present in field mode', async ({ browser }) => {
+  const ctx = await browser.newContext();
+  await seedAuthToken(ctx);
+  const page = await ctx.newPage();
+  await loadForest(page);
+  await openBattleHand(page);
+
+  const hasBHC = await page.evaluate(() => {
+    const scene = (window as any).__game?.scene?.getScene('ForestScene') as any;
+    const modal = scene?.battleHand?.manageModal;
+    if (!modal) return false;
+    const walk = (c: any): boolean => {
+      for (const o of c.getAll ? c.getAll() : []) {
+        if (o.isBenchHealthCombat === true) return true;
+        if (o.getAll && walk(o)) return true;
+      }
+      return false;
+    };
+    return walk(modal);
+  });
+
+  expect(
+    hasBHC,
+    'Field overlay must contain a BenchHealthCombat component (isBenchHealthCombat=true)',
+  ).toBe(true);
+
+  await ctx.close();
+});
+
+// ── #395 — Single [RECHARGE] button replaces the old pair ────────────────────
+// #395 consolidates [Recharge] + [Recharge All] to a single [RECHARGE] button.
+test('manage-battle-rings (#395): single [RECHARGE] button present (no [Recharge All])', async ({ browser }) => {
+  const ctx = await browser.newContext();
+  await seedAuthToken(ctx);
+  const page = await ctx.newPage();
+  await loadForest(page);
+  await openBattleHand(page);
+
+  const texts = await modalTexts(page);
+  // The new single button.
+  expect(texts).toContain('[RECHARGE]');
+  // The old pair must be gone.
+  expect(texts.some((t) => t === '[Recharge]')).toBe(false);
+  expect(texts.some((t) => t === '[Recharge All]')).toBe(false);
 
   await ctx.close();
 });

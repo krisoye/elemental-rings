@@ -147,6 +147,12 @@ apiRouter.post('/auth/register', async (req: Request, res: Response): Promise<vo
   try {
     const passwordHash = await bcrypt.hash(password, BCRYPT_ROUNDS);
     const playerId = createPlayer(username, passwordHash);
+    // E2E_TEST_ROUTES: bench-fill tests buy up to spare_ring_max rings (270 GP at
+    // 30 GP each). The 200 GP starter budget falls short; add 300 GP so every E2E
+    // registration has enough headroom. Never activates in production.
+    if (process.env.E2E_TEST_ROUTES === '1') {
+      addGold(playerId, 300);
+    }
     const token = signToken({ playerId, username });
     res.status(201).json({ token, playerId });
   } catch (err: unknown) {
@@ -452,12 +458,15 @@ apiRouter.post('/api/spirit/recharge', requireAuth, (req: Request, res: Response
 
 /**
  * POST /api/spirit/recharge-all — recharge every carried ring in priority order
- * (Thumb→A1→A2→D1→D2→spares), stopping when spirit hits 0 (#41). No body.
- * Requires auth.
+ * (Thumb→A1→A2→D1→D2→spares), stopping when spirit hits 0 (#41). Optional body
+ * flag `includeReliquary: true` extends recharge to the resting Reliquary pool
+ * (after all carried rings) — Option A, single route (#397). Requires auth.
  */
 apiRouter.post('/api/spirit/recharge-all', requireAuth, (req: Request, res: Response): void => {
   const playerId = req.playerId as string;
-  const spiritRemaining = rechargeAllWithSpirit(playerId);
+  // #397 — forward includeReliquary flag to extend recharge to the resting pool.
+  const includeReliquary = req.body?.includeReliquary === true;
+  const spiritRemaining = rechargeAllWithSpirit(playerId, includeReliquary);
   res.status(200).json({
     rings: getRingsByOwner(playerId),
     spirit_current: spiritRemaining,
@@ -1147,6 +1156,10 @@ if (process.env.E2E_TEST_ROUTES === '1') {
     // Constant placeholder hash — login is never exercised against E2E players,
     // so a real bcrypt hash is pure waste here.
     const playerId = createPlayer(username, 'e2e-no-hash');
+    // E2E bench-fill tests (reliquary-modal, manage-battle-rings) buy spare_ring_max
+    // (9) rings at 30 GP each = 270 GP. Default 200 GP is not enough; add 300 to
+    // give a comfortable headroom without changing the schema default.
+    addGold(playerId, 300);
     const token = signToken({ playerId, username });
     res.json({ token, playerId });
   });
