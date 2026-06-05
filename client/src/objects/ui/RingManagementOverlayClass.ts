@@ -1,7 +1,7 @@
 import Phaser from 'phaser';
 import { SLOT_KEYS, CANVAS_W, CANVAS_H } from '../../Constants';
 import type { SlotKey } from '../../Constants';
-import { InventoryGrid, type RingData } from '../InventoryGrid';
+import { InventoryGrid, type RingData, GRID_CARD_W, GRID_COL_GAP, GRID_ROW_GAP } from '../InventoryGrid';
 import { RingCard } from './RingCard';
 import { CLOSE_GLYPH } from './ModalShell';
 import { SlotSwapManager, type SwapSlot } from './SlotSwapManager';
@@ -338,6 +338,28 @@ export class RingManagementOverlay {
     c.add(bhc);
     this.bhc = bhc;
 
+    // ♥ cur/max label with dark backing rect — added as direct children of the
+    // modal container (not inside BenchHealthCombat) so the flat modal.getAll()
+    // scan used by E2E can see the [hpBg, hpLbl] pair at adjacent positions.
+    const HP_X = 659;
+    const HP_Y = 159; // ROW_STATUS_Y(193) - LABEL_ABOVE_Y_OFFSET(34)
+    const heartRing = this.heartRing;
+    const hpText = heartRing
+      ? `♥ ${heartRing.current_uses}/${heartRing.max_uses}`
+      : '♥ 0/0';
+    const hpLbl = this.scene.add
+      .text(HP_X, HP_Y, hpText, {
+        fontSize: '11px',
+        color: heartRing ? '#ff99aa' : '#777777',
+      })
+      .setScrollFactor(0)
+      .setOrigin(0.5);
+    const hpBg = this.scene.add
+      .rectangle(HP_X, HP_Y, hpLbl.width + 6, hpLbl.height + 2, 0x000000, 0.55)
+      .setScrollFactor(0)
+      .setOrigin(0.5);
+    c.add([hpBg, hpLbl]);
+
     // Status text.
     const STATUS_Y = MODAL_TOP + MODAL_H - 14;
     this.statusText = crispCanvasText(
@@ -424,8 +446,12 @@ export class RingManagementOverlay {
       .setInteractive({ useHandCursor: true })
       .on('pointerdown', () => this.opts.onDiscardSlotClick?.(this));
     c.add(discardRect);
+    // DISCARD label — dark backing so E2E CSS background check passes.
     this.domLabels.push(
-      addDomLabel(this.scene, COL0_X, LABEL_Y_ROW1, 'DISCARD', { fontPx: 11, color: '#aa4444', align: 'center' }),
+      addDomLabel(this.scene, COL0_X, LABEL_Y_ROW1, 'DISCARD', {
+        fontPx: 11, color: '#aa4444', align: 'center',
+        background: 'rgba(0,0,0,0.55)', padding: '1px 3px',
+      }),
     );
 
     // Spare InventoryGrid (reused from the old BattleHandOverlay layout).
@@ -458,6 +484,34 @@ export class RingManagementOverlay {
     this.scene.add.existing(spareGrid);
     c.add(spareGrid);
     this.spareGrid = spareGrid;
+
+    // Empty-spare placeholder: interactive rect in spareGrid.getCardContainer() so it
+    // scrolls with the grid. Shown when something actionable is held (battle-slot,
+    // heart, or pending ring) and the bench has capacity. Mirrors the old BHO logic.
+    const usedSpares = availableRings.length;
+    const spareCapacity = spareMax;
+    const emptySpareActionable = selId !== null && selSrc !== 'spare';
+    if (emptySpareActionable && usedSpares < spareCapacity) {
+      const GRID_CARD_H = 88;
+      const MODAL_BOTTOM = 538;
+      const NUM_COLS = 3;
+      const rawPhY = Math.ceil(usedSpares / NUM_COLS) * GRID_ROW_GAP + GRID_CARD_H / 2;
+      const maxLocalY = MODAL_BOTTOM - GRID_CONTENT_TOP_Y - GRID_CARD_H / 2 - 4;
+      const phY = Math.min(rawPhY, maxLocalY);
+      const GRID_VISIBLE_BOTTOM_LOCAL = RINGWALL_VISIBLE_ROWS * GRID_ROW_GAP;
+      if (phY < GRID_VISIBLE_BOTTOM_LOCAL) {
+        const nextCol = usedSpares % NUM_COLS;
+        const phX = nextCol * GRID_COL_GAP + GRID_CARD_W / 2;
+        const ph = this.scene.add
+          .rectangle(phX, phY, GRID_CARD_W, GRID_CARD_H, 0x2a2a33)
+          .setScrollFactor(0)
+          .setStrokeStyle(2, 0x665544)
+          .setAlpha(0.7)
+          .setInteractive({ useHandCursor: true })
+          .on('pointerdown', () => { void this.swap.moveTo('spare'); });
+        spareGrid.getCardContainer().add(ph);
+      }
+    }
   }
 
   private rerenderIfOpen(): void {

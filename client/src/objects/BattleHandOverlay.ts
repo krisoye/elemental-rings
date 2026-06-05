@@ -29,13 +29,13 @@ export class BattleHandOverlay {
   private readonly onModalRender?: (c: Phaser.GameObjects.Container) => void;
   private onCloseCb?: () => void;
   private overlay: RingManagementOverlay | null = null;
-  private discardConfirm: Phaser.GameObjects.Container | null = null;
+  private discardConfirm_: Phaser.GameObjects.Container | null = null;
   private discardKeyHandlers: (() => void) | null = null;
   // Cached for discard confirm label + routing.
   private allRings: RingData[] = [];
   private heartRing: RingData | null = null;
   private loadout: Record<string, string | null> = {};
-  private pendingRingId: string | null = null;
+  private pendingRingId_: string | null = null; private spareRingMax_: number | undefined;
 
   constructor(
     scene: Phaser.Scene,
@@ -48,15 +48,16 @@ export class BattleHandOverlay {
   }
 
   isOpen(): boolean { return this.overlay?.isOpen() ?? false; }
-
-  // ── E2E bridge (pre-#395 private-field contract preserved for Playwright) ──
+  // ── E2E bridge ──────────────────────────────────────────────────────────────
   get manageModal() { return this.overlay?.getContainer() ?? null; }
   get spareGrid()   { return this.overlay?.getSpareGrid() ?? null; }
   get swap()        { return this.overlay?.getSwap(); }
+  get pendingRingId(): string | null { return this.pendingRingId_; }
+  get discardConfirm(): Phaser.GameObjects.Container | null { return this.discardConfirm_; }
   async refreshManageData(): Promise<void> { if (this.overlay) await this.refresh(this.overlay); }
   renderManageModal(): void {
     if (!this.overlay?.isOpen()) return;
-    this.overlay.refresh({ player: { heart_ring: this.heartRing ?? null, pending_ring_id: this.pendingRingId }, rings: this.allRings, loadout: this.loadout });
+    this.overlay.refresh({ player: { heart_ring: this.heartRing ?? null, pending_ring_id: this.pendingRingId_, spare_ring_max: this.spareRingMax_ }, rings: this.allRings, loadout: this.loadout });
   }
 
   async open(onClose?: () => void): Promise<void> {
@@ -84,7 +85,8 @@ export class BattleHandOverlay {
 
   private cache(d: OverlayData): void {
     this.allRings = d.rings; this.heartRing = d.player?.heart_ring ?? null;
-    this.loadout = d.loadout ?? {}; this.pendingRingId = d.player?.pending_ring_id ?? null;
+    this.loadout = d.loadout ?? {}; this.pendingRingId_ = d.player?.pending_ring_id ?? null;
+    this.spareRingMax_ = d.player?.spare_ring_max;
   }
 
   private makeOpts(): RingManagementOverlayOpts {
@@ -161,8 +163,8 @@ export class BattleHandOverlay {
 
   // ── Discard confirm (#348) ─────────────────────────────────────────────────
   private openConfirm(ringId: string, source: SwapSlot | null): void {
-    if (this.discardConfirm) return;
-    const isPending = source === null && ringId === this.pendingRingId;
+    if (this.discardConfirm_) return;
+    const isPending = source === null && ringId === this.pendingRingId_;
     const ring = source === 'heart' ? this.heartRing : this.allRings.find((r) => r.id === ringId) ?? null;
     const en = ring ? (ELEMENT_NAMES[ring.element] ?? '?') : '?';
     const tier = ring ? ring.tier : '?';
@@ -172,7 +174,7 @@ export class BattleHandOverlay {
     const nBtn = this.scene.add.text(CANVAS_W / 2 + 70, CANVAS_H / 2 + 22, '[Cancel]', { fontSize: '15px', color: '#aaccff' }).setScrollFactor(0).setOrigin(0.5).setInteractive({ useHandCursor: true }).setName('discard-confirm-no').on('pointerdown', () => this.dismissConfirm());
     const p = this.scene.add.container(0, 0, [bg, txt, yBtn, nBtn]).setDepth(3000);
     this.onModalRender?.(p);
-    this.discardConfirm = p; window.__discardConfirmOpen = true;
+    this.discardConfirm_ = p; window.__discardConfirmOpen = true;
     const kb = this.scene.input.keyboard;
     if (kb) {
       const KC = Phaser.Input.Keyboard.KeyCodes;
@@ -189,9 +191,9 @@ export class BattleHandOverlay {
     if (window.__encounterState && isPending) window.__encounterState.pendingWonRing = null;
   }
   private dismissConfirm(): void {
-    const was = this.discardConfirm !== null;
+    const was = this.discardConfirm_ !== null;
     this.discardKeyHandlers?.(); this.discardKeyHandlers = null;
-    this.discardConfirm?.destroy(true); this.discardConfirm = null;
+    this.discardConfirm_?.destroy(true); this.discardConfirm_ = null;
     window.__discardConfirmOpen = false;
     if (was) this.overlay?.clearSelection();
   }

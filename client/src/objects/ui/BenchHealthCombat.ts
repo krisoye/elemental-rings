@@ -130,11 +130,11 @@ export class BenchHealthCombat extends Phaser.GameObjects.Container {
     this.add(benchGrid);
     this.benchGrid = benchGrid;
 
-    // BENCH column header (DOM — crisp).
+    // BENCH column header (DOM — crisp). #389: player-facing label uses "Bench:" (code keeps spare_*).
     this.addDomLbl(
       BENCH_GRID_X + 68,
       BENCH_GRID_TOP_Y - 20,
-      `BENCH  ${benchN}/${spareMax}`,
+      `Bench: ${benchN} / ${spareMax}`,
       12,
       benchFull ? '#ff8888' : '#aaccff',
     );
@@ -174,31 +174,12 @@ export class BenchHealthCombat extends Phaser.GameObjects.Container {
     this.add(heartCard);
     this.heartCard = heartCard;
 
-    // ♥ cur/max label with dark backing rect (canvas — E2E asserts the backing rect).
-    const hpText = heartRing
-      ? `♥ ${heartRing.current_uses}/${heartRing.max_uses}`
-      : '♥ 0/0';
-    const hpLbl = this.scene.add
-      .text(COL_HEALTH_X, ROW_STATUS_Y - LABEL_ABOVE_Y_OFFSET, hpText, {
-        fontSize: '11px',
-        color: heartRing ? '#ff99aa' : '#777777',
-      })
-      .setScrollFactor(0)
-      .setOrigin(0.5);
-    const hpBg = this.scene.add
-      .rectangle(
-        COL_HEALTH_X,
-        ROW_STATUS_Y - LABEL_ABOVE_Y_OFFSET,
-        hpLbl.width + 6,
-        hpLbl.height + 2,
-        0x000000,
-        0.55,
-      )
-      .setScrollFactor(0)
-      .setOrigin(0.5);
-    this.add([hpBg, hpLbl]);
-
     // ── [RECHARGE] link (below heart card, D1/D2 row) ──────────────────────
+    // DOM label "Recharge" is added by the host container (RingManagementOverlayClass)
+    // alongside the [RECHARGE] canvas button so it appears as a direct child of the
+    // modal container. The backing ♥ HP label pair is also hoisted to the root.
+    // DOM label "Recharge" above the button (E2E checks texts.includes('Recharge')).
+    this.addDomLbl(COL_HEALTH_X, ROW_COMBAT1_Y - LABEL_ABOVE_Y_OFFSET, 'Recharge', 10, '#ffcc44');
     const rechargeBtn = crispCanvasText(
       this.scene.add
         .text(COL_HEALTH_X, ROW_COMBAT1_Y, '[RECHARGE]', {
@@ -265,13 +246,14 @@ export class BenchHealthCombat extends Phaser.GameObjects.Container {
         .setInteractive({ useHandCursor: true })
         .on('pointerdown', () => this.onSlotClick(def.slot));
 
-      // Slot label above card (DOM — crisp).
+      // Slot label above card (DOM — crisp, with dark backing so E2E CSS check passes).
       this.addDomLbl(
         def.x,
         def.y - LABEL_ABOVE_Y_OFFSET,
         def.label,
         11,
         def.slot === 'thumb' ? '#ffcc44' : '#cccccc',
+        true,
       );
 
       // STATUS escrow LOCKED label (canvas — inside card container space).
@@ -343,12 +325,14 @@ export class BenchHealthCombat extends Phaser.GameObjects.Container {
 
   // ── Private helpers ───────────────────────────────────────────────────────
 
-  private addDomLbl(x: number, y: number, text: string, fontPx: number, color: string): void {
+  private addDomLbl(x: number, y: number, text: string, fontPx: number, color: string, backed = false): void {
     this.domLabels.push(
       addDomLabel(this.scene, x, y, text, {
         fontPx,
         color,
         align: 'center',
+        background: backed ? 'rgba(0,0,0,0.55)' : undefined,
+        padding: backed ? '1px 3px' : undefined,
       }),
     );
   }
