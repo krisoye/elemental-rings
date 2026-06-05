@@ -13,6 +13,16 @@ import { FOREST_GENERATED_TILESETS } from './ForestScene';
  */
 const SNOW_DETECTION_RADIUS = 100; // same as Swamp — biome parity
 
+/**
+ * Snow-palette tilesets used by the hand-authored Snow maps. Each entry's key
+ * equals the tileset `name` declared in the map JSON so buildTilesets() resolves
+ * it by name; the path points at the in-repo committed copy of the raou snow art.
+ */
+const SNOW_TILESETS: ReadonlyArray<readonly [string, string]> = [
+  ['autoTile_snow', 'assets/terrain/autotile_snow_16.png'],
+  ['ts_snow', 'assets/terrain/terrain_snow_main.png'],
+];
+
 export class SnowScene extends BaseBiomeScene {
   constructor() {
     super({ key: 'SnowScene' });
@@ -65,8 +75,10 @@ export class SnowScene extends BaseBiomeScene {
     for (const [key, path] of FOREST_GENERATED_TILESETS) {
       if (!this.textures.exists(key)) this.load.image(key, path);
     }
-    if (!this.textures.exists('terrain_snowtiles')) {
-      this.load.image('terrain_snowtiles', 'assets/terrain/terrain_snowtiles.png');
+    // Snow palette: keys match the tileset names declared in snow_entry.json
+    // (autoTile_snow / ts_snow) so buildTilesets() resolves them by name.
+    for (const [key, path] of SNOW_TILESETS) {
+      if (!this.textures.exists(key)) this.load.image(key, path);
     }
     this.loadCommonAssets();
     this.load.tilemapTiledJSON('snow_entry', 'assets/maps/snow/snow_entry.json');
