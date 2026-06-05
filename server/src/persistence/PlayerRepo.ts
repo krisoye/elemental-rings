@@ -421,7 +421,7 @@ const selectReliquaryMaxUsesSum = db.prepare(
   `SELECT COALESCE(SUM(max_uses), 0) AS uses_sum FROM rings WHERE owner_id = ? AND in_carry = 0 AND heart_slot = 0`,
 );
 // #397 — resting rings eligible for Sanctum RECHARGE (in_carry=0, heart_slot=0,
-// escrowed=0). Ordered most-depleted first, then stable by id, to match spare ordering.
+// escrowed=0). Ordered by deficit DESC (largest deficit → DESC), then stable by id.
 const selectReliquaryResting = db.prepare(
   `SELECT * FROM rings
    WHERE owner_id = ? AND in_carry = 0 AND heart_slot = 0 AND escrowed = 0

@@ -503,7 +503,7 @@ test(
 );
 
 test(
-  'spirit: #397 spirit runs out before reliquary fully recharged — carried rings topped first',
+  'spirit: #397 includeReliquary=true with all-full rings is idempotent (no spirit spent)',
   async () => {
     const { token } = await register();
 
