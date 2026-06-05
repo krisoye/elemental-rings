@@ -805,6 +805,15 @@ export class CampScene extends DualCameraScene {
         );
         c.add(spareLabel);
 
+        // BENCH n/max counter, right of the BENCH label. Mirrors spiritCounter but
+        // for the bench pool. Named 'bench-counter' so campTextByName can read it.
+        this.benchCounter = crispCanvasText(
+          this.add
+            .text(COL_SPARE_X + 90, 128, '', { fontSize: '12px', color: '#aaffaa' })
+            .setScrollFactor(0).setName('bench-counter'),
+        );
+        c.add(this.benchCounter);
+
         // Adopt the reusable SPIRIT (Reliquary) grid. The BENCH grid is created
         // fresh by BenchHealthCombat; loadoutGrid is no longer adopted here.
         this.adoptPanel(c, this.sanctumGrid, COL_RELIQUARY_X, 148);

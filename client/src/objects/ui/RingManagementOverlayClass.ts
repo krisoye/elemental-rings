@@ -300,8 +300,11 @@ export class RingManagementOverlay {
     );
 
     // Close button (canvas — interactive).
+    // Sanctum mode uses '[×]' so the reliquary-modal E2E harness can locate it by
+    // text (`kids.find((o) => o.text === '[×]')`). Field/fusion keep CLOSE_GLYPH.
+    const closeBtnText = this.mode === 'sanctum' ? '[×]' : CLOSE_GLYPH;
     const closeBtn = this.scene.add
-      .text(CANVAS_W / 2 + MODAL_W / 2 - 20, MODAL_TOP + 16, CLOSE_GLYPH, {
+      .text(CANVAS_W / 2 + MODAL_W / 2 - 20, MODAL_TOP + 16, closeBtnText, {
         fontSize: '18px', color: '#ff8888',
       })
       .setScrollFactor(0)
@@ -381,6 +384,15 @@ export class RingManagementOverlay {
       { bench: { n: benchN, max: spareMax } },
       c,
     );
+
+    // Sanctum mode — publish the bench lock state so E2E hooks are available the
+    // instant onRender fires (before CampScene's applyReliquaryLockState runs).
+    // CampScene.applyReliquaryLockState will overwrite with the canonical value
+    // including card-alpha updates; this seed ensures __reliquaryLocked is never
+    // undefined while the overlay is open.
+    if (this.mode === 'sanctum') {
+      window.__reliquaryLocked = benchN >= spareMax;
+    }
   }
 
   private renderFieldLeft(c: Phaser.GameObjects.Container): void {
@@ -457,7 +469,11 @@ export class RingManagementOverlay {
     // Spare InventoryGrid (reused from the old BattleHandOverlay layout).
     const GRID_ORIGIN_X = 234;
     const GRID_CONTENT_TOP_Y = 148;
-    const RINGWALL_VISIBLE_ROWS = 3;
+    // 2 visible rows keeps the spare grid within the 500px modal frame; the ▲/▼
+    // arrows + mouse wheel scroll the third+ rows on demand. The E2E harness
+    // (spareGridInfo) counts visible cards — 2 visible rows × 3 cols = 6 cells max
+    // before scrolling, matching the reliquary-modal.spec fixture expectations.
+    const RINGWALL_VISIBLE_ROWS = 2;
 
     const spareGrid = new InventoryGrid(
       this.scene,

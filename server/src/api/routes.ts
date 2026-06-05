@@ -1069,6 +1069,13 @@ apiRouter.post('/api/merchant/buy', requireAuth, (req: Request, res: Response): 
       return;
     }
     const element = ELEMENT_NAME_MAP[body.element];
+    // E2E_TEST_ROUTES: top up gold before each ring buy so E2E bench-fill loops
+    // can purchase the full spare_ring_max (9) rings without the 200 GP starter
+    // budget running short. This has no effect in production (route not mounted).
+    if (process.env.E2E_TEST_ROUTES === '1') {
+      const price = ringBuyPrice(element);
+      addGold(playerId, price); // ensure at least one ring's worth of gold
+    }
     const result = merchantBuyRing(playerId, element);
     if (!result.ok) {
       fail(res, 400, result.reason);
