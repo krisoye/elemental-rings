@@ -145,4 +145,79 @@ describe('PUT /api/loadout — pending WON ring overflow (#421 route level)', ()
     expect(res.status).toBe(400);
     expect(res.json.error).toMatch(/spare grid full/);
   });
+
+  test('slot-to-slot reassignment (a1→a2) at overflow returns 400 — spare still over max', async () => {
+    // #421 adversarial (case A clarified): moving a ring from a1 to a2 while in overflow
+    // involves the saveLoadout one-slot-per-ring rule silently clearing a1, BUT the sparse
+    // delta computation only iterates keys IN partial. Since partial={a2: slotRing} contains
+    // only "a2", the loop processes only the a2 assignment: newVal=slotRing, which is NOT in
+    // spare (it's in a1 slot) → removingFromSpare=[]. addingToSpare=[].
+    // assertSpareWithinMax({}) = spareCountAfter({}) = getSpareIds().length = max+1 > max → 400.
+    // This verifies the inner delta guard is still authoritative at overflow — the removed outer
+    // gate was not the only blocker; the inner delta guard correctly blocks net-zero-but-at-overflow
+    // moves too. Only moves that genuinely reduce spare count (e.g. slotting a spare ring into an
+    // empty battle slot) succeed.
+    const { playerId, token } = makePlayer();
+    const max = repo.getSpareRingMax(playerId);
+    // Fill bench to max, then grant WON ring → max + 1 (genuine overflow state).
+    for (let i = 0; i < max; i++) makeRing(playerId, { inCarry: 1 });
+    repo.grantRing(playerId, ElementEnum.FIRE);
+    expect(repo.getSpareIds(playerId).length).toBe(max + 1);
+    // Put a ring in a1 (it is in a battle slot — NOT in spare).
+    const slotRing = makeRing(playerId, { inCarry: 1 });
+    dbInstance.prepare(`UPDATE loadout SET a1 = ? WHERE player_id = ?`).run(slotRing, playerId);
+    // Attempt to reassign to a2 — delta is actually zero (slotRing was never in spare),
+    // BUT spare count is already max+1, so assertSpareWithinMax fires and returns 400.
+    const res = await putLoadout(token, { a2: slotRing });
+    expect(res.status).toBe(400);
+    expect(res.json.error).toMatch(/spare grid full/);
+    // This verifies the inner guard is still the authoritative backstop at overflow — the
+    // outer gate's removal only unlocks moves with negative spare delta (e.g. slotting the
+    // WON ring from spare into an empty slot, which reduces spare from max+1 to max).
+  });
+
+  test('empty body at overflow returns 400 — assertSpareWithinMax fires on current spare count', async () => {
+    // #421 adversarial: an empty PUT body still triggers assertSpareWithinMax({}) which
+    // checks spareCountAfter(playerId, {}) = getSpareIds().length = max+1 > max → 400.
+    // This verifies the inner guard fires even on no-op mutations when already over max.
+    // The outer gate removal (the #421 fix) does NOT make empty-body-at-overflow succeed.
+    const { playerId, token } = makePlayer();
+    const max = repo.getSpareRingMax(playerId);
+    for (let i = 0; i < max; i++) makeRing(playerId, { inCarry: 1 });
+    repo.grantRing(playerId, ElementEnum.FIRE); // overflow → spare = max + 1
+    expect(repo.getSpareIds(playerId).length).toBe(max + 1);
+    // Empty body: saveLoadout iterates zero keys → assertSpareWithinMax({}) → spare still max+1 → 400.
+    const res = await putLoadout(token, {});
+    expect(res.status).toBe(400);
+    expect(res.json.error).toMatch(/spare grid full/);
+  });
+
+  test('PUT /api/loadout filters unknown slot keys — valid keys in same body still process', async () => {
+    // #421 adversarial: a body with mixed valid+invalid keys (e.g. {"badSlot": "id", "a1": "id"})
+    // must ignore the unknown key and process the valid key. The route's key-filter loop
+    // (`if (!VALID_SLOTS.has(key)) continue`) must not contaminate the partial with bad keys.
+    const { playerId, token } = makePlayer();
+    const ringId = makeRing(playerId, { inCarry: 1 });
+    const res = await putLoadout(token, { badSlot: ringId, a1: ringId } as any);
+    expect(res.status).toBe(200);
+    // The valid a1 key was processed; the bad key was silently dropped.
+    expect(res.json.loadout?.a1).toBe(ringId);
+  });
+
+  test('PUT /api/loadout with a ring not owned by the player is silently ignored (no 400)', async () => {
+    // #421 adversarial: saveLoadout validates ring ownership — an unowned ring id is
+    // silently skipped (the slot remains as-is). This tests the ownership guard path
+    // does not throw an unhandled error through the route's try/catch.
+    const { playerId, token } = makePlayer();
+    const otherPlayerId = `other_${Math.random().toString(36).slice(2)}`;
+    dbInstance.prepare(`INSERT INTO players (id, username, password_hash) VALUES (?, ?, ?)`).run(
+      otherPlayerId, `u_${otherPlayerId}`, 'x',
+    );
+    const foreignRing = makeRing(otherPlayerId, { inCarry: 1 });
+    // Attempting to assign a ring owned by someone else — silently ignored.
+    const res = await putLoadout(token, { a1: foreignRing });
+    expect(res.status).toBe(200);
+    // a1 remains null (the foreign ring was not assigned).
+    expect(res.json.loadout?.a1).toBeNull();
+  });
 });
