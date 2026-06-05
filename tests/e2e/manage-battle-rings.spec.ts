@@ -2213,11 +2213,10 @@ test('manage-battle-rings (#395): single [RECHARGE] button present (no [Recharge
 //     400 was swallowed and the selection cleared silently ("card lights up, click
 //     target, deselects").
 //
-// These integration tests drive the real ForestScene battle-hand overlay via its
-// E2E bridge (scene.battleHand.swap — TypeScript `private` is JS-transparent), the
-// same proven access pattern as the EPIC#378 Sub-2 S2 test, and assert against
-// server-authoritative /api/me state. Real mouse input is used where card geometry
-// is stable (HEALTH/A1 cards).
+// All gestures use REAL pointer input (page.mouse.click on the canvas) per the
+// project E2E policy — JS hooks/bridges are used ONLY for state readback
+// (battleHand.pendingRingId, battleHand.swap.selection, window.__ringMgmtStatus).
+// Assertions are against server-authoritative /api/me state.
 
 /** Resolve the seeded auth token by reading er_token off a CampScene boot. */
 async function bootToken(ctx: import('@playwright/test').BrowserContext): Promise<string> {
@@ -2227,6 +2226,41 @@ async function bootToken(ctx: import('@playwright/test').BrowserContext): Promis
   const t = await p.evaluate(() => localStorage.getItem('er_token') ?? '');
   await p.close();
   return t;
+}
+
+/**
+ * Convert logical canvas coordinates (CANVAS_W×CANVAS_H = 1024×576) to actual page
+ * coordinates by reading the canvas element's bounding rect — mirrors the helper in
+ * anchorage-campfire.spec.ts. Used to place real `page.mouse.click` events on
+ * overlay cards.
+ */
+async function canvasCoords(
+  page: Page,
+  logicalX: number,
+  logicalY: number,
+): Promise<{ x: number; y: number }> {
+  const box = await page.locator('canvas').first().boundingBox();
+  if (!box) throw new Error('canvas element not found');
+  const scaleX = box.width / 1024;
+  const scaleY = box.height / 576;
+  return {
+    x: Math.round(box.x + logicalX * scaleX),
+    y: Math.round(box.y + logicalY * scaleY),
+  };
+}
+
+// Overlay card centers in the 1024×576 logical space (geometry constants from
+// RingManagementOverlayClass.ts / BenchHealthCombat.ts).
+const WON_CARD = { x: 195, y: 193 } as const;          // COL0_X, ROW0_Y
+const A1_CARD = { x: 759, y: 291 } as const;           // COL_COMBAT_LEFT_X, ROW_COMBAT0_Y
+const HEALTH_CARD = { x: 659, y: 193 } as const;       // COL_HEALTH_X, ROW_STATUS_Y
+// First bench cell: grid origin (370,148) + local card center (CARD_W/2=32, CARD_H/2=44).
+const BENCH_CELL0 = { x: 402, y: 192 } as const;
+
+/** Real-pointer click at a logical canvas coordinate. */
+async function clickCanvas(page: Page, pt: { x: number; y: number }): Promise<void> {
+  const { x, y } = await canvasCoords(page, pt.x, pt.y);
+  await page.mouse.click(x, y);
 }
 
 /** Fill the player's bench (spare grid) to exactly spare_ring_max. */
@@ -2249,20 +2283,33 @@ async function fillBenchToMax(tok: string): Promise<void> {
   };
   const needed = Math.max(0, me.player.spare_ring_max - benchCount(me));
   if (needed > 0) {
-    await fetch(`${API_URL}/api/test/seed-resting-rings`, {
+    const seedRes = await fetch(`${API_URL}/api/test/seed-resting-rings`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${tok}` },
       body: JSON.stringify({ count: needed }),
     });
+    expect(seedRes.ok, 'seed-resting-rings must succeed').toBe(true);
     const seeded = await fetchMe();
     const carried = seeded.rings.filter((r) => r.in_carry === 1).map((r) => r.id);
     const newResting = seeded.rings.filter((r) => r.in_carry === 0).map((r) => r.id).slice(0, needed);
-    await fetch(`${API_URL}/api/carry`, {
+    const carryRes = await fetch(`${API_URL}/api/carry`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${tok}` },
       body: JSON.stringify({ ringIds: Array.from(new Set([...carried, ...newResting])) }),
     });
+    expect(carryRes.ok, 'bench-fill PUT /api/carry must succeed').toBe(true);
   }
+}
+
+/** Assert the player is in the bench-overflow state (carried > spare_ring_max). */
+async function expectOverflowState(tok: string): Promise<void> {
+  const me = (await (
+    await fetch(`${API_URL}/api/me`, { headers: { Authorization: `Bearer ${tok}` } })
+  ).json()) as { player: { spare_ring_max: number }; rings: Array<{ in_carry: number }> };
+  const spareCount = me.rings.filter((r) => r.in_carry === 1).length;
+  expect(spareCount, 'seeding must produce the overflow state').toBeGreaterThan(
+    me.player.spare_ring_max,
+  );
 }
 
 // S1 — resolve the overflow by slotting the WON ring into a battle slot. Pre-fix
@@ -2285,17 +2332,14 @@ test('won-ring overflow S1: resolve by slotting into a battle slot', async ({ br
   expect(wonRingId).toBeTruthy();
 
   // Confirm we are in the overflow state the bug is about (bench at capacity + WON ring).
-  const meBefore = (await (
-    await fetch(`${API_URL}/api/me`, { headers: { Authorization: `Bearer ${tok}` } })
-  ).json()) as { player: { spare_ring_max: number }; rings: Array<{ id: string; in_carry: number }> };
-  expect(meBefore.rings.filter((r) => r.in_carry === 1).length).toBeGreaterThan(meBefore.player.spare_ring_max);
+  await expectOverflowState(tok);
 
   const page = await ctx.newPage();
   await loadForest(page);
   await openBattleHand(page);
   await page.waitForFunction(() => (window as any).__battleHandOpen === true, { timeout: 5000 });
 
-  // The overlay reports the pending WON ring on the field battleHand.
+  // The overlay reports the pending WON ring on the field battleHand (state readback).
   await page.waitForFunction(
     (id) => {
       const scene = (window as any).__game?.scene?.getScene('ForestScene') as any;
@@ -2304,17 +2348,22 @@ test('won-ring overflow S1: resolve by slotting into a battle slot', async ({ br
     wonRingId,
     { timeout: 5000 },
   );
+  await page.waitForTimeout(200); // let Phaser input settle after the modal renders
 
-  // Select the WON ring then move it onto a1 via the documented swap bridge (same
-  // access pattern as the EPIC#378 Sub-2 S2 test — TypeScript `private` is
-  // JS-runtime-transparent). Pre-fix the resulting PUT /api/loadout was rejected by
-  // the outer spare gate (spare > max) and the 400 was swallowed.
-  await page.evaluate((id) => {
-    const scene = (window as any).__game?.scene?.getScene('ForestScene') as any;
-    const bh = scene?.battleHand;
-    bh.swap.select(id, 'spare');
-    void bh.swap.moveTo('a1');
-  }, wonRingId);
+  // REAL pointer gesture: click the WON card to pick up the pending ring…
+  await clickCanvas(page, WON_CARD);
+  await page.waitForFunction(
+    (id) => {
+      const scene = (window as any).__game?.scene?.getScene('ForestScene') as any;
+      return scene?.battleHand?.swap?.selection?.ringId === id;
+    },
+    wonRingId,
+    { timeout: 5000 },
+  );
+
+  // …then click the A1 combat card to drop it. Pre-fix the resulting PUT
+  // /api/loadout was rejected by the outer spare gate and the 400 was swallowed.
+  await clickCanvas(page, A1_CARD);
 
   // Wait for the refresh to clear the pending ring.
   await page.waitForFunction(
@@ -2345,6 +2394,8 @@ test('won-ring overflow S2: rejected bench→spare move surfaces error and keeps
 
   // Full bench so dropping a battle-slot ring back to spare overflows the grid.
   await fillBenchToMax(tok);
+  // Post-seed sanity: carried rings exceed spare_ring_max (bench full + 5 slot rings).
+  await expectOverflowState(tok);
 
   const me0 = (await (
     await fetch(`${API_URL}/api/me`, { headers: { Authorization: `Bearer ${tok}` } })
@@ -2356,38 +2407,29 @@ test('won-ring overflow S2: rejected bench→spare move surfaces error and keeps
   await loadForest(page);
   await openBattleHand(page);
   await page.waitForFunction(() => (window as any).__battleHandOpen === true, { timeout: 5000 });
+  await page.waitForTimeout(200); // let Phaser input settle after the modal renders
 
-  // Pick up the a1 battle ring via the swap bridge (the established selection
-  // pattern in this spec — the field-overlay slot cards route through
-  // BenchHealthCombat, so tests drive selection through battleHand.swap), then try
-  // to drop it onto the full bench. The server rejects with 400 (spare grid full).
-  await page.evaluate((id) => {
-    const scene = (window as any).__game?.scene?.getScene('ForestScene') as any;
-    const bh = scene?.battleHand;
-    bh.swap.select(id, 'a1');
-    bh.renderManageModal();
-    void bh.swap.moveTo('spare');
-  }, a1Id);
-
-  // Wait for the rejected move to surface the bench-full message in the modal status
-  // text. This also guarantees the fire-and-forget resolveMove() round-trip finished
-  // (the message is re-applied AFTER the failed-move refresh, so its presence proves
-  // the whole path ran).
+  // REAL pointer gesture: click the A1 combat card to pick up its battle ring…
+  await clickCanvas(page, A1_CARD);
   await page.waitForFunction(
-    () => {
+    (id) => {
       const scene = (window as any).__game?.scene?.getScene('ForestScene') as any;
-      const modal = scene?.battleHand?.manageModal;
-      if (!modal) return false;
-      let found = false;
-      const walk = (c: any): void => {
-        for (const o of c.getAll ? c.getAll() : []) {
-          if (typeof o.text === 'string' && /Bench is full/i.test(o.text)) found = true;
-          if (o.getAll) walk(o);
-        }
-      };
-      walk(modal);
-      return found;
+      return scene?.battleHand?.swap?.selection?.ringId === id;
     },
+    a1Id,
+    { timeout: 5000 },
+  );
+
+  // …then click the first bench card to drop it onto the FULL bench. The server
+  // rejects with 400 (spare grid full).
+  await clickCanvas(page, BENCH_CELL0);
+
+  // Wait for the rejected move to surface the bench-full message via the
+  // __ringMgmtStatus state hook (#421 — mirrors the overlay status bar; reads are
+  // bridge-eligible). Its arrival also guarantees the resolveMove round-trip
+  // finished: the message is re-applied AFTER the failed-move refresh.
+  await page.waitForFunction(
+    () => /Bench is full/i.test(((window as any).__ringMgmtStatus as string) ?? ''),
     undefined,
     { timeout: 8000 },
   );
@@ -2432,7 +2474,7 @@ test('won-ring overflow S3: heart-slot equip of pending ring clears pending (reg
   await openBattleHand(page);
   await page.waitForFunction(() => (window as any).__battleHandOpen === true, { timeout: 5000 });
 
-  // Select the WON ring then move it onto the HEALTH heart slot via the swap bridge.
+  // The overlay reports the pending WON ring on the field battleHand (state readback).
   await page.waitForFunction(
     (id) => {
       const scene = (window as any).__game?.scene?.getScene('ForestScene') as any;
@@ -2441,12 +2483,21 @@ test('won-ring overflow S3: heart-slot equip of pending ring clears pending (reg
     wonRingId,
     { timeout: 5000 },
   );
-  await page.evaluate((id) => {
-    const scene = (window as any).__game?.scene?.getScene('ForestScene') as any;
-    const bh = scene?.battleHand;
-    bh.swap.select(id, 'spare');
-    void bh.swap.moveTo('heart');
-  }, wonRingId);
+  await page.waitForTimeout(200); // let Phaser input settle after the modal renders
+
+  // REAL pointer gesture: click the WON card to pick up the pending ring…
+  await clickCanvas(page, WON_CARD);
+  await page.waitForFunction(
+    (id) => {
+      const scene = (window as any).__game?.scene?.getScene('ForestScene') as any;
+      return scene?.battleHand?.swap?.selection?.ringId === id;
+    },
+    wonRingId,
+    { timeout: 5000 },
+  );
+
+  // …then click the HEALTH heart card to equip it.
+  await clickCanvas(page, HEALTH_CARD);
 
   await page.waitForFunction(
     () => {

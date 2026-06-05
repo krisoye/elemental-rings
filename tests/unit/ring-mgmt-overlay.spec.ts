@@ -1233,13 +1233,15 @@ describe('#396 Sub-B SpecConformance: FusionPanel retired', () => {
     ).toContain("mode === 'fusion'");
   });
 
-  it('Spec AC: RingManagementOverlayClass.ts exports setFuseStatus (overlay.setFuseStatus method)', () => {
+  it('Spec AC: RingManagementOverlayClass.ts exposes setStatusMessage (status surfacing for onFuse/rejected moves)', () => {
+    // #421 consolidated setFuseStatus into the generic setStatusMessage — both the
+    // fusion onFuse callbacks and rejected swap moves surface through it.
     const src = readClientSrc('objects/ui/RingManagementOverlayClass.ts');
     if (src === null) return;
     expect(
       src,
-      'RingManagementOverlayClass must expose setFuseStatus() for the onFuse callback to surface errors',
-    ).toContain('setFuseStatus');
+      'RingManagementOverlayClass must expose setStatusMessage() for adapters to surface errors',
+    ).toContain('setStatusMessage');
   });
 
   it('Spec AC: RingManagementOverlayOpts declares onFuse and filterElement options', () => {

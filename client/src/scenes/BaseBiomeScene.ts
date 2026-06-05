@@ -318,7 +318,7 @@ export abstract class BaseBiomeScene extends DualCameraScene {
       filterElement,
       onFuse: async (ringId1, ringId2, ov) => {
         const err = await this.doShrineFuse(ringId1, ringId2, filterElement, ov);
-        if (err) ov.setFuseStatus(err);
+        if (err) ov.setStatusMessage(err);
       },
       onRender: (c) => {
         this.routeToUi(c);

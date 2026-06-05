@@ -753,6 +753,12 @@ describe('saveLoadout — pending lifecycle (#380 Phase 1)', () => {
 
 // ---------------------------------------------------------------------------
 // #421 — saveLoadout permits resolving a pending WON ring overflow
+//
+// NOTE: these tests call saveLoadout directly and would still pass if the outer
+// spare-count gate removed by #421 were accidentally re-added to the Express
+// route. The HTTP route layer (PUT /api/loadout) is covered separately in
+// tests/integration/loadout-route.test.ts, which mounts the production apiRouter
+// and asserts the overflow-resolution PUT returns 200.
 // ---------------------------------------------------------------------------
 
 describe('saveLoadout — pending WON ring overflow resolution (#421)', () => {

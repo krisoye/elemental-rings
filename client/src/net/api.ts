@@ -95,3 +95,29 @@ export const apiClient = {
 export async function fetchMe<T = MeState>(): Promise<T> {
   return apiClient.get<T>('/api/me');
 }
+
+/**
+ * #421 — non-throwing mutation helper for call sites that must branch on commit
+ * status AND surface the server's error message (e.g. swap moves that keep the
+ * player's held selection on rejection instead of silently deselecting).
+ *
+ * Returns `{ ok: true, error: null }` on a 2xx response. On a non-2xx response
+ * returns `{ ok: false, error }` with the parsed `body.error` (null when the body
+ * is unparseable). On a network failure — or when unauthenticated (no request is
+ * made) — returns `{ ok: false, error: null }`.
+ */
+export async function apiMutate(
+  method: 'PUT' | 'POST',
+  path: string,
+  body?: unknown,
+): Promise<{ ok: boolean; error: string | null }> {
+  if (!getToken()) return { ok: false, error: null };
+  try {
+    const res = await apiFetch(path, { method, json: body });
+    if (res.ok) return { ok: true, error: null };
+    const parsed = (await res.json().catch(() => ({}))) as { error?: string };
+    return { ok: false, error: parsed.error ?? null };
+  } catch {
+    return { ok: false, error: null };
+  }
+}

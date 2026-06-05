@@ -119,7 +119,7 @@ export interface RingManagementOverlayOpts {
   /**
    * Called when `[FUSE]` is clicked with the two chosen parent ring ids.  The
    * adapter should POST /api/fusion/combine, then call `overlay.refresh(newData)`
-   * on success or `overlay.setFuseStatus(msg)` on failure.
+   * on success or `overlay.setStatusMessage(msg)` on failure.
    */
   onFuse?: (ringId1: string, ringId2: string, overlay: RingManagementOverlay) => Promise<void>;
 
@@ -426,6 +426,9 @@ export class RingManagementOverlay {
         .setOrigin(0.5),
     );
     c.add(this.statusText);
+    // #421 E2E hook — mirror the (re)built status text so Playwright can read the
+    // current status without walking the scene graph. A re-render resets it to ''.
+    (window as unknown as Record<string, unknown>).__ringMgmtStatus = '';
 
     this.container = c;
     this.opts.onRender?.(c);
@@ -573,18 +576,10 @@ export class RingManagementOverlay {
   }
 
   /**
-   * Surface a fusion error message in the status bar. Called by the host's
-   * `onFuse` callback when the server rejects the combine request.
-   */
-  setFuseStatus(msg: string): void {
-    this.setStatus(msg);
-  }
-
-  /**
-   * Surface a status/error message in the overlay's status bar. #421 — field
-   * adapters call this AFTER a failed-move `refresh()` (which rebuilds the modal
-   * and resets the status text) so a rejected move's error survives the re-render
-   * instead of being wiped.
+   * Surface a status/error message in the overlay's status bar. Used by host
+   * adapters for fusion rejections and (#421) rejected swap moves — field adapters
+   * call this AFTER a failed-move `refresh()` (which rebuilds the modal and resets
+   * the status text) so the error survives the re-render instead of being wiped.
    */
   setStatusMessage(msg: string): void {
     this.setStatus(msg);
@@ -889,6 +884,9 @@ export class RingManagementOverlay {
 
   private setStatus(msg: string): void {
     if (this.statusText) this.statusText.setText(msg);
+    // #421 E2E hook — surface the status message for Playwright state readback
+    // (reads are bridge-eligible; only gestures must use real pointer input).
+    (window as unknown as Record<string, unknown>).__ringMgmtStatus = msg;
     this.opts.onStatus?.(msg);
   }
 
@@ -925,6 +923,8 @@ export class RingManagementOverlay {
       this.fuseParent2 = null;
       this.swap.clear();
       clearRingMgmtState();
+      // Clear the #421 status hook so tests never read a stale message after close.
+      (window as unknown as Record<string, unknown>).__ringMgmtStatus = undefined;
       // Clear the fusion E2E hook so tests can detect the overlay is closed.
       if (this.mode === 'fusion') {
         (window as unknown as Record<string, unknown>).__fusionState = undefined;
