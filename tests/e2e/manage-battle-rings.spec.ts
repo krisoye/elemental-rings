@@ -707,11 +707,13 @@ test('manage-battle-rings (#381/#394): column X-centres — LOOT leftmost, then 
   });
 
   // #394 — LOOT column (WON/DISCARD) is leftmost: x≈195, well left of BENCH.
+  expect(positions.DISCARD, 'DISCARD DOM label not found').toBeDefined();
   expect(Math.abs(positions.DISCARD - 195)).toBeLessThanOrEqual(2);
-  // #394 — ordering invariant: LOOT x-centre < BENCH header x-centre.
-  expect(positions.DISCARD).toBeLessThan(positions.BENCH_HEADER);
   // #394 — BENCH header is centred over the 3-col grid: x≈474.
+  expect(positions.BENCH_HEADER, 'Bench: header DOM label not found').toBeDefined();
   expect(Math.abs(positions.BENCH_HEADER - 474)).toBeLessThanOrEqual(2);
+  // #394 — ordering invariant: LOOT x-centre < BENCH header x-centre (column-order guard).
+  expect(positions.DISCARD).toBeLessThan(positions.BENCH_HEADER);
   // HEALTH (HP) at x=659. DOM-measured → ±1px; canvas exact.
   expect(positions.HP).toBe(659);
   // COMBAT cluster: STATUS left-aligned above A1/D1 at x=759; A2/D2 at x=837.
