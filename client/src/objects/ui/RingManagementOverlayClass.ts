@@ -457,7 +457,6 @@ export class RingManagementOverlay {
     if (this.pendingRingId) slottedIds.add(this.pendingRingId);
     const availableRings = this.manageRings.filter((r) => !slottedIds.has(r.id));
     const spareMax = this.managePlayer?.spare_ring_max ?? 0;
-    const benchFull = availableRings.length >= spareMax && spareMax >= 0;
 
     // WON card.
     const pendingRing = this.pendingRingId
