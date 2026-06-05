@@ -441,7 +441,7 @@ Return the fixed merchant inventory with buy and sell prices. Prices are public.
 **Request body:** `{ item: 'food', quantity: number }` | `{ item: 'ring', element: 'fire' | 'water' | 'earth' | 'wind' | 'wood', tier: 1 }`
 **Response (success — food):** `{ gold: number, food_units: number }` — HTTP 200
 **Response (success — ring):** `{ gold: number, ring: Ring }` — HTTP 200
-**Response (error):** 400 — `"quantity must be a positive integer"` | 400 — `"element must be one of: fire, water, earth, wind, wood"` | 400 — `"item must be \"food\" or \"ring\""` | 400 — reason from `merchantBuyFood` or `merchantBuyRing` (insufficient gold, `"Bench full and a won ring is already pending — resolve it first"`)
+**Response (error):** 400 — `"quantity must be a positive integer"` | 400 — `"element must be one of: fire, water, earth, wind, wood"` | 400 — `"item must be \"food\" or \"ring\""` | 400 — reason from `merchantBuyFood` or `merchantBuyRing` (insufficient gold, `"Resolve your pending won ring first"`)
 
 Buy food or a Tier 1 ring from the merchant. `quantity` must be a positive integer for food purchases. `tier` field in the request body is not validated server-side (only `element` is used for ring purchases).
 

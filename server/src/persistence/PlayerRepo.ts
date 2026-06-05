@@ -2022,15 +2022,13 @@ export const merchantBuyRing = db.transaction(
     let asPending = false;
     if (spareCount >= spareMax) {
       if (getPendingRingId(playerId) !== null) {
-        return {
-          ok: false,
-          reason: 'Bench full and a won ring is already pending — resolve it first',
-        };
+        return { ok: false, reason: 'Resolve your pending won ring first' };
       }
       asPending = true;
     }
 
-    // Deduct gold, create ring, mark it as carried (pending=1 when bench is full).
+    // Deduct gold, create the ring directly in carry (pending=1 when bench is
+    // full) — one INSERT sets both flags, structurally identical to grantRing.
     updateGold.run(-price, playerId);
     const ringId = insertRingRow(
       playerId,
@@ -2041,10 +2039,10 @@ export const merchantBuyRing = db.transaction(
         maxUses: 3,
         currentUses: 3,
         escrowed: 0,
+        inCarry: 1,
         pending: asPending ? 1 : 0,
       }),
     );
-    setRingCarry(ringId, 1);
 
     const updated = getPlayerById(playerId)!;
     const ring = getRingById(ringId)!;

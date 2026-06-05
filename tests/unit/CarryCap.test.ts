@@ -942,7 +942,7 @@ describe('merchantBuyRing — bench-aware purchase routing (#423)', () => {
     expect(repo.getSpareIds(p).length).toBe(max + 1);
   });
 
-  test('buy with bench at max AND existing pending ring → rejected with /already pending/', () => {
+  test('buy with bench at max AND existing pending ring → rejected with /pending won ring/', () => {
     const p = makePlayer(dbInstance);
     const max = repo.getSpareRingMax(p);
     for (let i = 0; i < max; i++) makeRing(dbInstance, p, { inCarry: 1 });
@@ -952,7 +952,7 @@ describe('merchantBuyRing — bench-aware purchase routing (#423)', () => {
     const res = repo.merchantBuyRing(p, ElementEnum.FIRE);
     expect(res.ok).toBe(false);
     if (res.ok) return;
-    expect(res.reason).toMatch(/already pending/);
+    expect(res.reason).toMatch(/pending won ring/i);
   });
 
   test('gold is NOT deducted on the already-pending rejection path', () => {
