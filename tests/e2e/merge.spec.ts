@@ -337,20 +337,30 @@ test('merge: Steam+Steam merge → element=Steam, parent_dominant=higher-XP pare
   const { ring: steamB } = await fuseB.json();
   expect(steamB.element).toBe(STEAM);
 
-  // Give steamA more XP so it is the dominant parent (steamB stays at fusedXP).
+  // Lower steamA's XP so the two parents differ (steamB stays at its fused XP
+  // of 500+500=1000) — exercises the higher-XP-parent dominance rule with no tie.
   const STEAM_A_XP = 800;
   await setRingXP(token, steamA.id, STEAM_A_XP);
-  // steamB stays at its fused XP (500+500=1000 XP after fuse).
 
   await unlockShrine(token, TEST_SHRINE_ID);
+
+  // Re-fetch both Steam rings at merge time so the additive XP assertion uses
+  // the actual server-side values, not JSON captured from the earlier fusion
+  // responses (resilient to any future XP mutation between fuse and merge).
+  const { rings: preMerge } = await getMe(token);
+  const steamAState = preMerge.find((r: any) => r.id === steamA.id);
+  const steamBState = preMerge.find((r: any) => r.id === steamB.id);
+  if (!steamAState || !steamBState) throw new Error('Steam parents missing before merge');
+  expect(steamAState.xp).not.toBe(steamBState.xp); // no tie — dominance rule applies
 
   const res = await mergeRings(token, steamA.id, steamB.id, TEST_SHRINE_ID);
   expect(res.status).toBe(200);
   const { ring } = await res.json();
 
   expect(ring.element).toBe(STEAM);
-  expect(ring.xp).toBe(STEAM_A_XP + steamB.xp);
-  // parent_dominant = steamA's element (higher XP) = STEAM (5).
+  expect(ring.xp).toBe(steamAState.xp + steamBState.xp);
+  // parent_dominant = element of the higher-XP parent. Both parents are Steam,
+  // so it resolves to STEAM (5) — and never -1, since the XPs differ.
   expect(ring.parent_dominant).toBe(STEAM);
 
   // Both Steam parents deleted.

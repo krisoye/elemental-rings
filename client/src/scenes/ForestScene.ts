@@ -278,6 +278,8 @@ export class ForestScene extends BaseBiomeScene {
       false,
       () => void this.openShrineMerge('forest_thornado_shrine'),
     );
+    // #431 — expose the zone so the M-key handler can gate on its sealed state.
+    this.activeMergeShrineZone = this.shrineZone;
     this.registerInteractionZone(
       this.shrineZone.interactionZone,
       this.shrineZone.altarObjects,
@@ -316,6 +318,8 @@ export class ForestScene extends BaseBiomeScene {
       true, // alwaysOpen — the Bloom altar has no seal
       () => void this.openShrineMerge('forest_bloom_hollow'),
     );
+    // #431 — expose the zone so the M-key handler can gate on its sealed state.
+    this.activeMergeShrineZone = this.shrineZone;
     this.registerInteractionZone(
       this.shrineZone.interactionZone,
       this.shrineZone.altarObjects,

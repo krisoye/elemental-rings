@@ -20,6 +20,7 @@ import { RingManagementOverlay, type RingManagementOverlayOpts } from '../object
 import type { OverlayData } from '../objects/ui/RingManagementOverlayClass';
 import type { RingData } from '../objects/InventoryGrid';
 import { DiscardConfirm } from '../objects/ui/DiscardConfirm';
+import type { ShrineZone } from '../objects/world/ShrineZone';
 import { showTransientText } from '../objects/ui/toast';
 import { addDomLabel, setDomLabelText } from '../objects/ui/DomLabel';
 import { apiFetch, fetchMe, getToken } from '../net/api';
@@ -146,6 +147,12 @@ export abstract class BaseBiomeScene extends DualCameraScene {
   private shrineMergeOverlay: RingManagementOverlay | null = null;
   /** #431 — id of the shrine whose merge overlay is currently open (or null). */
   protected activeMergeShrineId: string | null = null;
+  /**
+   * #431 — the ShrineZone backing {@link activeMergeShrineId}, so the M-key
+   * handler can gate on its live sealed/open state (isUnlocked) before opening
+   * the merge overlay. Set by the concrete scene alongside activeMergeShrineId.
+   */
+  protected activeMergeShrineZone: ShrineZone | null = null;
   /** #423 — shared discard-confirm dialog for the shrine-fusion DISCARD slot. */
   private fusionDiscard_: DiscardConfirm | null = null;
   /** Centers of Anchorage locations (keyed by waystoneId), for compass + spawn logic. */
@@ -734,9 +741,15 @@ export abstract class BaseBiomeScene extends DualCameraScene {
       }
     });
     // #431 — M dispatches to shrine merge when a merge shrine is active; falls
-    // back to the overworld map in all other contexts.
+    // back to the overworld map in all other contexts. A sealed shrine blocks
+    // the merge (the shrine must be unsealed first — same gate the server
+    // enforces on POST /api/rings/merge).
     this.input.keyboard!.on('keydown-M', () => {
       if (this.activeMergeShrineId) {
+        if (this.activeMergeShrineZone && !this.activeMergeShrineZone.isUnlocked()) {
+          this.showToast('The shrine is sealed.', '#ff8888');
+          return;
+        }
         void this.openShrineMerge(this.activeMergeShrineId);
       } else {
         this.toggleOverworldMap();
@@ -807,6 +820,7 @@ export abstract class BaseBiomeScene extends DualCameraScene {
       this.shrineMergeOverlay?.close();
       this.shrineMergeOverlay = null;
       this.activeMergeShrineId = null;
+      this.activeMergeShrineZone = null;
       this.campfires.forEach((cf) => cf.destroy());
       this.campfires.clear();
       this.compass.destroy();

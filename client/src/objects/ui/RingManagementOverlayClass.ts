@@ -1047,15 +1047,19 @@ export class RingManagementOverlay {
     }
     this.statusText = null;
     if (fireCb) {
-      // Clear fusion parent selections only on genuine close — a re-render
+      // Clear fusion/merge parent selections only on genuine close — a re-render
       // (fireCb=false) must preserve the user's R1/R2 choices between renders.
       this.fuseParent1 = null;
       this.fuseParent2 = null;
+      this.mergeParent1 = null;
+      this.mergeParent2 = null;
       this.swap.clear();
       clearRingMgmtState();
       // Clear the #421 status hook so tests never read a stale message after close.
       (window as unknown as Record<string, unknown>).__ringMgmtStatus = undefined;
       // Clear the fusion E2E hook so tests can detect the overlay is closed.
+      // Merge mode (#431) publishes no mode-specific hook — its E2E observability
+      // is the shared __ringMgmtState (cleared above via clearRingMgmtState).
       if (this.mode === 'fusion') {
         (window as unknown as Record<string, unknown>).__fusionState = undefined;
       }
