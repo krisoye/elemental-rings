@@ -1223,3 +1223,445 @@ test('#426 QA: re-opening the overlay shows exactly one spirit-header DOM label 
 
   await ctx.close();
 });
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Phase 2 — implementation-aware tests
+// These tests target specific code branches, dual-path interactions, and the
+// COL_HEALTH_X single-source-of-truth contract that only become verifiable once
+// the implementation is visible.
+// ═══════════════════════════════════════════════════════════════════════════════
+
+// ── P2-1: renderReliquaryHeader and applyReliquaryLockState both use the same
+//          color values for the same condition — sync check ──────────────────
+
+// #426 implementation-aware: CampScene has TWO code paths that mutate
+// spiritHeader.node.style.color:
+//   (a) renderReliquaryHeader (line 1270): reliquaryCount >= reliquaryCap → '#ff5555'
+//   (b) applyReliquaryLockState (line 1331): window.__reliquaryFull → '#ff5555'
+// Both are called by afterReliquaryReload() when state changes. If they diverge
+// (e.g. one uses '#ff4444', the other '#ff5555'), the color flickers between the
+// two on every reload. This test opens the overlay at full-cap, reads the color
+// renderReliquaryHeader set, then checks it matches what applyReliquaryLockState
+// would decide via __reliquaryFull.
+test('#426 P2: renderReliquaryHeader and applyReliquaryLockState agree on spirit-header color at full-cap state', async ({
+  browser,
+}) => {
+  const token = await registerAndToken();
+  const meInit = await getMe(token);
+  const cap: number = meInit.player.reliquaryCap ?? 20;
+  const currentResting: number =
+    meInit.player.reliquaryCount ??
+    meInit.rings.filter((r: any) => r.in_carry === 0 && !r.escrowed && r.heart_slot !== 1).length;
+  const needed = cap - currentResting;
+  if (needed > 0) {
+    await seedRestingRings(token, needed);
+  }
+
+  const ctx = await browser.newContext();
+  await ctx.addInitScript(`localStorage.setItem('er_token', ${JSON.stringify(token)})`);
+  const page = await ctx.newPage();
+  await loadSanctum(page);
+  await openReliquary(page);
+
+  const counters = await page.evaluate(() => (window as any).__ringMgmtState?.counters);
+  test.skip(
+    counters?.spirit?.n !== counters?.spirit?.max,
+    `Reliquary not at cap after seeding (${counters?.spirit?.n}/${counters?.spirit?.max}) — skip`,
+  );
+
+  // Color as set by renderReliquaryHeader (the last path to run after openReliquary).
+  const colorAfterRender = await page.evaluate(() => {
+    let color: string | null = null;
+    document.querySelectorAll('.er-dom-label').forEach((n) => {
+      if ((n as HTMLElement).getAttribute('data-label') === 'spirit-header') {
+        color = (n as HTMLElement).style.color;
+      }
+    });
+    return color;
+  });
+
+  // What applyReliquaryLockState would set: __reliquaryFull ? '#ff5555' : '#ffdd66'.
+  const colorByApply = await page.evaluate(() =>
+    (window as any).__reliquaryFull ? '#ff5555' : '#ffdd66',
+  );
+
+  expect(colorAfterRender, 'spirit-header color not set after open').not.toBeNull();
+
+  const normalize = (c: string): string =>
+    c === 'rgb(255, 85, 85)' ? '#ff5555' :
+    c === 'rgb(255, 221, 102)' ? '#ffdd66' : c;
+
+  expect(
+    normalize(colorAfterRender!),
+    `Full-cap: renderReliquaryHeader set "${colorAfterRender}" but applyReliquaryLockState expects "${colorByApply}" — the two color paths disagree`,
+  ).toBe(colorByApply);
+
+  await ctx.close();
+});
+
+// #426 P2: Below-cap case — both paths must agree on the normal color.
+// If renderReliquaryHeader uses '#ffdd66' but applyReliquaryLockState left a
+// different fallback (e.g. '#aaaaaa' from the old canvas-text path), the header
+// shows the wrong color on every non-full open.
+test('#426 P2: renderReliquaryHeader and applyReliquaryLockState agree on spirit-header color in the below-cap (normal) state', async ({
+  browser,
+}) => {
+  const token = await registerAndToken();
+  const meInit = await getMe(token);
+  const cap: number = meInit.player.reliquaryCap ?? 20;
+  const currentResting: number =
+    meInit.player.reliquaryCount ??
+    meInit.rings.filter((r: any) => r.in_carry === 0 && !r.escrowed && r.heart_slot !== 1).length;
+  test.skip(
+    currentResting >= cap,
+    `Fresh player already at cap (${currentResting}/${cap}) — cannot test normal color path`,
+  );
+
+  const ctx = await browser.newContext();
+  await ctx.addInitScript(`localStorage.setItem('er_token', ${JSON.stringify(token)})`);
+  const page = await ctx.newPage();
+  await loadSanctum(page);
+  await openReliquary(page);
+
+  const colorAfterRender = await page.evaluate(() => {
+    let color: string | null = null;
+    document.querySelectorAll('.er-dom-label').forEach((n) => {
+      if ((n as HTMLElement).getAttribute('data-label') === 'spirit-header') {
+        color = (n as HTMLElement).style.color;
+      }
+    });
+    return color;
+  });
+
+  const colorByApply = await page.evaluate(() =>
+    (window as any).__reliquaryFull ? '#ff5555' : '#ffdd66',
+  );
+
+  expect(colorAfterRender, 'spirit-header color not set in below-cap state').not.toBeNull();
+
+  const normalize = (c: string): string =>
+    c === 'rgb(255, 85, 85)' ? '#ff5555' :
+    c === 'rgb(255, 221, 102)' ? '#ffdd66' : c;
+
+  expect(
+    normalize(colorAfterRender!),
+    `Below-cap: renderReliquaryHeader set "${colorAfterRender}" but applyReliquaryLockState expects "${colorByApply}" — paths disagree`,
+  ).toBe(colorByApply);
+
+  await ctx.close();
+});
+
+// ── P2-2: spiritDropHit (container child) vs spiritHeader (non-child) —
+//          both teardown paths fire correctly in the same close cycle ─────────
+
+// #426 implementation-aware: two DIFFERENT teardown mechanisms for objects
+// created at the same time:
+//   • spiritDropHit — added to `c` via `c.add(spiritDropHit)` (CampScene line 820);
+//     destroyed automatically by container.destroy(true) in overlay.close().
+//   • spiritHeader — NOT in the container; destroyed manually in onBeforeDestroy
+//     callback (CampScene line 949) and nulled in onClose (line 983).
+// If the mechanisms are crossed (e.g. spiritDropHit added to scene root, or
+// spiritHeader accidentally added to container), one teardown path fails silently.
+// This test closes the overlay and checks BOTH are gone in a single close cycle.
+test('#426 P2: spiritDropHit (container child) and spiritHeader (DOM non-child) are both cleaned up in the same close cycle', async ({
+  browser,
+}) => {
+  const token = await registerAndToken();
+  const ctx = await browser.newContext();
+  await ctx.addInitScript(`localStorage.setItem('er_token', ${JSON.stringify(token)})`);
+  const page = await ctx.newPage();
+  await loadSanctum(page);
+  await openReliquary(page);
+
+  const openState = await page.evaluate(() => {
+    const scene = (window as any).__scene as any;
+    let hitRectFound = false;
+    const walk = (container: any, depth: number): void => {
+      if (depth > 4) return;
+      for (const o of (container.getAll ? container.getAll() : [])) {
+        if (o.name === 'spirit-drop-hit') { hitRectFound = true; return; }
+        if (o.getAll) walk(o, depth + 1);
+      }
+    };
+    walk({ getAll: () => scene.children.getAll() }, 0);
+    const domLabelCount = document.querySelectorAll('[data-label="spirit-header"]').length;
+    return { hitRectFound, domLabelCount };
+  });
+  expect(openState.hitRectFound, 'spirit-drop-hit must exist while open').toBe(true);
+  expect(openState.domLabelCount, 'spirit-header DOM label must exist while open').toBe(1);
+
+  await page.keyboard.press('Escape');
+  await page.waitForFunction(() => (window as any).__sanctumOverlayOpen === null, {
+    timeout: 5000,
+  });
+
+  const closedState = await page.evaluate(() => {
+    const scene = (window as any).__scene as any;
+    let hitRectFound = false;
+    const walk = (container: any, depth: number): void => {
+      if (depth > 4) return;
+      for (const o of (container.getAll ? container.getAll() : [])) {
+        if (o.name === 'spirit-drop-hit') { hitRectFound = true; return; }
+        if (o.getAll) walk(o, depth + 1);
+      }
+    };
+    walk({ getAll: () => scene.children.getAll() }, 0);
+    const domLabelCount = document.querySelectorAll('[data-label="spirit-header"]').length;
+    return { hitRectFound, domLabelCount };
+  });
+
+  expect(
+    closedState.hitRectFound,
+    'spirit-drop-hit must be gone after close — container.destroy(true) should have reclaimed it as a container child',
+  ).toBe(false);
+  expect(
+    closedState.domLabelCount,
+    'spirit-header DOM label must be gone after close — onBeforeDestroy must call spiritHeader.destroy()',
+  ).toBe(0);
+
+  await ctx.close();
+});
+
+// #426 P2: spirit-header DOM label is not a direct Phaser container child.
+// The spec comment on CampScene line 792 says "NOT added to the container".
+// If it were added to the container, container.destroy(true) would reclaim it
+// and the manual spiritHeader.destroy() in onBeforeDestroy would be a double-destroy.
+// Verify the invariant holds so the teardown model is internally consistent.
+test('#426 P2: spirit-header DOM label is not a child of the overlay container — manual teardown invariant', async ({
+  browser,
+}) => {
+  const token = await registerAndToken();
+  const ctx = await browser.newContext();
+  await ctx.addInitScript(`localStorage.setItem('er_token', ${JSON.stringify(token)})`);
+  const page = await ctx.newPage();
+  await loadSanctum(page);
+  await openReliquary(page);
+
+  const isContainerChild = await page.evaluate(() => {
+    const scene = (window as any).__scene as any;
+    const spiritDomNode = document.querySelector('[data-label="spirit-header"]') as HTMLElement | null;
+    if (!spiritDomNode) return null;
+
+    let found = false;
+    const walk = (container: any, depth: number): void => {
+      if (depth > 4) return;
+      for (const o of (container.getAll ? container.getAll() : [])) {
+        // Match any Phaser DOMElement whose node is or contains the spirit-header element.
+        if (o.node === spiritDomNode || o.node?.contains?.(spiritDomNode)) {
+          found = true;
+          return;
+        }
+        if (o.getAll) walk(o, depth + 1);
+      }
+    };
+    walk({ getAll: () => scene.children.getAll() }, 0);
+    return found;
+  });
+
+  expect(isContainerChild, 'spirit-header DOM label lookup returned null — label not found').not.toBeNull();
+  expect(
+    isContainerChild,
+    'spirit-header DOM label must NOT be a Phaser container child — it must be destroyed manually via spiritHeader.destroy() in onBeforeDestroy, not by container.destroy(true)',
+  ).toBe(false);
+
+  await ctx.close();
+});
+
+// ── P2-3: COL_HEALTH_X single source of truth — HP label x and BHC HEALTH
+//          column center must match (import-not-duplicate contract) ──────────
+
+// #426 implementation-aware: COL_HEALTH_X is exported from BenchHealthCombat.ts
+// (line 45) and imported by RingManagementOverlayClass.ts (line 9) to place the
+// HP canvas-Text label (line 434). If the import is missed and HP_X=659 survives,
+// the HP label sits at 659 while BHC's HEALTH column renders at 660. This test
+// measures both positions in the same render and asserts they are identical.
+test('#426 P2: HP label x and HEALTH DOM column center are identical — COL_HEALTH_X single source of truth (field mode)', async ({
+  browser,
+}) => {
+  const ctx = await browser.newContext();
+  await seedAuthToken(ctx);
+  const page = await ctx.newPage();
+  await page.goto(URL);
+  await page.waitForFunction(() => (window as any).__activeScene === 'CampScene', {
+    timeout: 10000,
+  });
+  await enterForestScreen(page, 'forest_anchorage');
+  await page.waitForFunction(
+    () => typeof (window as any).__overworldToggleBattleHand === 'function',
+    { timeout: 8000 },
+  );
+  await page.evaluate(() => (window as any).__overworldToggleBattleHand());
+  await page.waitForFunction(() => (window as any).__overworldBattleHandOpen === true, {
+    timeout: 5000,
+  });
+
+  const positions = await page.evaluate(() => {
+    const game = (window as any).__game;
+    const scene = game?.scene?.getScene('ForestScene');
+    const modal = scene?.battleHand?.manageModal;
+    const canvasRect: DOMRect = game?.canvas?.getBoundingClientRect();
+    const scaleX = canvasRect ? canvasRect.width / 1024 : 1;
+
+    // HP canvas-Text x (added by RingManagementOverlayClass at COL_HEALTH_X, line 434).
+    let hpLabelX: number | null = null;
+    const walk = (c: any): void => {
+      for (const o of c.getAll ? c.getAll() : []) {
+        if (typeof o.text === 'string' && o.text.startsWith('♥') && !o.text.includes('\n')) {
+          hpLabelX = Math.round(o.x);
+        }
+        if (o.getAll) walk(o);
+      }
+    };
+    if (modal) walk(modal);
+
+    // HEALTH DOM label center-x (rendered by BHC at COL_HEALTH_X, line 188).
+    let healthDomX: number | null = null;
+    document.querySelectorAll('.er-dom-label').forEach((n) => {
+      const el = n as HTMLElement;
+      if (el.textContent?.trim() === 'HEALTH') {
+        const rect = el.getBoundingClientRect();
+        healthDomX = Math.round((rect.left + rect.width / 2 - (canvasRect?.left ?? 0)) / scaleX);
+      }
+    });
+
+    return { hpLabelX, healthDomX };
+  });
+
+  expect(positions.hpLabelX, 'HP label (♥ canvas text) not found in field modal').not.toBeNull();
+  expect(positions.healthDomX, 'HEALTH DOM label not found in field modal').not.toBeNull();
+
+  expect(
+    positions.hpLabelX,
+    `HP label x=${positions.hpLabelX} must be 660 — RingManagementOverlayClass must use imported COL_HEALTH_X, not hard-coded 659`,
+  ).toBe(660);
+  expect(
+    positions.healthDomX,
+    `HEALTH DOM label x=${positions.healthDomX} must be 660 (BenchHealthCombat COL_HEALTH_X)`,
+  ).toBe(660);
+  expect(
+    positions.hpLabelX,
+    `HP x (${positions.hpLabelX}) ≠ HEALTH DOM x (${positions.healthDomX}) — COL_HEALTH_X is not a single source of truth; RingManagementOverlayClass is using a different value`,
+  ).toBe(positions.healthDomX);
+
+  await ctx.close();
+});
+
+// Same contract in sanctum mode — RingManagementOverlayClass uses COL_HEALTH_X
+// for the HP label in the sanctum overlay context too.
+test('#426 P2: HP label x and HEALTH DOM column center match in sanctum mode — COL_HEALTH_X single source of truth', async ({
+  browser,
+}) => {
+  const token = await registerAndToken();
+  const ctx = await browser.newContext();
+  await ctx.addInitScript(`localStorage.setItem('er_token', ${JSON.stringify(token)})`);
+  const page = await ctx.newPage();
+  await loadSanctum(page);
+  await openReliquary(page);
+
+  const positions = await page.evaluate(() => {
+    const game = (window as any).__game;
+    const scene = (window as any).__scene as any;
+    const canvasRect: DOMRect = game?.canvas?.getBoundingClientRect();
+    const scaleX = canvasRect ? canvasRect.width / 1024 : 1;
+
+    let hpLabelX: number | null = null;
+    const walk = (c: any, depth: number): void => {
+      if (depth > 5) return;
+      for (const o of (c.getAll ? c.getAll() : [])) {
+        if (typeof o.text === 'string' && o.text.startsWith('♥') && !o.text.includes('\n')) {
+          hpLabelX = Math.round(o.x);
+        }
+        if (o.getAll) walk(o, depth + 1);
+      }
+    };
+    walk({ getAll: () => scene.children.getAll() }, 0);
+
+    let healthDomX: number | null = null;
+    document.querySelectorAll('.er-dom-label').forEach((n) => {
+      const el = n as HTMLElement;
+      if (el.textContent?.trim() === 'HEALTH') {
+        const rect = el.getBoundingClientRect();
+        healthDomX = Math.round((rect.left + rect.width / 2 - (canvasRect?.left ?? 0)) / scaleX);
+      }
+    });
+
+    return { hpLabelX, healthDomX };
+  });
+
+  expect(positions.healthDomX, 'HEALTH DOM label not found in sanctum mode').not.toBeNull();
+  expect(
+    positions.healthDomX,
+    `Sanctum HEALTH DOM label x=${positions.healthDomX} must be 660 (COL_HEALTH_X from BHC)`,
+  ).toBe(660);
+
+  if (positions.hpLabelX !== null) {
+    expect(
+      positions.hpLabelX,
+      `Sanctum HP label x=${positions.hpLabelX} must be 660 (COL_HEALTH_X imported by RingManagementOverlayClass)`,
+    ).toBe(660);
+    expect(
+      positions.hpLabelX,
+      `Sanctum: HP x (${positions.hpLabelX}) ≠ HEALTH DOM x (${positions.healthDomX}) — COL_HEALTH_X not a single source of truth`,
+    ).toBe(positions.healthDomX);
+  }
+
+  await ctx.close();
+});
+
+// ── P2-4: spiritHeader DOM label has pointer-events:none; hit-rect has
+//          input.enabled=true — architectural split is intact ─────────────────
+
+// #426 implementation-aware: DOM labels are pointer-events:none (DomLabel.ts:104-108).
+// The hit-rect exists precisely because the DOM label cannot receive pointer events.
+// If the DOM label's pointer-events were accidentally set to 'auto' (e.g. the
+// addDomLabel call omitted the CSS), the drop target would work differently:
+// clicks would land on the DOM label itself, which IS destroyed with the container,
+// but the hit-rect would become a ghost interactive object in the scene. Asserting
+// this split is intact confirms the implementation followed the spec's reasoning.
+test('#426 P2: spirit-header DOM label has pointer-events:none (inert); spirit-drop-hit has input.enabled=true (interactive)', async ({
+  browser,
+}) => {
+  const token = await registerAndToken();
+  const ctx = await browser.newContext();
+  await ctx.addInitScript(`localStorage.setItem('er_token', ${JSON.stringify(token)})`);
+  const page = await ctx.newPage();
+  await loadSanctum(page);
+  await openReliquary(page);
+
+  const domLabelPointerEvents = await page.evaluate(() => {
+    const el = document.querySelector('[data-label="spirit-header"]') as HTMLElement | null;
+    if (!el) return null;
+    return window.getComputedStyle(el).pointerEvents;
+  });
+
+  const hitRectInputEnabled = await page.evaluate(() => {
+    const scene = (window as any).__scene as any;
+    let enabled: boolean | null = null;
+    const walk = (container: any, depth: number): void => {
+      if (depth > 4) return;
+      for (const o of (container.getAll ? container.getAll() : [])) {
+        if (o.name === 'spirit-drop-hit') {
+          enabled = !!(o.input?.enabled);
+          return;
+        }
+        if (o.getAll) walk(o, depth + 1);
+      }
+    };
+    walk({ getAll: () => scene.children.getAll() }, 0);
+    return enabled;
+  });
+
+  expect(domLabelPointerEvents, 'spirit-header DOM label not found').not.toBeNull();
+  expect(
+    domLabelPointerEvents,
+    `spirit-header must have pointer-events:none (got "${domLabelPointerEvents}") — if interactive, the hit-rect is redundant and drops will behave differently on teardown`,
+  ).toBe('none');
+
+  expect(hitRectInputEnabled, 'spirit-drop-hit canvas rectangle not found').not.toBeNull();
+  expect(
+    hitRectInputEnabled,
+    'spirit-drop-hit must have input.enabled=true — it is the actual drop target for the SPIRIT header strip',
+  ).toBe(true);
+
+  await ctx.close();
+});
