@@ -46,6 +46,7 @@ const SOLO_SPECS = [
   'forage-client.spec.ts',
   'frost-sentinel.spec.ts', // #269
   'fusion.spec.ts',
+  'merge.spec.ts', // #431 — ring merge at shrines (GDD §4.7)
   'merchant.spec.ts',
   'merchant-client.spec.ts',
   'npc-population.spec.ts',

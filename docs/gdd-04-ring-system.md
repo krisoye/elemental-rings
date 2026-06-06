@@ -132,4 +132,30 @@ Players who invest deeply in one ring keep a focused single element; players who
 
 **Element count is separate from tier.** A fused ring's compound element is what it is regardless of how high a tier it reaches. A Steam ring at Tier 5 is still Steam — it does not become a three-element ring. Maximum fusion depth is **two elements**.
 
+### 4.7 Merge — Same-Element Consolidation
+
+Merge is a same-element ritual performed at any unsealed shrine. Two rings of the **same element** (including identical fusion elements — Steam + Steam, Thornado + Thornado) are collapsed into a single ring that carries the combined XP of both parents.
+
+**Merge rules:**
+- Both parent rings must share the **same element** — base or fusion. A Thornado ring and a Steam ring cannot merge (different elements); two Steam rings can.
+- Each parent must independently be at least **Tier 1** (≥ 500 XP). This is the same floor as fusion — low-level rings are not eligible.
+- Neither parent may be **escrowed** (staked) or the player's pending WON ring.
+- The player must be at an **unsealed shrine** — the shrine must have been previously unlocked with a ring-key. Sealed shrines reject merge requests.
+- Both parent rings are consumed; they cease to exist.
+
+**Merge result:**
+- Element = same as both parents (unchanged)
+- `xp = parent1.xp + parent2.xp` — the full XP investment of both parents is preserved, with no bonus multiplier
+- `tier = tierForXp(combined_xp)` — standard tier formula; the combined XP can push the child into a higher tier than either parent
+- `max_uses = 3 + tier` — the same pure-XP rule every ring follows (§4.2); `current_uses` starts at `max_uses` (full)
+- For fusion-element merges: `parent_dominant` records the element of the higher-XP parent (for two-tone card rendering); on a tie it is set to −1 (static order)
+
+**Use-throughput tradeoff.** Two rings each with `max_uses = 4` (Tier 1) collapse into one ring with `max_uses` derived from the combined XP. This is generally one full-capacity ring instead of two partial ones. The player gains XP consolidation and tier uplift but loses the ability to run two separate ring charges per combat.
+
+**Fusion depth is not increased.** Merging two Steam rings produces a Steam ring at the combined XP — it does not become a deeper compound. Maximum fusion depth stays at two base elements.
+
+**Shrine requirement.** Merge shares the same shrine location as fusion. The shrine must be unsealed; a sealed shrine blocks both fuse and merge.
+
+**Playtest watch-item — stake-shielding.** Merge enables a potential stake-shielding pattern: consolidating XP into a high-tier ring that is not staked while staking low-quality junk. Two existing governors soften this: (a) NPC difficulty scales with battle-hand average XP regardless of what is staked; (b) thumb-passive longevity scales with staked-ring uses, so junk stakes yield weak passives. Monitor whether thumb stakes trend toward low-XP junk in playtesting and tune accordingly.
+
 ---
