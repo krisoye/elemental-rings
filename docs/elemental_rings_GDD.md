@@ -19,7 +19,11 @@ Each section lives in its own file. Read only what you need.
 | 8 | Player Progression | [gdd-08-player-progression.md](gdd-08-player-progression.md) | Player XP, world gating, inventory |
 | 9 | Staking Economy | [gdd-09-staking-economy.md](gdd-09-staking-economy.md) | Stake rules, jewelry positions, self-regulation |
 | 10 | Overworld | [gdd-10-overworld.md](gdd-10-overworld.md) | Biomes, detection, NPC types, Sanctum, waystones, anchorages, teleportation; §10.13 short-range blink; §10.14 overworld battle-hand (Tab) |
-| 10r | World Regions | [gdd-10-regions.md](gdd-10-regions.md) | Overworld architecture, Forest region screen manifest (§10.15), terrain/asset approach, biome-scene architecture |
+| 10r | World Regions | [gdd-10-regions.md](gdd-10-regions.md) | World architecture hub — world progression overview (§10.11), overworld architecture, terrain/asset approach, biome-scene architecture |
+| 10f | Forest Region | [gdd-10-forest.md](gdd-10-forest.md) | Forest region screen manifest (§10.15, 29 screens) |
+| 10s | Snow Region | [gdd-10-snow.md](gdd-10-snow.md) | Snow Mountains region manifest (9 screens, Storm/Dust shrines, Blizzard King) |
+| 10w | Swamp Region | [gdd-10-swamp.md](gdd-10-swamp.md) | Swamp region manifest (10 screens, Mud/Tidal shrines, Desert gates) |
+| 10d | Desert & Volcano Regions | [gdd-10-desert.md](gdd-10-desert.md) | DesertScene (13 screens) + VolcanoScene (9 screens) manifests, all four Fire-fusion shrines, Molten Sovereign |
 | 11 | UI and Information Display | [gdd-11-ui.md](gdd-11-ui.md) | HUD, ring reveal, status display |
 | 12 | Spirit System | [gdd-12-spirit-system.md](gdd-12-spirit-system.md) | Spirit gauge, carry capacity, ring recharge, food/sleep; §12.7 short-range blink cost; §12.8 ambush premium |
 | 13 | Open Questions | [gdd-13-open-questions.md](gdd-13-open-questions.md) | Unresolved design decisions |
@@ -50,7 +54,7 @@ This log records **how the game's design has evolved** — the decisions that ch
 - **Waystones and Anchorages are distinct.** *Anchorages* are spiritual-energy sites the Sanctum can anchor to — discovered by walking in, and the destinations of teleportation. *Waystones* are revelation markers — attuning one reveals a distant region — not teleport destinations.
 - **Biome gates are bosses, not attunement.** Passage between biomes is held by a boss NPC that physically blocks the exit until defeated, rather than by a waystone the player must attune.
 - **Fusion is XP-driven and tier-emergent.** Two rings of different base elements, each at ≥ Tier 1 (the same-tier requirement was dropped 2026-06-04), fuse into a dual-element ring whose XP is the sum of its parents; the result's tier follows from that total. A fusion ring cannot be fused again. Fusion happens at the Sanctum ring-wall, and at in-world **Fusion Shrines** that unlock specific recipes as a world-progression reward.
-- **The overworld is a multi-screen biome graph.** Biomes are graphs of discrete tilemap screens connected by walkable edges; the Forest is the first full region (28 screens, §10.15). The Sanctum is a walkable interior home.
+- **The overworld is a multi-screen biome graph.** Biomes are graphs of discrete tilemap screens connected by walkable edges; the Forest is the hub region (29 screens, [gdd-10-forest.md](gdd-10-forest.md)). The Sanctum is a walkable interior home.
 - **Combat uses an initiative model with active timed-block and rally chains.** One player holds initiative and chooses to attack, recharge, or forfeit; the other reacts. A STRONG PARRY fires a counter-volley, extending the current initiative phase. After any chain resolves — regardless of rally depth or who scored hits — initiative passes strictly to the other player. (Replaced an earlier simultaneous-secret turn model.)
 - **Element model is a triangle + asymmetric neutrals.** Fire > Wood > Water > Fire, with Wind (strong attack / weak defense) and Earth (weak attack / neutral defense) as neutrals — replacing the earlier five-element pentagon. Status effects are the three triangle gauges.
 - **Five-slot named loadout.** Thumb / A1 / A2 / D1 / D2, with phase-locked input (attack slots active only in the attack phase, defense slots in the defense phase). Replaced free-hand selection and the dominant/off-hand split.

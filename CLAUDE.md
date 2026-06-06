@@ -42,7 +42,8 @@ elemental-rings/
     gdd-03-element-system.md      ← Pentagon matchups, fused elements, Shadow
     gdd-07-status-effects.md      ← Gauge mechanics, status effects
     gdd-10-overworld.md           ← Biomes, detection, NPCs, Sanctum, waystones, anchorages, teleport
-    gdd-10-regions.md             ← Phase 8 build decomposition, Forest region manifest, 8D/8E plans
+    gdd-10-regions.md             ← World architecture hub, progression overview, biome-scene hierarchy
+    gdd-10-{forest,snow,swamp,desert}.md ← Per-region screen manifests
     gdd-0{1,2,4,5,8,9,11}.md     ← All other sections
 ```
 
@@ -68,7 +69,11 @@ The GDD is split into per-section files under `docs/`. Read only the section you
 | Ring tiers, uses, XP, recharge | `docs/gdd-04-ring-system.md` |
 | Staking, jewelry positions | `docs/gdd-09-staking-economy.md` |
 | Overworld, biomes, NPCs, Sanctum, waystones, anchorages, teleport | `docs/gdd-10-overworld.md` |
-| Phase 8 build phases, Forest region screens, 8D assets, 8E architecture | `docs/gdd-10-regions.md` |
+| World regions architecture, biome-scene hierarchy, world progression overview | `docs/gdd-10-regions.md` |
+| Forest region screens (29 screens including forest_volcano_gate) | `docs/gdd-10-forest.md` |
+| Snow Mountains region screens | `docs/gdd-10-snow.md` |
+| Swamp region screens | `docs/gdd-10-swamp.md` |
+| Desert/Canyon and Volcano region screens | `docs/gdd-10-desert.md` |
 | Navigation + quick reference | `docs/elemental_rings_GDD.md` |
 
 Always read the relevant section before designing or implementing any game system.
