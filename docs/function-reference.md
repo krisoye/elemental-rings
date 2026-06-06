@@ -505,11 +505,11 @@ export type DefenseSlot = 'd1' | 'd2';
 
 ```ts
 export type AIPersonality = 'AGGRESSIVE' | 'DEFENSIVE' | 'STATUS_HUNTER' | 'RESILIENT';
-export type DifficultyTier = 'wanderer' | 'seeker' | 'ascendant';
+export type DifficultyTier = 'wanderer' | 'seeker' | 'ascendant' | 'ascetic' | 'void';
 export type BossTier = 'major' | 'gate' | 'sub';
 
 export const DIFFICULTY_MULTIPLIERS: Record<DifficultyTier, number>;
-// { wanderer: 5, seeker: 4, ascendant: 3 }
+// { wanderer: 5, seeker: 4, ascendant: 3, ascetic: 2, void: 1 }
 // Scales spirit_max = floor(sum_of_reliquary_maxUses × multiplier).
 
 export function isDifficultyTier(v: unknown): v is DifficultyTier

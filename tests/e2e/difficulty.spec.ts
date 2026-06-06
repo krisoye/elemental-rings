@@ -103,6 +103,32 @@ test('difficulty: PUT ascendant recomputes spirit_max to Σ(max_uses) × 3', asy
   expect((await getMe(token)).player.spirit_max).toBe(usesSum * 3);
 });
 
+// ── Ascetic — yields the ×2 multiplier ───────────────────────────────────────
+test('difficulty: PUT ascetic recomputes spirit_max to Σ(max_uses) × 2', async () => {
+  const token = await mintToken();
+  const usesSum = await seedReliquaryUses(token, 2); // 2 rings → Σ = 6
+
+  const res = await putDifficulty(token, 'ascetic');
+  expect(res.status).toBe(200);
+  const body = await res.json();
+  expect(body.difficulty).toBe('ascetic');
+  expect(body.spirit_max).toBe(usesSum * 2); // 6 × 2 = 12
+  expect((await getMe(token)).player.spirit_max).toBe(usesSum * 2);
+});
+
+// ── Void — yields the ×1 multiplier ──────────────────────────────────────────
+test('difficulty: PUT void recomputes spirit_max to Σ(max_uses) × 1', async () => {
+  const token = await mintToken();
+  const usesSum = await seedReliquaryUses(token, 3); // 3 rings → Σ = 9
+
+  const res = await putDifficulty(token, 'void');
+  expect(res.status).toBe(200);
+  const body = await res.json();
+  expect(body.difficulty).toBe('void');
+  expect(body.spirit_max).toBe(usesSum * 1); // 9 × 1 = 9
+  expect((await getMe(token)).player.spirit_max).toBe(usesSum * 1);
+});
+
 // ── #283 Scenario 3 — lowering the tier clamps spirit_current ────────────────
 test('difficulty: switching to a lower tier clamps spirit_current to the new max', async () => {
   const token = await mintToken();
