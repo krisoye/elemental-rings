@@ -554,3 +554,323 @@ describe('fuseRings — adversarial boundary and guard-order tests (#390)', () =
     expect(result1!.xp).toBe(result2!.xp);
   });
 });
+
+// ---------------------------------------------------------------------------
+// mergeRings — DB transaction (#431, GDD §4.7)
+//
+// Each test shares the singleton DB set up by the fuseRings adversarial suite
+// above. mergeRings is the sibling transaction to fuseRings but allows same-
+// element parents (including fusion elements) and enforces a shrine-based
+// caller-side gate (not DB-side); the transaction itself only validates the
+// ring state.
+// ---------------------------------------------------------------------------
+
+describe('mergeRings — DB transaction (§4.7, #431)', () => {
+  let repo: typeof import('../../server/src/persistence/PlayerRepo');
+
+  function makeRing(
+    db: import('better-sqlite3').Database,
+    playerId: string,
+    element: number,
+    xp: number,
+    maxUses = 5,
+    escrowed = 0,
+  ): string {
+    const id = `mr_${element}_${Math.random().toString(36).slice(2)}`;
+    db.prepare(
+      `INSERT INTO rings (id, owner_id, element, tier, max_uses, current_uses, xp, escrowed)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(id, playerId, element, tierForXp(xp), maxUses, maxUses, xp, escrowed);
+    return id;
+  }
+
+  function makePlayer(db: import('better-sqlite3').Database): string {
+    const id = `mp_${Math.random().toString(36).slice(2)}`;
+    db.prepare(`INSERT INTO players (id, username, password_hash) VALUES (?, ?, ?)`).run(
+      id, `u_${id}`, 'x',
+    );
+    db.prepare(
+      `INSERT INTO loadout (player_id, thumb, a1, a2, d1, d2) VALUES (?, NULL, NULL, NULL, NULL, NULL)`,
+    ).run(id);
+    return id;
+  }
+
+  let db: import('better-sqlite3').Database;
+
+  beforeAll(async () => {
+    // Reuse the singleton DB already initialised by the fuseRings suite above.
+    repo = await import('../../server/src/persistence/PlayerRepo');
+    db = (await import('../../server/src/persistence/db')).db;
+  });
+
+  // ── Happy-path ─────────────────────────────────────────────────────────────
+
+  test('two Tier-1 Earth rings merge: xp=sum, tier=tierForXp(sum), max_uses=3+tier, current_uses=max_uses', () => {
+    // #431 adversarial: all four result fields derived from XP — verifies no residual
+    // parent-uses inheritance from fuseRings code path.
+    const p = makePlayer(db);
+    const e1 = makeRing(db, p, EARTH, T1_XP);
+    const e2 = makeRing(db, p, EARTH, T1_XP);
+
+    const newId = repo.mergeRings(p, e1, e2);
+    const result = repo.getRingsByOwner(p).find((r) => r.id === newId);
+
+    expect(result).toBeDefined();
+    expect(result!.element).toBe(EARTH);
+    expect(result!.xp).toBe(T1_XP * 2);
+    expect(result!.tier).toBe(tierForXp(T1_XP * 2));
+    expect(result!.max_uses).toBe(naturalMaxUses(tierForXp(T1_XP * 2)));
+    expect(result!.current_uses).toBe(result!.max_uses);
+    // Universal invariant — matches spec §4.7 exactly.
+    expect(result!.max_uses).toBe(3 + tierForXp(result!.xp));
+  });
+
+  test('both parents consumed after successful merge', () => {
+    // #431 adversarial: irreversible DB deletion — verifies the deleteRingOwned loop
+    // fires for BOTH parents, not just one.
+    const p = makePlayer(db);
+    const w1 = makeRing(db, p, WIND, T1_XP);
+    const w2 = makeRing(db, p, WIND, T1_XP);
+
+    repo.mergeRings(p, w1, w2);
+    const rings = repo.getRingsByOwner(p);
+    expect(rings).toHaveLength(1);
+    expect(rings.find((r) => r.id === w1)).toBeUndefined();
+    expect(rings.find((r) => r.id === w2)).toBeUndefined();
+  });
+
+  test('element = same as both parents (not derived from fusionOf)', () => {
+    // #431 adversarial: merge must preserve the parent element, not look up a fusion
+    // recipe. A copy-paste from fuseRings that calls fusionOf would produce DUST for
+    // WIND+WIND rather than WIND.
+    const p = makePlayer(db);
+    const w1 = makeRing(db, p, WIND, T1_XP);
+    const w2 = makeRing(db, p, WIND, T1_XP);
+
+    const newId = repo.mergeRings(p, w1, w2);
+    const result = repo.getRingsByOwner(p).find((r) => r.id === newId);
+    expect(result!.element).toBe(WIND); // must be WIND, not DUST
+  });
+
+  test('Steam + Steam (fusion elements) merge succeeds: element=Steam after merge', () => {
+    // #431 adversarial: fusion-depth rule — merge does NOT increase fusion depth.
+    // A guard copy-pasted from fuseRings that rejects isFusion elements would block
+    // this valid case.
+    const p = makePlayer(db);
+    const s1 = makeRing(db, p, STEAM, T1_XP);
+    const s2 = makeRing(db, p, STEAM, T1_XP);
+
+    const newId = repo.mergeRings(p, s1, s2);
+    const result = repo.getRingsByOwner(p).find((r) => r.id === newId);
+    expect(result!.element).toBe(STEAM);
+  });
+
+  // ── XP boundary ────────────────────────────────────────────────────────────
+
+  test('parent at exactly 499 XP (one below Tier-1 floor) → throws Tier-1 error', () => {
+    // #431 adversarial: off-by-one — the gate is >= 500 (not > 499). A > comparison
+    // would silently accept 499-XP rings. This pins the correct boundary.
+    const p = makePlayer(db);
+    const f1 = makeRing(db, p, FIRE, 499); // one below
+    const f2 = makeRing(db, p, FIRE, 600); // clears floor
+
+    expect(() => repo.mergeRings(p, f1, f2)).toThrow(/Tier 1/);
+    expect(repo.getRingsByOwner(p)).toHaveLength(2); // both intact
+  });
+
+  test('parent at exactly 500 XP (exactly Tier-1 floor) → merge succeeds', () => {
+    // #431 adversarial: complement of the 499 test — >= 500 must accept exactly 500.
+    const p = makePlayer(db);
+    const f1 = makeRing(db, p, FIRE, 500); // exactly at floor
+    const f2 = makeRing(db, p, FIRE, 500);
+
+    const newId = repo.mergeRings(p, f1, f2);
+    expect(repo.getRingsByOwner(p).find((r) => r.id === newId)).toBeDefined();
+  });
+
+  test('XP overflow: two very high-XP rings (10000+10000) → tier and max_uses correct', () => {
+    // #431 adversarial: integer overflow check — very high XP values could expose
+    // truncation or a wrong tier-ceiling if tierForXp has a loop limit.
+    const p = makePlayer(db);
+    const HIGH_XP = 10000;
+    const r1 = makeRing(db, p, EARTH, HIGH_XP);
+    const r2 = makeRing(db, p, EARTH, HIGH_XP);
+
+    const newId = repo.mergeRings(p, r1, r2);
+    const result = repo.getRingsByOwner(p).find((r) => r.id === newId);
+
+    expect(result!.xp).toBe(HIGH_XP * 2); // 20000
+    expect(result!.tier).toBe(tierForXp(HIGH_XP * 2));
+    expect(result!.max_uses).toBe(3 + tierForXp(HIGH_XP * 2));
+  });
+
+  // ── parent_dominant ─────────────────────────────────────────────────────────
+
+  test('parent_dominant = r1.element when r1.xp > r2.xp', () => {
+    // #431 adversarial: for fusion-element merges, parent_dominant records the
+    // higher-XP parent's element. Verifies the ternary fires for r1 > r2.
+    const p = makePlayer(db);
+    const s1 = makeRing(db, p, STEAM, 800); // higher XP → dominant
+    const s2 = makeRing(db, p, STEAM, 600);
+
+    const newId = repo.mergeRings(p, s1, s2);
+    const result = repo.getRingsByOwner(p).find((r) => r.id === newId);
+    expect(result!.parent_dominant).toBe(STEAM);
+  });
+
+  test('parent_dominant = r2.element when r2.xp > r1.xp', () => {
+    // #431 adversarial: verifies the ternary also fires for r2 > r1 (not just r1 > r2).
+    const p = makePlayer(db);
+    const s1 = makeRing(db, p, STEAM, 600);
+    const s2 = makeRing(db, p, STEAM, 900); // higher XP → dominant
+
+    const newId = repo.mergeRings(p, s1, s2);
+    const result = repo.getRingsByOwner(p).find((r) => r.id === newId);
+    expect(result!.parent_dominant).toBe(STEAM);
+  });
+
+  test('parent_dominant = −1 when both parents have equal XP (exact tie)', () => {
+    // #431 adversarial: the −1 sentinel must be stored on tie; a missing else branch
+    // would store undefined/null which breaks the card renderer's tiebreak lookup.
+    const p = makePlayer(db);
+    const s1 = makeRing(db, p, STEAM, T1_XP);
+    const s2 = makeRing(db, p, STEAM, T1_XP); // equal XP → tie
+
+    const newId = repo.mergeRings(p, s1, s2);
+    const result = repo.getRingsByOwner(p).find((r) => r.id === newId);
+    expect(result!.parent_dominant).toBe(-1);
+  });
+
+  test('parent_dominant for two base-element rings with different XP uses the higher-XP element', () => {
+    // #431 adversarial: non-fusion base elements also go through the parent_dominant
+    // ternary. Verifies the rule applies to all merge types, not just STEAM merges.
+    const p = makePlayer(db);
+    const e1 = makeRing(db, p, EARTH, 1200); // higher
+    const e2 = makeRing(db, p, EARTH, 700);
+
+    const newId = repo.mergeRings(p, e1, e2);
+    const result = repo.getRingsByOwner(p).find((r) => r.id === newId);
+    expect(result!.parent_dominant).toBe(EARTH);
+  });
+
+  // ── Self-merge and ownership guards ────────────────────────────────────────
+
+  test('ringId1 === ringId2 (self-merge) → throws', () => {
+    // #431 adversarial: self-merge must be caught before the DB lookup, otherwise
+    // the transaction might succeed and produce a doubly-XP ring from one input.
+    const p = makePlayer(db);
+    const f1 = makeRing(db, p, FIRE, T1_XP);
+    expect(() => repo.mergeRings(p, f1, f1)).toThrow(/with itself/i);
+    expect(repo.getRingsByOwner(p)).toHaveLength(1); // intact
+  });
+
+  test('ring not owned by the player → throws', () => {
+    // #431 adversarial: ownership check must cover both r1 and r2. A bug that only
+    // checks r1 would allow a cross-player merge of r2.
+    const p1 = makePlayer(db);
+    const p2 = makePlayer(db);
+    const f1 = makeRing(db, p1, FIRE, T1_XP);
+    const f2 = makeRing(db, p2, FIRE, T1_XP); // owned by p2
+
+    expect(() => repo.mergeRings(p1, f1, f2)).toThrow(/not found or not owned/);
+    // Both rings intact — transaction rolled back.
+    expect(repo.getRingsByOwner(p1)).toHaveLength(1);
+    expect(repo.getRingsByOwner(p2)).toHaveLength(1);
+  });
+
+  // ── Cross-element guard ─────────────────────────────────────────────────────
+
+  test('FIRE + WATER (different elements) → throws with "same element" message, not generic error', () => {
+    // #431 adversarial: the element check must throw a descriptive "same element"
+    // message, NOT a 500-style generic error. A merged error message lets the UI
+    // show a useful rejection reason.
+    const p = makePlayer(db);
+    const fire = makeRing(db, p, FIRE, T1_XP);
+    const water = makeRing(db, p, WATER, T1_XP);
+
+    expect(() => repo.mergeRings(p, fire, water)).toThrow(/same element/i);
+  });
+
+  // ── Escrowed guard ──────────────────────────────────────────────────────────
+
+  test('escrowed parent (r1 escrowed) → throws', () => {
+    // #431 adversarial: escrowed rings cannot be merged — they are locked as
+    // collateral in a wager. The guard must cover both r1 and r2 independently.
+    const p = makePlayer(db);
+    const r1 = makeRing(db, p, WIND, T1_XP, 5, 1 /* escrowed */);
+    const r2 = makeRing(db, p, WIND, T1_XP);
+
+    expect(() => repo.mergeRings(p, r1, r2)).toThrow(/escrowed/i);
+    expect(repo.getRingsByOwner(p)).toHaveLength(2); // both intact
+  });
+
+  test('escrowed parent (r2 escrowed) → throws', () => {
+    // #431 adversarial: confirms the escrowed check uses || (not &&). If && were used,
+    // only the case where BOTH are escrowed would throw.
+    const p = makePlayer(db);
+    const r1 = makeRing(db, p, WIND, T1_XP);
+    const r2 = makeRing(db, p, WIND, T1_XP, 5, 1 /* escrowed */);
+
+    expect(() => repo.mergeRings(p, r1, r2)).toThrow(/escrowed/i);
+    expect(repo.getRingsByOwner(p)).toHaveLength(2);
+  });
+
+  // ── Pending (WON) ring guard ────────────────────────────────────────────────
+
+  test('pending WON ring as r1 → throws', () => {
+    // #431 adversarial: a pending ring is the unresolved WON overflow; merging it
+    // would bypass the accept/discard prompt, destroying an unreviewed reward.
+    const p = makePlayer(db);
+    const won = makeRing(db, p, EARTH, T1_XP);
+    // Mark it as pending.
+    db.prepare('UPDATE rings SET pending = 1 WHERE id = ?').run(won);
+    const other = makeRing(db, p, EARTH, T1_XP);
+
+    expect(() => repo.mergeRings(p, won, other)).toThrow(/pending/i);
+    // Both rings intact.
+    expect(repo.getRingsByOwner(p)).toHaveLength(2);
+  });
+
+  test('pending WON ring as r2 → throws', () => {
+    // #431 adversarial: pending guard must cover r2, not just r1.
+    const p = makePlayer(db);
+    const other = makeRing(db, p, EARTH, T1_XP);
+    const won = makeRing(db, p, EARTH, T1_XP);
+    db.prepare('UPDATE rings SET pending = 1 WHERE id = ?').run(won);
+
+    expect(() => repo.mergeRings(p, other, won)).toThrow(/pending/i);
+  });
+
+  // ── Loadout slot clearing ───────────────────────────────────────────────────
+
+  test('parent in a loadout slot → slot nulled after merge', () => {
+    // #431 adversarial: clearRingFromLoadout must fire before deleteRingOwned.
+    // If the delete fires first (or the clear is skipped), the loadout retains a
+    // dangling ring reference that breaks the battle-hand display.
+    const p = makePlayer(db);
+    const e1 = makeRing(db, p, EARTH, T1_XP);
+    const e2 = makeRing(db, p, EARTH, T1_XP);
+    repo.saveLoadout(p, { a1: e1 });
+    expect(repo.getLoadout(p)!.a1).toBe(e1);
+
+    repo.mergeRings(p, e1, e2);
+
+    expect(repo.getLoadout(p)!.a1).toBeNull(); // slot cleared
+    expect(repo.getRingsByOwner(p)).toHaveLength(1); // only merged ring remains
+  });
+
+  // ── Exact-arithmetic XP ────────────────────────────────────────────────────
+
+  test('child xp === r1.xp + r2.xp exactly — no rounding, no cap', () => {
+    // #431 adversarial: asymmetric non-round XP values expose rounding bugs.
+    const p = makePlayer(db);
+    const XP1 = 617;
+    const XP2 = 2983;
+    const r1 = makeRing(db, p, WOOD, XP1);
+    const r2 = makeRing(db, p, WOOD, XP2);
+
+    const newId = repo.mergeRings(p, r1, r2);
+    const result = repo.getRingsByOwner(p).find((r) => r.id === newId);
+    expect(result!.xp).toBe(XP1 + XP2); // 3600 — exact arithmetic
+  });
+});

@@ -48,6 +48,8 @@ export class ShrineZone extends WorldInteractable {
   private readonly shrineId: string;
   private readonly shrineElement: number;
   private readonly onShrineOpen: () => void;
+  /** #431 — optional merge callback; when provided the blink prompt shows [E] FUSE / [M] MERGE. */
+  private readonly onShrineMerge: (() => void) | null;
   private readonly alwaysOpen: boolean;
   private readonly centerX: number;
   private readonly centerY: number;
@@ -70,6 +72,11 @@ export class ShrineZone extends WorldInteractable {
    * @param alwaysOpen #232 — when true the altar has no seal: it renders open
    *   immediately, skips the server state fetch, and E presses craft directly with
    *   no ring-key / confirmation flow (the Bloom altar).
+   * @param onShrineMerge #431 — when provided, the blink prompt becomes
+   *   `[E] FUSE / [M] MERGE` to advertise the merge keybinding. This callback is
+   *   NOT invoked by ShrineZone itself; it serves only as a presence flag. The
+   *   M-key handler is managed globally by the hosting BaseBiomeScene via
+   *   `activeMergeShrineId`.
    */
   constructor(
     scene: Phaser.Scene,
@@ -78,15 +85,19 @@ export class ShrineZone extends WorldInteractable {
     shrineElement: number,
     onShrineOpen: () => void,
     alwaysOpen = false,
+    onShrineMerge: (() => void) | null = null,
   ) {
     // One zone covering the altar (via the WorldInteractable base); its callback
     // dispatches on the live sealed/open state. The arrow only runs
     // post-construction, so referencing `this` here is safe.
-    super(scene, shrineObj, () => this.handleInteract(), 'Examine altar [E]');
+    // #431 — when a merge callback is provided, show both keybindings in the prompt.
+    const promptText = onShrineMerge ? '[E] FUSE / [M] MERGE' : 'Examine altar [E]';
+    super(scene, shrineObj, () => this.handleInteract(), promptText);
     this.scene = scene;
     this.shrineId = shrineId;
     this.shrineElement = shrineElement;
     this.onShrineOpen = onShrineOpen;
+    this.onShrineMerge = onShrineMerge;
     this.alwaysOpen = alwaysOpen;
 
     const x = shrineObj.x ?? 0;

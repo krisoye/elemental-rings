@@ -6,13 +6,14 @@ import { RingCard } from './RingCard';
 import { CLOSE_GLYPH } from './ModalShell';
 import { SlotSwapManager, type SwapSlot } from './SlotSwapManager';
 import { addDomLabel, crispCanvasText } from './DomLabel';
-import { BenchHealthCombat, COL_HEALTH_X } from './BenchHealthCombat';
+import { BenchHealthCombat, COL_HEALTH_X, BENCH_GRID_TOP_Y } from './BenchHealthCombat';
 import type { BenchHealthCombatMe } from './BenchHealthCombat';
 import {
   isFusion,
   isFusionEligibleParent,
   fusionOf,
   fusionParents,
+  MIN_FUSION_PARENT_XP,
 } from '../../../../shared/fusions';
 import { FusedCardFill } from '../fusedFill';
 import {
@@ -124,6 +125,16 @@ export interface RingManagementOverlayOpts {
    * Omitted → all recipes.
    */
   filterElement?: number;
+
+  // ── Merge-mode opts (#431 / GDD §4.7) ──────────────────────────────────────
+
+  /**
+   * Called when `[MERGE]` is clicked with the two chosen same-element parent ring
+   * ids. The adapter should POST /api/rings/merge, then call
+   * `overlay.refresh(newData)` on success or `overlay.setStatusMessage(msg)` on
+   * failure.
+   */
+  onMerge?: (ringId1: string, ringId2: string, overlay: RingManagementOverlay) => Promise<void>;
 }
 
 /**
@@ -164,6 +175,12 @@ export class RingManagementOverlay {
   private fuseParent1: RingData | null = null;
   /** Second parent ring selected for fusion (assigned on second bench click). */
   private fuseParent2: RingData | null = null;
+
+  // ── Merge-mode state (#431) ───────────────────────────────────────────────
+  /** First parent ring selected for merge (assigned on first bench click). */
+  private mergeParent1: RingData | null = null;
+  /** Second parent ring selected for merge (assigned on second bench click). */
+  private mergeParent2: RingData | null = null;
 
   /** The unified swap controller (one instance per open overlay). */
   private readonly swap: SlotSwapManager;
@@ -332,7 +349,9 @@ export class RingManagementOverlay {
         ? 'Reliquary'
         : this.mode === 'fusion'
           ? 'Fuse Rings'
-          : 'Manage Battle Rings';
+          : this.mode === 'merge'
+            ? 'Merge Rings'
+            : 'Manage Battle Rings';
     this.domLabels.push(
       addDomLabel(this.scene, panelCenterX, MODAL_TOP + 16, titleText, {
         fontPx: 18,
@@ -360,6 +379,8 @@ export class RingManagementOverlay {
       this.opts.renderLeft?.(c);
     } else if (this.mode === 'fusion') {
       this.renderFusionLeft(c);
+    } else if (this.mode === 'merge') {
+      this.renderMergeLeft(c);
     }
     // Field mode has no left column — WON/DISCARD/ghost now live in BHC.
 
@@ -394,7 +415,9 @@ export class RingManagementOverlay {
     const onBenchSelect =
       this.mode === 'fusion'
         ? (ring: RingData | null) => { if (ring) this.onFusionBenchClick(ring); }
-        : (ring: RingData | null) => this.opts.onBenchGridSelect?.(ring, this);
+        : this.mode === 'merge'
+          ? (ring: RingData | null) => { if (ring) this.onMergeBenchClick(ring); }
+          : (ring: RingData | null) => this.opts.onBenchGridSelect?.(ring, this);
 
     const bhc = new BenchHealthCombat(
       this.scene,
@@ -512,8 +535,9 @@ export class RingManagementOverlay {
     } = RingManagementOverlay;
 
     // ── Column header ─────────────────────────────────────────────────────────
+    // Aligned with BENCH/HEALTH/COMBAT headers at BENCH_GRID_TOP_Y - 20 (y = 128).
     this.domLabels.push(
-      addDomLabel(this.scene, FUSE_RESULT_X, MODAL_TOP + 40, 'FUSE', {
+      addDomLabel(this.scene, FUSE_RESULT_X, BENCH_GRID_TOP_Y - 20, 'FUSE', {
         fontPx: 13, color: '#cc88ff', align: 'center',
       }),
     );
@@ -798,6 +822,215 @@ export class RingManagementOverlay {
     this.fuseParent2 = null;
   }
 
+  // ── Merge left column (#431 / GDD §4.7) ──────────────────────────────────
+
+  /**
+   * Render the MERGE left column (R1, R2 parent slots, MR result, [MERGE] button).
+   * Bench card clicks assign same-element rings to R1 then R2; clicking an
+   * occupied parent clears it. Reuses FUSE geometry constants verbatim.
+   */
+  private renderMergeLeft(c: Phaser.GameObjects.Container): void {
+    const {
+      FUSE_R1_X, FUSE_R2_X, FUSE_PARENT_Y, FUSE_RESULT_X, FUSE_RESULT_Y,
+      FUSE_BTN_Y, FUSE_CARD_W, FUSE_CARD_H, FUSE_LABEL_OFFSET,
+    } = RingManagementOverlay;
+
+    // ── Column header — aligned with BENCH/HEALTH/COMBAT at BENCH_GRID_TOP_Y - 20
+    this.domLabels.push(
+      addDomLabel(this.scene, FUSE_RESULT_X, BENCH_GRID_TOP_Y - 20, 'MERGE', {
+        fontPx: 13, color: '#ffcc44', align: 'center',
+      }),
+    );
+
+    // ── R1 slot ─────────────────────────────────────────────────────────────
+    const r1 = this.mergeParent1;
+    const r1Card = new RingCard(this.scene, FUSE_R1_X, FUSE_PARENT_Y, {
+      width: FUSE_CARD_W, height: FUSE_CARD_H, scrollFactor: 0,
+      strokeColor: r1 ? 0xffcc44 : 0x555566, strokeWidth: r1 ? 2 : 1,
+    });
+    if (r1) {
+      r1Card.setRing({
+        element: r1.element, tier: r1.tier, xp: r1.xp,
+        currentUses: r1.current_uses, maxUses: r1.max_uses,
+        fusionParents: r1.fusionParents,
+      });
+    } else {
+      r1Card.clear('R1');
+      r1Card.setAlpha(0.6);
+    }
+    r1Card.bg.setInteractive({ useHandCursor: !!r1 }).on('pointerdown', () => {
+      if (this.mergeParent1) { this.mergeParent1 = null; this.rerenderIfOpen(); }
+    });
+    this.scene.add.existing(r1Card);
+    c.add(r1Card);
+    this.domLabels.push(
+      addDomLabel(
+        this.scene, FUSE_R1_X,
+        FUSE_PARENT_Y - FUSE_CARD_H / 2 - FUSE_LABEL_OFFSET, 'R1',
+        { fontPx: 10, color: '#ffcc44', align: 'center' },
+      ),
+    );
+
+    // ── R2 slot ─────────────────────────────────────────────────────────────
+    const r2 = this.mergeParent2;
+    const r2Card = new RingCard(this.scene, FUSE_R2_X, FUSE_PARENT_Y, {
+      width: FUSE_CARD_W, height: FUSE_CARD_H, scrollFactor: 0,
+      strokeColor: r2 ? 0xffcc44 : 0x555566, strokeWidth: r2 ? 2 : 1,
+    });
+    if (r2) {
+      r2Card.setRing({
+        element: r2.element, tier: r2.tier, xp: r2.xp,
+        currentUses: r2.current_uses, maxUses: r2.max_uses,
+        fusionParents: r2.fusionParents,
+      });
+    } else {
+      r2Card.clear('R2');
+      r2Card.setAlpha(0.6);
+    }
+    r2Card.bg.setInteractive({ useHandCursor: !!r2 }).on('pointerdown', () => {
+      if (this.mergeParent2) { this.mergeParent2 = null; this.rerenderIfOpen(); }
+    });
+    this.scene.add.existing(r2Card);
+    c.add(r2Card);
+    this.domLabels.push(
+      addDomLabel(
+        this.scene, FUSE_R2_X,
+        FUSE_PARENT_Y - FUSE_CARD_H / 2 - FUSE_LABEL_OFFSET, 'R2',
+        { fontPx: 10, color: '#ffcc44', align: 'center' },
+      ),
+    );
+
+    // ── MR result slot ───────────────────────────────────────────────────────
+    const { mrElement, eligible } = this.computeMergeResult();
+
+    this.domLabels.push(
+      addDomLabel(
+        this.scene, FUSE_RESULT_X,
+        FUSE_RESULT_Y - FUSE_CARD_H / 2 - FUSE_LABEL_OFFSET, 'MR',
+        { fontPx: 10, color: eligible ? '#ffdd88' : '#555566', align: 'center' },
+      ),
+    );
+
+    if (r1 && r2 && eligible && mrElement !== null) {
+      // Both parents eligible — preview the merged result as a plain single-element card.
+      const mrBg = this.scene.add
+        .rectangle(FUSE_RESULT_X, FUSE_RESULT_Y, FUSE_CARD_W, FUSE_CARD_H, 0x222233)
+        .setScrollFactor(0)
+        .setStrokeStyle(2, 0xffcc44);
+      c.add(mrBg);
+      const mrLabel = crispCanvasText(
+        this.scene.add
+          .text(FUSE_RESULT_X, FUSE_RESULT_Y, ELEMENT_NAMES[mrElement] ?? '?', {
+            fontSize: '9px', color: '#ffffff',
+          })
+          .setScrollFactor(0).setOrigin(0.5),
+      );
+      c.add(mrLabel);
+    } else if (r1 && r2) {
+      // Both set but ineligible (different elements or below Tier 1) — error state.
+      const mrBg = this.scene.add
+        .rectangle(FUSE_RESULT_X, FUSE_RESULT_Y, FUSE_CARD_W, FUSE_CARD_H, 0x331a1a)
+        .setScrollFactor(0)
+        .setStrokeStyle(2, 0xff4444);
+      c.add(mrBg);
+      const errLabel = crispCanvasText(
+        this.scene.add
+          .text(FUSE_RESULT_X, FUSE_RESULT_Y, 'ineligible', {
+            fontSize: '9px', color: '#ff4444',
+          })
+          .setScrollFactor(0).setOrigin(0.5),
+      );
+      c.add(errLabel);
+    } else {
+      // One or both slots empty — dim placeholder.
+      const mrPh = this.scene.add
+        .rectangle(FUSE_RESULT_X, FUSE_RESULT_Y, FUSE_CARD_W, FUSE_CARD_H, 0x1a1a22)
+        .setScrollFactor(0)
+        .setStrokeStyle(1, 0x555566)
+        .setAlpha(0.5);
+      c.add(mrPh);
+    }
+
+    // ── [MERGE] button ────────────────────────────────────────────────────────
+    const mergeActive = eligible && r1 !== null && r2 !== null && mrElement !== null;
+    const mergeBtn = crispCanvasText(
+      this.scene.add
+        .text(FUSE_RESULT_X, FUSE_BTN_Y, '[MERGE]', {
+          fontSize: '14px',
+          color: mergeActive ? '#ffdd88' : '#555566',
+        })
+        .setScrollFactor(0)
+        .setOrigin(0.5)
+        .setInteractive({ useHandCursor: mergeActive })
+        .on('pointerdown', () => {
+          if (!mergeActive || !r1 || !r2) return;
+          void this.opts.onMerge?.(r1.id, r2.id, this);
+        }),
+    );
+    c.add(mergeBtn);
+  }
+
+  /**
+   * Compute the merge result element (if any) from the current two parent rings.
+   * Both parents must share the same element and each independently clear Tier 1
+   * (≥ MIN_FUSION_PARENT_XP). Unlike fusion, isFusionEligibleParent is NOT used
+   * here — fusion rings (Steam, Thornado, etc.) are valid merge parents.
+   */
+  private computeMergeResult(): { mrElement: number | null; eligible: boolean } {
+    const r1 = this.mergeParent1;
+    const r2 = this.mergeParent2;
+    if (!r1 || !r2) return { mrElement: null, eligible: false };
+    if (r1.element !== r2.element) return { mrElement: null, eligible: false };
+    if (r1.xp < MIN_FUSION_PARENT_XP || r2.xp < MIN_FUSION_PARENT_XP) {
+      return { mrElement: null, eligible: false };
+    }
+    return { mrElement: r1.element, eligible: true };
+  }
+
+  /**
+   * Returns the bench rings visible for merge parent selection. Like
+   * getBenchRingsForFusion but WITHOUT the `!isFusion(r.element)` filter —
+   * fusion rings (e.g. Steam, Thornado) are eligible merge parents.
+   */
+  private getBenchRingsForMerge(): RingData[] {
+    const battleSlotIds = new Set(
+      (SLOT_KEYS as readonly string[]).map((k) => this.manageLoadout[k]).filter(Boolean) as string[],
+    );
+    if (this.heartRing) battleSlotIds.add(this.heartRing.id);
+    if (this.pendingRingId) battleSlotIds.add(this.pendingRingId);
+    return this.manageRings.filter((r) => !battleSlotIds.has(r.id));
+  }
+
+  /**
+   * Handle a bench ring click in merge mode: assign to R1 (first empty slot) then
+   * R2 (second), or replace R2 if both are occupied. Clicking an already-assigned
+   * parent (via the parent card bg pointerdown) clears it; this handler assigns.
+   */
+  private onMergeBenchClick(ring: RingData): void {
+    if (this.mergeParent1?.id === ring.id) {
+      this.mergeParent1 = null;
+    } else if (this.mergeParent2?.id === ring.id) {
+      this.mergeParent2 = null;
+    } else if (!this.mergeParent1) {
+      this.mergeParent1 = ring;
+    } else if (!this.mergeParent2) {
+      this.mergeParent2 = ring;
+    } else {
+      this.mergeParent2 = ring;
+    }
+    this.rerenderIfOpen();
+  }
+
+  /**
+   * Clear both merge parent selections. Called by adapters after a successful
+   * merge before `ov.refresh()` so stale deleted-ring references do not survive
+   * the re-render.
+   */
+  clearMergeParents(): void {
+    this.mergeParent1 = null;
+    this.mergeParent2 = null;
+  }
+
   private teardown(fireCb = false): void {
     if (this.bhc) {
       this.bhc.destroy();
@@ -814,15 +1047,19 @@ export class RingManagementOverlay {
     }
     this.statusText = null;
     if (fireCb) {
-      // Clear fusion parent selections only on genuine close — a re-render
+      // Clear fusion/merge parent selections only on genuine close — a re-render
       // (fireCb=false) must preserve the user's R1/R2 choices between renders.
       this.fuseParent1 = null;
       this.fuseParent2 = null;
+      this.mergeParent1 = null;
+      this.mergeParent2 = null;
       this.swap.clear();
       clearRingMgmtState();
       // Clear the #421 status hook so tests never read a stale message after close.
       (window as unknown as Record<string, unknown>).__ringMgmtStatus = undefined;
       // Clear the fusion E2E hook so tests can detect the overlay is closed.
+      // Merge mode (#431) publishes no mode-specific hook — its E2E observability
+      // is the shared __ringMgmtState (cleared above via clearRingMgmtState).
       if (this.mode === 'fusion') {
         (window as unknown as Record<string, unknown>).__fusionState = undefined;
       }

@@ -969,6 +969,93 @@ export const fuseRings = db.transaction(
 );
 
 // ---------------------------------------------------------------------------
+// #431 — Ring Merge (GDD §4.7): same-element consolidation at a shrine
+// ---------------------------------------------------------------------------
+
+/**
+ * Merge two same-element rings into a single stronger ring (GDD §4.7).
+ *
+ * Validates (in order): two distinct rings owned by the player; same element
+ * (fusion elements allowed — Steam+Steam OK); each independently at Tier 1 or
+ * above (`tierForXp(xp) >= 1`, ≥ 500 XP); neither escrowed; neither is the
+ * player's pending WON ring. On success inserts the merged ring via
+ * `insertFusionRing` (same schema — `parent_dominant` already present),
+ * clears each parent from any loadout slot, then permanently deletes both
+ * parents. Runs in a single transaction, so any thrown validation error leaves
+ * the inventory untouched.
+ *
+ * Result: element = same as both parents; xp = p1.xp + p2.xp; tier =
+ * tierForXp(xp); max_uses = naturalMaxUses(tier); current_uses = max_uses
+ * (full). For fusion-element merges: parent_dominant = element of higher-XP
+ * parent; -1 on tie (mirrors the fuseRings rule).
+ *
+ * @returns the new ring's id.
+ * @throws Error with a caller-displayable message on any validation failure.
+ */
+export const mergeRings = db.transaction(
+  (playerId: string, ringId1: string, ringId2: string): string => {
+    if (ringId1 === ringId2) {
+      throw new Error('Cannot merge a ring with itself');
+    }
+    const r1 = getRingById(ringId1);
+    const r2 = getRingById(ringId2);
+    if (!r1 || r1.owner_id !== playerId || !r2 || r2.owner_id !== playerId) {
+      throw new Error('Ring not found or not owned');
+    }
+
+    // §4.7 — both parents must share the same element.
+    if (r1.element !== r2.element) {
+      throw new Error('Both rings must share the same element to merge');
+    }
+
+    // §4.7 — each parent must independently reach at least Tier 1 (≥ 500 XP).
+    if (tierForXp(r1.xp) < 1 || tierForXp(r2.xp) < 1) {
+      throw new Error('Both rings must reach Tier 1 to merge');
+    }
+
+    // §4.7 — neither parent may be escrowed (staked).
+    if (r1.escrowed !== 0 || r2.escrowed !== 0) {
+      throw new Error('Escrowed rings cannot be merged');
+    }
+
+    // §4.7 — neither parent may be the player's pending WON ring.
+    const pendingId = getPendingRingId(playerId);
+    if (pendingId && (r1.id === pendingId || r2.id === pendingId)) {
+      throw new Error('A pending WON ring cannot be merged');
+    }
+
+    // §4.7 — XP additive; tier from the summed XP; max_uses = 3 + tier.
+    const mergedXp = r1.xp + r2.xp;
+    const mergedTier = tierForXp(mergedXp);
+    const mergedMaxUses = naturalMaxUses(mergedTier);
+
+    // For fusion-element merges: parent_dominant = element of higher-XP parent;
+    // -1 on exact tie (mirrors the fuseRings #263 rule).
+    const parentDominant = r1.xp > r2.xp ? r1.element : r2.xp > r1.xp ? r2.element : -1;
+
+    const newRingId = uuidv4();
+    insertFusionRing.run({
+      id: newRingId,
+      owner_id: playerId,
+      element: r1.element,
+      tier: mergedTier,
+      max_uses: mergedMaxUses,
+      current_uses: mergedMaxUses,
+      xp: mergedXp,
+      parent_dominant: parentDominant,
+    });
+
+    // Consume both parents: null them out of any loadout slot, then delete.
+    for (const ring of [r1, r2]) {
+      clearRingFromLoadout(playerId, ring.id);
+      deleteRingOwned(ring.id, playerId);
+    }
+
+    return newRingId;
+  },
+);
+
+// ---------------------------------------------------------------------------
 // EPIC #378 — Spare-grid cap primitives (replaces assertCarryWithinCap)
 // ---------------------------------------------------------------------------
 

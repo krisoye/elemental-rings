@@ -40,7 +40,8 @@ export interface BenchHealthCombatMe {
 
 // ── Canonical geometry constants ──────────────────────────────────────────────
 const BENCH_GRID_X = 388;
-const BENCH_GRID_TOP_Y = 148;
+/** Top Y of the bench grid — exported so sibling columns (FUSE, MERGE) can align their headers. */
+export const BENCH_GRID_TOP_Y = 148;
 const RINGWALL_VISIBLE_ROWS = 3;
 export const COL_HEALTH_X = 660;
 const COL_COMBAT_LEFT_X = 759;

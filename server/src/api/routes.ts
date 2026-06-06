@@ -35,6 +35,7 @@ import {
   lockStake,
   unlockStake,
   fuseRings,
+  mergeRings,
   setRingXP,
   addGold,
   getAttunements,
@@ -67,6 +68,7 @@ import {
   grantRing,
   grantShard,
   isShrineUnlocked,
+  unlockShrine,
   consumeAndUnlockShrine,
   swapRings,
 } from '../persistence/PlayerRepo';
@@ -411,6 +413,39 @@ apiRouter.put('/api/rings/swap', requireAuth, requirePlayer, (req: Request, res:
     rings: getRingsByOwner(playerId).filter((r) => r.heart_slot !== 1),
     loadout: getLoadout(playerId) ?? null,
   });
+});
+
+/**
+ * POST /api/rings/merge — merge two same-element rings into one stronger ring
+ * at an unsealed shrine (#431, GDD §4.7). Body: { ringId1, ringId2, shrineId }.
+ * Both rings must be owned, share the same element, each independently reach
+ * Tier 1 (≥ 500 XP), and neither may be escrowed or the player's pending WON
+ * ring. The shrine must be unsealed. Returns the new ring on 200; descriptive
+ * 400 on any validation failure. Requires auth.
+ */
+apiRouter.post('/api/rings/merge', requireAuth, requirePlayer, (req: Request, res: Response): void => {
+  const playerId = req.playerId as string;
+  const { ringId1, ringId2, shrineId } = req.body ?? {};
+  if (
+    typeof ringId1 !== 'string' || !ringId1 ||
+    typeof ringId2 !== 'string' || !ringId2 ||
+    typeof shrineId !== 'string' || !shrineId
+  ) {
+    fail(res, 400, 'ringId1, ringId2, and shrineId are required');
+    return;
+  }
+  if (!isShrineUnlocked(playerId, shrineId)) {
+    fail(res, 400, 'Shrine is sealed — unseal it before merging');
+    return;
+  }
+  try {
+    const newRingId = mergeRings(playerId, ringId1, ringId2);
+    const ring = getRingsByOwner(playerId).find((r) => r.id === newRingId);
+    res.status(200).json({ ring });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : 'Merge failed';
+    fail(res, 400, msg);
+  }
 });
 
 /**
@@ -1381,5 +1416,22 @@ if (process.env.E2E_TEST_ROUTES === '1') {
     // overflow path), which would add to carry rather than the Reliquary.
     insertRingRow(playerId, makeRing({ element: 0, tier: 0, xp, maxUses: 3, currentUses: 3, escrowed: 0, inCarry: 0, pending: 0 }));
     res.status(200).json({ ok: true, aggregateXp: getSpiritStats(playerId).aggregateXp });
+  });
+
+  /**
+   * POST /api/test/unlock-shrine — permanently mark the given shrine as
+   * unsealed for the authenticated player. Used by E2E merge specs that need
+   * to exercise the happy-path merge route without running the full ring-key
+   * unseal flow. Body: { shrineId: string }. Test-only.
+   */
+  apiRouter.post('/api/test/unlock-shrine', requireAuth, (req: Request, res: Response): void => {
+    const playerId = req.playerId as string;
+    const { shrineId } = req.body ?? {};
+    if (typeof shrineId !== 'string' || !shrineId) {
+      fail(res, 400, 'shrineId (string) is required');
+      return;
+    }
+    unlockShrine(playerId, shrineId, 0);
+    res.status(200).json({ ok: true, unlocked: isShrineUnlocked(playerId, shrineId) });
   });
 }
