@@ -93,7 +93,7 @@ test.describe('difficulty modal (#284)', () => {
     });
 
     const state = await page.evaluate(() => (window as any).__difficultyState);
-    expect(state.tiers).toEqual(['wanderer', 'seeker', 'ascendant']);
+    expect(state.tiers).toEqual(['wanderer', 'seeker', 'ascendant', 'ascetic', 'void']);
     expect(state.current).toBe('seeker');
 
     // The current tier's row label carries the "(current)" marker.

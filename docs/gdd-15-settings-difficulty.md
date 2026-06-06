@@ -4,13 +4,15 @@ Difficulty in Elemental Rings is not a wall of damage sliders. It is a single, h
 
 ### 15.1 Difficulty Tiers
 
-Three named tiers, each a multiplier on the spirit formula (see §12.1). The multipliers are the single source of truth in `DIFFICULTY_MULTIPLIERS` (`shared/types.ts`); the client never recomputes `spirit_max` itself.
+Five named tiers, each a multiplier on the spirit formula (see §12.1). The multipliers are the single source of truth in `DIFFICULTY_MULTIPLIERS` (`shared/types.ts`); the client never recomputes `spirit_max` itself.
 
 | Tier | Multiplier | Spirit feel |
 |---|---|---|
 | **Wanderer** | ×5 | Spirit is a backdrop — focus on rings and battles |
 | **Seeker** (default) | ×4 | Meaningful choices — spirit matters but rarely desperate |
 | **Ascendant** | ×3 | Spirit is always on your mind |
+| **Ascetic** | ×2 | Every spirit point counts — recharge and travel are deliberate acts |
+| **Void** | ×1 | Spirit is bone-dry — every ring use and step is a commitment |
 
 `spirit_max = SUM(max_uses WHERE in_carry = 0) × DIFFICULTY_MULTIPLIERS[player.difficulty]`
 

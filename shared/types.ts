@@ -43,17 +43,25 @@ export type AIPersonality = 'AGGRESSIVE' | 'DEFENSIVE' | 'STATUS_HUNTER' | 'RESI
 // (DIFFICULTY_MULTIPLIERS) applied to the sum of Reliquary ring max_uses. Stored
 // in players.difficulty (default 'seeker'); changeable anytime via
 // PUT /api/difficulty. Lives in shared/ so client and server import one source.
-export type DifficultyTier = 'wanderer' | 'seeker' | 'ascendant';
+export type DifficultyTier = 'wanderer' | 'seeker' | 'ascendant' | 'ascetic' | 'void';
 
 export const DIFFICULTY_MULTIPLIERS: Record<DifficultyTier, number> = {
   wanderer: 5,
   seeker: 4,
   ascendant: 3,
+  ascetic: 2,
+  void: 1,
 };
 
 /** Runtime type guard for an incoming difficulty tier value (request bodies). */
 export function isDifficultyTier(v: unknown): v is DifficultyTier {
-  return v === 'wanderer' || v === 'seeker' || v === 'ascendant';
+  return (
+    v === 'wanderer' ||
+    v === 'seeker' ||
+    v === 'ascendant' ||
+    v === 'ascetic' ||
+    v === 'void'
+  );
 }
 
 // Boss tiers (EPIC #256). A boss NPC carries a tier on its NpcSpawnDef.boss

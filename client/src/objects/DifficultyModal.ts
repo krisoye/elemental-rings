@@ -14,7 +14,7 @@ interface TierRow {
 }
 
 /**
- * The three selectable difficulty tiers, ordered easiest → hardest. Multipliers
+ * The five selectable difficulty tiers, ordered easiest → hardest. Multipliers
  * are read from the shared DIFFICULTY_MULTIPLIERS so the "×N" badge never drifts
  * from the server's spirit_max formula.
  */
@@ -33,6 +33,16 @@ const TIER_ROWS: readonly TierRow[] = [
     tier: 'ascendant',
     label: 'Ascendant',
     description: 'Spirit is always on your mind',
+  },
+  {
+    tier: 'ascetic',
+    label: 'Ascetic',
+    description: 'Every spirit point counts — recharge and travel are deliberate acts',
+  },
+  {
+    tier: 'void',
+    label: 'Void',
+    description: 'Spirit is bone-dry — every ring use and step is a commitment',
   },
 ];
 
@@ -109,17 +119,17 @@ export class DifficultyModal {
       .setInteractive()
       .on('pointerdown', () => this.close());
     const panel = this.scene.add
-      .rectangle(CANVAS_W / 2, CANVAS_H / 2, 560, 360, 0x161622)
+      .rectangle(CANVAS_W / 2, CANVAS_H / 2, 560, 460, 0x161622)
       .setStrokeStyle(2, 0x6082aa);
     // #382 — all these labels are Container children → crispCanvasText.
     const title = crispCanvasText(
       this.scene.add
-        .text(CANVAS_W / 2, 90, 'DIFFICULTY', { fontSize: '20px', color: '#ffffff' })
+        .text(CANVAS_W / 2, 72, 'DIFFICULTY', { fontSize: '20px', color: '#ffffff' })
         .setOrigin(0.5),
     );
     const subtitle = crispCanvasText(
       this.scene.add
-        .text(CANVAS_W / 2, 118, 'Spirit scarcity scales with your chosen tier', {
+        .text(CANVAS_W / 2, 96, 'Spirit scarcity scales with your chosen tier', {
           fontSize: '12px',
           color: '#aaaaaa',
         })
@@ -127,7 +137,7 @@ export class DifficultyModal {
     );
     const closeBtn = crispCanvasText(
       this.scene.add
-        .text(CANVAS_W / 2 + 260, 84, '[×]', { fontSize: '16px', color: '#ff8888' })
+        .text(CANVAS_W / 2 + 260, 66, '[×]', { fontSize: '16px', color: '#ff8888' })
         .setOrigin(0.5)
         .setInteractive({ useHandCursor: true })
         .on('pointerdown', () => this.close()),
@@ -135,8 +145,8 @@ export class DifficultyModal {
 
     container.add([backdrop, panel, title, subtitle, closeBtn]);
 
-    const startY = 160;
-    const rowH = 84;
+    const startY = 118;
+    const rowH = 70;
     TIER_ROWS.forEach((row, idx) => {
       this.renderTierRow(container, startY + idx * rowH, row, current);
     });
@@ -171,7 +181,7 @@ export class DifficultyModal {
   ): void {
     const isCurrent = row.tier === current;
     const cardW = 480;
-    const cardH = 72;
+    const cardH = 62;
     const card = this.scene.add
       .rectangle(CANVAS_W / 2, y + cardH / 2, cardW, cardH, isCurrent ? 0x2a3550 : 0x202030)
       .setStrokeStyle(2, isCurrent ? 0xffdd66 : 0x6082aa)
@@ -186,7 +196,7 @@ export class DifficultyModal {
       this.scene.add
         .text(
           CANVAS_W / 2 - cardW / 2 + 16,
-          y + 12,
+          y + 10,
           `${row.label}  ×${multiplier}${isCurrent ? '   (current)' : ''}`,
           { fontSize: '16px', color: isCurrent ? '#ffdd66' : '#ffffff' },
         )
@@ -196,7 +206,7 @@ export class DifficultyModal {
 
     const desc = crispCanvasText(
       this.scene.add
-        .text(CANVAS_W / 2 - cardW / 2 + 16, y + 40, row.description, {
+        .text(CANVAS_W / 2 - cardW / 2 + 16, y + 36, row.description, {
           fontSize: '12px',
           color: '#bbbbbb',
           wordWrap: { width: cardW - 32 },

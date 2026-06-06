@@ -143,10 +143,11 @@ db.exec(
 
 // EPIC #279 — recompute spirit_max on every boot from the new formula:
 // SUM(max_uses) across the player's Reliquary rings (in_carry = 0) × their
-// difficulty multiplier (wanderer ×5, ascendant ×3, else seeker ×4). This must
-// match getSpiritStats() in PlayerRepo. The difficulty column migration above
-// has already run, so the CASE is safe. An empty Reliquary yields 0 — intended;
-// there is no floor. Then cap spirit_current to the (possibly lower) new max.
+// difficulty multiplier (wanderer ×5, ascendant ×3, ascetic ×2, void ×1, else
+// seeker ×4). This must match getSpiritStats() in PlayerRepo. The difficulty
+// column migration above has already run, so the CASE is safe. An empty
+// Reliquary yields 0 — intended; there is no floor. Then cap spirit_current to
+// the (possibly lower) new max.
 db.exec(
   `UPDATE players
      SET spirit_max = (
@@ -156,6 +157,8 @@ db.exec(
      ) * CASE players.difficulty
          WHEN 'wanderer'  THEN 5
          WHEN 'ascendant' THEN 3
+         WHEN 'ascetic'   THEN 2
+         WHEN 'void'      THEN 1
          ELSE 4
        END`,
 );
