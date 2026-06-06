@@ -19,6 +19,7 @@ import { WanderingNpc } from '../objects/world/WanderingNpc';
 import { RingManagementOverlay, type RingManagementOverlayOpts } from '../objects/ui/RingManagementOverlayClass';
 import type { OverlayData } from '../objects/ui/RingManagementOverlayClass';
 import type { RingData } from '../objects/InventoryGrid';
+import { DiscardConfirm } from '../objects/ui/DiscardConfirm';
 import { showTransientText } from '../objects/ui/toast';
 import { addDomLabel, setDomLabelText } from '../objects/ui/DomLabel';
 import { apiFetch, fetchMe, getToken } from '../net/api';
@@ -141,6 +142,8 @@ export abstract class BaseBiomeScene extends DualCameraScene {
   private activeZone: InteractionZone | null = null;
   /** #396 — the unified fusion overlay for the Fusion Shrine (lazy, per-open). */
   private shrineFusionOverlay: RingManagementOverlay | null = null;
+  /** #423 — shared discard-confirm dialog for the shrine-fusion DISCARD slot. */
+  private fusionDiscard_: DiscardConfirm | null = null;
   /** Centers of Anchorage locations (keyed by waystoneId), for compass + spawn logic. */
   private anchorageMarkers: Map<string, { center: { x: number; y: number } }> = new Map();
   /** Campfire graphics markers keyed by anchorage id (#191). */
@@ -320,11 +323,38 @@ export abstract class BaseBiomeScene extends DualCameraScene {
         const err = await this.doShrineFuse(ringId1, ringId2, filterElement, ov);
         if (err) ov.setStatusMessage(err);
       },
+      // #423 — DISCARD slot in BHC is now available in fusion mode too.
+      onDiscardSlotClick: (ov) => {
+        const sel = ov.selection;
+        if (!sel) return;
+        // Look up the ring from the /api/me snapshot this overlay was opened with —
+        // never window.__campState, which is CampScene-owned and stale in biome scenes.
+        const ring: RingData | null =
+          meData.rings.find((r: RingData) => r.id === sel.ringId) ?? null;
+        // Single stored instance, routed to the UI camera like every other modal.
+        if (!this.fusionDiscard_) {
+          this.fusionDiscard_ = new DiscardConfirm(this, (c) => this.routeToUi(c));
+        }
+        this.fusionDiscard_.open(ring, sel.ringId,
+          async () => {
+            try {
+              await apiFetch(`/api/rings/${sel.ringId}`, { method: 'DELETE' });
+            } catch { /* surface nothing — the reopened overlay shows fresh state */ }
+            ov.clearSelection();
+            void this.openShrineFusion(filterElement);
+          },
+          () => { ov.clearSelection(); },
+        );
+      },
       onRender: (c) => {
         this.routeToUi(c);
       },
       onBeforeDestroy: (c) => {
         this.unignoreMain(c);
+        // #423 — never leave an orphaned discard confirm (container + Y/N key
+        // listeners) behind when the fusion overlay closes.
+        this.fusionDiscard_?.dismiss();
+        this.fusionDiscard_ = null;
       },
     };
 

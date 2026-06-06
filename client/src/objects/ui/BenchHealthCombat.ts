@@ -1,7 +1,7 @@
 import Phaser from 'phaser';
 import { SLOT_KEYS } from '../../Constants';
 import type { SlotKey } from '../../Constants';
-import { InventoryGrid, type RingData } from '../InventoryGrid';
+import { InventoryGrid, type RingData, GRID_CARD_W, GRID_COL_GAP, GRID_ROW_GAP } from '../InventoryGrid';
 import { RingCard } from './RingCard';
 import { attachTooltip } from './Tooltip';
 import { addDomLabel, crispCanvasText } from './DomLabel';
@@ -69,11 +69,14 @@ export class BenchHealthCombat extends Phaser.GameObjects.Container {
   private readonly domLabels: Phaser.GameObjects.DOMElement[] = [];
 
   /**
-   * @param scene           host Phaser scene
-   * @param onRecharge      fired when `[RECHARGE]` is clicked
-   * @param onSlotClick     fired when a HEALTH or COMBAT slot card is clicked
-   * @param getThumbTooltip lazy supplier for the STATUS hover tooltip text
-   * @param onBenchSelect   fired when a bench card is clicked (ring | null for deselect)
+   * @param scene             host Phaser scene
+   * @param onRecharge        fired when `[RECHARGE]` is clicked
+   * @param onSlotClick       fired when a HEALTH or COMBAT slot card is clicked
+   * @param getThumbTooltip   lazy supplier for the STATUS hover tooltip text
+   * @param onBenchSelect     fired when a bench card is clicked (ring | null for deselect)
+   * @param onWonSelect       fired when the WON card is clicked (#423)
+   * @param onDiscardClick    fired when the DISCARD slot is clicked (#423)
+   * @param onBenchGhostClick fired when the bench ghost placeholder is clicked (#423)
    */
   constructor(
     scene: Phaser.Scene,
@@ -81,6 +84,9 @@ export class BenchHealthCombat extends Phaser.GameObjects.Container {
     private readonly onSlotClick: (slot: 'heart' | SlotKey) => void,
     private readonly getThumbTooltip: () => string,
     private readonly onBenchSelect: (ring: RingData | null) => void,
+    private readonly onWonSelect?: () => void,
+    private readonly onDiscardClick?: () => void,
+    private readonly onBenchGhostClick?: () => void,
   ) {
     super(scene, 0, 0);
     scene.add.existing(this);
@@ -102,6 +108,7 @@ export class BenchHealthCombat extends Phaser.GameObjects.Container {
     const loadout = me.loadout ?? {};
     const heartRing = me.player?.heart_ring ?? null;
     const pendingId = me.player?.pending_ring_id ?? null;
+    const pendingRing = pendingId ? me.rings.find((r) => r.id === pendingId) ?? null : null;
     const spareMax = me.player?.spare_ring_max ?? 0;
 
     // ── BENCH grid ──────────────────────────────────────────────────────────
@@ -145,6 +152,28 @@ export class BenchHealthCombat extends Phaser.GameObjects.Container {
         const bg = benchGrid.getCardBg(r.id);
         if (bg) bg.setAlpha(0.45);
       });
+    }
+
+    // ── Bench ghost placeholder (#423) ─────────────────────────────────────────
+    // Always-visible ghost at the next open bench cell when the bench is below cap.
+    // Removes the old emptySpareActionable gate; the ghost is now passive until clicked.
+    // Added unconditionally to the card container — the InventoryGrid scroll mask
+    // hides off-screen cells naturally, so no visibility guard is needed.
+    if (benchN < spareMax) {
+      const GHOST_NUM_COLS = 3;
+      const GHOST_CARD_H = 88; // CARD_H in InventoryGrid (not exported)
+      // Next open cell index = benchRings.length → row = floor(n/3), col = n%3.
+      const phY = Math.floor(benchRings.length / GHOST_NUM_COLS) * GRID_ROW_GAP + GHOST_CARD_H / 2;
+      const nextCol = benchRings.length % GHOST_NUM_COLS;
+      const phX = nextCol * GRID_COL_GAP + GRID_CARD_W / 2;
+      const ph = this.scene.add
+        .rectangle(phX, phY, GRID_CARD_W, GHOST_CARD_H, 0x2a2a33)
+        .setScrollFactor(0)
+        .setStrokeStyle(2, 0x665544)
+        .setAlpha(0.7)
+        .setInteractive({ useHandCursor: true })
+        .on('pointerdown', () => this.onBenchGhostClick?.());
+      benchGrid.getCardContainer().add(ph);
     }
 
     this.scene.add.existing(benchGrid);
@@ -214,6 +243,60 @@ export class BenchHealthCombat extends Phaser.GameObjects.Container {
         .on('pointerdown', () => this.onRecharge()),
     );
     this.add(rechargeBtn);
+
+    // ── WON slot (#423) — at (837, 193), right of STATUS in COMBAT row 1 ──────
+    // Visible in all modes; shows a ghost rectangle when no pending ring exists.
+    // Pending WON ring is selected with source='spare' by convention (established
+    // in the original renderFieldLeft and preserved in onWonSelect). Do not change
+    // to 'pending' — SlotSwapManager has no such slot.
+    const wonSel =
+      pendingId !== null &&
+      selectedRingId === pendingId &&
+      swapSource === 'spare';
+    if (pendingRing) {
+      const wonCard = new RingCard(this.scene, COL_COMBAT_RIGHT_X, ROW_STATUS_Y, {
+        width: CARD_W,
+        height: CARD_H,
+        scrollFactor: 0,
+        strokeColor: wonSel ? 0xffff00 : 0xffcc44,
+        strokeWidth: wonSel ? 3 : 2,
+      });
+      wonCard.setRing({
+        element: pendingRing.element,
+        tier: pendingRing.tier,
+        xp: pendingRing.xp,
+        currentUses: pendingRing.current_uses,
+        maxUses: pendingRing.max_uses,
+        fusionParents: pendingRing.fusionParents,
+      });
+      wonCard.bg
+        .setInteractive({ useHandCursor: true })
+        .on('pointerdown', () => this.onWonSelect?.());
+      this.scene.add.existing(wonCard);
+      this.add(wonCard);
+    } else {
+      // Empty ghost when no pending ring (all modes)
+      const wonGhost = this.scene.add
+        .rectangle(COL_COMBAT_RIGHT_X, ROW_STATUS_Y, CARD_W, CARD_H, 0x2a2a33)
+        .setScrollFactor(0)
+        .setStrokeStyle(2, 0x555566)
+        .setAlpha(0.5);
+      this.add(wonGhost);
+    }
+    // WON label above (y = 193 - 34 = 159)
+    this.addDomLbl(COL_COMBAT_RIGHT_X, ROW_STATUS_Y - LABEL_ABOVE_Y_OFFSET, 'WON ◆', 11, '#ffcc44');
+
+    // ── DISCARD slot (#423) — at (659, 291), HEALTH column row 2 ────────────
+    // Visible in all modes; gives sanctum + shrine fusion a discard path.
+    const discardRect = this.scene.add
+      .rectangle(COL_HEALTH_X, ROW_COMBAT0_Y, CARD_W, CARD_H, 0x331a1a, 0.4)
+      .setScrollFactor(0)
+      .setStrokeStyle(2, 0xaa4444)
+      .setName('discard-slot')
+      .setInteractive({ useHandCursor: true })
+      .on('pointerdown', () => this.onDiscardClick?.());
+    this.add(discardRect);
+    this.addDomLbl(COL_HEALTH_X, ROW_COMBAT0_Y - LABEL_ABOVE_Y_OFFSET, 'DISCARD', 11, '#aa4444', true);
 
     // ── COMBAT cluster (STATUS + A1/A2/D1/D2) ──────────────────────────────
     const combatDefs: { slot: SlotKey; label: string; x: number; y: number }[] = [

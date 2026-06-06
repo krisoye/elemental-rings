@@ -191,10 +191,10 @@ test('manage-battle-rings: title renders and the STATUS/HP cluster labels show',
 
 // ── Scenario 1c (#389) — converged structure reporter (field mode) ────────────
 // The field overlay shares the unified RingManagementOverlay structure: the
-// columns are LOOT | BENCH | HEALTH | COMBAT, the Bench counter reads
-// usedSpares/spare_ring_max, and — post-#389 — no card carries a Tier row. The
+// columns are BENCH | HEALTH | COMBAT (#423 removed LOOT left column), the Bench
+// counter reads usedSpares/spare_ring_max, and — post-#389 — no card carries a Tier row. The
 // player-facing "Bench" label replaces "Spares" (the code keeps `spare_*`).
-test('manage-battle-rings (#389): __ringMgmtState reports field columns, Bench counter, no Tier row', async ({ browser }) => {
+test('manage-battle-rings (#389/#423): __ringMgmtState reports field columns, Bench counter, no Tier row', async ({ browser }) => {
   const ctx = await browser.newContext();
   await seedAuthToken(ctx);
   const page = await ctx.newPage();
@@ -204,8 +204,8 @@ test('manage-battle-rings (#389): __ringMgmtState reports field columns, Bench c
   const state = await page.evaluate(() => (window as any).__ringMgmtState);
   expect(state).toBeTruthy();
   expect(state.mode).toBe('field');
-  // Field LEFT column is LOOT (WON + DISCARD); the three shared columns match sanctum.
-  expect(state.columns).toEqual(['LOOT', 'BENCH', 'HEALTH', 'COMBAT']);
+  // #423 — field mode no longer has a LOOT left column; WON/DISCARD/ghost live in BHC.
+  expect(state.columns).toEqual(['BENCH', 'HEALTH', 'COMBAT']);
   // No Spirit counter in the field (no resting-pool access away from the Sanctum).
   expect(state.counters.spirit).toBeUndefined();
   // Bench counter is present with a numeric n/max.
@@ -243,11 +243,11 @@ test('manage-battle-rings (#389): __ringMgmtState reports field columns, Bench c
   await ctx.close();
 });
 
-// ── Scenario 1b — #352/#381: panel geometry, header, HP card above STATUS ─────
-// #381 updated: panel is now 760×500 (center 288, top 38). The modal gains a
-// three-part Spirit/♥/XP header, so Day/Gold/Food are still absent but Total XP
-// now appears in the header.
-test('manage-battle-rings (#352/#381): panel 760×500, ♥ HP label present and above STATUS', async ({ browser }) => {
+// ── Scenario 1b — #352/#381/#423: panel geometry, header, HP card above STATUS ─
+// #423 updated: the field panel narrowed from 760×500 to 560×500 (LOOT column
+// removed). Center x=612, right edge 892 (unchanged), left edge 332, top 38.
+// Day/Gold/Food are still absent. Card absolute positions (659/759/837) unmoved.
+test('manage-battle-rings (#352/#381/#423): field panel 560×500, ♥ HP label present and above STATUS', async ({ browser }) => {
   const ctx = await browser.newContext();
   await seedAuthToken(ctx);
   const page = await ctx.newPage();
@@ -273,14 +273,15 @@ test('manage-battle-rings (#352/#381): panel 760×500, ♥ HP label present and 
   // #352 §4 — ♥ cur/max label is present in the modal (above the HP card).
   expect(texts.some((t) => t === `♥ ${hp}`)).toBe(true);
 
-  // #381 §2 — panel is 760 wide, centered at (512, 288); top ≥ 38 (= 288−250).
+  // #423 §2 — field panel is 560 wide (MODAL_W_FIELD), centered at (612, 288);
+  // top ≥ 38 (= 288−250). Right edge stays at 892; left edge moved 132 → 332.
   const panelTopY = await page.evaluate(() => {
     const scene = (window as any).__game?.scene?.getScene('ForestScene') as any;
     const modal = scene?.battleHand?.manageModal;
     if (!modal) return null;
     const objs = (modal.getAll ? modal.getAll() : []) as any[];
     for (const o of objs) {
-      if (o.width === 760 && typeof o.strokeColor !== 'undefined') {
+      if (o.width === 560 && typeof o.strokeColor !== 'undefined') {
         return o.y - o.height / 2;
       }
     }
@@ -655,11 +656,10 @@ test('manage-battle-rings: clicking DISCARD with nothing selected does not open 
   await ctx.close();
 });
 
-// ── #381/#394 E2E — column X-centres: LOOT(~195) | BENCH(~474) | HEALTH(659) | COMBAT(759/837) ──
-// #394 corrects column order: left-most is LOOT (WON/DISCARD x≈195), then BENCH grid
-// (header x≈474), then HEALTH (x=659), then COMBAT (x=759/837).
-// LOOT x-centre must be LESS THAN BENCH x-centre (ordering invariant).
-test('manage-battle-rings (#381/#394): column X-centres — LOOT leftmost, then BENCH, HEALTH(659), COMBAT(759/837)', async ({ browser }) => {
+// ── #381/#394/#423 E2E — column X-centres: BENCH(~474) | HEALTH(659) | COMBAT(759/837) ──
+// #423 removes the LOOT left column; WON(837,193) and DISCARD(659,291) now live in BHC.
+// BENCH header must be leftmost visible column label.
+test('manage-battle-rings (#381/#394/#423): column X-centres — BENCH leftmost, HEALTH(659), COMBAT(759/837), WON(837,193), DISCARD(659,291)', async ({ browser }) => {
   const ctx = await browser.newContext();
   await seedAuthToken(ctx);
   const page = await ctx.newPage();
@@ -670,7 +670,7 @@ test('manage-battle-rings (#381/#394): column X-centres — LOOT leftmost, then 
     const game = (window as any).__game;
     const result: Record<string, number> = {};
 
-    // #363 — STATUS/A1/A2/D1/D2/DISCARD are DOM labels; WON card and HP on canvas.
+    // DOM labels: STATUS/A1/A2/D1/D2/DISCARD/WON.
     const canvas: HTMLCanvasElement = game?.canvas;
     const canvasRect = canvas.getBoundingClientRect();
     const scaleX = canvasRect.width / 1024;
@@ -685,9 +685,11 @@ test('manage-battle-rings (#381/#394): column X-centres — LOOT leftmost, then 
       if (text === 'A2') result.A2 = logicalX;
       if (text === 'D1') result.D1 = logicalX;
       if (text === 'D2') result.D2 = logicalX;
-      // DISCARD label is the canonical LOOT-column x-centre.
+      // DISCARD is now in BHC at (659, 291).
       if (text === 'DISCARD') result.DISCARD = logicalX;
-      // Bench header label for ordering check.
+      // WON ◆ is now in BHC at (837, 193).
+      if (text === 'WON ◆') result.WON = logicalX;
+      // Bench header label.
       if (text?.startsWith('Bench:')) result.BENCH_HEADER = logicalX;
     });
 
@@ -706,15 +708,10 @@ test('manage-battle-rings (#381/#394): column X-centres — LOOT leftmost, then 
     return result;
   });
 
-  // #394 — LOOT column (WON/DISCARD) is leftmost: x≈195, well left of BENCH.
-  expect(positions.DISCARD, 'DISCARD DOM label not found').toBeDefined();
-  expect(Math.abs(positions.DISCARD - 195)).toBeLessThanOrEqual(2);
-  // #394 — BENCH header is centred over the 3-col grid: x≈474.
+  // #423 — BENCH header is the leftmost column, centred over the 3-col grid: x≈474.
   expect(positions.BENCH_HEADER, 'Bench: header DOM label not found').toBeDefined();
   expect(Math.abs(positions.BENCH_HEADER - 474)).toBeLessThanOrEqual(2);
-  // #394 — ordering invariant: LOOT x-centre < BENCH header x-centre (column-order guard).
-  expect(positions.DISCARD).toBeLessThan(positions.BENCH_HEADER);
-  // HEALTH (HP) at x=659. DOM-measured → ±1px; canvas exact.
+  // HEALTH (HP) at x=659. Canvas exact.
   expect(positions.HP).toBe(659);
   // COMBAT cluster: STATUS left-aligned above A1/D1 at x=759; A2/D2 at x=837.
   expect(Math.abs(positions.STATUS - 759)).toBeLessThanOrEqual(1);
@@ -722,6 +719,12 @@ test('manage-battle-rings (#381/#394): column X-centres — LOOT leftmost, then 
   expect(Math.abs(positions.A2 - 837)).toBeLessThanOrEqual(1);
   expect(Math.abs(positions.D1 - 759)).toBeLessThanOrEqual(1);
   expect(Math.abs(positions.D2 - 837)).toBeLessThanOrEqual(1);
+  // #423 — DISCARD slot label is in BHC HEALTH column at x≈659.
+  expect(positions.DISCARD, 'DISCARD DOM label not found').toBeDefined();
+  expect(Math.abs(positions.DISCARD - 659)).toBeLessThanOrEqual(2);
+  // #423 — WON label is in BHC at x≈837 (right of STATUS).
+  expect(positions.WON, 'WON ◆ DOM label not found').toBeDefined();
+  expect(Math.abs(positions.WON - 837)).toBeLessThanOrEqual(2);
 
   await ctx.close();
 });
@@ -1779,29 +1782,15 @@ test('manage-battle-rings (#381 adversarial): empty-spare placeholder absent whe
   await loadForest(page);
   await openBattleHand(page);
 
-  // Select a battle-slot ring (a1, if occupied) to make emptySpareActionable=true.
-  // We need an actionable selection to ensure the placeholder code path is entered.
-  const me3 = (await (
-    await fetch(`${API_URL}/api/me`, { headers: { Authorization: `Bearer ${tok}` } })
-  ).json()) as { loadout: Record<string, string | null> };
-  const a1Id = me3.loadout.a1 ?? null;
-  if (a1Id) {
-    await page.evaluate((id) => {
-      const scene = (window as any).__game?.scene?.getScene('ForestScene') as any;
-      const bh = scene.battleHand;
-      bh.swap.select(id, 'a1');
-      bh.renderManageModal();
-    }, a1Id);
-  }
-
-  // With the pool full, no placeholder Rectangle should exist in the card container.
+  // With the bench at capacity, no ghost Rectangle should exist in the card container
+  // (#423: ghost is only rendered when benchN < spareMax).
   const placeholderFound = await page.evaluate(() => {
     const scene = (window as any).__game?.scene?.getScene('ForestScene') as any;
     const bh = scene?.battleHand;
     if (!bh) return false;
     const cardContainer = bh.spareGrid?.getCardContainer?.();
     if (!cardContainer) return false;
-    // Placeholder is a bare Rectangle with a pointer cursor and no getAll (not a container).
+    // Ghost is a bare Rectangle with a pointer cursor and no getAll (not a container).
     for (const child of cardContainer.getAll()) {
       if (child.type === 'Rectangle' && child.input?.cursor === 'pointer') {
         return true;
@@ -1815,10 +1804,10 @@ test('manage-battle-rings (#381 adversarial): empty-spare placeholder absent whe
   await ctx.close();
 });
 
-// ── #381/#389/#394 QA — modal panel bounds: no card center exceeds x=855 or y=538
-// Adversarial: the 760×500 panel spans x=132–892, y=38–538. #394 corrected cluster
-// card centers sit at x∈{195,659,759,837} and y∈{193,291,389} (STATUS above the
-// 2×2). The rightmost col (A2/D2) is at x=837; the bottom row (D1/D2) at y=389 →
+// ── #381/#389/#394/#423 QA — modal panel bounds: no card center exceeds x=855 or y=538
+// Adversarial: the 760×500 panel (field: 560×500) spans to right edge x=892, y=38–538.
+// #423 card centers sit at x∈{659,759,837} and y∈{193,291,389} (no x=195 LOOT column).
+// The rightmost col (A2/D2/WON) is at x=837; the bottom row (D1/D2) at y=389 →
 // bottom edge 434 < 538. Any wider/lower coordinate would overflow the panel.
 test('manage-battle-rings (#381 adversarial): no slot-card center x exceeds 855 or y exceeds 538', async ({ browser }) => {
   // #381 adversarial: cards placed beyond x=855 clip past the panel right edge
@@ -2042,16 +2031,10 @@ test('manage-battle-rings (#381 impl): spare count label reflects post-exclusion
   await ctx.close();
 });
 
-// ── #381 QA Phase 2 — placeholder phY clamping stays within visible window ────
-// Implementation-aware: the placeholder's local y is clamped to maxLocalY =
-// MODAL_BOTTOM − GRID_CONTENT_TOP_Y − GRID_CARD_H/2 − 4 = 538−148−44−4 = 342.
-// The visible window bottom is RINGWALL_VISIBLE_ROWS × GRID_ROW_GAP = 3×92 = 276.
-// The placeholder is suppressed entirely when phY ≥ 276 (it would be off-screen).
-// This test verifies the placeholder, when rendered, stays within the visible window.
-test('manage-battle-rings (#381 impl): empty-spare placeholder local y is within visible grid window when rendered', async ({ browser }) => {
-  // #381 impl: phY must be < RINGWALL_VISIBLE_ROWS*GRID_ROW_GAP (=276). If it were
-  // not clamped, a grid with 6 filled rows would place the placeholder at y=6*92=552
-  // which is both off-screen and below the modal bottom — confusing the player.
+// ── #381/#423 QA — bench ghost y is within visible window when rendered ──────
+// #423: ghost is always-visible (no emptySpareActionable gate). Ghost local y must
+// be < RINGWALL_VISIBLE_ROWS × GRID_ROW_GAP (=276) when rendered.
+test('manage-battle-rings (#381/#423 impl): bench ghost local y is within visible grid window when rendered', async ({ browser }) => {
   const ctx = await browser.newContext();
   await seedAuthToken(ctx);
   const tok = await (async () => {
@@ -2063,31 +2046,16 @@ test('manage-battle-rings (#381 impl): empty-spare placeholder local y is within
     return t;
   })();
 
-  // Seed exactly 3 spares (1 row) so the placeholder lands in row 1 (phY = 1×92+44 = 136).
-  // This is within the visible window (< 276), so the placeholder SHOULD render.
+  // Seed exactly 3 spares (1 row) so the ghost lands in row 1 (phY = 1×92+44 = 136).
   await seedSpares(tok, 3);
 
   const page = await ctx.newPage();
   await loadForest(page);
   await openBattleHand(page);
 
-  // Need an actionable selection so emptySpareActionable is true.
-  const me = (await (
-    await fetch(`${API_URL}/api/me`, { headers: { Authorization: `Bearer ${tok}` } })
-  ).json()) as { loadout: Record<string, string | null> };
-  const a1Id = me.loadout.a1 ?? null;
-  if (a1Id) {
-    await page.evaluate((id) => {
-      const scene = (window as any).__game?.scene?.getScene('ForestScene') as any;
-      const bh = scene.battleHand;
-      bh.swap.select(id, 'a1');
-      bh.renderManageModal();
-    }, a1Id);
-  }
-
   const GRID_VISIBLE_BOTTOM_LOCAL = 3 * 92; // RINGWALL_VISIBLE_ROWS * GRID_ROW_GAP = 276
 
-  const placeholderInfo = await page.evaluate((visBottom) => {
+  const ghostInfo = await page.evaluate((visBottom) => {
     const scene = (window as any).__game?.scene?.getScene('ForestScene') as any;
     const bh = scene?.battleHand;
     if (!bh) return { found: false, y: null, withinWindow: null };
@@ -2105,34 +2073,24 @@ test('manage-battle-rings (#381 impl): empty-spare placeholder local y is within
     return { found: false, y: null, withinWindow: null };
   }, GRID_VISIBLE_BOTTOM_LOCAL);
 
-  // If we have an actionable selection and the pool has room, the placeholder should render.
-  if (a1Id && placeholderInfo.found) {
-    expect(placeholderInfo.withinWindow).toBe(true);
-    expect(placeholderInfo.y!).toBeLessThan(GRID_VISIBLE_BOTTOM_LOCAL);
-  }
-  // If no a1 ring was available to select, this test is a no-op (not a failure — the
-  // player may have a fresh account with no a1 slot. The clamping logic is still
-  // exercised by the other branches above that seed exactly 3 spares).
+  expect(ghostInfo.found, 'Bench ghost must be present when bench has room').toBe(true);
+  expect(ghostInfo.withinWindow).toBe(true);
+  expect(ghostInfo.y!).toBeLessThan(GRID_VISIBLE_BOTTOM_LOCAL);
 
   await ctx.close();
 });
 
-// ── #381 QA Phase 2 — placeholder NOT rendered when pool has room but nothing actionable
-// Implementation-aware: the conditional is `emptySpareActionable && usedSpares < spareCapacity`.
-// With 0 spares and nothing selected, emptySpareActionable=false → no placeholder.
-// This guards against the placeholder appearing passively (confusing if nothing is held).
-test('manage-battle-rings (#381 impl): empty-spare placeholder absent when nothing is selected (emptySpareActionable=false)', async ({ browser }) => {
-  // #381 impl: emptySpareActionable requires a battle-slot, heart, or pending ring
-  // to be in the swap manager. Without a selection the placeholder must not render,
-  // even if the pool has capacity (rendering it would be a meaningless click target).
+// ── #423 — bench ghost ALWAYS visible at open with no selection ────────────────
+// #423 removes emptySpareActionable gate; ghost is visible as soon as bench < cap.
+test('manage-battle-rings (#423 S2): bench ghost visible with no selection; no-op click leaves selection null', async ({ browser }) => {
   const ctx = await browser.newContext();
   await seedAuthToken(ctx);
   const page = await ctx.newPage();
   await loadForest(page);
   await openBattleHand(page);
 
-  // No selection active at open time — placeholder must be absent.
-  const placeholderFound = await page.evaluate(() => {
+  // Ghost must be present immediately at open with NO selection.
+  const ghostFound = await page.evaluate(() => {
     const scene = (window as any).__game?.scene?.getScene('ForestScene') as any;
     const bh = scene?.battleHand;
     if (!bh) return false;
@@ -2146,7 +2104,48 @@ test('manage-battle-rings (#381 impl): empty-spare placeholder absent when nothi
     return false;
   });
 
-  expect(placeholderFound).toBe(false);
+  // Ghost may be absent if bench is full — skip if so. /api/me is fetched in
+  // Node test scope against API_URL (same pattern as every other test here).
+  const tok = await page.evaluate(() => localStorage.getItem('er_token') ?? '');
+  const me = (await (
+    await fetch(`${API_URL}/api/me`, { headers: { Authorization: `Bearer ${tok}` } })
+  ).json()) as any;
+  const benchN = (me.rings ?? []).filter((r: any) => r.in_carry === 1 && !Object.values(me.loadout ?? {}).includes(r.id) && r.id !== me.player?.pending_ring_id).length;
+  if (benchN >= (me.player?.spare_ring_max ?? 9)) {
+    // Bench is full — ghost legitimately absent; skip assertions.
+    await ctx.close();
+    return;
+  }
+
+  expect(ghostFound, 'Bench ghost must be visible when bench is below capacity').toBe(true);
+
+  // Click the ghost with nothing selected — selection should remain null (no-op).
+  const ghostPos = await page.evaluate(async () => {
+    const scene = (window as any).__game?.scene?.getScene('ForestScene') as any;
+    const bh = scene?.battleHand;
+    const cardContainer = bh?.spareGrid?.getCardContainer?.();
+    if (!cardContainer) return null;
+    for (const child of cardContainer.getAll()) {
+      if (child.type === 'Rectangle' && child.input?.cursor === 'pointer') {
+        // Get world position of ghost
+        const m = child.getWorldTransformMatrix?.();
+        if (m) return { x: Math.round(m.tx), y: Math.round(m.ty) };
+      }
+    }
+    return null;
+  });
+
+  if (ghostPos) {
+    // ghostPos is in logical canvas space (world transform of a scrollFactor-0
+    // rect) — convert to page coordinates before the real click.
+    const pagePt = await canvasCoords(page, ghostPos.x, ghostPos.y);
+    await page.mouse.click(pagePt.x, pagePt.y);
+    const sel = await page.evaluate(() => {
+      const scene = (window as any).__game?.scene?.getScene('ForestScene') as any;
+      return scene?.battleHand?.swap?.selection ?? null;
+    });
+    expect(sel, 'Ghost click with no selection should be a no-op').toBeNull();
+  }
 
   await ctx.close();
 });
@@ -2250,10 +2249,11 @@ async function canvasCoords(
 }
 
 // Overlay card centers in the 1024×576 logical space (geometry constants from
-// RingManagementOverlayClass.ts / BenchHealthCombat.ts).
-const WON_CARD = { x: 195, y: 193 } as const;          // COL0_X, ROW0_Y
+// BenchHealthCombat.ts). #423: WON moved to (837,193) in BHC; DISCARD to (659,291).
+const WON_CARD = { x: 837, y: 193 } as const;          // COL_COMBAT_RIGHT_X, ROW_STATUS_Y (#423)
 const A1_CARD = { x: 759, y: 291 } as const;           // COL_COMBAT_LEFT_X, ROW_COMBAT0_Y
 const HEALTH_CARD = { x: 659, y: 193 } as const;       // COL_HEALTH_X, ROW_STATUS_Y
+const DISCARD_CARD = { x: 659, y: 291 } as const;      // COL_HEALTH_X, ROW_COMBAT0_Y (#423)
 // First bench cell: grid origin (370,148) + local card center (CARD_W/2=32, CARD_H/2=44).
 const BENCH_CELL0 = { x: 402, y: 192 } as const;
 

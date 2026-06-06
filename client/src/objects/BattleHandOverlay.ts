@@ -1,10 +1,11 @@
 import Phaser from 'phaser';
-import { CANVAS_W, CANVAS_H, ELEMENT_NAMES, THUMB_PASSIVE_INFO } from '../Constants';
+import { THUMB_PASSIVE_INFO } from '../Constants';
 import type { SlotKey } from '../Constants';
 import { type RingData } from './InventoryGrid';
 import { apiFetch, apiMutate, fetchMe, getToken } from '../net/api';
 import { RingManagementOverlay } from './ui/RingManagementOverlayClass';
 import type { RingManagementOverlayOpts, OverlayData } from './ui/RingManagementOverlayClass';
+import { DiscardConfirm } from './ui/DiscardConfirm';
 import { clearRingMgmtState } from './ui/RingManagementOverlay';
 import type { SwapSlot } from './ui/SlotSwapManager';
 
@@ -29,8 +30,7 @@ export class BattleHandOverlay {
   private readonly onModalRender?: (c: Phaser.GameObjects.Container) => void;
   private onCloseCb?: () => void;
   private overlay: RingManagementOverlay | null = null;
-  private discardConfirm_: Phaser.GameObjects.Container | null = null;
-  private discardKeyHandlers: (() => void) | null = null;
+  private readonly discard_: DiscardConfirm;
   // Cached for discard confirm label + routing.
   private allRings: RingData[] = [];
   private heartRing: RingData | null = null;
@@ -39,6 +39,7 @@ export class BattleHandOverlay {
 
   constructor(scene: Phaser.Scene, onStatus?: (msg: string) => void, onModalRender?: (c: Phaser.GameObjects.Container) => void) {
     this.scene = scene; this.onStatus = onStatus; this.onModalRender = onModalRender;
+    this.discard_ = new DiscardConfirm(scene, onModalRender);
   }
 
   isOpen(): boolean { return this.overlay?.isOpen() ?? false; }
@@ -47,7 +48,7 @@ export class BattleHandOverlay {
   get spareGrid()   { return this.overlay?.getSpareGrid() ?? null; }
   get swap()        { return this.overlay?.getSwap(); }
   get pendingRingId(): string | null { return this.pendingRingId_; }
-  get discardConfirm(): Phaser.GameObjects.Container | null { return this.discardConfirm_; }
+  get discardConfirm(): Phaser.GameObjects.Container | null { return this.discard_.container_; }
   async refreshManageData(): Promise<void> { if (this.overlay) await this.refresh(this.overlay); }
   renderManageModal(): void {
     if (!this.overlay?.isOpen()) return;
@@ -74,7 +75,7 @@ export class BattleHandOverlay {
     window.__encounterDiscardRing = (id: string): void => void this.deleteRing(id);
   }
 
-  close(): void { this.dismissConfirm(); this.overlay?.close(); this.overlay = null; }
+  close(): void { this.discard_.dismiss(); this.overlay?.close(); this.overlay = null; }
   destroy(): void { this.close(); }
 
   private cache(d: OverlayData): void {
@@ -84,11 +85,8 @@ export class BattleHandOverlay {
 
   private makeOpts(): RingManagementOverlayOpts {
     return {
-      // #421 — propagate commit status: clear the held selection only on success
-      // (keep it on failure so the player can retry), and re-apply the failure
-      // message AFTER refresh() rebuilds the modal (which wipes the status bar).
       resolveMove: async (id, from, to, ov) => {
-        let lastError = ''; // closure-local: interleaved calls never share errors
+        let lastError = '';
         const onErr = (m: string): void => { lastError = m; };
         const body =
           to === 'heart' ? (from === 'spare' ? { ringId: id, releaseTo: 'spare' } : { releaseTo: from })
@@ -117,7 +115,13 @@ export class BattleHandOverlay {
       },
       onDiscardSlotClick: (ov) => {
         const sel = ov.selection;
-        if (sel) this.openConfirm(sel.ringId, sel.source);
+        if (!sel) return;
+        const isPending = sel.ringId === this.pendingRingId_;
+        const ring = sel.source === 'heart' ? this.heartRing : this.allRings.find((r) => r.id === sel.ringId) ?? null;
+        this.discard_.open(ring, sel.ringId,
+          () => this.doConfirm(sel.ringId, sel.source, isPending),
+          () => { ov.clearSelection(); },
+        );
       },
       onBenchGridSelect: async (ring, ov) => {
         if (!ring) { ov.clearSelection(); await this.refresh(ov); return; }
@@ -127,8 +131,25 @@ export class BattleHandOverlay {
         if (ov.selection?.ringId === ring.id) ov.clearSelection(); else ov.selectRing(ring.id, 'spare');
         await this.refresh(ov);
       },
+      onBenchGhostClick: async (ov) => {
+        const sel = ov.selection;
+        if (!sel) return;
+        if (sel.ringId === this.pendingRingId_) {
+          // WON ring → accept to bench via PUT /api/rings/:id/accept
+          let lastError = '';
+          const onErr = (m: string): void => { lastError = m; };
+          const ok = await this.send('PUT', `/api/rings/${sel.ringId}/accept`, {}, onErr);
+          if (ok) { ov.clearSelection(); await this.refresh(ov); }
+          else if (lastError) ov.setStatusMessage(lastError);
+        } else {
+          // Regular ring → move to bench. Routes through ov.moveRingTo → swap.moveTo
+          // → resolveMove, which honours the #421 error-surfacing contract
+          // (hold selection on failure, re-apply the message after refresh).
+          await ov.moveRingTo('spare');
+        }
+      },
       onRender: (c) => this.onModalRender?.(c),
-      onStatus: (msg) => this.onStatus?.(msg), // P2-B: surface network errors
+      onStatus: (msg) => this.onStatus?.(msg),
     };
   }
 
@@ -142,13 +163,6 @@ export class BattleHandOverlay {
     } catch { this.onStatus?.('Network error — please retry'); }
   }
 
-  /**
-   * #421 — run a mutation via apiMutate, surface any failure (`spare grid full`
-   * maps to CampScene's bench-full wording, CampScene.ts:1596), and return whether
-   * the server committed it. Callers MUST honour the boolean: `false` ⇒ keep the
-   * held selection (no silent deselect). `onErr` lets resolveMove re-apply the
-   * message after the refresh wipes the status bar.
-   */
   private async send(method: 'PUT' | 'POST', url: string, body: Record<string, unknown>, onErr?: (m: string) => void): Promise<boolean> {
     const r = await apiMutate(method, url, body);
     if (!r.ok) {
@@ -159,42 +173,23 @@ export class BattleHandOverlay {
     }
     return r.ok;
   }
+
   private async deleteRing(id: string): Promise<void> {
-    await apiFetch(`/api/rings/${id}`, { method: 'DELETE' });
+    try {
+      const res = await apiFetch(`/api/rings/${id}`, { method: 'DELETE' });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({})) as { error?: string };
+        this.onStatus?.(body.error ?? 'Could not discard ring');
+      }
+    } catch {
+      this.onStatus?.('Network error — could not discard ring');
+    }
     if (this.overlay) await this.refresh(this.overlay);
   }
 
-  // ── Discard confirm (#348) ─────────────────────────────────────────────────
-  private openConfirm(ringId: string, source: SwapSlot | null): void {
-    if (this.discardConfirm_) return;
-    const isPending = source === null && ringId === this.pendingRingId_;
-    const ring = source === 'heart' ? this.heartRing : this.allRings.find((r) => r.id === ringId) ?? null;
-    const en = ring ? (ELEMENT_NAMES[ring.element] ?? '?') : '?'; const tier = ring ? ring.tier : '?';
-    const bg = this.scene.add.rectangle(CANVAS_W / 2, CANVAS_H / 2, 460, 110, 0x000000, 0.9).setScrollFactor(0).setStrokeStyle(2, 0xff4444);
-    const txt = this.scene.add.text(CANVAS_W / 2, CANVAS_H / 2 - 20, `Discard ${en} T${tier} ring? Permanent.`, { fontSize: '16px', color: '#ffdddd' }).setScrollFactor(0).setOrigin(0.5);
-    const yBtn = this.scene.add.text(CANVAS_W / 2 - 70, CANVAS_H / 2 + 22, '[Discard]', { fontSize: '15px', color: '#ff8888' }).setScrollFactor(0).setOrigin(0.5).setInteractive({ useHandCursor: true }).setName('discard-confirm-yes').on('pointerdown', () => this.doConfirm(ringId, source, isPending));
-    const nBtn = this.scene.add.text(CANVAS_W / 2 + 70, CANVAS_H / 2 + 22, '[Cancel]', { fontSize: '15px', color: '#aaccff' }).setScrollFactor(0).setOrigin(0.5).setInteractive({ useHandCursor: true }).setName('discard-confirm-no').on('pointerdown', () => this.dismissConfirm());
-    const p = this.scene.add.container(0, 0, [bg, txt, yBtn, nBtn]).setDepth(3000);
-    this.onModalRender?.(p);
-    this.discardConfirm_ = p; window.__discardConfirmOpen = true;
-    const kb = this.scene.input.keyboard;
-    if (kb) {
-      const KC = Phaser.Input.Keyboard.KeyCodes;
-      const yk = kb.addKey(KC.Y); const nk = kb.addKey(KC.N);
-      const onY = (): void => this.doConfirm(ringId, source, isPending);
-      const onN = (): void => this.dismissConfirm();
-      yk.on('down', onY); nk.on('down', onN);
-      this.discardKeyHandlers = () => { yk.off('down', onY); nk.off('down', onN); };
-    }
-  }
   private doConfirm(ringId: string, source: SwapSlot | null, isPending: boolean): void {
-    this.dismissConfirm(); void this.deleteRing(ringId);
+    void this.deleteRing(ringId);
+    this.overlay?.clearSelection(); // mirror old dismissConfirm — never hold a deleted ring
     if (window.__encounterState && isPending) window.__encounterState.pendingWonRing = null;
-  }
-  private dismissConfirm(): void {
-    const was = this.discardConfirm_ !== null;
-    this.discardKeyHandlers?.(); this.discardKeyHandlers = null;
-    this.discardConfirm_?.destroy(true); this.discardConfirm_ = null;
-    window.__discardConfirmOpen = false; if (was) this.overlay?.clearSelection();
   }
 }

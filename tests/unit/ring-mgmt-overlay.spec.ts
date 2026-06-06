@@ -405,23 +405,22 @@ describe('#389 COLUMN_LABELS: mode-column contract', () => {
     expect(COLUMN_LABELS.sanctum).toEqual(['SPIRIT', 'BENCH', 'HEALTH', 'COMBAT']);
   });
 
-  it('field mode has 4 columns: LOOT, BENCH, HEALTH, COMBAT', () => {
-    // Field left column is LOOT (WON + DISCARD); the three shared columns are identical.
-    expect(COLUMN_LABELS.field).toEqual(['LOOT', 'BENCH', 'HEALTH', 'COMBAT']);
+  it('field mode has 3 columns: BENCH, HEALTH, COMBAT (#423 — LOOT column removed)', () => {
+    // #423 — WON and DISCARD moved into BHC; field mode no longer has a LOOT left column.
+    expect(COLUMN_LABELS.field).toEqual(['BENCH', 'HEALTH', 'COMBAT']);
   });
 
-  it('both modes share the three right-hand columns BENCH, HEALTH, COMBAT at indices 1-3', () => {
-    // #389 spec: the three right columns are the SAME component in both modes.
-    // Any divergence (e.g. renaming "BENCH" to "SPARES" in one mode) is caught here.
-    const shared = COLUMN_LABELS.sanctum.slice(1);
-    expect(COLUMN_LABELS.field.slice(1)).toEqual(shared);
+  it('field mode shares all three columns BENCH, HEALTH, COMBAT with sanctum indices 1-3', () => {
+    // #423 — field mode IS the three shared BHC columns; it shares all with sanctum[1..3].
+    const sharedFromSanctum = COLUMN_LABELS.sanctum.slice(1);
+    expect(COLUMN_LABELS.field).toEqual(sharedFromSanctum);
   });
 
-  it('sanctum and field left columns differ (SPIRIT vs LOOT)', () => {
-    // The only difference between modes is the first column — this is the anti-drift test.
+  it('sanctum has a SPIRIT left column that field mode does not', () => {
+    // #423 — sanctum still has SPIRIT; field no longer has LOOT.
     expect(COLUMN_LABELS.sanctum[0]).toBe('SPIRIT');
-    expect(COLUMN_LABELS.field[0]).toBe('LOOT');
-    expect(COLUMN_LABELS.sanctum[0]).not.toBe(COLUMN_LABELS.field[0]);
+    expect(COLUMN_LABELS.field).not.toContain('SPIRIT');
+    expect(COLUMN_LABELS.field).not.toContain('LOOT');
   });
 
   it('column arrays are read-only (readonly tuple — mutation throws or is noop)', () => {
@@ -459,9 +458,9 @@ describe('#389 publishRingMgmtState + clearRingMgmtState: window hook', () => {
     expect((global as any).window.__ringMgmtState.mode).toBe('field');
   });
 
-  it('publishRingMgmtState field mode sets columns to [LOOT, BENCH, HEALTH, COMBAT]', () => {
+  it('publishRingMgmtState field mode sets columns to [BENCH, HEALTH, COMBAT] (#423)', () => {
     publishRingMgmtState('field', { bench: { n: 1, max: 5 } });
-    expect((global as any).window.__ringMgmtState.columns).toEqual(['LOOT', 'BENCH', 'HEALTH', 'COMBAT']);
+    expect((global as any).window.__ringMgmtState.columns).toEqual(['BENCH', 'HEALTH', 'COMBAT']);
   });
 
   it('publishRingMgmtState sanctum mode sets columns to [SPIRIT, BENCH, HEALTH, COMBAT]', () => {
@@ -1112,11 +1111,12 @@ describe('#396 fusion mode: COLUMN_LABELS and publishRingMgmtState', () => {
     expect(COLUMN_LABELS.fusion[0]).toBe('FUSE');
   });
 
-  it('fusion mode shares the three right-hand columns with sanctum and field', () => {
-    // #396 convergence contract: BENCH/HEALTH/COMBAT identical across all three modes.
+  it('fusion mode shares the three right-hand columns with sanctum indices 1-3', () => {
+    // #396/#423 convergence contract: BENCH/HEALTH/COMBAT identical across all three modes.
     const shared = COLUMN_LABELS.sanctum.slice(1);
     expect(COLUMN_LABELS.fusion.slice(1)).toEqual(shared);
-    expect(COLUMN_LABELS.field.slice(1)).toEqual(shared);
+    // #423 — field IS the three shared columns (no left column).
+    expect(COLUMN_LABELS.field).toEqual(shared);
   });
 
   it('publishRingMgmtState fusion mode sets columns to [FUSE, BENCH, HEALTH, COMBAT]', () => {
@@ -1143,11 +1143,11 @@ describe('#396 fusion mode: COLUMN_LABELS and publishRingMgmtState', () => {
     }
   });
 
-  it('all three modes (sanctum/field/fusion) define exactly 4 columns', () => {
-    // Regression: no mode may drop or add a column silently.
+  it('sanctum and fusion define 4 columns; field defines 3 columns (#423)', () => {
+    // #423 — field mode lost its LOOT left column; WON/DISCARD/ghost now live in BHC.
     expect(COLUMN_LABELS.sanctum).toHaveLength(4);
-    expect(COLUMN_LABELS.field).toHaveLength(4);
     expect(COLUMN_LABELS.fusion).toHaveLength(4);
+    expect(COLUMN_LABELS.field).toHaveLength(3);
   });
 
 });
@@ -2775,5 +2775,383 @@ describe('#421 apiMutate contract: source-scan verification', () => {
       'BattleHandOverlay.send must have a final network-error fallback string',
     ).toContain('Network error — please retry');
   });
+
+});
+
+// ===========================================================================
+// Class 29 — #423 adversarial: WON slot, DISCARD slot, bench ghost, DiscardConfirm
+// ===========================================================================
+
+describe('#423 adversarial: WON slot, DISCARD slot, bench ghost, DiscardConfirm', () => {
+
+  // ── A. Ghost visibility boundary ─────────────────────────────────────────
+
+  it('benchSpareCount at exactly spare_ring_max → ghost cell NOT rendered (benchN >= spareMax)', () => {
+    // #423 adversarial: when the bench is full (benchN === spareMax), the ghost
+    // cell must NOT be added. The BHC build() condition is `if (benchN < spareMax)`.
+    // An off-by-one (<=) would render a ghost even when the bench has zero free slots,
+    // creating a clickable placeholder that can never be filled.
+    // Source-scan: the ghost cell condition must be strictly less-than.
+    const src = readClientSrc('objects/ui/BenchHealthCombat.ts');
+    if (src === null) return;
+    // The guard: `if (benchN < spareMax)` — strictly less than, not <=
+    expect(
+      src,
+      'BenchHealthCombat bench ghost must use `benchN < spareMax` (strict less-than, not <=)',
+    ).toMatch(/if\s*\(\s*benchN\s*<\s*spareMax\s*\)/);
+    // Confirm the inverted form (<=) is NOT present adjacent to the ghost cell code.
+    // Scan the block around the ghost section for the wrong operator.
+    const lines = src.split('\n');
+    const ghostIdx = lines.findIndex((l) => /Bench ghost placeholder/.test(l));
+    expect(ghostIdx, 'ghost cell comment must exist').toBeGreaterThan(-1);
+    const ghostBlock = lines.slice(ghostIdx, ghostIdx + 5).join('\n');
+    expect(
+      ghostBlock,
+      'ghost block must not use benchN <= spareMax (that would render ghost when full)',
+    ).not.toMatch(/benchN\s*<=\s*spareMax/);
+  });
+
+  it('benchSpareCount at spare_ring_max - 1 satisfies benchN < spareMax → ghost IS rendered', () => {
+    // #423 adversarial: at one below capacity, the ghost must appear to indicate
+    // that a ring can be moved there. Verify the predicate used by BHC build()
+    // is satisfied at max-1, using benchSpareCount for an authoritative count.
+    const rings = [ring('r1', { in_carry: 1 }), ring('r2', { in_carry: 1 })];
+    const spareMax = 3; // bench has 1 free slot
+    const benchN = benchSpareCount(rings, emptyLoadout(), null);
+    // benchN (2) < spareMax (3) → ghost IS rendered.
+    expect(benchN < spareMax, 'ghost condition must be true when bench has capacity').toBe(true);
+  });
+
+  it('benchSpareCount at spare_ring_max satisfies benchN >= spareMax → ghost NOT rendered', () => {
+    // #423 adversarial: at full capacity, benchN (3) >= spareMax (3) → no ghost.
+    const rings = [ring('r1', { in_carry: 1 }), ring('r2', { in_carry: 1 }), ring('r3', { in_carry: 1 })];
+    const spareMax = 3;
+    const benchN = benchSpareCount(rings, emptyLoadout(), null);
+    // benchN (3) >= spareMax (3) → ghost NOT rendered.
+    expect(benchN < spareMax, 'ghost condition must be false when bench is full').toBe(false);
+  });
+
+  // ── B. DISCARD slot no-op when nothing selected ───────────────────────────
+
+  it('BattleHandOverlay.ts onDiscardSlotClick is a no-op when swap selection is null (source scan)', () => {
+    // #423 adversarial: clicking DISCARD with no ring selected must NOT open the confirm
+    // dialog and must NOT set __discardConfirmOpen=true. Without the `if (!sel) return`
+    // guard, any DISCARD click would try to open a confirm for undefined/null ring and
+    // crash with a TypeError in DiscardConfirm.open().
+    const src = readClientSrc('objects/BattleHandOverlay.ts');
+    if (src === null) return;
+    const lines = src.split('\n');
+    const discardStart = lines.findIndex((l) => /onDiscardSlotClick\s*:/.test(l));
+    expect(discardStart, 'onDiscardSlotClick handler must exist in BattleHandOverlay').toBeGreaterThan(-1);
+    // The guard `if (!sel) return;` must appear within the first few lines after the handler opens.
+    const handlerBlock = lines.slice(discardStart, discardStart + 6).join('\n');
+    expect(
+      handlerBlock,
+      'onDiscardSlotClick must guard with `if (!sel) return` when nothing is selected',
+    ).toMatch(/if\s*\(\s*!sel\s*\)\s*return/);
+  });
+
+  it('DiscardConfirm.open() is a no-op when called while already open (container guard)', () => {
+    // #423 adversarial: a rapid double-click on the DISCARD slot could call open()
+    // twice. The second call must be a no-op — no new container, no duplicate
+    // keyboard handlers. The guard: `if (this.container) return;`
+    const src = readClientSrc('objects/ui/DiscardConfirm.ts');
+    if (src === null) return;
+    // The guard must appear inside the open() method body. Scan from the open() method
+    // declaration (`) open(` at the class-body level) through the first 10 lines.
+    const lines = src.split('\n');
+    // Find the actual method open( — must be at class indentation level (not in docstring)
+    const openStart = lines.findIndex((l) => /^\s{2}open\s*\(/.test(l));
+    expect(openStart, 'DiscardConfirm.open() method must exist at class level').toBeGreaterThan(-1);
+    // The guard `if (this.container) return;` is within the first 10 lines of the method body.
+    const openBlock = lines.slice(openStart, openStart + 10).join('\n');
+    expect(
+      openBlock,
+      'DiscardConfirm.open() must guard against double-open: if (this.container) return',
+    ).toMatch(/if\s*\(\s*this\.container\s*\)\s*return/);
+  });
+
+  it('DiscardConfirm.dismiss() when not open does not throw (safe no-op)', () => {
+    // #423 adversarial: dismiss() uses optional chaining on `this.keyHandlers?.()` and
+    // `this.container?.destroy(true)`. A dismiss() call before open() (or after a
+    // previous dismiss()) must never throw — both fields are null and `?.` is a no-op.
+    // Source-scan: both private fields must use optional chaining in dismiss().
+    const src = readClientSrc('objects/ui/DiscardConfirm.ts');
+    if (src === null) return;
+    const lines = src.split('\n');
+    const dismissStart = lines.findIndex((l) => /dismiss\s*\(\s*\)\s*:\s*void/.test(l));
+    expect(dismissStart, 'DiscardConfirm.dismiss() must exist').toBeGreaterThan(-1);
+    const dismissBlock = lines.slice(dismissStart, dismissStart + 10).join('\n');
+    // Optional chaining ensures no crash when container/keyHandlers are null.
+    expect(
+      dismissBlock,
+      'dismiss() must use optional chaining on keyHandlers: this.keyHandlers?.()',
+    ).toContain('this.keyHandlers?.()');
+    expect(
+      dismissBlock,
+      'dismiss() must use optional chaining on container: this.container?.destroy(true)',
+    ).toContain('this.container?.destroy(true)');
+  });
+
+  it('DiscardConfirm.dismiss() sets window.__discardConfirmOpen to false on close', () => {
+    // #423 adversarial: E2E tests use `window.__discardConfirmOpen` to determine whether
+    // the confirm dialog is visible. If dismiss() forgets to reset the flag, E2E scripts
+    // that call `waitForFunction(() => !window.__discardConfirmOpen)` would time out
+    // after a successful cancel/confirm action.
+    const src = readClientSrc('objects/ui/DiscardConfirm.ts');
+    if (src === null) return;
+    const lines = src.split('\n');
+    const dismissStart = lines.findIndex((l) => /dismiss\s*\(\s*\)\s*:\s*void/.test(l));
+    expect(dismissStart, 'DiscardConfirm.dismiss() must exist').toBeGreaterThan(-1);
+    const dismissBlock = lines.slice(dismissStart, dismissStart + 10).join('\n');
+    expect(
+      dismissBlock,
+      'dismiss() must set window.__discardConfirmOpen = false so E2E can observe the close',
+    ).toMatch(/__discardConfirmOpen\s*=\s*false/);
+  });
+
+  // ── C. WON slot toggle (deselect on re-click) ────────────────────────────
+
+  it('RingManagementOverlayClass.ts onWonSelect clears swap selection when WON is re-clicked', () => {
+    // #423 adversarial: the WON slot must toggle — clicking a selected WON ring again
+    // deselects it (swap.clear()). Without the toggle check, a second click would
+    // re-select the same ring (no-op swap.select), and the UI would never deselect.
+    // Source-scan: the toggle branch must check both `ringId === pendingId` AND
+    // `source === 'spare'` before calling swap.clear().
+    const src = readClientSrc('objects/ui/RingManagementOverlayClass.ts');
+    if (src === null) return;
+    // The toggle condition: `this.swap.selection?.ringId === pendingId && source === 'spare'`
+    expect(
+      src,
+      'onWonSelect toggle must check swap.selection.ringId === pendingId',
+    ).toMatch(/selection\?\.ringId\s*===\s*pendingId/);
+    expect(
+      src,
+      "onWonSelect toggle must check source === 'spare'",
+    ).toMatch(/source\s*===\s*['"]spare['"]/);
+    // And it must call swap.clear() (not swap.select) on the re-click path.
+    expect(
+      src,
+      'onWonSelect toggle branch must call this.swap.clear() to deselect',
+    ).toContain('this.swap.clear()');
+  });
+
+  it('RingManagementOverlayClass.ts onWonSelect is a no-op when pendingId is null (no ghost click)', () => {
+    // #423 adversarial: when there is no pending ring (pendingId=null), clicking the
+    // WON ghost slot fires onWonSelect but the callback has `if (!pendingId) return;`.
+    // Without this guard, swap.select(null, 'spare') would be called with a null ringId,
+    // corrupting the swap state and breaking subsequent move resolution.
+    const src = readClientSrc('objects/ui/RingManagementOverlayClass.ts');
+    if (src === null) return;
+    const lines = src.split('\n');
+    const wonSelectStart = lines.findIndex((l) => /const onWonSelect\s*=/.test(l));
+    expect(wonSelectStart, 'onWonSelect must exist in RingManagementOverlayClass.ts').toBeGreaterThan(-1);
+    // The guard `if (!pendingId) return;` must appear within the first 5 lines of the lambda.
+    const wonBlock = lines.slice(wonSelectStart, wonSelectStart + 6).join('\n');
+    expect(
+      wonBlock,
+      'onWonSelect must guard: if (!pendingId) return — prevents swap.select(null, spare)',
+    ).toMatch(/if\s*\(\s*!pendingId\s*\)\s*return/);
+  });
+
+  it('RingManagementOverlayClass.ts wonSel is false when swapSource is not "spare" (source scan)', () => {
+    // #423 adversarial: wonSel (yellow stroke on WON card) must be true ONLY when
+    // all three conditions hold: pendingId != null, selectedRingId === pendingId,
+    // AND swapSource === 'spare'. With swapSource === 'a1' (a combat slot selected
+    // and WON card happens to match the selectedRingId), wonSel must still be false.
+    // An incomplete check (omitting the swapSource === 'spare' guard) would render
+    // a yellow stroke on the WON card whenever any ring with the pending id is selected
+    // — even from a combat slot, which has a different stroke convention.
+    const src = readClientSrc('objects/ui/BenchHealthCombat.ts');
+    if (src === null) return;
+    const lines = src.split('\n');
+    const wonSelIdx = lines.findIndex((l) => /wonSel\s*=/.test(l) && !l.trim().startsWith('//'));
+    expect(wonSelIdx, 'wonSel assignment must exist in BenchHealthCombat.ts').toBeGreaterThan(-1);
+    // The full three-condition expression must be present.
+    const wonSelBlock = lines.slice(wonSelIdx, wonSelIdx + 6).join('\n');
+    expect(
+      wonSelBlock,
+      'wonSel must require pendingId !== null',
+    ).toMatch(/pendingId\s*!==\s*null/);
+    expect(
+      wonSelBlock,
+      'wonSel must require selectedRingId === pendingId',
+    ).toMatch(/selectedRingId\s*===\s*pendingId/);
+    expect(
+      wonSelBlock,
+      "wonSel must require swapSource === 'spare'",
+    ).toMatch(/swapSource\s*===\s*['"]spare['"]/);
+  });
+
+  // ── D. DiscardConfirm.ts — structural contracts ───────────────────────────
+
+  it('DiscardConfirm.ts exports class DiscardConfirm', () => {
+    // #423 acceptance criterion: the shared discard-confirm class must be exported
+    // so BattleHandOverlay, CampScene, and BaseBiomeScene can all import it.
+    const src = readClientSrc('objects/ui/DiscardConfirm.ts');
+    if (src === null) return;
+    expect(src, 'DiscardConfirm.ts must export class DiscardConfirm').toMatch(/export class DiscardConfirm/);
+  });
+
+  it('DiscardConfirm.ts open() sets window.__discardConfirmOpen = true', () => {
+    // #423 adversarial: E2E tests detect the open confirm via `__discardConfirmOpen`.
+    // If open() forgets to set the flag, Playwright waitForFunction would time out
+    // and the discard flow would appear broken even when the UI renders correctly.
+    const src = readClientSrc('objects/ui/DiscardConfirm.ts');
+    if (src === null) return;
+    expect(
+      src,
+      'DiscardConfirm.open() must set window.__discardConfirmOpen = true',
+    ).toMatch(/__discardConfirmOpen\s*=\s*true/);
+  });
+
+  it('DiscardConfirm.ts has container_ getter that returns the private container (E2E bridge)', () => {
+    // #423 adversarial: E2E tests access the confirm buttons via bh.discardConfirm
+    // → BattleHandOverlay.discardConfirm → DiscardConfirm.container_. If container_
+    // is absent or returns a different field, Playwright cannot find the Y/N buttons.
+    const src = readClientSrc('objects/ui/DiscardConfirm.ts');
+    if (src === null) return;
+    expect(
+      src,
+      'DiscardConfirm must expose container_ getter for E2E bridge access',
+    ).toContain('get container_');
+  });
+
+  it('DiscardConfirm.ts N-key handler calls dismiss() then onCancel (ring NOT deleted on N)', () => {
+    // #423 adversarial: pressing N must call dismiss() THEN onCancel. If the order were
+    // reversed, dismiss() would destroy the modal WHILE onCancel is still executing —
+    // potentially leaving dangling handlers. More critically: if dismiss() is omitted,
+    // the confirm stays open after the player says No, blocking further UI interaction.
+    // Source-scan: the N-key handler must call dismiss() before onCancel.
+    const src = readClientSrc('objects/ui/DiscardConfirm.ts');
+    if (src === null) return;
+    const lines = src.split('\n');
+    // Find the `const onN` line — implementation: `const onN = (): void => { this.dismiss(); onCancel(); };`
+    // Allow for type annotation: `const onN\s*=\s*\(\s*\)\s*(?::\s*\w+\s*=>|=>)`.
+    const onNIdx = lines.findIndex((l) => /const onN\s*=/.test(l));
+    expect(onNIdx, 'DiscardConfirm must define onN key handler').toBeGreaterThan(-1);
+    const handlerText = lines[onNIdx] ?? '';
+    // dismiss must appear before onCancel in the handler body (both on the same line in the impl)
+    const dismissPos = handlerText.indexOf('this.dismiss()');
+    const cancelPos = handlerText.indexOf('onCancel()');
+    expect(dismissPos, 'onN handler must call this.dismiss()').toBeGreaterThan(-1);
+    expect(cancelPos, 'onN handler must call onCancel()').toBeGreaterThan(-1);
+    expect(
+      dismissPos,
+      `dismiss() (pos ${dismissPos}) must come before onCancel() (pos ${cancelPos}) in onN handler`,
+    ).toBeLessThan(cancelPos);
+  });
+
+  // ── E. BHC structural contracts for #423 slots ───────────────────────────
+
+  it('BenchHealthCombat.ts constructor declares onWonSelect as optional (no-op in modes without WON action)', () => {
+    // #423 adversarial: onWonSelect is optional (`?`) so callers that do not supply it
+    // (e.g. a future minimal-mode wrapper) get a safe no-op via `?.()`. Making it
+    // required would force every caller to supply a potentially noop lambda.
+    const src = readClientSrc('objects/ui/BenchHealthCombat.ts');
+    if (src === null) return;
+    expect(
+      src,
+      'BHC constructor must declare onWonSelect as optional (private readonly onWonSelect?:)',
+    ).toMatch(/private readonly onWonSelect\?:/);
+  });
+
+  it('BenchHealthCombat.ts constructor declares onDiscardClick as optional (modes without discard action)', () => {
+    // #423 adversarial: same reasoning as onWonSelect — optional prevents forced no-op lambdas.
+    const src = readClientSrc('objects/ui/BenchHealthCombat.ts');
+    if (src === null) return;
+    expect(
+      src,
+      'BHC constructor must declare onDiscardClick as optional (private readonly onDiscardClick?:)',
+    ).toMatch(/private readonly onDiscardClick\?:/);
+  });
+
+  it('BenchHealthCombat.ts WON ghost is rendered (non-interactive) when pendingRing is null', () => {
+    // #423 adversarial: when there is no pending ring, the WON slot must show a ghost
+    // rectangle (passive placeholder). If the else-branch were missing, the WON column
+    // would be empty and there would be no visual cue that the slot exists.
+    // Source-scan: the else branch must add a ghost rectangle at the WON slot position.
+    const src = readClientSrc('objects/ui/BenchHealthCombat.ts');
+    if (src === null) return;
+    // Find the WON slot section, then verify the else branch adds a rectangle.
+    const lines = src.split('\n');
+    const wonSectionIdx = lines.findIndex((l) => /WON slot.*#423/.test(l));
+    expect(wonSectionIdx, 'WON slot comment section must exist').toBeGreaterThan(-1);
+    // Use 60 lines to capture the if(pendingRing){...} else {...} block fully.
+    const wonBlock = lines.slice(wonSectionIdx, wonSectionIdx + 60).join('\n');
+    // The else branch: `} else {` followed by a ghost rectangle add.
+    expect(
+      wonBlock,
+      'WON section must have an else branch for the empty ghost placeholder',
+    ).toMatch(/}\s*else\s*\{/);
+    // The ghost uses method chaining: `this.scene.add\n  .rectangle(...)` (multi-line).
+    // Match the presence of `this.scene.add` AND `.rectangle(` anywhere in the block.
+    expect(
+      wonBlock,
+      'WON ghost placeholder must call this.scene.add (start of rectangle chain)',
+    ).toContain('this.scene.add');
+    expect(
+      wonBlock,
+      'WON ghost placeholder must call .rectangle() to create the ghost cell',
+    ).toMatch(/\.rectangle\s*\(/);
+  });
+
+  it('BenchHealthCombat.ts DISCARD slot label text is "DISCARD" (canonical name, case-sensitive)', () => {
+    // #423 adversarial: E2E tests grep for the "DISCARD" label text. A capitalisation
+    // change (e.g. "Discard") would break label-text assertions without a TypeScript error.
+    const src = readClientSrc('objects/ui/BenchHealthCombat.ts');
+    if (src === null) return;
+    expect(
+      src,
+      'BenchHealthCombat must use the label text "DISCARD" (all caps) for the discard slot',
+    ).toContain("'DISCARD'");
+  });
+
+  it('BenchHealthCombat.ts WON label text is "WON ◆" (canonical name includes diamond)', () => {
+    // #423 adversarial: E2E tests for the WON slot header check for "WON ◆". A label
+    // that reads just "WON" (without ◆) would still render but break visual E2E checks.
+    const src = readClientSrc('objects/ui/BenchHealthCombat.ts');
+    if (src === null) return;
+    expect(
+      src,
+      'BenchHealthCombat WON column label must be "WON ◆"',
+    ).toContain("'WON ◆'");
+  });
+
+  // ── F. CampScene and BaseBiomeScene wire DiscardConfirm for new modes ─────
+
+  it('CampScene.ts imports DiscardConfirm for sanctum DISCARD slot support (#423)', () => {
+    // #423 acceptance criterion: CampScene must instantiate DiscardConfirm to handle
+    // the DISCARD slot click in sanctum mode. An import check confirms the wiring is present.
+    const src = readClientSrc('scenes/CampScene.ts');
+    if (src === null) return;
+    expect(
+      src,
+      'CampScene.ts must import DiscardConfirm — needed for sanctum DISCARD slot',
+    ).toContain("import { DiscardConfirm }");
+    expect(
+      src,
+      'CampScene.ts must instantiate DiscardConfirm for sanctumDiscard_',
+    ).toContain('sanctumDiscard_');
+  });
+
+  it('BaseBiomeScene.ts imports DiscardConfirm for shrine-fusion DISCARD slot support (#423)', () => {
+    // #423 acceptance criterion: BaseBiomeScene must provide a discard path in fusion
+    // mode via the BHC DISCARD slot. Without this, shrine-fusion players can never
+    // discard a ring from the overlay.
+    const src = readClientSrc('scenes/BaseBiomeScene.ts');
+    if (src === null) return;
+    expect(
+      src,
+      'BaseBiomeScene.ts must import DiscardConfirm — needed for shrine-fusion DISCARD slot',
+    ).toContain("import { DiscardConfirm }");
+    expect(
+      src,
+      'BaseBiomeScene.ts must instantiate DiscardConfirm for fusionDiscard_',
+    ).toContain('fusionDiscard_');
+  });
+
+  // ── G. Field mode COLUMN_LABELS is 3 columns not 4 (already covered in Class 5) ──
+  // Verified in Class 5 and Class 6 — not duplicated here.
 
 });

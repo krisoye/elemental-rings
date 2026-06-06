@@ -27,6 +27,8 @@ interface RingRecord {
   max_uses: number;
   in_carry: number;
   xp: number;
+  pending: number;
+  heart_slot: number;
 }
 
 /**
@@ -436,7 +438,15 @@ export class MerchantModal {
       this.gold = body.gold ?? this.gold;
       if (body.ring) this.allRings.push(body.ring);
       if (this.goldText) setDomLabelText(this.goldText, `Gold: ${this.gold}`);
-      this.status(`Bought ${ELEMENT_NAMES[elementIndex] ?? element} Ring`, '#aaffaa');
+      // #423 — a purchase with a full bench mints the ring as the pending WON
+      // ring (server routes through the grantRing overflow model).
+      const wentPending = body.ring?.pending === 1;
+      this.status(
+        wentPending
+          ? 'Ring added to your WON slot — bench is full'
+          : `Bought ${ELEMENT_NAMES[elementIndex] ?? element} Ring`,
+        '#aaffaa',
+      );
       this.onHudRefresh();
       this.renderTabContent();
     } catch { this.status('Network error', '#ff8888'); }

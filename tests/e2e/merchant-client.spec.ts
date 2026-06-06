@@ -103,7 +103,7 @@ test('merchant-client: buy ring with insufficient gold returns 400', async () =>
       headers: authJson(token),
       body: JSON.stringify({ item: 'ring', element: 'wind', tier: 1 }),
     });
-    if (!r.ok) break; // carry cap hit
+    if (!r.ok) break; // defensive — #423 bench routing never rejects below spare_ring_max
   }
 
   const { player } = (await (

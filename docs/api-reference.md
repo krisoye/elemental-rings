@@ -441,9 +441,11 @@ Return the fixed merchant inventory with buy and sell prices. Prices are public.
 **Request body:** `{ item: 'food', quantity: number }` | `{ item: 'ring', element: 'fire' | 'water' | 'earth' | 'wind' | 'wood', tier: 1 }`
 **Response (success — food):** `{ gold: number, food_units: number }` — HTTP 200
 **Response (success — ring):** `{ gold: number, ring: Ring }` — HTTP 200
-**Response (error):** 400 — `"quantity must be a positive integer"` | 400 — `"element must be one of: fire, water, earth, wind, wood"` | 400 — `"item must be \"food\" or \"ring\""` | 400 — reason from `merchantBuyFood` or `merchantBuyRing` (insufficient gold, carry cap full)
+**Response (error):** 400 — `"quantity must be a positive integer"` | 400 — `"element must be one of: fire, water, earth, wind, wood"` | 400 — `"item must be \"food\" or \"ring\""` | 400 — reason from `merchantBuyFood` or `merchantBuyRing` (insufficient gold, `"Resolve your pending won ring first"`)
 
 Buy food or a Tier 1 ring from the merchant. `quantity` must be a positive integer for food purchases. `tier` field in the request body is not validated server-side (only `element` is used for ring purchases).
+
+Ring purchases route through the same bench/WON overflow model as duel wins (#423): when the bench (spare grid) has room, the ring enters carry as a normal spare (`pending=0`); when the bench is full, the ring is minted as the pending WON ring (`pending=1` in the returned `ring` row — exactly one overflow allowed) and the player must resolve it via the ring-management overlay. A purchase while a won ring is already pending is rejected with HTTP 400 **before** gold is deducted. The old aggregate carry-cap rejection (`"Carry cap full"`) is gone.
 
 ---
 

@@ -895,3 +895,149 @@ describe('spareCountAfter — overlapping add+remove same ring (#378 Phase 2)', 
     expect(count).toBe(2);
   });
 });
+
+// ---------------------------------------------------------------------------
+// #423 — merchantBuyRing: bench-aware purchase routing
+//
+// Purchases route through the same bench/WON overflow model as duel wins
+// (grantRing): bench has room → normal spare (pending=0); bench full → the ring
+// is minted as the pending WON ring (pending=1, exactly one allowed); bench
+// full AND a pending ring already exists → rejected BEFORE gold is deducted.
+// ---------------------------------------------------------------------------
+
+describe('merchantBuyRing — bench-aware purchase routing (#423)', () => {
+  /** Read the player's current gold directly from the DB. */
+  function getGold(playerId: string): number {
+    const row = dbInstance
+      .prepare('SELECT gold FROM players WHERE id = ?')
+      .get(playerId) as { gold: number } | undefined;
+    return row?.gold ?? -1;
+  }
+
+  test('buy with bench below max → ring has pending=0, in_carry=1', () => {
+    const p = makePlayer(dbInstance);
+    makeRing(dbInstance, p, { inCarry: 1 }); // bench at 1, well below max
+    const res = repo.merchantBuyRing(p, ElementEnum.FIRE);
+    expect(res.ok).toBe(true);
+    if (!res.ok) return;
+    expect(res.ring.in_carry).toBe(1);
+    expect(res.ring.pending).toBe(0);
+    // The new ring is a normal bench spare — not the pending ring.
+    expect(repo.getPendingRingId(p)).toBeNull();
+    expect(repo.getSpareIds(p)).toContain(res.ring.id);
+  });
+
+  test('buy with bench at max, no pending → ring has pending=1 and getPendingRingId returns it', () => {
+    const p = makePlayer(dbInstance);
+    const max = repo.getSpareRingMax(p);
+    for (let i = 0; i < max; i++) makeRing(dbInstance, p, { inCarry: 1 });
+    expect(repo.getSpareIds(p).length).toBe(max);
+    const res = repo.merchantBuyRing(p, ElementEnum.FIRE);
+    expect(res.ok).toBe(true);
+    if (!res.ok) return;
+    // WON-slot overflow: exactly one allowed, mirrors grantRing.
+    expect(res.ring.in_carry).toBe(1);
+    expect(res.ring.pending).toBe(1);
+    expect(repo.getPendingRingId(p)).toBe(res.ring.id);
+    expect(repo.getSpareIds(p).length).toBe(max + 1);
+  });
+
+  test('buy with bench at max AND existing pending ring → rejected with /pending won ring/', () => {
+    const p = makePlayer(dbInstance);
+    const max = repo.getSpareRingMax(p);
+    for (let i = 0; i < max; i++) makeRing(dbInstance, p, { inCarry: 1 });
+    // Existing pending WON ring (duel win) → bench is at max+1 overflow.
+    repo.grantRing(p, ElementEnum.WATER);
+    expect(repo.getPendingRingId(p)).not.toBeNull();
+    const res = repo.merchantBuyRing(p, ElementEnum.FIRE);
+    expect(res.ok).toBe(false);
+    if (res.ok) return;
+    expect(res.reason).toMatch(/pending won ring/i);
+  });
+
+  test('gold is NOT deducted on the already-pending rejection path', () => {
+    const p = makePlayer(dbInstance);
+    const max = repo.getSpareRingMax(p);
+    for (let i = 0; i < max; i++) makeRing(dbInstance, p, { inCarry: 1 });
+    repo.grantRing(p, ElementEnum.WATER);
+    const goldBefore = getGold(p);
+    const res = repo.merchantBuyRing(p, ElementEnum.FIRE);
+    expect(res.ok).toBe(false);
+    expect(getGold(p)).toBe(goldBefore);
+  });
+
+  test('gold IS deducted on the pending-overflow purchase path (price charged exactly once)', () => {
+    // The overflow purchase is a real purchase — gold must move exactly like a
+    // normal buy; only the pending flag differs.
+    const p = makePlayer(dbInstance);
+    const max = repo.getSpareRingMax(p);
+    for (let i = 0; i < max; i++) makeRing(dbInstance, p, { inCarry: 1 });
+    const goldBefore = getGold(p);
+    const res = repo.merchantBuyRing(p, ElementEnum.FIRE);
+    expect(res.ok).toBe(true);
+    if (!res.ok) return;
+    expect(res.gold).toBe(goldBefore - repo.ringBuyPrice(ElementEnum.FIRE));
+    expect(getGold(p)).toBe(goldBefore - repo.ringBuyPrice(ElementEnum.FIRE));
+  });
+
+  test('insufficient gold still rejects before any bench routing', () => {
+    const p = makePlayer(dbInstance);
+    dbInstance.prepare('UPDATE players SET gold = 0 WHERE id = ?').run(p);
+    const res = repo.merchantBuyRing(p, ElementEnum.FIRE);
+    expect(res.ok).toBe(false);
+    if (res.ok) return;
+    expect(res.reason).toMatch(/Insufficient gold/);
+  });
+
+  test('buy with gold exactly equal to price at full bench succeeds with pending=1 (no off-by-one on gold check)', () => {
+    // #423 adversarial: the gold check is `player.gold < price` (strict less-than).
+    // With gold === price, the check must pass — not reject. An accidental `<=` would
+    // refuse this purchase even though the player has enough gold.
+    const p = makePlayer(dbInstance);
+    const max = repo.getSpareRingMax(p);
+    for (let i = 0; i < max; i++) makeRing(dbInstance, p, { inCarry: 1 });
+    const price = repo.ringBuyPrice(ElementEnum.FIRE);
+    dbInstance.prepare('UPDATE players SET gold = ? WHERE id = ?').run(price, p);
+    const res = repo.merchantBuyRing(p, ElementEnum.FIRE);
+    expect(res.ok).toBe(true);
+    if (!res.ok) return;
+    // Bench was full → minted as pending WON ring.
+    expect(res.ring.pending).toBe(1);
+    // Gold is now exactly 0 (charged exactly price, nothing left).
+    expect(res.gold).toBe(0);
+  });
+
+  test('buy with gold one below price rejects with insufficient gold (boundary below price)', () => {
+    // #423 adversarial: the mirror of the above — price-1 gold must be rejected.
+    // Confirms the boundary is at price, not price-1 or price+1.
+    const p = makePlayer(dbInstance);
+    const max = repo.getSpareRingMax(p);
+    for (let i = 0; i < max; i++) makeRing(dbInstance, p, { inCarry: 1 });
+    const price = repo.ringBuyPrice(ElementEnum.FIRE);
+    dbInstance.prepare('UPDATE players SET gold = ? WHERE id = ?').run(price - 1, p);
+    const res = repo.merchantBuyRing(p, ElementEnum.FIRE);
+    expect(res.ok).toBe(false);
+    if (res.ok) return;
+    expect(res.reason).toMatch(/Insufficient gold/);
+  });
+
+  test('buy at full bench with existing pending ring does not insert a new ring row', () => {
+    // #423 adversarial: rejection on the already-pending path must be atomic — no ring
+    // row must be inserted before the rejection fires. A partially-committed transaction
+    // would leak a ring without charging gold and without clearing the pending slot.
+    const p = makePlayer(dbInstance);
+    const max = repo.getSpareRingMax(p);
+    for (let i = 0; i < max; i++) makeRing(dbInstance, p, { inCarry: 1 });
+    repo.grantRing(p, ElementEnum.WATER); // creates the existing pending ring
+    const countBefore = (dbInstance
+      .prepare('SELECT COUNT(*) as n FROM rings WHERE owner_id = ?')
+      .get(p) as { n: number }).n;
+    const res = repo.merchantBuyRing(p, ElementEnum.FIRE);
+    expect(res.ok).toBe(false);
+    const countAfter = (dbInstance
+      .prepare('SELECT COUNT(*) as n FROM rings WHERE owner_id = ?')
+      .get(p) as { n: number }).n;
+    // Rejection must be a true no-op: ring count unchanged.
+    expect(countAfter).toBe(countBefore);
+  });
+});
