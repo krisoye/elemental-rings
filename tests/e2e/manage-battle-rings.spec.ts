@@ -656,10 +656,10 @@ test('manage-battle-rings: clicking DISCARD with nothing selected does not open 
   await ctx.close();
 });
 
-// ── #381/#394/#423 E2E — column X-centres: BENCH(~474) | HEALTH(659) | COMBAT(759/837) ──
-// #423 removes the LOOT left column; WON(837,193) and DISCARD(659,291) now live in BHC.
+// ── #381/#394/#423 E2E — column X-centres: BENCH(~492) | HEALTH(660) | COMBAT(759/837) ──
+// #423 removes the LOOT left column; WON(837,193) and DISCARD(660,291) now live in BHC.
 // BENCH header must be leftmost visible column label.
-test('manage-battle-rings (#381/#394/#423): column X-centres — BENCH leftmost, HEALTH(659), COMBAT(759/837), WON(837,193), DISCARD(659,291)', async ({ browser }) => {
+test('manage-battle-rings (#381/#394/#423): column X-centres — BENCH leftmost, HEALTH(660), COMBAT(759/837), WON(837,193), DISCARD(660,291)', async ({ browser }) => {
   const ctx = await browser.newContext();
   await seedAuthToken(ctx);
   const page = await ctx.newPage();

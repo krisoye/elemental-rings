@@ -149,8 +149,6 @@ test('reliquary (#389): opens with converged columns and SPIRIT + BENCH counters
 
   // #426 — spirit-counter and bench-counter canvas texts removed; read from the
   // structure reporter and DOM labels instead.
-  expect(state.counters.spirit.n).toBe(reliquaryCount);
-  expect(state.counters.spirit.max).toBe(me.player.reliquaryCap);
   const spiritDomLabel = await page.evaluate(() => {
     for (const n of Array.from(document.querySelectorAll('.er-dom-label'))) {
       const el = n as HTMLElement;
