@@ -228,17 +228,17 @@ test('manage-battle-rings (#389/#423): __ringMgmtState reports field columns, Be
   expect(state.counters.bench.n).toBe(expectedBench);
   expect(state.counters.bench.max).toBe(me.player.spare_ring_max);
 
-  // The player-facing column label reads "Bench" (a DOM label), not "Spare(s)".
+  // The player-facing column label reads "BENCH:" (a DOM label), not "Spare(s)".
   const benchLabel = await page.evaluate(() => {
     let found: string | null = null;
     document.querySelectorAll('.er-dom-label').forEach((n) => {
       const txt = (n as HTMLElement).textContent ?? '';
-      if (txt.startsWith('Bench:')) found = txt;
+      if (txt.startsWith('BENCH:')) found = txt;
     });
     return found;
   });
   expect(benchLabel).toBeTruthy();
-  expect(benchLabel!.startsWith('Bench:')).toBe(true);
+  expect(benchLabel!.startsWith('BENCH:')).toBe(true);
 
   await ctx.close();
 });
@@ -517,9 +517,9 @@ test('manage-battle-rings (#381): 4×2 cluster renders and the 3-col spare Inven
     walk(modal);
     return out;
   });
-  // #389 — STATUS at the COMBAT left column x=759; HEALTH HP at x=659.
+  // #389 — STATUS at the COMBAT left column x=759; HEALTH HP at x=660 (#426).
   expect(Math.abs(labelXs.STATUS - 759)).toBeLessThanOrEqual(1);
-  expect(labelXs.HP).toBe(659);
+  expect(labelXs.HP).toBe(660);
 
   // The spare InventoryGrid shows the 6 seeded spares: 2 full rows of 3.
   // RINGWALL_VISIBLE_ROWS=3 so all 6 are visible without scrolling.
@@ -656,10 +656,10 @@ test('manage-battle-rings: clicking DISCARD with nothing selected does not open 
   await ctx.close();
 });
 
-// ── #381/#394/#423 E2E — column X-centres: BENCH(~474) | HEALTH(659) | COMBAT(759/837) ──
-// #423 removes the LOOT left column; WON(837,193) and DISCARD(659,291) now live in BHC.
+// ── #381/#394/#423 E2E — column X-centres: BENCH(~492) | HEALTH(660) | COMBAT(759/837) ──
+// #423 removes the LOOT left column; WON(837,193) and DISCARD(660,291) now live in BHC.
 // BENCH header must be leftmost visible column label.
-test('manage-battle-rings (#381/#394/#423): column X-centres — BENCH leftmost, HEALTH(659), COMBAT(759/837), WON(837,193), DISCARD(659,291)', async ({ browser }) => {
+test('manage-battle-rings (#381/#394/#423): column X-centres — BENCH leftmost, HEALTH(660), COMBAT(759/837), WON(837,193), DISCARD(660,291)', async ({ browser }) => {
   const ctx = await browser.newContext();
   await seedAuthToken(ctx);
   const page = await ctx.newPage();
@@ -690,7 +690,7 @@ test('manage-battle-rings (#381/#394/#423): column X-centres — BENCH leftmost,
       // WON ◆ is now in BHC at (837, 193).
       if (text === 'WON ◆') result.WON = logicalX;
       // Bench header label.
-      if (text?.startsWith('Bench:')) result.BENCH_HEADER = logicalX;
+      if (text?.startsWith('BENCH:')) result.BENCH_HEADER = logicalX;
     });
 
     // ♥ HP stays on canvas.
@@ -708,20 +708,20 @@ test('manage-battle-rings (#381/#394/#423): column X-centres — BENCH leftmost,
     return result;
   });
 
-  // #423 — BENCH header is the leftmost column, centred over the 3-col grid: x≈474.
-  expect(positions.BENCH_HEADER, 'Bench: header DOM label not found').toBeDefined();
-  expect(Math.abs(positions.BENCH_HEADER - 474)).toBeLessThanOrEqual(2);
-  // HEALTH (HP) at x=659. Canvas exact.
-  expect(positions.HP).toBe(659);
+  // #426 — BENCH header centred over the 3-col grid: x≈492 (BENCH_GRID_X 388 + 104).
+  expect(positions.BENCH_HEADER, 'BENCH: header DOM label not found').toBeDefined();
+  expect(Math.abs(positions.BENCH_HEADER - 492)).toBeLessThanOrEqual(2);
+  // HEALTH (HP) at x=660 (#426). Canvas exact.
+  expect(positions.HP).toBe(660);
   // COMBAT cluster: STATUS left-aligned above A1/D1 at x=759; A2/D2 at x=837.
   expect(Math.abs(positions.STATUS - 759)).toBeLessThanOrEqual(1);
   expect(Math.abs(positions.A1 - 759)).toBeLessThanOrEqual(1);
   expect(Math.abs(positions.A2 - 837)).toBeLessThanOrEqual(1);
   expect(Math.abs(positions.D1 - 759)).toBeLessThanOrEqual(1);
   expect(Math.abs(positions.D2 - 837)).toBeLessThanOrEqual(1);
-  // #423 — DISCARD slot label is in BHC HEALTH column at x≈659.
+  // #426 — DISCARD slot label is in BHC HEALTH column at x≈660.
   expect(positions.DISCARD, 'DISCARD DOM label not found').toBeDefined();
-  expect(Math.abs(positions.DISCARD - 659)).toBeLessThanOrEqual(2);
+  expect(Math.abs(positions.DISCARD - 660)).toBeLessThanOrEqual(2);
   // #423 — WON label is in BHC at x≈837 (right of STATUS).
   expect(positions.WON, 'WON ◆ DOM label not found').toBeDefined();
   expect(Math.abs(positions.WON - 837)).toBeLessThanOrEqual(2);
@@ -2009,19 +2009,19 @@ test('manage-battle-rings (#381 impl): spare count label reflects post-exclusion
   if (pendingId) slottedSet.add(pendingId);
   const expectedUsed = me.rings.filter((r) => r.in_carry === 1 && !slottedSet.has(r.id)).length;
   const expectedMax = me.player.spare_ring_max;
-  // #389 — player-facing label is now "Bench:" (code/DB/API keep `spare_*`).
-  const expectedLabel = `Bench: ${expectedUsed} / ${expectedMax}`;
+  // #426 — player-facing label is now "BENCH:" (uppercase; code/DB/API keep `spare_*`).
+  const expectedLabel = `BENCH: ${expectedUsed} / ${expectedMax}`;
 
   const page = await ctx.newPage();
   await loadForest(page);
   await openBattleHand(page);
 
-  // The "Bench: N / max" label is a DOM label (not canvas text).
+  // The "BENCH: N / max" label is a DOM label (not canvas text).
   const spareLabel = await page.evaluate(() => {
     let found: string | null = null;
     document.querySelectorAll('.er-dom-label').forEach((n) => {
       const txt = (n as HTMLElement).textContent ?? '';
-      if (txt.startsWith('Bench:')) found = txt;
+      if (txt.startsWith('BENCH:')) found = txt;
     });
     return found;
   });
@@ -2252,10 +2252,10 @@ async function canvasCoords(
 // BenchHealthCombat.ts). #423: WON moved to (837,193) in BHC; DISCARD to (659,291).
 const WON_CARD = { x: 837, y: 193 } as const;          // COL_COMBAT_RIGHT_X, ROW_STATUS_Y (#423)
 const A1_CARD = { x: 759, y: 291 } as const;           // COL_COMBAT_LEFT_X, ROW_COMBAT0_Y
-const HEALTH_CARD = { x: 659, y: 193 } as const;       // COL_HEALTH_X, ROW_STATUS_Y
-const DISCARD_CARD = { x: 659, y: 291 } as const;      // COL_HEALTH_X, ROW_COMBAT0_Y (#423)
-// First bench cell: grid origin (370,148) + local card center (CARD_W/2=32, CARD_H/2=44).
-const BENCH_CELL0 = { x: 402, y: 192 } as const;
+const HEALTH_CARD = { x: 660, y: 193 } as const;       // COL_HEALTH_X 660 (#426), ROW_STATUS_Y
+const DISCARD_CARD = { x: 660, y: 291 } as const;      // COL_HEALTH_X 660 (#426), ROW_COMBAT0_Y
+// First bench cell: grid origin (388 after #426, 148) + local card center (CARD_W/2=32, CARD_H/2=44).
+const BENCH_CELL0 = { x: 420, y: 192 } as const;
 
 /** Real-pointer click at a logical canvas coordinate. */
 async function clickCanvas(page: Page, pt: { x: number; y: number }): Promise<void> {

@@ -142,9 +142,17 @@ test('heart: the left column label reads SPIRIT (was RELIQUARY)', async ({ brows
   await loadSanctum(page);
   await openReliquary(page);
 
-  const label = await campTextByName(page, 'reliquary-label');
-  expect(label).toContain('SPIRIT');
-  expect(label).not.toContain('RELIQUARY');
+  // #426 — reliquary-label canvas text removed; SPIRIT header is now a DOM label.
+  const spiritLabel = await page.evaluate(() => {
+    for (const n of Array.from(document.querySelectorAll('.er-dom-label'))) {
+      const el = n as HTMLElement;
+      if (el.dataset['label'] === 'spirit-header') return el.textContent ?? null;
+    }
+    return null;
+  });
+  expect(spiritLabel).not.toBeNull();
+  expect(spiritLabel).toContain('SPIRIT');
+  expect(spiritLabel).not.toContain('RELIQUARY');
   await ctx.close();
 });
 
@@ -162,12 +170,19 @@ test('heart: four column headers render and ATTACK/DEFENSE labels are gone', asy
   await openReliquary(page);
 
   // All four column headers present, left → right.
-  expect(await campTextByName(page, 'reliquary-label')).toContain('SPIRIT');
-  // #389 — middle column is BENCH (player-facing), not the old SPARES.
-  expect(await campTextByName(page, 'spare-label')).toContain('BENCH');
-  expect(await campTextByName(page, 'spare-label')).not.toContain('SPARES');
-  expect(await campTextByName(page, 'health-label')).toBe('HEALTH');
-  expect(await campTextByName(page, 'battle-hand-label')).toBe('COMBAT');
+  // #426 — SPIRIT header is now a DOM label; BENCH header was already a DOM label.
+  const domLabelTexts = await page.evaluate(() =>
+    Array.from(document.querySelectorAll('.er-dom-label')).map(
+      (n) => (n as HTMLElement).textContent ?? '',
+    ),
+  );
+  expect(domLabelTexts.some((t) => t.startsWith('SPIRIT:'))).toBe(true);
+  // #426 — BENCH header is uppercase BENCH: (not the old SPARES).
+  const benchHeaderTxt = domLabelTexts.find((t) => /^BENCH:/.test(t));
+  expect(benchHeaderTxt).toBeTruthy();
+  expect(benchHeaderTxt).not.toContain('SPARES');
+  expect(domLabelTexts).toContain('HEALTH');
+  expect(domLabelTexts).toContain('COMBAT');
 
   // The retired ATTACK / DEFENSE row labels no longer exist anywhere in the modal.
   expect(await campTextByName(page, 'attack-row-label')).toBeNull();

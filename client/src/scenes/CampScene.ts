@@ -25,7 +25,7 @@ import { FOREST_SCREENS } from '../../../shared/world/forest';
 import { restAtCamp, summonSanctum as summonSanctumHelper } from '../net/campActions';
 import { API_BASE, apiClient, apiFetch, fetchMe, getToken } from '../net/api';
 import { DualCameraScene } from './DualCameraScene';
-import { crispCanvasText } from '../objects/ui/DomLabel';
+import { addDomLabel, crispCanvasText, setDomLabelText } from '../objects/ui/DomLabel';
 
 // #389 — the four combat-hand loadout slots (formerly the LoadoutPanel's type).
 // The Thumb (STATUS) slot is tracked separately as `'thumb' | LoadoutSlot`.
@@ -52,7 +52,6 @@ const MODAL_LEFT = CANVAS_W / 2 - MODAL_W / 2; // 132
 const CONTENT_LEFT = MODAL_LEFT + 20; // 152
 const CONTENT_RIGHT = CANVAS_W / 2 + MODAL_W / 2 - 20; // 872
 const COL_RELIQUARY_X = CONTENT_LEFT; // 152
-const COL_SPARE_X = 474;              // BENCH column header x — BENCH_GRID_X(370) + 104 (midpoint of 3-col grid)
 // COMBAT cluster left edge, right-aligned to CONTENT_RIGHT (2-col width=148).
 const BATTLEHAND_RING_X = CONTENT_RIGHT - 148; // 724 — COMBAT column left edge
 
@@ -177,13 +176,11 @@ export class CampScene extends DualCameraScene {
    */
   private thumbTooltipDetach: (() => void) | null = null;
   /**
-   * #389 — the two converged column counters that replace the removed
-   * `loadoutBadge` (`LOADOUT (N/cap)`): SPIRIT `reliquaryCount/reliquaryCap` and
-   * BENCH `benchSpareCount/spare_ring_max`. Crisp column-header labels, overlay-
-   * container-scoped (the container destroy reclaims them on close).
+   * #426 — the DOM SPIRIT header label that replaces the old canvas `reliquary-label`
+   * + `spirit-counter` pair. NOT a child of the overlay container — tracked manually
+   * and destroyed in onBeforeDestroy / nulled in onClose (same pattern as BHC domLabels).
    */
-  private spiritCounter: Phaser.GameObjects.Text | null = null;
-  private benchCounter: Phaser.GameObjects.Text | null = null;
+  private spiritHeader: Phaser.GameObjects.DOMElement | null = null;
   /**
    * #389 — the COMBAT cluster cards (STATUS thumb + A1/A2/D1/D2), built fresh per
    * overlay open and added to the overlay container (reclaimed on close), replacing
@@ -791,45 +788,36 @@ export class CampScene extends DualCameraScene {
             .setScrollFactor(0),
         );
 
-        // SPIRIT ↓ column label — clicking with a carried ring selected drops it
-        // back to the Reliquary/spirit pool.
-        const reliquaryLabel = crispCanvasText(
-          this.add
-            .text(COL_RELIQUARY_X, 128, 'SPIRIT  ↓', { fontSize: '13px', color: '#cccccc' })
-            .setScrollFactor(0).setName('reliquary-label')
-            .setInteractive({ useHandCursor: true })
-            .on('pointerdown', () => void this.onReliquaryDropClicked()),
-        );
-        c.add(reliquaryLabel);
+        // SPIRIT DOM header — crisp, center-anchored at the grid midpoint (same row/size/
+        // anchor formula as BHC bench header). NOT added to the container — tracked in
+        // this.spiritHeader and destroyed manually in onBeforeDestroy. (#426)
+        {
+          const campS = window.__campState;
+          const reliqCount: number = campS?.reliquaryCount ??
+            (campS?.rings ?? []).filter(
+              (r: RingData) => r.in_carry === 0 && !(r as { escrowed?: number }).escrowed && r.heart_slot !== 1,
+            ).length;
+          const reliqCap: number = campS?.reliquaryCap ?? 0;
+          const full = reliqCount >= reliqCap;
+          this.spiritHeader = addDomLabel(
+            this,
+            COL_RELIQUARY_X + 104,
+            128,
+            `SPIRIT: ${reliqCount} / ${reliqCap}`,
+            { fontPx: 12, color: full ? '#ff5555' : '#ffdd66', align: 'center', id: 'spirit-header' },
+          );
+        }
 
-        // SPIRIT n/max counter, right of the label.
-        this.spiritCounter = crispCanvasText(
-          this.add
-            .text(COL_RELIQUARY_X + 90, 128, '', { fontSize: '12px', color: '#ffdd66' })
-            .setScrollFactor(0).setName('spirit-counter'),
-        );
-        c.add(this.spiritCounter);
-
-        // BENCH ↓ drop-label (middle column, interactive).
-        // #395 — BENCH column is at COL_SPARE_X so __campLoadoutScroll target matches
-        // the legacy E2E hook address (loadoutGrid → BHC bench grid).
-        const spareLabel = crispCanvasText(
-          this.add
-            .text(COL_SPARE_X, 128, 'BENCH  ↓', { fontSize: '13px', color: '#88ccaa' })
-            .setScrollFactor(0).setName('spare-label')
-            .setInteractive({ useHandCursor: true })
-            .on('pointerdown', () => void this.onSpareDropClicked()),
-        );
-        c.add(spareLabel);
-
-        // BENCH n/max counter, right of the BENCH label. Mirrors spiritCounter but
-        // for the bench pool. Named 'bench-counter' so campTextByName can read it.
-        this.benchCounter = crispCanvasText(
-          this.add
-            .text(COL_SPARE_X + 90, 128, '', { fontSize: '12px', color: '#aaffaa' })
-            .setScrollFactor(0).setName('bench-counter'),
-        );
-        c.add(this.benchCounter);
+        // Invisible canvas hit-rect that forwards pointer events to onReliquaryDropClicked.
+        // Required because DOM labels are pointer-events:none. Added to the container
+        // AFTER the deselect zone so it wins input. (#426)
+        const spiritDropHit = this.add
+          .rectangle(COL_RELIQUARY_X + 104, 128, 208, 18, 0x000000, 0.001)
+          .setScrollFactor(0)
+          .setName('spirit-drop-hit')
+          .setInteractive({ useHandCursor: true })
+          .on('pointerdown', () => void this.onReliquaryDropClicked());
+        c.add(spiritDropHit);
 
         // Adopt the reusable SPIRIT (Reliquary) grid. The BENCH grid is created
         // fresh by BenchHealthCombat; loadoutGrid is no longer adopted here.
@@ -956,6 +944,10 @@ export class CampScene extends DualCameraScene {
         // Clear the discard confirm dialog if open.
         this.sanctumDiscard_?.dismiss();
         this.sanctumDiscard_ = null;
+        // #426 — destroy the DOM SPIRIT header (not a container child; must be
+        // destroyed before the container to avoid a dangling DOM node).
+        this.spiritHeader?.destroy();
+        this.spiritHeader = null;
       },
     });
 
@@ -988,8 +980,7 @@ export class CampScene extends DualCameraScene {
       this.reliquaryHeaderCenter = null;
       this.reliquaryHeaderRight = null;
       this.heartCard = null;
-      this.spiritCounter = null;
-      this.benchCounter = null;
+      this.spiritHeader = null; // #426 — already destroyed in onBeforeDestroy; null the ref
       this.combatCards.clear();
       this.statusLockLabel = null;
       // Clear swap manager and E2E hooks.
@@ -1264,10 +1255,8 @@ export class CampScene extends DualCameraScene {
       this.renderHeartCard();
       this.renderCombatCluster();
     }
-    // #389 — paint the converged SPIRIT + BENCH counters and publish the structure
-    // reporter (replacing the removed LOADOUT badge). Both read /api/me-computed
-    // fields mirrored into __campState; the Bench count excludes the pending WON
-    // ring exactly like the lock predicate.
+    // #426 — update the DOM SPIRIT header text + color; publish the structure reporter.
+    // Bench count excludes the pending WON ring (same as lock predicate).
     if (s) {
       const reliquaryCount =
         s.reliquaryCount ??
@@ -1276,15 +1265,9 @@ export class CampScene extends DualCameraScene {
       const pendingId = (s.player?.pending_ring_id as string | null | undefined) ?? null;
       const benchN = benchSpareCount(s.rings as RingData[], s.loadout, pendingId);
       const benchMax = s.spare_ring_max ?? 0;
-      if (this.spiritCounter) {
-        this.spiritCounter
-          .setText(`${reliquaryCount}/${reliquaryCap}`)
-          .setColor(reliquaryCount >= reliquaryCap ? '#ff5555' : '#ffdd66');
-      }
-      if (this.benchCounter) {
-        this.benchCounter
-          .setText(`${benchN}/${benchMax}`)
-          .setColor(benchN >= benchMax ? '#ff5555' : '#aaffaa');
+      if (this.spiritHeader) {
+        setDomLabelText(this.spiritHeader, `SPIRIT: ${reliquaryCount} / ${reliquaryCap}`);
+        (this.spiritHeader.node as HTMLElement).style.color = reliquaryCount >= reliquaryCap ? '#ff5555' : '#ffdd66';
       }
       publishRingMgmtState(
         'sanctum',
@@ -1343,10 +1326,9 @@ export class CampScene extends DualCameraScene {
       ).length;
     const reliquaryCap: number = s.reliquaryCap ?? 20;
     window.__reliquaryFull = reliquaryCount >= reliquaryCap;
-    // Update the RELIQUARY drop-label color to signal when the Reliquary is full.
-    if (this.overlay) {
-      const lbl = this.overlay.getByName('reliquary-label') as Phaser.GameObjects.Text | null;
-      if (lbl) lbl.setColor(window.__reliquaryFull ? '#ff5555' : '#cccccc');
+    // #426 — update the DOM SPIRIT header color to signal when the Reliquary is full.
+    if (this.spiritHeader) {
+      (this.spiritHeader.node as HTMLElement).style.color = window.__reliquaryFull ? '#ff5555' : '#ffdd66';
     }
   }
 
@@ -1530,17 +1512,6 @@ export class CampScene extends DualCameraScene {
     const sel = this.swapManager?.selection ?? null;
     if (!sel || sel.source === 'reliquary') return;
     await this.swapManager!.moveTo('reliquary');
-  }
-
-  /**
-   * The SPARE label was clicked: drop the selected ring into the Spare pool (carry
-   * it but unassign from any battle slot). A Spare selection or no selection is a
-   * no-op.
-   */
-  private async onSpareDropClicked(): Promise<void> {
-    const sel = this.swapManager?.selection ?? null;
-    if (!sel || sel.source === 'spare') return;
-    await this.swapManager!.moveTo('spare');
   }
 
   /**

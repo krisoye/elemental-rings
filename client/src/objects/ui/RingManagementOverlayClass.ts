@@ -6,7 +6,7 @@ import { RingCard } from './RingCard';
 import { CLOSE_GLYPH } from './ModalShell';
 import { SlotSwapManager, type SwapSlot } from './SlotSwapManager';
 import { addDomLabel, crispCanvasText } from './DomLabel';
-import { BenchHealthCombat } from './BenchHealthCombat';
+import { BenchHealthCombat, COL_HEALTH_X } from './BenchHealthCombat';
 import type { BenchHealthCombatMe } from './BenchHealthCombat';
 import {
   isFusion,
@@ -425,21 +425,20 @@ export class RingManagementOverlay {
     // ♥ cur/max label with dark backing rect — added as direct children of the
     // modal container (not inside BenchHealthCombat) so the flat modal.getAll()
     // scan used by E2E can see the [hpBg, hpLbl] pair at adjacent positions.
-    const HP_X = 659;
     const HP_Y = 159; // ROW_STATUS_Y(193) - LABEL_ABOVE_Y_OFFSET(34)
     const heartRing = this.heartRing;
     const hpText = heartRing
       ? `♥ ${heartRing.current_uses}/${heartRing.max_uses}`
       : '♥ 0/0';
     const hpLbl = this.scene.add
-      .text(HP_X, HP_Y, hpText, {
+      .text(COL_HEALTH_X, HP_Y, hpText, {
         fontSize: '11px',
         color: heartRing ? '#cccccc' : '#777777',
       })
       .setScrollFactor(0)
       .setOrigin(0.5);
     const hpBg = this.scene.add
-      .rectangle(HP_X, HP_Y, hpLbl.width + 6, hpLbl.height + 2, 0x000000, 0.55)
+      .rectangle(COL_HEALTH_X, HP_Y, hpLbl.width + 6, hpLbl.height + 2, 0x000000, 0.55)
       .setScrollFactor(0)
       .setOrigin(0.5);
     c.add([hpBg, hpLbl]);
@@ -488,8 +487,8 @@ export class RingManagementOverlay {
 
   /**
    * Geometry for the FUSE left column. Modal left edge: CANVAS_W/2 - MODAL_W/2 = 132.
-   * BENCH grid starts at x=370. Two compact 50×70 parent cards fit side-by-side at ~195.
-   * R1 center=165, R2 center=230, column centre≈197 (well left of BENCH at 370).
+   * BENCH grid starts at x=388. Two compact 50×70 parent cards fit side-by-side at ~195.
+   * R1 center=165, R2 center=230, column centre≈197 (well left of BENCH at 388).
    */
   private static readonly FUSE_R1_X = 165;
   private static readonly FUSE_R2_X = 230;

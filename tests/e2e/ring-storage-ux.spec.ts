@@ -165,27 +165,25 @@ test('reliquary-redesign: converged column labels + live stats header are presen
     const byName = (n: string) => all.find((o: any) => o.name === n);
     // #423 — BENCH/HEALTH/COMBAT headers moved into BenchHealthCombat as crisp
     // DOM labels (.er-dom-label nodes), no longer Phaser Text objects in the
-    // scene graph. Read them from the DOM; SPIRIT + the live header stay
-    // CampScene-owned Phaser Texts.
+    // scene graph. Read them from the DOM; SPIRIT (#426) + the live header stay
+    // DOM labels / CampScene-owned.
     const domTexts = Array.from(document.querySelectorAll('.er-dom-label')).map(
       (n) => n.textContent ?? '',
     );
     return {
       headerLeft: (byName('reliquary-header-left') as any)?.text ?? null,
-      reliquary: (byName('reliquary-label') as any)?.text ?? null,
       domTexts,
       hasFuse: !!all.find((o: any) => o.type === 'Text' && o.text === '[Fuse Rings]'),
     };
   });
-  // #302/#347 — left column is SPIRIT; COMBAT replaces BATTLE HAND; HEALTH present.
-  expect(labels.reliquary).toContain('SPIRIT');
+  // #302/#347 — left column is SPIRIT (DOM label after #426); COMBAT replaces BATTLE HAND; HEALTH present.
+  expect(labels.domTexts.some((t) => t.startsWith('SPIRIT:'))).toBe(true);
   expect(labels.domTexts).toContain('COMBAT');
   expect(labels.domTexts).toContain('HEALTH');
-  // #389 — the middle column header is the live bench counter "Bench: n / max"
-  // (player-facing label; the canonical mechanic name stays "Spare grid").
+  // #426 — the middle column header is the live bench counter "BENCH: n / max" (uppercase).
   expect(
-    labels.domTexts.some((t) => /^Bench: \d+ \/ \d+$/.test(t)),
-    `a "Bench: n / max" DOM label must be present (got: ${labels.domTexts.join(' | ')})`,
+    labels.domTexts.some((t) => /^BENCH: \d+ \/ \d+$/.test(t)),
+    `a "BENCH: n / max" DOM label must be present (got: ${labels.domTexts.join(' | ')})`,
   ).toBe(true);
   expect(labels.hasFuse).toBe(false); // Fuse Rings moved out of this overlay
   // The live header's left segment carries the spirit reading.
