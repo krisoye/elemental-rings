@@ -31,13 +31,14 @@ function makeRing(
     heartSlot = 0,
     element = ElementEnum.FIRE,
     pending = 0,
-  }: { inCarry?: number; heartSlot?: number; element?: number; pending?: number } = {},
+    escrowed = 0,
+  }: { inCarry?: number; heartSlot?: number; element?: number; pending?: number; escrowed?: number } = {},
 ): string {
   const id = `ring_${Math.random().toString(36).slice(2)}`;
   db.prepare(
     `INSERT INTO rings (id, owner_id, element, tier, max_uses, current_uses, xp, in_carry, escrowed, heart_slot, pending)
-     VALUES (?, ?, ?, 0, 3, 3, 0, ?, 0, ?, ?)`,
-  ).run(id, playerId, element, inCarry, heartSlot, pending);
+     VALUES (?, ?, ?, 0, 3, 3, 0, ?, ?, ?, ?)`,
+  ).run(id, playerId, element, inCarry, escrowed, heartSlot, pending);
   return id;
 }
 
@@ -1040,4 +1041,160 @@ describe('merchantBuyRing — bench-aware purchase routing (#423)', () => {
     // Rejection must be a true no-op: ring count unchanged.
     expect(countAfter).toBe(countBefore);
   });
+});
+
+// ---------------------------------------------------------------------------
+// #424 — swapRings: position matrix coverage
+// ---------------------------------------------------------------------------
+
+describe('#424 swapRings — position matrix', () => {
+
+  test('spare ↔ reliquary: in_carry flags exchange', () => {
+    const p = makePlayer(dbInstance);
+    const spareId = makeRing(dbInstance, p, { inCarry: 1 });
+    const reliqId = makeRing(dbInstance, p, { inCarry: 0 });
+    repo.swapRings(p, spareId, reliqId);
+    const spareRow = dbInstance.prepare('SELECT in_carry FROM rings WHERE id = ?').get(spareId) as { in_carry: number };
+    const reliqRow = dbInstance.prepare('SELECT in_carry FROM rings WHERE id = ?').get(reliqId) as { in_carry: number };
+    expect(spareRow.in_carry).toBe(0);
+    expect(reliqRow.in_carry).toBe(1);
+  });
+
+  test('slot ↔ spare: loadout slot updates, both remain carried', () => {
+    const p = makePlayer(dbInstance);
+    const slotRing = makeRing(dbInstance, p, { inCarry: 1 });
+    assignSlot(dbInstance, p, 'a1', slotRing);
+    const spareRing = makeRing(dbInstance, p, { inCarry: 1 });
+    repo.swapRings(p, slotRing, spareRing);
+    const ld = dbInstance.prepare('SELECT a1 FROM loadout WHERE player_id = ?').get(p) as { a1: string | null };
+    expect(ld.a1).toBe(spareRing);
+    const formerSlot = dbInstance.prepare('SELECT in_carry FROM rings WHERE id = ?').get(slotRing) as { in_carry: number };
+    expect(formerSlot.in_carry).toBe(1);
+  });
+
+  test('slot ↔ reliquary: slot takes reliquary ring, former slot ring restores', () => {
+    const p = makePlayer(dbInstance);
+    const slotRing = makeRing(dbInstance, p, { inCarry: 1 });
+    assignSlot(dbInstance, p, 'a2', slotRing);
+    const reliqRing = makeRing(dbInstance, p, { inCarry: 0 });
+    repo.swapRings(p, slotRing, reliqRing);
+    const ld = dbInstance.prepare('SELECT a2 FROM loadout WHERE player_id = ?').get(p) as { a2: string | null };
+    expect(ld.a2).toBe(reliqRing);
+    const formerSlot = dbInstance.prepare('SELECT in_carry, heart_slot FROM rings WHERE id = ?').get(slotRing) as { in_carry: number; heart_slot: number };
+    expect(formerSlot.in_carry).toBe(0);
+    expect(formerSlot.heart_slot).toBe(0);
+    const newSlot = dbInstance.prepare('SELECT in_carry FROM rings WHERE id = ?').get(reliqRing) as { in_carry: number };
+    expect(newSlot.in_carry).toBe(1);
+  });
+
+  test('slot ↔ slot: loadout columns exchange, carry unchanged', () => {
+    const p = makePlayer(dbInstance);
+    const r1 = makeRing(dbInstance, p, { inCarry: 1 });
+    const r2 = makeRing(dbInstance, p, { inCarry: 1 });
+    assignSlot(dbInstance, p, 'a1', r1);
+    assignSlot(dbInstance, p, 'd1', r2);
+    repo.swapRings(p, r1, r2);
+    const ld = dbInstance.prepare('SELECT a1, d1 FROM loadout WHERE player_id = ?').get(p) as { a1: string | null; d1: string | null };
+    expect(ld.a1).toBe(r2);
+    expect(ld.d1).toBe(r1);
+  });
+
+  test('pending WON ring ↔ spare: pending=1 transfers to bench ring', () => {
+    const p = makePlayer(dbInstance);
+    const max = repo.getSpareRingMax(p);
+    for (let i = 0; i < max; i++) makeRing(dbInstance, p, { inCarry: 1 });
+    const wonId = repo.grantRing(p, ElementEnum.FIRE); // pending=1
+    const spareId = repo.getSpareIds(p)[0];
+    repo.swapRings(p, wonId, spareId);
+    expect(repo.getPendingRingId(p)).toBe(spareId);
+    const wonRow = dbInstance.prepare('SELECT pending FROM rings WHERE id = ?').get(wonId) as { pending: number };
+    expect(wonRow.pending).toBe(0);
+  });
+
+  test('pending WON ring ↔ slot: WON ring slotted (pending=0), slot ring becomes pending', () => {
+    const p = makePlayer(dbInstance);
+    const max = repo.getSpareRingMax(p);
+    for (let i = 0; i < max; i++) makeRing(dbInstance, p, { inCarry: 1 });
+    const wonId = repo.grantRing(p, ElementEnum.FIRE);
+    const slotRing = makeRing(dbInstance, p, { inCarry: 1 });
+    assignSlot(dbInstance, p, 'a1', slotRing);
+    repo.swapRings(p, wonId, slotRing);
+    // WON ring is now in slot a1 with pending=0.
+    const ld = dbInstance.prepare('SELECT a1 FROM loadout WHERE player_id = ?').get(p) as { a1: string | null };
+    expect(ld.a1).toBe(wonId);
+    const wonRow = dbInstance.prepare('SELECT pending FROM rings WHERE id = ?').get(wonId) as { pending: number };
+    expect(wonRow.pending).toBe(0);
+    // Displaced slot ring has pending=1.
+    expect(repo.getPendingRingId(p)).toBe(slotRing);
+  });
+
+  test('heart ↔ spare: positions exchange, spirit_max recomputed', () => {
+    const p = makePlayer(dbInstance);
+    const heartId = makeRing(dbInstance, p, { inCarry: 0, heartSlot: 1, element: ElementEnum.WIND });
+    dbInstance.prepare('UPDATE players SET heart_ring_id = ? WHERE id = ?').run(heartId, p);
+    const spareId = makeRing(dbInstance, p, { inCarry: 1, element: ElementEnum.FIRE });
+    repo.swapRings(p, heartId, spareId);
+    const player = dbInstance.prepare('SELECT heart_ring_id FROM players WHERE id = ?').get(p) as { heart_ring_id: string | null };
+    expect(player.heart_ring_id).toBe(spareId);
+    const formerHeart = dbInstance.prepare('SELECT in_carry, heart_slot FROM rings WHERE id = ?').get(heartId) as { in_carry: number; heart_slot: number };
+    expect(formerHeart.heart_slot).toBe(0);
+    expect(formerHeart.in_carry).toBe(1);
+  });
+
+  test('self-swap throws "cannot swap a ring with itself"', () => {
+    const p = makePlayer(dbInstance);
+    const r = makeRing(dbInstance, p, { inCarry: 1 });
+    expect(() => repo.swapRings(p, r, r)).toThrow(/cannot swap a ring with itself/i);
+  });
+
+  test('unowned ring throws "ring not found or not owned"', () => {
+    const p1 = makePlayer(dbInstance);
+    const p2 = makePlayer(dbInstance);
+    const r1 = makeRing(dbInstance, p1, { inCarry: 1 });
+    const r2 = makeRing(dbInstance, p2, { inCarry: 1 });
+    expect(() => repo.swapRings(p1, r1, r2)).toThrow(/ring not found or not owned/i);
+  });
+
+  test('escrowed ring throws "ring is locked in a duel"', () => {
+    const p = makePlayer(dbInstance);
+    const normal = makeRing(dbInstance, p, { inCarry: 1 });
+    const escrowed = makeRing(dbInstance, p, { inCarry: 1, escrowed: 1 });
+    expect(() => repo.swapRings(p, normal, escrowed)).toThrow(/ring is locked in a duel/i);
+  });
+
+  test('same-pool swap (spare ↔ spare) is a no-op (returns without error)', () => {
+    const p = makePlayer(dbInstance);
+    const a = makeRing(dbInstance, p, { inCarry: 1 });
+    const b = makeRing(dbInstance, p, { inCarry: 1 });
+    expect(() => repo.swapRings(p, a, b)).not.toThrow();
+    // Both still in carry.
+    const rowA = dbInstance.prepare('SELECT in_carry FROM rings WHERE id = ?').get(a) as { in_carry: number };
+    const rowB = dbInstance.prepare('SELECT in_carry FROM rings WHERE id = ?').get(b) as { in_carry: number };
+    expect(rowA.in_carry).toBe(1);
+    expect(rowB.in_carry).toBe(1);
+  });
+
+  test('same-pool swap (reliquary ↔ reliquary) is a no-op', () => {
+    const p = makePlayer(dbInstance);
+    const a = makeRing(dbInstance, p, { inCarry: 0 });
+    const b = makeRing(dbInstance, p, { inCarry: 0 });
+    expect(() => repo.swapRings(p, a, b)).not.toThrow();
+    const rowA = dbInstance.prepare('SELECT in_carry FROM rings WHERE id = ?').get(a) as { in_carry: number };
+    const rowB = dbInstance.prepare('SELECT in_carry FROM rings WHERE id = ?').get(b) as { in_carry: number };
+    expect(rowA.in_carry).toBe(0);
+    expect(rowB.in_carry).toBe(0);
+  });
+
+  test('swap is its own inverse (double-swap restores original state)', () => {
+    const p = makePlayer(dbInstance);
+    const spare = makeRing(dbInstance, p, { inCarry: 1 });
+    const reliq = makeRing(dbInstance, p, { inCarry: 0 });
+    repo.swapRings(p, spare, reliq);
+    repo.swapRings(p, spare, reliq);
+    const spareRow = dbInstance.prepare('SELECT in_carry FROM rings WHERE id = ?').get(spare) as { in_carry: number };
+    const reliqRow = dbInstance.prepare('SELECT in_carry FROM rings WHERE id = ?').get(reliq) as { in_carry: number };
+    expect(spareRow.in_carry).toBe(1);
+    expect(reliqRow.in_carry).toBe(0);
+  });
+
 });

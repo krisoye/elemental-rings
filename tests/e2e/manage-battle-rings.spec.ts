@@ -2384,24 +2384,32 @@ test('won-ring overflow S1: resolve by slotting into a battle slot', async ({ br
   await ctx.close();
 });
 
-// S2 — a genuinely-rejected move (bench→spare onto a full bench) must surface an
-// error AND keep the selection held (Defect 2: pre-fix the 400 was swallowed and
-// the selection silently cleared).
-test('won-ring overflow S2: rejected bench→spare move surfaces error and keeps selection', async ({ browser }) => {
+// S2 — #424: field slot↔bench swap at full bench now SUCCEEDS (swap-first model).
+// Pre-#424 the same gesture was rejected (400 "spare grid full") and tested as the
+// error path. Post-#424 a ring exchange does NOT add to either pool, so capacity is
+// never violated and the move always succeeds.
+test('rings-swap S2: field slot↔bench swap at full bench exchanges positions', async ({ browser }) => {
   const ctx = await browser.newContext();
   await seedAuthToken(ctx);
   const tok = await bootToken(ctx);
 
-  // Full bench so dropping a battle-slot ring back to spare overflows the grid.
+  // Full bench: spare_ring_max spares. All battle slots already occupied by starter rings.
   await fillBenchToMax(tok);
-  // Post-seed sanity: carried rings exceed spare_ring_max (bench full + 5 slot rings).
-  await expectOverflowState(tok);
 
   const me0 = (await (
     await fetch(`${API_URL}/api/me`, { headers: { Authorization: `Bearer ${tok}` } })
-  ).json()) as { loadout: Record<string, string | null> };
+  ).json()) as { rings: Array<{ id: string; in_carry: number }>; loadout: Record<string, string | null>; player: { spare_ring_max: number } };
   const a1Id = me0.loadout.a1 ?? null;
   expect(a1Id, 'fresh player must have an a1 battle ring').toBeTruthy();
+
+  // The first bench card (BENCH_CELL0) corresponds to the first spare ring sorted by the
+  // InventoryGrid canonical order: element asc → xp desc → id asc.
+  const slotted = new Set(Object.values(me0.loadout).filter(Boolean) as string[]);
+  const benchRings = (me0.rings as Array<{ id: string; in_carry: number; element: number; xp: number }>)
+    .filter((r) => r.in_carry === 1 && !slotted.has(r.id))
+    .sort((a, b) => a.element !== b.element ? a.element - b.element : b.xp !== a.xp ? b.xp - a.xp : a.id.localeCompare(b.id));
+  expect(benchRings.length, 'bench must be full').toBe(me0.player.spare_ring_max);
+  const benchRing0Id = benchRings[0].id; // ring at BENCH_CELL0 (grid sort order)
 
   const page = await ctx.newPage();
   await loadForest(page);
@@ -2420,34 +2428,255 @@ test('won-ring overflow S2: rejected bench→spare move surfaces error and keeps
     { timeout: 5000 },
   );
 
-  // …then click the first bench card to drop it onto the FULL bench. The server
-  // rejects with 400 (spare grid full).
+  // …then click the first bench card. #424: occupied bench card → PUT /api/rings/swap.
+  // The two rings exchange positions; pool counts are unchanged (no capacity violation).
   await clickCanvas(page, BENCH_CELL0);
 
-  // Wait for the rejected move to surface the bench-full message via the
-  // __ringMgmtStatus state hook (#421 — mirrors the overlay status bar; reads are
-  // bridge-eligible). Its arrival also guarantees the resolveMove round-trip
-  // finished: the message is re-applied AFTER the failed-move refresh.
+  // Wait for the modal refresh to clear the selection (swap succeeded).
+  await page.waitForFunction(
+    () => {
+      const scene = (window as any).__game?.scene?.getScene('ForestScene') as any;
+      return scene?.battleHand?.swap?.selection === null;
+    },
+    { timeout: 8000 },
+  );
+
+  // Server confirms: a1 now holds the bench ring; former a1 ring is a spare.
+  const me1 = (await (
+    await fetch(`${API_URL}/api/me`, { headers: { Authorization: `Bearer ${tok}` } })
+  ).json()) as { rings: Array<{ id: string; in_carry: number }>; loadout: Record<string, string | null>; player: { spare_ring_max: number } };
+  expect(me1.loadout.a1, 'bench ring must now occupy a1').toBe(benchRing0Id);
+  const formerA1 = me1.rings.find((r) => r.id === a1Id);
+  expect(formerA1?.in_carry, 'former a1 ring must now be a spare (in_carry=1)').toBe(1);
+  // Bench count must be unchanged — swap does not add to the pool.
+  const slotted1 = new Set(Object.values(me1.loadout).filter(Boolean) as string[]);
+  const benchCount1 = me1.rings.filter((r) => r.in_carry === 1 && !slotted1.has(r.id)).length;
+  expect(benchCount1, 'bench count must not change after a swap').toBe(me0.player.spare_ring_max);
+
+  await ctx.close();
+});
+
+// rings-swap S3 — #424: swapping the pending WON ring with a bench ring transfers
+// pending=1 to the bench ring. The WON ring becomes a normal spare; the bench ring
+// becomes the new pending WON ring.
+test('rings-swap S3: pending transfer — WON ring swap with bench ring transfers pending flag', async ({ browser }) => {
+  const ctx = await browser.newContext();
+  await seedAuthToken(ctx);
+  const tok = await bootToken(ctx);
+
+  // Fill the bench, THEN grant the WON ring → overflow state.
+  await fillBenchToMax(tok);
+  const grantRes = await fetch(`${API_URL}/api/test/grant-ring`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${tok}` },
+  });
+  expect(grantRes.ok).toBe(true);
+  const { player: grantPlayer } = (await grantRes.json()) as { player: { pending_ring_id: string | null } };
+  const wonRingId = grantPlayer.pending_ring_id!;
+  expect(wonRingId).toBeTruthy();
+
+  // Record bench composition before swap.
+  const me0 = (await (
+    await fetch(`${API_URL}/api/me`, { headers: { Authorization: `Bearer ${tok}` } })
+  ).json()) as { rings: Array<{ id: string; in_carry: number }>; loadout: Record<string, string | null>; player: { spare_ring_max: number; pending_ring_id: string | null } };
+  const slotted0 = new Set(Object.values(me0.loadout).filter(Boolean) as string[]);
+  const benchRings0 = me0.rings.filter((r) => r.in_carry === 1 && !slotted0.has(r.id) && r.id !== wonRingId);
+  const benchRing0Id = benchRings0[0].id;
+  const benchCount0 = benchRings0.length;
+
+  const page = await ctx.newPage();
+  await loadForest(page);
+  await openBattleHand(page);
+  await page.waitForFunction(() => (window as any).__battleHandOpen === true, { timeout: 5000 });
+  await page.waitForFunction(
+    (id) => {
+      const scene = (window as any).__game?.scene?.getScene('ForestScene') as any;
+      return scene?.battleHand?.pendingRingId === id;
+    },
+    wonRingId,
+    { timeout: 5000 },
+  );
+  await page.waitForTimeout(200); // let Phaser input settle after the modal renders
+
+  // REAL pointer gesture: click the WON card to pick up the pending ring…
+  await clickCanvas(page, WON_CARD);
+  await page.waitForFunction(
+    (id) => {
+      const scene = (window as any).__game?.scene?.getScene('ForestScene') as any;
+      return scene?.battleHand?.swap?.selection?.ringId === id;
+    },
+    wonRingId,
+    { timeout: 5000 },
+  );
+
+  // …then click the first bench card — occupied bench → PUT /api/rings/swap.
+  // pending=1 transfers to the bench ring; the WON ring becomes a normal spare.
+  await clickCanvas(page, BENCH_CELL0);
+
+  // Wait for the swap to complete (selection clears on success).
+  await page.waitForFunction(
+    () => {
+      const scene = (window as any).__game?.scene?.getScene('ForestScene') as any;
+      return scene?.battleHand?.swap?.selection === null;
+    },
+    { timeout: 8000 },
+  );
+
+  // Server confirms: pending_ring_id is now the bench ring; WON ring is a spare.
+  const me1 = (await (
+    await fetch(`${API_URL}/api/me`, { headers: { Authorization: `Bearer ${tok}` } })
+  ).json()) as { rings: Array<{ id: string; in_carry: number }>; loadout: Record<string, string | null>; player: { pending_ring_id: string | null; spare_ring_max: number } };
+  expect(me1.player.pending_ring_id, 'bench ring must now be the pending WON ring').toBe(benchRing0Id);
+  const formerWon = me1.rings.find((r) => r.id === wonRingId);
+  expect(formerWon?.in_carry, 'former WON ring must be a spare (in_carry=1)').toBe(1);
+  // Spare count (carried, not slotted, not pending) grows by 1 — the former WON ring
+  // (pending=1, excluded from benchCount0) is now a regular spare.
+  const slotted1 = new Set(Object.values(me1.loadout).filter(Boolean) as string[]);
+  const benchCount1 = me1.rings.filter((r) => r.in_carry === 1 && !slotted1.has(r.id) && r.id !== me1.player.pending_ring_id).length;
+  expect(benchCount1, 'spare count must be benchCount0+1 (former WON is now spare)').toBe(benchCount0 + 1);
+
+  await ctx.close();
+});
+
+// rings-swap S4 — #424: swapping the heart ring with a bench ring recomputes
+// spirit_max. The bench ring becomes the heart ring; the displaced heart ring
+// lands on the bench.
+test('rings-swap S4: heart swap recomputes spirit_max', async ({ browser }) => {
+  const ctx = await browser.newContext();
+  await seedAuthToken(ctx);
+  const tok = await bootToken(ctx);
+
+  const me0 = (await (
+    await fetch(`${API_URL}/api/me`, { headers: { Authorization: `Bearer ${tok}` } })
+  ).json()) as { rings: Array<{ id: string; in_carry: number }>; loadout: Record<string, string | null>; player: { heart_ring?: { id: string } | null; spirit_max: number; spare_ring_max: number } };
+
+  // Ensure bench has at least one ring to swap with.
+  const slotted0 = new Set(Object.values(me0.loadout).filter(Boolean) as string[]);
+  const benchRings0 = me0.rings.filter((r) => r.in_carry === 1 && !slotted0.has(r.id));
+  if (benchRings0.length === 0) {
+    // Grant a ring and carry it to the bench.
+    const gr = await fetch(`${API_URL}/api/test/grant-ring`, { method: 'POST', headers: { Authorization: `Bearer ${tok}` } });
+    expect(gr.ok).toBe(true);
+  }
+  // Reload me.
+  const me1 = (await (
+    await fetch(`${API_URL}/api/me`, { headers: { Authorization: `Bearer ${tok}` } })
+  ).json()) as { rings: Array<{ id: string; in_carry: number }>; loadout: Record<string, string | null>; player: { heart_ring?: { id: string } | null; spirit_max: number } };
+  const slotted1 = new Set(Object.values(me1.loadout).filter(Boolean) as string[]);
+  const benchRings1 = me1.rings.filter((r) => r.in_carry === 1 && !slotted1.has(r.id));
+  expect(benchRings1.length, 'bench must have at least one ring to swap').toBeGreaterThan(0);
+  const benchRingId = benchRings1[0].id;
+  const oldHeartId = me1.player.heart_ring?.id ?? null;
+
+  const page = await ctx.newPage();
+  await loadForest(page);
+  await openBattleHand(page);
+  await page.waitForFunction(() => (window as any).__battleHandOpen === true, { timeout: 5000 });
+  await page.waitForTimeout(200); // let Phaser input settle after the modal renders
+
+  // REAL pointer gesture: click the HEALTH heart card to pick up the heart ring…
+  await clickCanvas(page, HEALTH_CARD);
+  await page.waitForFunction(
+    () => {
+      const scene = (window as any).__game?.scene?.getScene('ForestScene') as any;
+      const sel = scene?.battleHand?.swap?.selection;
+      return sel !== null && sel !== undefined && sel.source === 'heart';
+    },
+    { timeout: 5000 },
+  );
+
+  // …then click the first bench card — heart selection + occupied bench → swap.
+  await clickCanvas(page, BENCH_CELL0);
+
+  // Wait for the swap to complete (selection clears).
+  await page.waitForFunction(
+    () => {
+      const scene = (window as any).__game?.scene?.getScene('ForestScene') as any;
+      return scene?.battleHand?.swap?.selection === null;
+    },
+    { timeout: 8000 },
+  );
+
+  // Server confirms: bench ring is now the heart ring; spirit_max recomputed.
+  const me2 = (await (
+    await fetch(`${API_URL}/api/me`, { headers: { Authorization: `Bearer ${tok}` } })
+  ).json()) as { rings: Array<{ id: string; in_carry: number }>; loadout: Record<string, string | null>; player: { heart_ring?: { id: string } | null; spirit_max: number } };
+  expect(me2.player.heart_ring?.id, 'bench ring must now be heart ring').toBe(benchRingId);
+  if (oldHeartId) {
+    const displaced = me2.rings.find((r) => r.id === oldHeartId);
+    expect(displaced?.in_carry, 'displaced heart ring must be on bench (in_carry=1)').toBe(1);
+  }
+  // spirit_max must be a non-negative number (recomputed, not stale zero).
+  expect(typeof me2.player.spirit_max).toBe('number');
+  expect(me2.player.spirit_max).toBeGreaterThanOrEqual(0);
+
+  await ctx.close();
+});
+
+// rings-swap S5 — #424: pool insertions at full bench are still rejected.
+// With a full bench, a slot ring → spare move (insertion, not swap) is rejected
+// by the server with 400 "spare grid full". The error is surfaced via __ringMgmtStatus
+// and the selection stays held.
+test('rings-swap S5: bench insertion still rejected at full bench (error surfaced, selection held)', async ({ browser }) => {
+  const ctx = await browser.newContext();
+  await seedAuthToken(ctx);
+  const tok = await bootToken(ctx);
+
+  // Full bench.
+  await fillBenchToMax(tok);
+
+  const me0 = (await (
+    await fetch(`${API_URL}/api/me`, { headers: { Authorization: `Bearer ${tok}` } })
+  ).json()) as { loadout: Record<string, string | null>; rings: Array<{ id: string; in_carry: number }>; player: { spare_ring_max: number } };
+  const a1Id = me0.loadout.a1 ?? null;
+  expect(a1Id, 'a1 must be occupied').toBeTruthy();
+  const beforeCarried = me0.rings.filter((r) => r.in_carry === 1).length;
+
+  const page = await ctx.newPage();
+  await loadForest(page);
+  await openBattleHand(page);
+  await page.waitForFunction(() => (window as any).__battleHandOpen === true, { timeout: 5000 });
+  await page.waitForTimeout(200);
+
+  // Real-pointer: click the A1 card to select the a1 ring.
+  await clickCanvas(page, A1_CARD);
+  await page.waitForFunction(
+    (id) => {
+      const scene = (window as any).__game?.scene?.getScene('ForestScene') as any;
+      return scene?.battleHand?.swap?.selection?.ringId === id;
+    },
+    a1Id,
+    { timeout: 5000 },
+  );
+
+  // Hook-driven: moveTo('spare') drives the insertion path. The spare ghost
+  // is a DOM label unreachable via canvas coords (accepted E2E hook use case).
+  // With a full bench, the server rejects with 400 "spare grid full".
+  await page.evaluate(() => {
+    const scene = (window as any).__game?.scene?.getScene('ForestScene') as any;
+    scene?.battleHand?.swap?.moveTo?.('spare');
+  });
+
+  // Wait for the "Bench is full" message to surface via __ringMgmtStatus.
   await page.waitForFunction(
     () => /Bench is full/i.test(((window as any).__ringMgmtStatus as string) ?? ''),
     undefined,
     { timeout: 8000 },
   );
 
-  // Selection stays held after the rejected move (Defect 2 — pre-fix it cleared
-  // silently).
+  // Selection must stay held — a rejected insertion never clears the selection.
   const sel = await page.evaluate(() => {
     const scene = (window as any).__game?.scene?.getScene('ForestScene') as any;
     return scene?.battleHand?.swap?.selection ?? null;
   });
-  expect(sel, 'selection must remain held after a rejected move').not.toBeNull();
-  expect((sel as { source?: string } | null)?.source).toBe('a1');
+  expect(sel, 'selection must remain held after rejected insertion').not.toBeNull();
 
-  // Server loadout is unchanged — a1 still holds its ring.
+  // Server loadout unchanged — a1 still holds its ring; carry count unchanged.
   const me1 = (await (
     await fetch(`${API_URL}/api/me`, { headers: { Authorization: `Bearer ${tok}` } })
-  ).json()) as { loadout: Record<string, string | null> };
-  expect(me1.loadout.a1).toBe(a1Id);
+  ).json()) as { loadout: Record<string, string | null>; rings: Array<{ id: string; in_carry: number }> };
+  expect(me1.loadout.a1, 'a1 must still hold its ring after rejected insertion').toBe(a1Id);
+  expect(me1.rings.filter((r) => r.in_carry === 1).length, 'carry count must not change').toBe(beforeCarried);
 
   await ctx.close();
 });

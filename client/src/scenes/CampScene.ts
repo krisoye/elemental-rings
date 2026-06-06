@@ -385,7 +385,6 @@ export class CampScene extends DualCameraScene {
       window.__campLoadoutScroll = undefined;
       window.__reliquaryMove = undefined;
       window.__reliquarySelect = undefined;
-      window.__reliquaryLocked = undefined;
       window.__teleportState = undefined;
       // __campState intentionally NOT cleared: Phaser's scene queue stops the old
       // scene (firing shutdown) before starting the new one, so clearing here would
@@ -998,7 +997,6 @@ export class CampScene extends DualCameraScene {
       window.__campHitTestRing = undefined;
       window.__reliquaryMove = undefined;
       window.__reliquarySelect = undefined;
-      window.__reliquaryLocked = undefined;
       window.__reliquaryFull = undefined;
       // Clear overlay tracking (the container is already destroyed by the overlay class).
       this.overlay = null;
@@ -1325,24 +1323,16 @@ export class CampScene extends DualCameraScene {
   /**
    * Dim and lock the Reliquary grid cards when the **spare (Bench) pool** is full
    * — the player cannot pull more rings from the Reliquary into the resting pool.
-   * EPIC #378/#388 — the lock mirrors the server's `assertSpareWithinMax`
-   * predicate (spare count vs `spare_ring_max`), NOT the aggregate carry cap: a
-   * full battle loadout or a pending WON ring (one allowed overflow) must not lock
-   * the grid while the bench still has room. A spare ring is `in_carry=1`, not in
-   * any battle-hand slot, and not `pending`. Also tracks the Reliquary-full
-   * condition (#182) via __reliquaryFull so the drop-to-Reliquary path can surface
-   * the right error. The cap is enforced server-side with 400 as well.
+   * #424 — #388 lock removed: a full bench no longer dims SPIRIT cards or sets
+   * __reliquaryLocked because occupied cards are now always valid swap targets.
+   * Capacity limits apply only to insertions (ghost / drop-label paths), enforced
+   * server-side and by the drop-time guard in reliquaryMove.
+   *
+   * Tracks Reliquary-full state (#182) via __reliquaryFull for the drop-label color.
    */
   private applyReliquaryLockState(): void {
     const s = window.__campState;
     if (!s) return;
-    // #389 — the lock threshold and the BENCH counter MUST use identical spare
-    // semantics, so both go through the single canonical benchSpareCount predicate
-    // (carried, not battle-slotted, and not the pending WON ring — by id AND flag).
-    const spareRingMax = s.spare_ring_max ?? 9;
-    const pendingId = (s.player?.pending_ring_id as string | null | undefined) ?? null;
-    const spareCount = benchSpareCount(s.rings as RingData[], this.loadout, pendingId);
-    const locked = spareCount >= spareRingMax;
     // #182 — track Reliquary-full state for the drop-label hint. The fallback
     // mirrors renderReliquaryHeader: resting rings are in_carry=0, not escrowed,
     // and NOT the equipped heart ring (heart_slot=1, which also rests at in_carry=0).
@@ -1353,11 +1343,6 @@ export class CampScene extends DualCameraScene {
       ).length;
     const reliquaryCap: number = s.reliquaryCap ?? 20;
     window.__reliquaryFull = reliquaryCount >= reliquaryCap;
-    for (const ring of s.atSanctum as RingData[]) {
-      const bg = this.sanctumGrid.getCardBg(ring.id);
-      if (bg) bg.setAlpha(locked ? 0.45 : 1);
-    }
-    window.__reliquaryLocked = locked;
     // Update the RELIQUARY drop-label color to signal when the Reliquary is full.
     if (this.overlay) {
       const lbl = this.overlay.getByName('reliquary-label') as Phaser.GameObjects.Text | null;
@@ -1740,7 +1725,20 @@ export class CampScene extends DualCameraScene {
       return true;
     }
 
-    // target is a named battle slot — carry the ring first if needed, then assign.
+    // target is a named battle slot. #424 — if the slot is occupied, use PUT
+    // /api/rings/swap (capacity-free exchange). An empty slot uses the existing
+    // carry-first + assign path (genuine insertion).
+    const slotOccupant = this.loadout[target] ?? null;
+    if (slotOccupant && slotOccupant !== ringId) {
+      const swapped = await this.swapRingsMutation(ringId, slotOccupant);
+      this.clearReliquarySelection();
+      if (!swapped) return false;
+      await this.loadData();
+      this.afterReliquaryReload();
+      return true;
+    }
+
+    // Empty slot insertion — carry the ring first if needed, then assign.
     if (!wasCarried) {
       const ok = await this.carryRing(ringId);
       if (!ok) {
@@ -1753,6 +1751,29 @@ export class CampScene extends DualCameraScene {
     if (!assigned) return false;
     await this.loadData();
     this.afterReliquaryReload();
+    return true;
+  }
+
+  /**
+   * #424 — PUT /api/rings/swap for a capacity-free two-ring exchange. Surfaces
+   * errors via setStatus (mirrors putLoadout's error-surfacing pattern).
+   */
+  private async swapRingsMutation(ringId1: string, ringId2: string): Promise<boolean> {
+    if (!getToken()) {
+      this.scene.start('LoginScene');
+      return false;
+    }
+    try {
+      const res = await apiFetch('/api/rings/swap', { method: 'PUT', json: { ringId1, ringId2 } });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        this.setStatus(body?.error ?? `Swap failed (${res.status})`);
+        return false;
+      }
+    } catch {
+      this.setStatus('Network error during ring swap');
+      return false;
+    }
     return true;
   }
 

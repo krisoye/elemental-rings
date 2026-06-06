@@ -469,14 +469,9 @@ export class RingManagementOverlay {
       c,
     );
 
-    // Sanctum mode — publish the bench lock state so E2E hooks are available the
-    // instant onRender fires (before CampScene's applyReliquaryLockState runs).
-    // CampScene.applyReliquaryLockState will overwrite with the canonical value
-    // including card-alpha updates; this seed ensures __reliquaryLocked is never
-    // undefined while the overlay is open.
-    if (this.mode === 'sanctum') {
-      window.__reliquaryLocked = benchN >= spareMax;
-    }
+    // #424 — __reliquaryLocked seed removed. The bench-full lock was abolished
+    // in #424 (full pools are valid swap targets; capacity limits apply only to
+    // insertions via ghost/drop-label paths). __reliquaryLocked is no longer set.
   }
 
   /**

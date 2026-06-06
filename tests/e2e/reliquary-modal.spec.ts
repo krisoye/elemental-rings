@@ -334,20 +334,20 @@ test('reliquary: at carry cap, Reliquary cards are locked and clicking does noth
   );
   await openReliquary(page);
 
-  // The lock flag is set and the badge is red at cap. __reliquaryLocked is still used
-  // for badge rendering; we wait for it to ensure the UI is up to date.
-  await page.waitForFunction(() => (window as any).__reliquaryLocked === true, { timeout: 5000 });
+  // #424 — __reliquaryLocked is no longer set by carry-cap or bench-full.
+  // Wait for the overlay to be fully rendered (move hooks registered) instead.
+  await page.waitForFunction(() => typeof (window as any).__reliquaryMove === 'function', { timeout: 5000 });
 
   const beforeCarried = await page.evaluate(
     () => (window as any).__campState.rings.filter((r: any) => r.in_carry === 1).length,
   );
-  // #413: pick-up (select) now SUCCEEDS at full bench; only the DROP to 'spare' is
-  // rejected by the drop-time guard in reliquaryMove.
+  // #413: pick-up (select) now SUCCEEDS; only the DROP to 'spare' is rejected by
+  // the drop-time guard in reliquaryMove (carry cap exceeded).
   await page.evaluate(
     (id) => (window as any).__reliquarySelect(id, 'reliquary'),
     reliquaryRing.id,
   );
-  // Drop to 'spare' — rejected by drop-time bench-full guard.
+  // Drop to 'spare' — rejected by drop-time guard (carry cap full).
   await page.evaluate((id) => (window as any).__reliquaryMove(id, 'spare'), reliquaryRing.id);
   // Give any (rejected) round-trip a beat, then assert carried count is unchanged.
   await page.waitForTimeout(500);
@@ -533,11 +533,12 @@ test('reliquary: full battle loadout with spare room keeps the SPIRIT grid unloc
   await ctx.close();
 });
 
-// ── Scenario 10 (#388/#413): spare pool full → SPIRIT grid locked, drop to spare rejected ──
-// Seed the spare pool to spare_ring_max (9): 5 battle-slot rings + 9 spares = 14
-// carried (at carry_cap). spareCount 9 >= 9 → locked. SPIRIT cards dim and a DROP to
-// 'spare' is rejected by the drop-time guard (#413). Pick-up itself now succeeds.
-test('reliquary: a full spare pool locks the SPIRIT grid and rejects drop to spare (#388/#413)', async ({
+// ── Scenario 10 (#388/#413/#424): full bench → SPIRIT cards still clickable/swappable;
+// pool insertion ('spare' drop) still rejected ──
+// #424 removes the bench-full lock (__reliquaryLocked) and card dim from the SPIRIT grid.
+// Occupied SPIRIT cards are valid swap targets regardless of pool fullness. Pool
+// insertions (drop to 'spare') remain rejected by the drop-time capacity guard.
+test('reliquary: full bench — SPIRIT cards clickable and swap-valid; drop-to-spare still rejected (#424)', async ({
   browser,
 }) => {
   const token = await registerAndToken();
@@ -554,7 +555,7 @@ test('reliquary: a full spare pool locks the SPIRIT grid and rejects drop to spa
   const resting = me.rings.filter((r: any) => r.in_carry === 0).map((r: any) => r.id);
   const nineSpares = resting.slice(0, 9);
   expect(nineSpares.length).toBe(9);
-  // A Reliquary ring left behind to attempt picking up while locked.
+  // A Reliquary ring left behind to click and swap.
   const remainingReliquary = resting[9];
   expect(remainingReliquary).toBeDefined();
   const carryRes = await putCarry(token, [...slotted, ...nineSpares]);
@@ -570,28 +571,34 @@ test('reliquary: a full spare pool locks the SPIRIT grid and rejects drop to spa
   );
   await openReliquary(page);
 
-  // spareCount (9) >= spare_ring_max (9) → the grid is locked.
-  await page.waitForFunction(() => (window as any).__reliquaryLocked === true, { timeout: 5000 });
+  // #424 — __reliquaryLocked is NO LONGER set by bench fullness; bench-full does not
+  // lock the SPIRIT grid. The grid SPIRIT cards must NOT be dimmed.
+  await page.waitForFunction(() => (window as any).__campState !== undefined, { timeout: 5000 });
+  const isLocked = await page.evaluate(() => (window as any).__reliquaryLocked);
+  expect(isLocked, '__reliquaryLocked must not be true at full bench (#424 removed bench-full lock)').not.toBe(true);
 
-  // The locked Reliquary cards are dimmed (alpha < 1).
+  // #424 — SPIRIT card alpha must be 1 (not dimmed) at full bench.
   const cardAlpha = await page.evaluate((id) => {
-    const grid = (window as any).__scene.sanctumGrid;
+    const grid = (window as any).__scene?.sanctumGrid;
     return grid?.getCardBg?.(id)?.alpha ?? null;
   }, remainingReliquary);
-  expect(cardAlpha).not.toBeNull();
-  expect(cardAlpha as number).toBeLessThan(1);
+  // alpha may be null if grid not yet rendered; if present it must be 1 (not dimmed).
+  if (cardAlpha !== null) {
+    expect(cardAlpha as number, 'SPIRIT card must not be dimmed at full bench (#424)').toBe(1);
+  }
 
-  // #413: pick-up (select) now SUCCEEDS — the guard fires at DROP time, not pick-up time.
-  // The drop to 'spare' is rejected by the drop-time guard (spareCount >= spareRingMax).
-  const beforeCarried = await page.evaluate(
-    () => (window as any).__campState.rings.filter((r: any) => r.in_carry === 1).length,
-  );
-  // Pick-up succeeds (selection is set — no "Bench is full" at pick-up time).
+  // Pick-up (select) SUCCEEDS at full bench — no lock.
   await page.evaluate(
     (id) => (window as any).__reliquarySelect(id, 'reliquary'),
     remainingReliquary,
   );
-  // Drop to 'spare' — rejected by drop-time guard; carry count must not change.
+
+  // #413 / #424: pool insertion via __reliquaryMove('spare') is STILL rejected at
+  // drop time (capacity guard unchanged — insertions always capacity-checked).
+  const beforeCarried = await page.evaluate(
+    () => (window as any).__campState.rings.filter((r: any) => r.in_carry === 1).length,
+  );
+  // Drop to 'spare' — rejected by drop-time guard (spareCount >= spareRingMax); carry count must not change.
   await page.evaluate((id) => (window as any).__reliquaryMove(id, 'spare'), remainingReliquary);
   await page.waitForTimeout(500);
   const afterCarried = await page.evaluate(
@@ -601,6 +608,88 @@ test('reliquary: a full spare pool locks the SPIRIT grid and rejects drop to spa
 
   const after = await getMe(token);
   expect(after.rings.find((r: any) => r.id === remainingReliquary)?.in_carry).toBe(0);
+  await ctx.close();
+});
+
+// ── rings-swap Scenario 1 (#424): everything-full swap in sanctum ──────────────
+// Both the spare pool (9/9) and the reliquary are at cap. The Reliquary overlay
+// is open. A real click on a SPIRIT card + a real click on a bench card issues
+// PUT /api/rings/swap. The exchange succeeds: both pool counts are unchanged and
+// the two rings swapped their in_carry values.
+test('rings-swap S1 (sanctum): SPIRIT↔bench swap with both pools at cap succeeds', async ({
+  browser,
+}) => {
+  const token = await registerAndToken();
+  // Fill spare pool to 9 AND leave the reliquary with at least one ring.
+  await seedRestingRings(token, 9);
+  const me0 = await getMe(token);
+  const spareMax = me0.player.spare_ring_max as number;
+  const slotted = (BATTLE_SLOTS.map((s) => (me0.loadout as any)[s]).filter(Boolean) as string[]);
+  const resting = me0.rings.filter((r: any) => r.in_carry === 0).map((r: any) => r.id);
+  const nineSpares = resting.slice(0, 9);
+  expect(nineSpares.length).toBe(9);
+  // A Reliquary ring left behind (resting[9]).
+  const spiritRingId = resting[9];
+  expect(spiritRingId).toBeDefined();
+  const carryRes = await putCarry(token, [...slotted, ...nineSpares]);
+  expect(carryRes.status).toBe(200);
+
+  // Re-read /api/me after seeding.
+  const me1 = await getMe(token);
+  const benchRings1 = (me1.rings as Array<{ id: string; in_carry: number }>).filter(
+    (r) => r.in_carry === 1 && !slotted.includes(r.id),
+  );
+  expect(benchRings1.length, 'bench must be full after seeding').toBe(spareMax);
+  const benchRing0Id = benchRings1[0].id;
+
+  const ctx = await browser.newContext();
+  await ctx.addInitScript(`localStorage.setItem('er_token', ${JSON.stringify(token)})`);
+  const page = await ctx.newPage();
+  await loadSanctum(page);
+  await page.waitForFunction(
+    () => (window as any).__campState.rings.filter((r: any) => r.in_carry === 1).length === 14,
+    { timeout: 8000 },
+  );
+  await openReliquary(page);
+
+  // #424 — lock must NOT be set; bench-full no longer locks the SPIRIT grid.
+  const isLocked = await page.evaluate(() => (window as any).__reliquaryLocked);
+  expect(isLocked, '__reliquaryLocked must not be true (#424)').not.toBe(true);
+
+  // Two-click swap via E2E hooks: select the SPIRIT ring, then select the bench ring.
+  // The second __reliquarySelect from a different source triggers applySwap → carrySwap.
+  // Both pool counts stay the same — carry enters one and leaves one atomically.
+  await page.evaluate((id) => (window as any).__reliquarySelect(id, 'reliquary'), spiritRingId);
+  await page.evaluate((id) => (window as any).__reliquarySelect(id, 'spare'), benchRing0Id);
+
+  // Wait for the server round-trip to propagate.
+  await page.waitForFunction(
+    (sid) => {
+      const s = (window as any).__campState;
+      return s?.rings?.find((r: any) => r.id === sid)?.in_carry === 1;
+    },
+    spiritRingId,
+    { timeout: 8000 },
+  );
+
+  const after = await getMe(token);
+  // Both pool counts must be unchanged — a swap never adds to a pool.
+  const afterBenchRings = (after.rings as Array<{ id: string; in_carry: number }>).filter(
+    (r) => r.in_carry === 1 && !slotted.includes(r.id),
+  );
+  expect(afterBenchRings.length, 'bench count must be unchanged after swap').toBe(spareMax);
+  const afterResting = (after.rings as Array<{ id: string; in_carry: number }>).filter(
+    (r) => r.in_carry === 0,
+  );
+  expect(afterResting.length, 'reliquary count must be unchanged after swap').toBe(
+    me1.rings.filter((r: any) => r.in_carry === 0).length,
+  );
+  // The two rings exchanged in_carry.
+  const spiritAfter = after.rings.find((r: any) => r.id === spiritRingId);
+  expect(spiritAfter?.in_carry, 'SPIRIT ring must now be on bench (in_carry=1)').toBe(1);
+  const benchAfter = after.rings.find((r: any) => r.id === benchRing0Id);
+  expect(benchAfter?.in_carry, 'bench ring must now be in reliquary (in_carry=0)').toBe(0);
+
   await ctx.close();
 });
 
@@ -696,8 +785,8 @@ test('reliquary (#413): pick-up always succeeds at full bench; only drop to spar
   await loadSanctum(page);
   await openReliquary(page);
 
-  // Verify bench is locked (full) — __reliquaryLocked still used for badge rendering.
-  await page.waitForFunction(() => (window as any).__reliquaryLocked === true, { timeout: 8000 });
+  // #424 — __reliquaryLocked is no longer set by bench-fullness. Wait for overlay.
+  await page.waitForFunction(() => typeof (window as any).__reliquaryMove === 'function', { timeout: 8000 });
 
   // #413: pick-up is ALWAYS allowed. Select a reliquary ring directly (no spare first).
   // With the old guard this would be blocked; with #413 it succeeds.
@@ -709,9 +798,9 @@ test('reliquary (#413): pick-up always succeeds at full bench; only drop to spar
   );
   expect(overlayOpen, 'Overlay must remain open after reliquary pick-up at full bench (#413)').toBe(true);
 
-  // Bench is still locked (pick-up does not change bench count).
+  // #424 — lock badge removed; __reliquaryLocked is no longer set.
   const stillLocked = await page.evaluate(() => (window as any).__reliquaryLocked);
-  expect(stillLocked, 'Bench lock badge must still be set after pick-up (no drop yet)').toBe(true);
+  expect(stillLocked, '__reliquaryLocked must not be set after #424').not.toBe(true);
 
   // Also verify order A still works: select spare first, then reliquary (both succeed).
   await page.evaluate(() => (window as any).__reliquarySelect(null, 'spare')); // clear
@@ -773,8 +862,8 @@ test('reliquary (#413): full bench: SPIRIT-to-A1 swap succeeds without bench-ful
   );
   await openReliquary(page);
 
-  // Bench is full (spareCount 9 >= 9).
-  await page.waitForFunction(() => (window as any).__reliquaryLocked === true, { timeout: 5000 });
+  // Bench is full (spareCount 9 >= 9). #424: __reliquaryLocked no longer set. Wait for overlay.
+  await page.waitForFunction(() => typeof (window as any).__reliquaryMove === 'function', { timeout: 5000 });
 
   // Step 1: pick up the reliquary ring (SPIRIT section) — succeeds (no pick-up-time guard in #413).
   await page.evaluate((id) => (window as any).__reliquarySelect(id, 'reliquary'), reliquaryRing);
@@ -831,7 +920,8 @@ test('reliquary (#413): full bench: SPIRIT-to-spare drop is rejected at drop tim
     { timeout: 8000 },
   );
   await openReliquary(page);
-  await page.waitForFunction(() => (window as any).__reliquaryLocked === true, { timeout: 5000 });
+  // #424: __reliquaryLocked no longer set by bench-fullness; wait for hooks to be registered.
+  await page.waitForFunction(() => typeof (window as any).__reliquaryMove === 'function', { timeout: 5000 });
 
   const beforeCarried = await page.evaluate(
     () => (window as any).__campState.rings.filter((r: any) => r.in_carry === 1).length,
