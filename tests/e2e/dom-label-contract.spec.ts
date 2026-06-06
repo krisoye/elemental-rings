@@ -1513,11 +1513,12 @@ test('crisp-text #386 I1: setText on a crispCanvasText label retains ceil(dpr) r
   await ctx.close();
 });
 
-// #386 I2: a setColor() on a crispCanvasText label (the SPIRIT column label,
-// recolored in applyReliquaryLockState) must retain ceil(dpr) resolution AND the
-// LINEAR filter. setColor funnels through updateText just like setText — this is
-// the exact SPIRIT-label lock-recolor path that regressed pre-#386.
-test('crisp-text #386 I2: setColor on the SPIRIT label retains ceil(dpr) resolution and LINEAR filter', async ({
+// #426 I2 (retargeted from #386 I2): a setColor() on a crispCanvasText label
+// ('overlay-status', a structural crisp-after-setColor anchor in CampScene.renderLeft)
+// must retain ceil(dpr) resolution AND the LINEAR filter. setColor funnels through
+// updateText just like setText — this is a structural contract test (the test calls
+// setColor directly via page.evaluate; 'overlay-status' has no production recolor path).
+test('crisp-text #386 I2: setColor on overlay-status retains ceil(dpr) resolution and LINEAR filter', async ({
   browser,
 }) => {
   const ctx = await browser.newContext();
@@ -1526,29 +1527,29 @@ test('crisp-text #386 I2: setColor on the SPIRIT label retains ceil(dpr) resolut
   await loadSanctum(page);
   await openReliquary(page);
 
-  // Recolor the SPIRIT column label (named 'reliquary-label') directly — the same
-  // setColor call applyReliquaryLockState makes when the Reliquary is full.
+  // Recolor the overlay-status label (named 'overlay-status') directly — structural
+  // crisp-after-setColor contract test (calls setColor via page.evaluate).
   await page.evaluate(() => {
     const scene = (window as any).__scene as Phaser.Scene;
     const found = scene.children
       .getAll()
       .flatMap((c: any) => (c.getAll ? [c, ...c.getAll()] : [c]))
       .flatMap((c: any) => (c.getAll ? [c, ...c.getAll()] : [c]))
-      .find((o: any) => o.name === 'reliquary-label') as any;
+      .find((o: any) => o.name === 'overlay-status') as any;
     found?.setColor('#ff5555');
   });
 
   const expectedRes = await page.evaluate(() => Math.ceil(window.devicePixelRatio));
-  const state = await readCrispState(page, 'reliquary-label');
+  const state = await readCrispState(page, 'overlay-status');
 
-  expect(state, 'SPIRIT label (reliquary-label) must be found in the scene graph').not.toBeNull();
+  expect(state, 'overlay-status must be found in the scene graph').not.toBeNull();
   expect(
     state!.resolution,
     `#386: resolution after setColor (${state!.resolution}) must equal ceil(dpr) (${expectedRes})`,
   ).toBe(expectedRes);
   expect(
     state!.scaleMode,
-    `#386: texture scaleMode after setColor (${state!.scaleMode}) must be 0 (LINEAR) — the SPIRIT-label lock-recolor path`,
+    `#386: texture scaleMode after setColor (${state!.scaleMode}) must be 0 (LINEAR)`,
   ).toBe(0);
 
   await ctx.close();

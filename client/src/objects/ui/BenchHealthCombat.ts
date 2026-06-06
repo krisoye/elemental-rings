@@ -16,13 +16,13 @@ import { benchSpareCount } from './RingManagementOverlay';
  * **HEALTH column** — equipped heart `RingCard` + single `[RECHARGE]` link below it.
  * **COMBAT column** — STATUS thumb card left-aligned above A1/A2 · D1/D2 (2×2).
  *
- * Canonical geometry (760×500 frame, matching #384 / corrected #394):
- *   BENCH grid   origin (370, 148)   3-col × 3 visible rows
- *   HEALTH card  center (659, 193)   70×90
+ * Canonical geometry (760×500 frame, matching #384 / corrected #394 / gap-equalised #426):
+ *   BENCH grid   origin (388, 148)   3-col × 3 visible rows
+ *   HEALTH card  center (660, 193)   70×90
  *   STATUS card  center (759, 193)   70×90
  *   A1 / A2      center (759/837, 291)
  *   D1 / D2      center (759/837, 389)
- *   [RECHARGE]   center (659, 389) — same row as D1/D2
+ *   [RECHARGE]   center (660, 389) — same row as D1/D2
  *
  * Architecture: display-only — no game logic, server is the only source of truth.
  */
@@ -39,10 +39,10 @@ export interface BenchHealthCombatMe {
 }
 
 // ── Canonical geometry constants ──────────────────────────────────────────────
-const BENCH_GRID_X = 370;
+const BENCH_GRID_X = 388;
 const BENCH_GRID_TOP_Y = 148;
 const RINGWALL_VISIBLE_ROWS = 3;
-const COL_HEALTH_X = 659;
+export const COL_HEALTH_X = 660;
 const COL_COMBAT_LEFT_X = 759;
 const COL_COMBAT_RIGHT_X = 837;
 const ROW_STATUS_Y = 193;
@@ -174,12 +174,12 @@ export class BenchHealthCombat extends Phaser.GameObjects.Container {
     this.add(benchGrid);
     this.benchGrid = benchGrid;
 
-    // BENCH column header (DOM — crisp). #389: player-facing label uses "Bench:" (code keeps spare_*).
+    // BENCH column header (DOM — crisp). #389: player-facing label uses "BENCH:" (code keeps spare_*).
     // +104 centres the label over the 3-col grid (col 0 at +32, col 2 at +176, midpoint +104).
     this.addDomLbl(
       BENCH_GRID_X + 104,
       BENCH_GRID_TOP_Y - 20,
-      `Bench: ${benchN} / ${spareMax}`,
+      `BENCH: ${benchN} / ${spareMax}`,
       12,
       benchFull ? '#ff8888' : '#aaccff',
     );

@@ -147,17 +147,33 @@ test('reliquary (#389): opens with converged columns and SPIRIT + BENCH counters
   ).length;
   expect(state.counters.bench.n).toBe(expectedBench);
 
-  // The crisp counter labels are rendered (named scene texts).
-  expect(await campTextByName(page, 'spirit-counter')).toBe(`${reliquaryCount}/${me.player.reliquaryCap}`);
-  expect(await campTextByName(page, 'bench-counter')).toBe(`${expectedBench}/${me.player.spare_ring_max}`);
+  // #426 — spirit-counter and bench-counter canvas texts removed; read from the
+  // structure reporter and DOM labels instead.
+  expect(state.counters.spirit.n).toBe(reliquaryCount);
+  expect(state.counters.spirit.max).toBe(me.player.reliquaryCap);
+  const spiritDomLabel = await page.evaluate(() => {
+    for (const n of Array.from(document.querySelectorAll('.er-dom-label'))) {
+      const el = n as HTMLElement;
+      if (el.dataset['label'] === 'spirit-header') return el.textContent ?? null;
+    }
+    return null;
+  });
+  expect(spiritDomLabel).toBe(`SPIRIT: ${reliquaryCount} / ${me.player.reliquaryCap}`);
 
   // The removed combined badge no longer exists.
   expect(await campTextByName(page, 'loadout-badge')).toBeNull();
 
-  // The middle column header reads BENCH (not the old SPARES).
-  const benchLabel = await campTextByName(page, 'spare-label');
-  expect(benchLabel).toContain('BENCH');
-  expect(benchLabel).not.toContain('SPARES');
+  // #426 — spare-label canvas text removed; BHC renders the bench header as a DOM label.
+  const benchDomLabel = await page.evaluate(() => {
+    for (const n of Array.from(document.querySelectorAll('.er-dom-label'))) {
+      const txt = (n as HTMLElement).textContent ?? '';
+      if (txt.startsWith('BENCH:')) return txt;
+    }
+    return null;
+  });
+  expect(benchDomLabel).not.toBeNull();
+  expect(benchDomLabel).toContain('BENCH:');
+  expect(benchDomLabel).not.toContain('SPARES');
 
   // The live header still surfaces the authoritative spirit reading.
   const headerLeft = await campTextByName(page, 'reliquary-header-left');
@@ -1003,9 +1019,10 @@ async function clickCanvas(page: Page, pt: { x: number; y: number }): Promise<vo
 
 // BHC geometry (BenchHealthCombat.ts): first bench cell center = grid origin
 // (370,148) + local card center (CARD_W/2=32, CARD_H/2=44).
-const BENCH_CELL0 = { x: 402, y: 192 } as const;
-// DISCARD slot in BHC: HEALTH column (659), row 2 (291).
-const DISCARD_SLOT = { x: 659, y: 291 } as const;
+// #426: bench grid moves 370→388; cell0 center = 388 + CARD_W/2(32) = 420.
+const BENCH_CELL0 = { x: 420, y: 192 } as const;
+// DISCARD slot in BHC: HEALTH column (660 after #426), row 2 (291).
+const DISCARD_SLOT = { x: 660, y: 291 } as const;
 // SPIRIT grid origin (CampScene COL_RELIQUARY_X=152, top y=148); InventoryGrid
 // cell geometry CARD_W=64, COL_GAP=72, ROW_GAP=92, CARD_H=88.
 const SPIRIT_GRID_ORIGIN = { x: 152, y: 148 } as const;
