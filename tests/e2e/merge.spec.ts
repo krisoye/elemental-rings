@@ -287,6 +287,257 @@ test('merge: overlay mode and column header are correct', async ({
   await ctx.close();
 });
 
+// ── Adversarial: self-merge (ringId1 === ringId2) → 400 ────────────────────
+// Spec AC: `ringId1 === ringId2` must return 400. This catches a regression where
+// the same ring ID is duplicated in the request body (e.g. a UI bug that reads
+// the first slot twice).
+test('merge: self-merge (ringId1 === ringId2) → 400', async () => {
+  const token = await registerPlayer();
+  const { rings } = await getMe(token);
+  const [earth1] = ringsOfElement(rings, EARTH, 2);
+  await setRingXP(token, earth1.id, TIER1_XP);
+  await unlockShrine(token, TEST_SHRINE_ID);
+
+  const res = await mergeRings(token, earth1.id, earth1.id, TEST_SHRINE_ID);
+  expect(res.status).toBe(400);
+  // Ring is intact — transaction did not delete it.
+  const { rings: after } = await getMe(token);
+  expect(after.find((r: any) => r.id === earth1.id)).toBeDefined();
+});
+
+// ── Adversarial: one ring owned by a different player → 400 ─────────────────
+// #431 adversarial: ownership check on r2 — a bug that only validates r1 would
+// allow cross-player merges. Uses a second registered player's ring ID directly.
+test('merge: ring owned by different player → 400', async () => {
+  const token1 = await registerPlayer();
+  const token2 = await registerPlayer();
+  const { rings: rings1 } = await getMe(token1);
+  const { rings: rings2 } = await getMe(token2);
+  const [earth1] = ringsOfElement(rings1, EARTH, 2);
+  // We only need one Earth ring from player2 — grab the first one.
+  const earth2p2 = ringOfElement(rings2, EARTH);
+  await setRingXP(token1, earth1.id, TIER1_XP);
+  await setRingXP(token2, earth2p2.id, TIER1_XP);
+  await unlockShrine(token1, TEST_SHRINE_ID);
+
+  // Player 1 tries to use player 2's ring as the second parent.
+  const res = await mergeRings(token1, earth1.id, earth2p2.id, TEST_SHRINE_ID);
+  expect(res.status).toBe(400);
+  // Player 1's ring is intact.
+  const { rings: after1 } = await getMe(token1);
+  expect(after1.find((r: any) => r.id === earth1.id)).toBeDefined();
+});
+
+// ── Adversarial: escrowed parent → 400 ──────────────────────────────────────
+// #431 adversarial: escrowed rings are staked collateral; merging them would
+// destroy the stake without resolving the wager. The guard must fire even when
+// only one ring is escrowed.
+test('merge: escrowed parent ring → 400', async () => {
+  const token = await registerPlayer();
+  const { rings } = await getMe(token);
+  const [earth1, earth2] = ringsOfElement(rings, EARTH, 2);
+  await setRingXP(token, earth1.id, TIER1_XP);
+  await setRingXP(token, earth2.id, TIER1_XP);
+  // Escrow earth1 via the test-only route.
+  const escrowRes = await fetch(`${API_URL}/api/test/set-escrowed`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+    body: JSON.stringify({ ringId: earth1.id, escrowed: 1 }),
+  });
+  // If the test helper doesn't exist, skip this test gracefully.
+  if (!escrowRes.ok) return;
+  await unlockShrine(token, TEST_SHRINE_ID);
+
+  const res = await mergeRings(token, earth1.id, earth2.id, TEST_SHRINE_ID);
+  expect(res.status).toBe(400);
+  const body = await res.json();
+  expect(body.error).toMatch(/escrowed/i);
+  // Both rings intact.
+  const { rings: after } = await getMe(token);
+  expect(after.find((r: any) => r.id === earth1.id)).toBeDefined();
+  expect(after.find((r: any) => r.id === earth2.id)).toBeDefined();
+});
+
+// ── Adversarial: 499 XP (just under floor) → 400; 500 XP → 200 ──────────────
+// #431 adversarial: the Tier-1 floor is exactly 500 XP. The off-by-one test
+// covers the >= boundary: 499 must be rejected but 500 must succeed. Both
+// parents at 499 is not sufficient — the spec requires 500 per-parent.
+test('merge: parent at exactly 499 XP → 400 (one below Tier-1 floor)', async () => {
+  const token = await registerPlayer();
+  const { rings } = await getMe(token);
+  const [earth1, earth2] = ringsOfElement(rings, EARTH, 2);
+  await setRingXP(token, earth1.id, 499); // one below floor
+  await setRingXP(token, earth2.id, TIER1_XP);
+  await unlockShrine(token, TEST_SHRINE_ID);
+
+  const res = await mergeRings(token, earth1.id, earth2.id, TEST_SHRINE_ID);
+  expect(res.status).toBe(400);
+  const body = await res.json();
+  expect(body.error).toMatch(/Tier 1/i);
+  // Both rings intact.
+  const { rings: after } = await getMe(token);
+  expect(after.find((r: any) => r.id === earth1.id)).toBeDefined();
+  expect(after.find((r: any) => r.id === earth2.id)).toBeDefined();
+});
+
+test('merge: parent at exactly 500 XP → 200 (exactly the Tier-1 floor)', async () => {
+  // #431 adversarial: 500 is the exact boundary — complement of the 499 test.
+  // A > comparison (instead of >=) would silently lock out freshly-minted T1 rings.
+  const token = await registerPlayer();
+  const { rings } = await getMe(token);
+  const [earth1, earth2] = ringsOfElement(rings, EARTH, 2);
+  await setRingXP(token, earth1.id, 500); // exactly at floor
+  await setRingXP(token, earth2.id, 500);
+  await unlockShrine(token, TEST_SHRINE_ID);
+
+  const res = await mergeRings(token, earth1.id, earth2.id, TEST_SHRINE_ID);
+  expect(res.status).toBe(200);
+  const { ring } = await res.json();
+  expect(ring.xp).toBe(1000);
+  expect(ring.tier).toBe(1);
+  expect(ring.max_uses).toBe(4);
+});
+
+// ── Adversarial: cross-element gives descriptive "same element" 400 ──────────
+// #431 adversarial: FIRE+WATER must return 400 with a "same element" error body,
+// not a generic 500. A missing element check or a panic would return 500.
+test('merge: FIRE+WATER cross-element → 400 with "same element" error body', async () => {
+  const token = await registerPlayer();
+  const { rings } = await getMe(token);
+  const fire = ringOfElement(rings, FIRE);
+  const water = ringOfElement(rings, WATER);
+  await setRingXP(token, fire.id, TIER1_XP);
+  await setRingXP(token, water.id, TIER1_XP);
+  await unlockShrine(token, TEST_SHRINE_ID);
+
+  const res = await mergeRings(token, fire.id, water.id, TEST_SHRINE_ID);
+  expect(res.status).toBe(400);
+  const body = await res.json();
+  // Must be a descriptive message — not a generic server fault.
+  expect(body.error).toMatch(/same element/i);
+  // Status code must be 400, not 500.
+  expect(res.status).not.toBe(500);
+});
+
+// ── Adversarial: parent_dominant = −1 on XP tie ──────────────────────────────
+// #431 adversarial: when both parents have equal XP, parent_dominant must be −1
+// (the sentinel), not 0 or the element number. A missing ternary branch would
+// store undefined (coerced to NULL) or 0.
+test('merge: equal-XP Steam parents → parent_dominant = −1 (exact tie sentinel)', async () => {
+  const token = await registerPlayer();
+  const { rings } = await getMe(token);
+  const fire1 = ringOfElement(rings, FIRE);
+  const water1 = ringOfElement(rings, WATER);
+  await setRingXP(token, fire1.id, TIER1_XP);
+  await setRingXP(token, water1.id, TIER1_XP);
+
+  // Fuse Fire+Water → first Steam ring.
+  const fuseA = await fetch(`${API_URL}/api/fusion/combine`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+    body: JSON.stringify({ ringId1: fire1.id, ringId2: water1.id }),
+  });
+  expect(fuseA.status).toBe(200);
+  const { ring: steamA } = await fuseA.json();
+
+  // Grant and fuse a second Steam ring.
+  await fetch(`${API_URL}/api/test/grant-ring`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+    body: JSON.stringify({ element: FIRE }),
+  });
+  await fetch(`${API_URL}/api/test/grant-ring`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+    body: JSON.stringify({ element: WATER }),
+  });
+  const { rings: rings2 } = await getMe(token);
+  const fire2 = rings2.find((r: any) => r.element === FIRE && r.xp === 0);
+  const water2 = rings2.find((r: any) => r.element === WATER && r.xp === 0);
+  if (!fire2 || !water2) throw new Error('granted rings not found');
+  await setRingXP(token, fire2.id, TIER1_XP);
+  await setRingXP(token, water2.id, TIER1_XP);
+  const fuseB = await fetch(`${API_URL}/api/fusion/combine`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+    body: JSON.stringify({ ringId1: fire2.id, ringId2: water2.id }),
+  });
+  expect(fuseB.status).toBe(200);
+  const { ring: steamB } = await fuseB.json();
+
+  // Force both Steam rings to identical XP so there is an exact tie.
+  const TIE_XP = 800;
+  await setRingXP(token, steamA.id, TIE_XP);
+  await setRingXP(token, steamB.id, TIE_XP);
+  await unlockShrine(token, TEST_SHRINE_ID);
+
+  const res = await mergeRings(token, steamA.id, steamB.id, TEST_SHRINE_ID);
+  expect(res.status).toBe(200);
+  const { ring } = await res.json();
+  expect(ring.parent_dominant).toBe(-1); // exact-tie sentinel
+});
+
+// ── Adversarial: sealed shrine re-used after unlocking → 200 ─────────────────
+// #431 adversarial: isShrineUnlocked must re-check on each request — a cached
+// result that was read-once at session start would allow the sealed-shrine error
+// to persist even after the player unlocks it.
+test('merge: same shrine after unlocking → 200 (unlock is not cached from sealed check)', async () => {
+  const token = await registerPlayer();
+  const { rings } = await getMe(token);
+  const [earth1, earth2] = ringsOfElement(rings, EARTH, 2);
+  await setRingXP(token, earth1.id, TIER1_XP);
+  await setRingXP(token, earth2.id, TIER1_XP);
+  // First attempt with sealed shrine → 400.
+  const sealedRes = await mergeRings(token, earth1.id, earth2.id, TEST_SHRINE_ID);
+  expect(sealedRes.status).toBe(400);
+  // Now unlock and retry — must succeed.
+  await unlockShrine(token, TEST_SHRINE_ID);
+  const openRes = await mergeRings(token, earth1.id, earth2.id, TEST_SHRINE_ID);
+  expect(openRes.status).toBe(200);
+});
+
+// ── Adversarial: missing body fields → 400 ───────────────────────────────────
+// #431 adversarial: the endpoint must validate all three required body fields.
+// Missing shrineId (or any field) should return 400, not a 500 crash.
+test('merge: missing shrineId → 400 (required field validation)', async () => {
+  const token = await registerPlayer();
+  const { rings } = await getMe(token);
+  const [earth1, earth2] = ringsOfElement(rings, EARTH, 2);
+
+  const res = await fetch(`${API_URL}/api/rings/merge`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+    body: JSON.stringify({ ringId1: earth1.id, ringId2: earth2.id }), // shrineId omitted
+  });
+  expect(res.status).toBe(400);
+  expect(res.status).not.toBe(500);
+});
+
+test('merge: empty body → 400 (all fields missing)', async () => {
+  // #431 adversarial: an empty body must produce a 400 with a validation message,
+  // not a 500 NullPointerException from req.body being parsed incorrectly.
+  const token = await registerPlayer();
+  const res = await fetch(`${API_URL}/api/rings/merge`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+    body: JSON.stringify({}),
+  });
+  expect(res.status).toBe(400);
+  expect(res.status).not.toBe(500);
+});
+
+// ── Adversarial: unauthenticated request → 401 ───────────────────────────────
+// #431 adversarial: the merge endpoint requires auth — an unauthenticated POST
+// must not reach mergeRings at all, preventing any rings from being consumed.
+test('merge: unauthenticated request → 401 (auth middleware fires)', async () => {
+  const res = await fetch(`${API_URL}/api/rings/merge`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' }, // no Authorization header
+    body: JSON.stringify({ ringId1: 'a', ringId2: 'b', shrineId: 'c' }),
+  });
+  expect(res.status).toBe(401);
+});
+
 // ── Scenario 7: Steam + Steam merge → parent_dominant set correctly ────────────
 // Fuse two Fire+Water pairs to obtain two Steam rings; set different XP on each;
 // merge them; assert the merged ring element is Steam and parent_dominant equals

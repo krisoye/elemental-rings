@@ -3197,3 +3197,339 @@ describe('#423 adversarial: WON slot, DISCARD slot, bench ghost, DiscardConfirm'
   // Verified in Class 5 and Class 6 — not duplicated here.
 
 });
+
+// ===========================================================================
+// Class 30 — #431 merge mode: COLUMN_LABELS and publishRingMgmtState
+// ===========================================================================
+
+describe('#431 merge mode: COLUMN_LABELS and publishRingMgmtState', () => {
+
+  it('merge mode has 4 columns: MERGE, BENCH, HEALTH, COMBAT', () => {
+    // #431 acceptance criterion: the merge left column label is MERGE (not FUSE).
+    // A copy-paste from the fusion mode entry that forgot to rename would produce
+    // FUSE here, silently breaking the AC.
+    expect(COLUMN_LABELS.merge).toEqual(['MERGE', 'BENCH', 'HEALTH', 'COMBAT']);
+  });
+
+  it('merge mode left column is MERGE (index 0)', () => {
+    // #431 adversarial: left-column index is 0; a right-shift bug would move
+    // MERGE to index 1 and leave index 0 as BENCH.
+    expect(COLUMN_LABELS.merge[0]).toBe('MERGE');
+  });
+
+  it('merge mode shares the three right-hand columns with sanctum indices 1-3', () => {
+    // #431/#423 convergence contract: BENCH/HEALTH/COMBAT must be identical across
+    // all four modes (sanctum, field, fusion, merge).
+    const shared = COLUMN_LABELS.sanctum.slice(1);
+    expect(COLUMN_LABELS.merge.slice(1)).toEqual(shared);
+  });
+
+  it('merge mode left column is MERGE, not FUSE (not a copy of fusion mode)', () => {
+    // #431 adversarial: if fusion and merge share the same COLUMN_LABELS entry
+    // (reference or accidental copy), the left column would be FUSE in merge mode.
+    expect(COLUMN_LABELS.merge[0]).not.toBe('FUSE');
+    expect(COLUMN_LABELS.merge[0]).toBe('MERGE');
+  });
+
+  it('RingMgmtMode TypeScript union includes "merge" — source scan', () => {
+    // #431 acceptance criterion: the type union must include 'merge'. A missed
+    // addition would allow TypeScript to reject 'merge' as a mode argument.
+    const src = readClientSrc('objects/ui/RingManagementOverlay.ts');
+    if (src === null) return;
+    expect(
+      src,
+      "RingManagementOverlay.ts RingMgmtMode must include 'merge'",
+    ).toContain("'merge'");
+  });
+
+  it('publishRingMgmtState merge mode sets columns to [MERGE, BENCH, HEALTH, COMBAT]', () => {
+    // #431 acceptance criterion: the window hook must expose merge mode columns.
+    publishRingMgmtState('merge', { bench: { n: 0, max: 5 } });
+    expect((global as any).window.__ringMgmtState.columns).toEqual(['MERGE', 'BENCH', 'HEALTH', 'COMBAT']);
+  });
+
+  it('publishRingMgmtState merge mode sets mode to "merge"', () => {
+    publishRingMgmtState('merge', { bench: { n: 1, max: 5 } });
+    expect((global as any).window.__ringMgmtState.mode).toBe('merge');
+  });
+
+  it('merge mode columns are an independent copy (not a reference to COLUMN_LABELS)', () => {
+    // #431 adversarial: mutating the published state must not corrupt the canonical table.
+    publishRingMgmtState('merge', { bench: { n: 0, max: 5 } });
+    const stored: string[] = (global as any).window.__ringMgmtState.columns;
+    stored.push('EXTRA');
+    expect(COLUMN_LABELS.merge).not.toContain('EXTRA');
+  });
+
+  it('merge mode does not contain "FUSE" in any column label', () => {
+    // #431 adversarial: a copy-paste from fusion mode that replaces only the key
+    // but not the label array would hide FUSE inside the merge mode columns.
+    for (const col of COLUMN_LABELS.merge) {
+      expect(col).not.toBe('FUSE');
+    }
+  });
+
+  it('merge mode does not contain "Spare" or "Spares" in any column label', () => {
+    // Consistency with #389 naming: "Bench" replaces "Spares" across all modes.
+    for (const col of COLUMN_LABELS.merge) {
+      expect(col.toLowerCase()).not.toContain('spare');
+    }
+  });
+
+  it('all four modes (sanctum, field, fusion, merge) are present in COLUMN_LABELS', () => {
+    // #431 adversarial: adding a fifth mode without a COLUMN_LABELS entry would
+    // cause publishRingMgmtState to spread an undefined array → runtime crash.
+    const modes: RingMgmtMode[] = ['sanctum', 'field', 'fusion', 'merge'];
+    for (const mode of modes) {
+      expect(COLUMN_LABELS[mode]).toBeDefined();
+      expect(Array.isArray(COLUMN_LABELS[mode])).toBe(true);
+    }
+  });
+
+  it('RingManagementOverlayClass.ts handles merge mode in renderLeft dispatch', () => {
+    // #431 acceptance criterion: the render dispatch must include a 'merge' branch.
+    // A missing branch would silently skip the left column in merge mode.
+    const src = readClientSrc('objects/ui/RingManagementOverlayClass.ts');
+    if (src === null) return;
+    expect(
+      src,
+      "RingManagementOverlayClass.ts must dispatch to renderMergeLeft when mode === 'merge'",
+    ).toContain("mode === 'merge'");
+  });
+
+  it('RingManagementOverlayClass.ts declares renderMergeLeft method', () => {
+    // #431 acceptance criterion: the method must exist as a distinct implementation
+    // of the left-column render (not aliased to renderFusionLeft).
+    const src = readClientSrc('objects/ui/RingManagementOverlayClass.ts');
+    if (src === null) return;
+    expect(src, 'must declare renderMergeLeft').toContain('renderMergeLeft');
+  });
+
+  it('RingManagementOverlayClass.ts declares computeMergeResult method', () => {
+    // #431 acceptance criterion: client-side eligibility check for the [MERGE] button.
+    const src = readClientSrc('objects/ui/RingManagementOverlayClass.ts');
+    if (src === null) return;
+    expect(src, 'must declare computeMergeResult').toContain('computeMergeResult');
+  });
+
+  it('RingManagementOverlayClass.ts declares getBenchRingsForMerge method', () => {
+    // #431 acceptance criterion: merge bench differs from fusion bench — fusion rings
+    // must be included. A missing method would fall through to getBenchRingsForFusion
+    // which excludes fusion rings.
+    const src = readClientSrc('objects/ui/RingManagementOverlayClass.ts');
+    if (src === null) return;
+    expect(src, 'must declare getBenchRingsForMerge').toContain('getBenchRingsForMerge');
+  });
+
+  it('getBenchRingsForMerge does NOT contain `!isFusion` filter (fusion rings are eligible)', () => {
+    // #431 adversarial: the spec explicitly says merge removes the `!isFusion` filter
+    // present in getBenchRingsForFusion. If the filter remains, Steam/Thornado/etc.
+    // rings would be invisible in the merge bench — the player could never select them.
+    const src = readClientSrc('objects/ui/RingManagementOverlayClass.ts');
+    if (src === null) return;
+    // Locate the getBenchRingsForMerge method body.
+    const lines = src.split('\n');
+    const methodStart = lines.findIndex((l) => /getBenchRingsForMerge\s*\(/.test(l));
+    if (methodStart < 0) return; // method not found — let the existence test catch it
+    // Find the next method-end (closing brace at the method indentation level).
+    // Heuristic: collect up to 20 lines after the method start.
+    const methodBody = lines.slice(methodStart, methodStart + 25).join('\n');
+    // The method must NOT contain !isFusion — that filter is for fusion mode only.
+    expect(
+      methodBody,
+      'getBenchRingsForMerge must not contain !isFusion filter — fusion rings are valid merge parents',
+    ).not.toContain('!isFusion');
+  });
+
+  it('RingManagementOverlayClass.ts declares clearMergeParents public method', () => {
+    // #431 acceptance criterion: adapters need clearMergeParents() to clear stale
+    // ring references before ov.refresh() on merge success. Without it, adapters
+    // must access private fields — a TypeScript error at the call site.
+    const src = readClientSrc('objects/ui/RingManagementOverlayClass.ts');
+    if (src === null) return;
+    expect(src, 'must expose clearMergeParents()').toContain('clearMergeParents');
+    // Must be public (not private).
+    const methodMatch = src.match(/(\w+)\s+clearMergeParents\s*\(\s*\)/);
+    if (methodMatch) {
+      expect(
+        methodMatch[1],
+        'clearMergeParents must be public',
+      ).not.toBe('private');
+    }
+  });
+
+  it('RingManagementOverlayOpts declares onMerge option', () => {
+    // #431 acceptance criterion: adapters pass the merge callback via opts.onMerge.
+    // A missing declaration would force callers to cast to any.
+    const src = readClientSrc('objects/ui/RingManagementOverlayClass.ts');
+    if (src === null) return;
+    expect(src, 'RingManagementOverlayOpts must declare onMerge').toContain('onMerge');
+  });
+
+  it('BaseBiomeScene.ts declares openShrineMerge method', () => {
+    // #431 acceptance criterion: the scene entry point for merge mode.
+    const src = readClientSrc('scenes/BaseBiomeScene.ts');
+    if (src === null) return;
+    expect(src, 'BaseBiomeScene.ts must declare openShrineMerge').toContain('openShrineMerge');
+  });
+
+  it('BaseBiomeScene.ts declares activeMergeShrineId field', () => {
+    // #431 adversarial: the M-key handler reads activeMergeShrineId to dispatch
+    // the merge overlay. If the field is absent the keydown handler cannot pass
+    // the shrine ID and the overlay opens without a valid shrine → every merge
+    // would hit the "sealed shrine" error.
+    const src = readClientSrc('scenes/BaseBiomeScene.ts');
+    if (src === null) return;
+    expect(src, 'BaseBiomeScene.ts must declare activeMergeShrineId').toContain('activeMergeShrineId');
+  });
+
+  it('FUSE column header Y-position updated: renderFusionLeft uses BENCH_GRID_TOP_Y - 20, not MODAL_TOP + 40', () => {
+    // #431 acceptance criterion (spec §UX): FUSE header must move from MODAL_TOP + 40
+    // to BENCH_GRID_TOP_Y - 20. A failed update leaves the header misaligned with the
+    // BENCH/HEALTH/COMBAT headers (y = 128 vs. the old y ~ 78).
+    const src = readClientSrc('objects/ui/RingManagementOverlayClass.ts');
+    if (src === null) return;
+    // Locate the DEFINITION of renderFusionLeft (private/public method declaration,
+    // not the call site). The call site is `this.renderFusionLeft(c)`.
+    const lines = src.split('\n');
+    const fusionStart = lines.findIndex((l) => /private\s+renderFusionLeft\s*\(/.test(l));
+    if (fusionStart < 0) return;
+    // Extract the column-header addDomLabel call (within ~15 lines of method start).
+    const fusionHeader = lines.slice(fusionStart, fusionStart + 15).join('\n');
+    // Must use BENCH_GRID_TOP_Y - 20, not MODAL_TOP + 40.
+    expect(
+      fusionHeader,
+      'renderFusionLeft column header must use BENCH_GRID_TOP_Y - 20 (not MODAL_TOP + 40)',
+    ).toContain('BENCH_GRID_TOP_Y - 20');
+    expect(
+      fusionHeader,
+      'renderFusionLeft column header must NOT use MODAL_TOP + 40 (moved to BENCH_GRID_TOP_Y - 20)',
+    ).not.toContain('MODAL_TOP + 40');
+  });
+
+  it('MERGE column header Y-position is BENCH_GRID_TOP_Y - 20 in renderMergeLeft', () => {
+    // #431 acceptance criterion: merge header must match the fuse/bench/health/combat
+    // header row at BENCH_GRID_TOP_Y - 20.
+    const src = readClientSrc('objects/ui/RingManagementOverlayClass.ts');
+    if (src === null) return;
+    const lines = src.split('\n');
+    // Match the method DEFINITION, not the call site.
+    const mergeStart = lines.findIndex((l) => /private\s+renderMergeLeft\s*\(/.test(l));
+    if (mergeStart < 0) return;
+    const mergeHeader = lines.slice(mergeStart, mergeStart + 15).join('\n');
+    expect(
+      mergeHeader,
+      'renderMergeLeft column header must use BENCH_GRID_TOP_Y - 20',
+    ).toContain('BENCH_GRID_TOP_Y - 20');
+  });
+
+});
+
+// ===========================================================================
+// Class 31 — #431 teardown: merge parent selections cleared on close only
+// ===========================================================================
+
+describe('#431 teardown: mergeParent1/2 cleared inside if (fireCb) only', () => {
+
+  it('teardown clears mergeParent1/2 INSIDE if (fireCb) — not on every re-render', () => {
+    // #431 adversarial: Phase 2 branch — this mirrors the #396 P1 fix that moved
+    // fuseParent1/2 = null inside the fireCb guard. mergeParent1/2 must follow the
+    // same discipline: clearing them on fireCb=false (re-render) erases the user's
+    // R1/R2 selections every render cycle.
+    const src = readClientSrc('objects/ui/RingManagementOverlayClass.ts');
+    if (src === null) return;
+
+    const lines = src.split('\n');
+    const teardownStart = lines.findIndex((l) => /private teardown\(/.test(l));
+    expect(teardownStart, 'teardown method must exist').toBeGreaterThan(-1);
+
+    const fireCbLineIdx = lines.findIndex(
+      (l, i) => i > teardownStart && /if\s*\(\s*fireCb\s*\)/.test(l),
+    );
+    expect(fireCbLineIdx, 'teardown must contain `if (fireCb)` guard').toBeGreaterThan(teardownStart);
+
+    // Both mergeParent1 = null and mergeParent2 = null must come AFTER if (fireCb).
+    const mp1LineIdx = lines.findIndex(
+      (l, i) => i > teardownStart && /this\.mergeParent1\s*=\s*null/.test(l),
+    );
+    const mp2LineIdx = lines.findIndex(
+      (l, i) => i > teardownStart && /this\.mergeParent2\s*=\s*null/.test(l),
+    );
+    expect(mp1LineIdx, 'mergeParent1 = null must exist in teardown').toBeGreaterThan(teardownStart);
+    expect(mp2LineIdx, 'mergeParent2 = null must exist in teardown').toBeGreaterThan(teardownStart);
+
+    expect(
+      mp1LineIdx,
+      `mergeParent1=null (line ${mp1LineIdx + 1}) must come AFTER if (fireCb) (line ${fireCbLineIdx + 1})`,
+    ).toBeGreaterThan(fireCbLineIdx);
+    expect(
+      mp2LineIdx,
+      `mergeParent2=null (line ${mp2LineIdx + 1}) must come AFTER if (fireCb) (line ${fireCbLineIdx + 1})`,
+    ).toBeGreaterThan(fireCbLineIdx);
+  });
+
+  it('teardown on re-render (fireCb=false) does NOT clear fuseParent1/2 or mergeParent1/2 — source confirms guard', () => {
+    // #431 adversarial Phase 2: both fusion and merge parent fields must be inside
+    // the same if (fireCb) block. If either pair is before the guard, selection state
+    // is lost on every re-render, breaking both fusion and merge workflows.
+    const src = readClientSrc('objects/ui/RingManagementOverlayClass.ts');
+    if (src === null) return;
+
+    const lines = src.split('\n');
+    const teardownStart = lines.findIndex((l) => /private teardown\(/.test(l));
+    if (teardownStart < 0) return;
+
+    const fireCbLineIdx = lines.findIndex(
+      (l, i) => i > teardownStart && /if\s*\(\s*fireCb\s*\)/.test(l),
+    );
+    if (fireCbLineIdx < 0) return;
+
+    // Collect all null-assignment lines in teardown that precede if (fireCb).
+    const beforeGuard = lines.slice(teardownStart, fireCbLineIdx);
+    const badAssignments = beforeGuard.filter((l) =>
+      /this\.(fuseParent|mergeParent)[12]\s*=\s*null/.test(l),
+    );
+    expect(
+      badAssignments,
+      'fuseParent1/2 and mergeParent1/2 must NOT be cleared before the if (fireCb) guard',
+    ).toHaveLength(0);
+  });
+
+  it('computeMergeResult returns eligible=false when only one slot is filled (one-slot state)', () => {
+    // #431 adversarial Phase 2: computeMergeResult is called during render to decide
+    // whether to enable the [MERGE] button. When only R1 is filled (R2 = null),
+    // it must return { mrElement: null, eligible: false } without crashing — a
+    // null-deref on r2.element would throw, breaking the overlay.
+    //
+    // This is a source-scan test because computeMergeResult is private. We verify
+    // that the early-return guard (`if (!r1 || !r2)`) exists before the element check.
+    const src = readClientSrc('objects/ui/RingManagementOverlayClass.ts');
+    if (src === null) return;
+    const lines = src.split('\n');
+    // Match the method DEFINITION (private computeMergeResult), not a call site.
+    const methodStart = lines.findIndex((l) => /private\s+computeMergeResult\s*\(/.test(l));
+    if (methodStart < 0) return;
+    // Collect up to 15 lines of the method body.
+    const methodBody = lines.slice(methodStart, methodStart + 15).join('\n');
+    // The guard: return { mrElement: null, eligible: false } when !r1 || !r2.
+    expect(
+      methodBody,
+      'computeMergeResult must have an early-return guard for the one-slot (R2=null) case',
+    ).toMatch(/if\s*\(\s*!r1\s*\|\|\s*!r2\s*\)/);
+  });
+
+  it('merge.spec.ts is registered in SOLO_SPECS in playwright.config.ts', () => {
+    // #431 acceptance criterion: the new spec must run in the solo project.
+    // A missing SOLO_SPECS entry means `npx playwright test --project solo --grep "merge"`
+    // silently runs zero tests and reports "0 passed".
+    const configSrc = fs.readFileSync(
+      path.resolve(__dirname, '../../playwright.config.ts'),
+      'utf8',
+    );
+    expect(
+      configSrc,
+      "playwright.config.ts SOLO_SPECS must include 'merge.spec.ts'",
+    ).toContain('merge.spec.ts');
+  });
+
+});
