@@ -72,6 +72,11 @@ export class ShrineZone extends WorldInteractable {
    * @param alwaysOpen #232 — when true the altar has no seal: it renders open
    *   immediately, skips the server state fetch, and E presses craft directly with
    *   no ring-key / confirmation flow (the Bloom altar).
+   * @param onShrineMerge #431 — when provided, the blink prompt becomes
+   *   `[E] FUSE / [M] MERGE` to advertise the merge keybinding. This callback is
+   *   NOT invoked by ShrineZone itself; it serves only as a presence flag. The
+   *   M-key handler is managed globally by the hosting BaseBiomeScene via
+   *   `activeMergeShrineId`.
    */
   constructor(
     scene: Phaser.Scene,

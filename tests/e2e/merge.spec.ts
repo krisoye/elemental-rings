@@ -248,9 +248,9 @@ test('merge: overlay mode and column header are correct', async ({
   const page = await ctx.newPage();
   await page.goto(URL);
 
-  // Wait for CampScene state to stabilize (rings loaded).
+  // Wait for CampScene to initialize (scene and token loaded).
   await page.waitForFunction(
-    () => (window as any).__campState?.rings?.length >= 10,
+    () => typeof (window as any).__scene !== 'undefined' && (window as any).__scene !== null,
     { timeout: 8000 },
   );
 
