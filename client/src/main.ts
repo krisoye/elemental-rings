@@ -221,9 +221,9 @@ declare global {
     // __reliquarySelect picks up a ring from a section ('reliquary' = not-carried,
     // 'spare' = carried-unslotted, 'battle' = assigned to a battle slot).
     // __reliquaryMove performs a full move to a target section/slot and resolves
-    // once the authoritative reload has rebuilt __campState. __reliquaryLocked is
-    // true while the carry cap is full (Reliquary cards are inert). All registered
+    // once the authoritative reload has rebuilt __campState. All hooks registered
     // only while the Reliquary modal is open; cleared on close.
+    // #424 — __reliquaryLocked removed: bench-full no longer locks the SPIRIT grid.
     __reliquarySelect?: (
       ringId: string,
       source: 'reliquary' | 'spare' | 'battle',
@@ -232,9 +232,9 @@ declare global {
       ringId: string,
       target: 'reliquary' | 'spare' | 'thumb' | 'a1' | 'a2' | 'd1' | 'd2' | 'heart',
     ) => Promise<void>;
-    __reliquaryLocked?: boolean;
     // #182 — true when the Reliquary is at its cap (reliquaryCount >= reliquaryCap).
-    // Distinct from __reliquaryLocked which guards carry-cap. Set by applyReliquaryLockState.
+    // Set by applyReliquaryLockState. The insertion-only drop guard uses this to
+    // colour the RELIQUARY drop label.
     __reliquaryFull?: boolean;
     // #81 — talisman loadout snapshot (the GET /api/talisman-loadout payload).
     // Published by CampScene (on ring-wall overlay open) and OverworldScene (on

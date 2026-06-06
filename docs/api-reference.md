@@ -156,6 +156,19 @@ Accept the WON (pending) ring as a regular spare ring. Clears `rings.pending` on
 
 ---
 
+### PUT /api/rings/swap
+
+**Auth required:** yes (requireAuth + requirePlayer)
+**Request body:** `{ ringId1: string, ringId2: string }`
+**Response (success):** `{ player: PlayerBlock, rings: Ring[], loadout: Loadout | null }` — HTTP 200
+**Response (error):** 400 — `"ringId1 and ringId2 must be non-empty strings"` | 400 — `"ring not found or not owned"` | 400 — `"ring is locked in a duel"` | 400 — `"cannot swap a ring with itself"`
+
+Exchange the positions of two rings owned by the authenticated player. The swap is capacity-free: because one ring enters each pool and one leaves simultaneously, no carry or reliquary cap is ever exceeded. Supported position pairs: spare↔slot, slot↔slot, reliquary↔spare, heart↔spare, pending↔spare, pending↔slot. Same-pool swaps (spare↔spare, reliquary↔reliquary) are positionally meaningless and return 200 with no state change. When either ring is the heart ring, `spirit_max` and `spirit_current` are recomputed. When the WON (pending) ring swaps with a spare, `pending=1` transfers to the displaced ring.
+
+Returns the same shape as `GET /api/me`: the canonical player block, the full ring list (excluding the heart-slot ring), and the current loadout.
+
+---
+
 ### PUT /api/loadout
 
 **Auth required:** yes (requireAuth only)

@@ -1159,6 +1159,13 @@ export const packLoadout = db.transaction(
 
     clearCarryForOwner.run(playerId);
     for (const id of unique) setRingCarry(id, 1);
+
+    // Carrying rings into/out of the Reliquary changes the spirit pool
+    // (spirit_max = Σ max_uses over in_carry=0, heart_slot=0 rings). Recompute
+    // and clamp the gauge so spirit_current never reads above the new ceiling —
+    // the same contract as setHeartRing, swapRings, and PUT /api/difficulty.
+    const spiritMax = refreshSpiritMax(playerId);
+    clampSpiritCurrent(playerId, spiritMax);
   },
 );
 
@@ -2112,3 +2119,203 @@ export const merchantSellRing = db.transaction(
     return { ok: true, gold: updated.gold };
   },
 );
+
+// ---------------------------------------------------------------------------
+// #424 — swapRings: capacity-free two-ring position exchange
+// ---------------------------------------------------------------------------
+
+/** Prepared statement to update players.heart_ring_id, used inside swapRings. */
+const updateHeartRingIdForSwap = db.prepare(
+  `UPDATE players SET heart_ring_id = ? WHERE id = ?`,
+);
+
+/** Prepared statement to update all loadout slot columns atomically in swapRings. */
+const updateLoadoutForSwap = db.prepare(
+  `UPDATE loadout SET thumb = @thumb, a1 = @a1, a2 = @a2, d1 = @d1, d2 = @d2 WHERE player_id = @player_id`,
+);
+
+/**
+ * Position descriptor for a ring inside `swapRings`.
+ *
+ * - `slot`: the ring occupies a named loadout slot.
+ * - `heart`: the ring is the equipped heart ring.
+ * - `spare`: the ring is carried but not slotted and not pending.
+ * - `pending`: the ring is the pending WON-ring overflow (in_carry=1, pending=1).
+ * - `reliquary`: the ring is resting (in_carry=0, heart_slot=0).
+ */
+type RingPosition =
+  | { kind: 'slot'; slot: keyof Omit<LoadoutRow, 'player_id'> }
+  | { kind: 'heart' }
+  | { kind: 'spare' }
+  | { kind: 'pending' }
+  | { kind: 'reliquary' };
+
+/**
+ * Classify a ring's current position from the loadout and flag columns.
+ *
+ * Pool membership (same kind, ignoring sub-position like which spare):
+ *   slot      → 'slot'
+ *   heart     → 'heart'
+ *   in_carry=1, pending=1 → 'pending'
+ *   in_carry=1, not slotted, not pending → 'spare'
+ *   in_carry=0, heart_slot=0 → 'reliquary'
+ */
+function classifyPosition(ring: RingRow, loadout: LoadoutRow | undefined): RingPosition {
+  if (ring.heart_slot === 1) return { kind: 'heart' };
+  if (loadout) {
+    const BATTLE_SLOTS = ['thumb', 'a1', 'a2', 'd1', 'd2'] as const;
+    for (const s of BATTLE_SLOTS) {
+      if (loadout[s] === ring.id) return { kind: 'slot', slot: s };
+    }
+  }
+  if (ring.in_carry === 1 && ring.pending === 1) return { kind: 'pending' };
+  if (ring.in_carry === 1) return { kind: 'spare' };
+  return { kind: 'reliquary' };
+}
+
+/**
+ * Atomically exchange the positions of two rings owned by the same player.
+ *
+ * This is a pure permutation — no capacity check is ever needed because every
+ * ring entering a section is offset by one leaving it. The only guards are
+ * ownership, self-swap, and escrow.
+ *
+ * Same-pool swaps (spare↔spare, reliquary↔reliquary) are positionally
+ * meaningless → returns without writing (idempotent no-op).
+ *
+ * Any swap involving the heart position recomputes spirit_max and clamps the
+ * gauge identically to setHeartRing.
+ *
+ * @throws `'ring not found or not owned'` — either ring not owned by player.
+ * @throws `'cannot swap a ring with itself'` — ringId1 === ringId2.
+ * @throws `'ring is locked in a duel'` — either ring is escrowed.
+ */
+export const swapRings = db.transaction(
+  (playerId: string, ringId1: string, ringId2: string): void => {
+    if (ringId1 === ringId2) throw new Error('cannot swap a ring with itself');
+
+    const r1 = getRingById(ringId1);
+    const r2 = getRingById(ringId2);
+
+    if (!r1 || r1.owner_id !== playerId) throw new Error('ring not found or not owned');
+    if (!r2 || r2.owner_id !== playerId) throw new Error('ring not found or not owned');
+    if (r1.escrowed) throw new Error('ring is locked in a duel');
+    if (r2.escrowed) throw new Error('ring is locked in a duel');
+
+    const loadout = selectLoadout.get(playerId) as LoadoutRow | undefined;
+    const pos1 = classifyPosition(r1, loadout);
+    const pos2 = classifyPosition(r2, loadout);
+
+    // Same-pool → positionally meaningless; idempotent no-op.
+    if (pos1.kind === pos2.kind && pos1.kind !== 'slot') return;
+    if (pos1.kind === 'slot' && pos2.kind === 'slot' && pos1.slot === pos2.slot) return;
+
+    // Handle loadout updates atomically before touching ring flags so the DB
+    // never sees a slot that references two rings simultaneously.
+    writeSwapLoadout(playerId, r1.id, pos1, r2.id, pos2, loadout);
+
+    // Update ring flags for r1 entering pos2.
+    writeRingFlags(playerId, r1, pos2);
+    // Update ring flags for r2 entering pos1.
+    writeRingFlags(playerId, r2, pos1);
+
+    // Recompute spirit_max when either position involves the heart slot.
+    if (pos1.kind === 'heart' || pos2.kind === 'heart') {
+      const spiritMax = refreshSpiritMax(playerId);
+      clampSpiritCurrent(playerId, spiritMax);
+    }
+  },
+);
+
+/**
+ * Write all loadout column changes needed for a swap in a single UPDATE so
+ * slots are never transiently inconsistent.
+ *
+ * The logic is: each ring moves INTO the other's position. If a position is
+ * a named battle slot, that slot column is assigned to the incoming ring. If
+ * neither position is a slot, the loadout does not change.
+ *
+ * Called before writeRingFlags so the loadout is correct by the time flags
+ * are updated.
+ */
+function writeSwapLoadout(
+  playerId: string,
+  id1: string,
+  pos1: RingPosition,
+  id2: string,
+  pos2: RingPosition,
+  preLd: LoadoutRow | undefined,
+): void {
+  const BATTLE_SLOTS = ['thumb', 'a1', 'a2', 'd1', 'd2'] as const;
+
+  // Collect slot assignments: ring A enters pos2's slot; ring B enters pos1's slot.
+  // - id1 (ring A) moves FROM pos1 TO pos2: if pos2 is a slot, assign pos2.slot = id1.
+  // - id2 (ring B) moves FROM pos2 TO pos1: if pos1 is a slot, assign pos1.slot = id2.
+  const changes: Partial<Record<typeof BATTLE_SLOTS[number], string | null>> = {};
+
+  if (pos2.kind === 'slot') changes[pos2.slot as typeof BATTLE_SLOTS[number]] = id1;
+  if (pos1.kind === 'slot') changes[pos1.slot as typeof BATTLE_SLOTS[number]] = id2;
+
+  if (Object.keys(changes).length === 0) return;
+
+  // Build an UPDATE from the pre-swap snapshot, applying only the diff.
+  const current: Partial<Record<typeof BATTLE_SLOTS[number], string | null>> = {};
+  for (const s of BATTLE_SLOTS) current[s] = preLd?.[s] ?? null;
+  const merged = { ...current, ...changes };
+
+  updateLoadoutForSwap.run({ ...merged, player_id: playerId });
+}
+
+/**
+ * Update the ring-flag columns (in_carry, heart_slot, pending) and
+ * players.heart_ring_id for one ring entering a new position.
+ *
+ * Called after writeSwapLoadout so flags reflect the new position.
+ */
+function writeRingFlags(
+  playerId: string,
+  ring: RingRow,
+  targetPos: RingPosition,
+): void {
+  switch (targetPos.kind) {
+    case 'slot': {
+      setRingCarry(ring.id, 1);
+      setRingHeartSlot(ring.id, 0);
+      clearPendingStmt.run(ring.id);
+      break;
+    }
+    case 'heart': {
+      setRingCarry(ring.id, 0);
+      setRingHeartSlot(ring.id, 1);
+      clearPendingStmt.run(ring.id);
+      updateHeartRingIdForSwap.run(ring.id, playerId);
+      break;
+    }
+    case 'spare': {
+      setRingCarry(ring.id, 1);
+      setRingHeartSlot(ring.id, 0);
+      clearPendingStmt.run(ring.id);
+      // If the mover was the heart ring, clear the heart pointer.
+      if (getHeartRingId(playerId) === ring.id) updateHeartRingIdForSwap.run(null, playerId);
+      break;
+    }
+    case 'pending': {
+      // Transfer pending=1 to the mover.
+      setRingCarry(ring.id, 1);
+      setRingHeartSlot(ring.id, 0);
+      setPendingStmt.run(ring.id);
+      if (getHeartRingId(playerId) === ring.id) updateHeartRingIdForSwap.run(null, playerId);
+      break;
+    }
+    case 'reliquary': {
+      setRingCarry(ring.id, 0);
+      setRingHeartSlot(ring.id, 0);
+      clearPendingStmt.run(ring.id);
+      if (getHeartRingId(playerId) === ring.id) updateHeartRingIdForSwap.run(null, playerId);
+      break;
+    }
+  }
+}
+
+// Note: getHeartRingId is the private module-level function at ~line 1337;
+// it is accessible within the same module scope.

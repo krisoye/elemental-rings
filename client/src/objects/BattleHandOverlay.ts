@@ -88,12 +88,15 @@ export class BattleHandOverlay {
       resolveMove: async (id, from, to, ov) => {
         let lastError = '';
         const onErr = (m: string): void => { lastError = m; };
-        const body =
-          to === 'heart' ? (from === 'spare' ? { ringId: id, releaseTo: 'spare' } : { releaseTo: from })
-          : from === 'heart' ? { releaseTo: to }
-          : from === 'spare' ? { [to]: id }
-          : { [to]: id, [from]: this.loadout[to] ?? null };
-        const ok = await this.send('PUT', to === 'heart' || from === 'heart' ? '/api/heart-slot' : '/api/loadout', body, onErr);
+        // #424 — occupied target → swap; empty target → existing insertion route.
+        const occ = to === 'heart' ? (this.heartRing?.id ?? null)
+          : (to === 'spare' || to === 'reliquary') ? null : (this.loadout[to] ?? null);
+        const ok = occ && occ !== id
+          ? await this.send('PUT', '/api/rings/swap', { ringId1: id, ringId2: occ }, onErr)
+          : await this.send('PUT', to === 'heart' || from === 'heart' ? '/api/heart-slot' : '/api/loadout',
+              to === 'heart' ? (from === 'spare' ? { ringId: id, releaseTo: 'spare' } : { releaseTo: from })
+              : from === 'heart' ? { releaseTo: to } : from === 'spare' ? { [to]: id }
+              : { [to]: id, [from]: this.loadout[to] ?? null }, onErr);
         if (ok) ov.clearSelection();
         await this.refresh(ov);
         if (!ok && lastError) ov.setStatusMessage(lastError);
@@ -126,8 +129,9 @@ export class BattleHandOverlay {
       onBenchGridSelect: async (ring, ov) => {
         if (!ring) { ov.clearSelection(); await this.refresh(ov); return; }
         const sel = ov.selection;
-        if (sel?.source === 'heart') { await this.send('PUT', '/api/heart-slot', { ringId: ring.id, releaseTo: 'spare' }); ov.clearSelection(); await this.refresh(ov); return; }
-        if (sel && sel.source !== 'spare') { await ov.moveRingTo('spare'); return; }
+        // #424: cross-pool selection on an occupied bench card → swap (the WON ring uses
+        // source='spare' by BHC convention but sits in the pending pool, so test by id too).
+        if (sel && (sel.source !== 'spare' || sel.ringId === this.pendingRingId_)) { let em = ''; const ok = await this.send('PUT', '/api/rings/swap', { ringId1: sel.ringId, ringId2: ring.id }, (m) => { em = m; }); if (ok) ov.clearSelection(); await this.refresh(ov); if (!ok && em) ov.setStatusMessage(em); return; }
         if (ov.selection?.ringId === ring.id) ov.clearSelection(); else ov.selectRing(ring.id, 'spare');
         await this.refresh(ov);
       },

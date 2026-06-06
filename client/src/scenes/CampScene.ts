@@ -385,7 +385,6 @@ export class CampScene extends DualCameraScene {
       window.__campLoadoutScroll = undefined;
       window.__reliquaryMove = undefined;
       window.__reliquarySelect = undefined;
-      window.__reliquaryLocked = undefined;
       window.__teleportState = undefined;
       // __campState intentionally NOT cleared: Phaser's scene queue stops the old
       // scene (firing shutdown) before starting the new one, so clearing here would
@@ -998,7 +997,6 @@ export class CampScene extends DualCameraScene {
       window.__campHitTestRing = undefined;
       window.__reliquaryMove = undefined;
       window.__reliquarySelect = undefined;
-      window.__reliquaryLocked = undefined;
       window.__reliquaryFull = undefined;
       // Clear overlay tracking (the container is already destroyed by the overlay class).
       this.overlay = null;
@@ -1325,24 +1323,16 @@ export class CampScene extends DualCameraScene {
   /**
    * Dim and lock the Reliquary grid cards when the **spare (Bench) pool** is full
    * — the player cannot pull more rings from the Reliquary into the resting pool.
-   * EPIC #378/#388 — the lock mirrors the server's `assertSpareWithinMax`
-   * predicate (spare count vs `spare_ring_max`), NOT the aggregate carry cap: a
-   * full battle loadout or a pending WON ring (one allowed overflow) must not lock
-   * the grid while the bench still has room. A spare ring is `in_carry=1`, not in
-   * any battle-hand slot, and not `pending`. Also tracks the Reliquary-full
-   * condition (#182) via __reliquaryFull so the drop-to-Reliquary path can surface
-   * the right error. The cap is enforced server-side with 400 as well.
+   * #424 — #388 lock removed: a full bench no longer dims SPIRIT cards or sets
+   * __reliquaryLocked because occupied cards are now always valid swap targets.
+   * Capacity limits apply only to insertions (ghost / drop-label paths), enforced
+   * server-side and by the drop-time guard in reliquaryMove.
+   *
+   * Tracks Reliquary-full state (#182) via __reliquaryFull for the drop-label color.
    */
   private applyReliquaryLockState(): void {
     const s = window.__campState;
     if (!s) return;
-    // #389 — the lock threshold and the BENCH counter MUST use identical spare
-    // semantics, so both go through the single canonical benchSpareCount predicate
-    // (carried, not battle-slotted, and not the pending WON ring — by id AND flag).
-    const spareRingMax = s.spare_ring_max ?? 9;
-    const pendingId = (s.player?.pending_ring_id as string | null | undefined) ?? null;
-    const spareCount = benchSpareCount(s.rings as RingData[], this.loadout, pendingId);
-    const locked = spareCount >= spareRingMax;
     // #182 — track Reliquary-full state for the drop-label hint. The fallback
     // mirrors renderReliquaryHeader: resting rings are in_carry=0, not escrowed,
     // and NOT the equipped heart ring (heart_slot=1, which also rests at in_carry=0).
@@ -1353,11 +1343,6 @@ export class CampScene extends DualCameraScene {
       ).length;
     const reliquaryCap: number = s.reliquaryCap ?? 20;
     window.__reliquaryFull = reliquaryCount >= reliquaryCap;
-    for (const ring of s.atSanctum as RingData[]) {
-      const bg = this.sanctumGrid.getCardBg(ring.id);
-      if (bg) bg.setAlpha(locked ? 0.45 : 1);
-    }
-    window.__reliquaryLocked = locked;
     // Update the RELIQUARY drop-label color to signal when the Reliquary is full.
     if (this.overlay) {
       const lbl = this.overlay.getByName('reliquary-label') as Phaser.GameObjects.Text | null;
@@ -1426,10 +1411,12 @@ export class CampScene extends DualCameraScene {
   }
 
   /**
-   * Resolve a two-ring swap into the right carry/loadout mutations. `a` is the
-   * previously-selected ring, `b` the just-clicked one. `a` moves to `b`'s
-   * section and `b` is displaced to `a`'s section per the #154 swap table; the
-   * authoritative server effect is driven by reliquaryMove for each leg.
+   * Resolve a two-ring swap. #424 — every two-ring exchange (slot↔slot,
+   * reliquary↔slot, spare↔slot, reliquary↔spare) routes through the atomic
+   * PUT /api/rings/swap, a single server-side transaction. This replaces the
+   * old multi-call carry/loadout orchestration (carrySwap / swapBattleSlots /
+   * swapIntoBattleSlot), whose sequential PUTs could strand the loadout
+   * referencing an uncarried ring on partial failure.
    */
   private async applySwap(
     a: { ringId: string; source: SwapSlot },
@@ -1437,101 +1424,11 @@ export class CampScene extends DualCameraScene {
   ): Promise<void> {
     // EPIC #302 — heart sources/targets are routed before applySwap (onRingClicked),
     // so neither leg is ever 'heart' here. The wider type only satisfies the caller.
-    const aBattle = a.source !== 'reliquary' && a.source !== 'spare';
-    const bBattle = b.source !== 'reliquary' && b.source !== 'spare';
-
     this.clearReliquarySelection();
-
-    if (aBattle && bBattle) {
-      // Battle slot ↔ battle slot: swap the two slot assignments (loadout only).
-      await this.swapBattleSlots(a.source as 'thumb' | LoadoutSlot, a.ringId, b.source as 'thumb' | LoadoutSlot, b.ringId);
-      return;
-    }
-    if (bBattle) {
-      // A (reliquary/spare) takes B's battle slot; B is displaced to A's section.
-      const slot = b.source as 'thumb' | LoadoutSlot;
-      await this.swapIntoBattleSlot(a.ringId, slot, b.ringId, a.source as 'reliquary' | 'spare');
-      return;
-    }
-    if (aBattle) {
-      // B (reliquary/spare) takes A's battle slot; A is displaced to B's section.
-      const slot = a.source as 'thumb' | LoadoutSlot;
-      await this.swapIntoBattleSlot(b.ringId, slot, a.ringId, b.source as 'reliquary' | 'spare');
-      return;
-    }
-    // Neither is a battle slot: reliquary ↔ spare. The carried/uncarried states
-    // simply flip — moving A to B's section moves B to A's automatically because
-    // a carry-set PUT carries one and un-carries the other in opposite directions.
-    // Move A to B's section; reliquaryMove reloads and B already sits in A's old
-    // section (it never moved). Then ensure B's carried state matches A's old one.
-    if (a.source === 'reliquary' && b.source === 'spare') {
-      // A enters carry, B leaves carry.
-      await this.carrySwap(a.ringId, b.ringId);
-    } else {
-      // a.source === 'spare' && b.source === 'reliquary' — B enters carry, A leaves.
-      await this.carrySwap(b.ringId, a.ringId);
-    }
-  }
-
-  /**
-   * Carry `enterId` and un-carry `leaveId` in a single PUT /api/carry so the
-   * Reliquary ↔ Spare swap is atomic and never transiently exceeds the cap. Both
-   * rings must currently sit on opposite sides of the carry boundary.
-   */
-  private async carrySwap(enterId: string, leaveId: string): Promise<void> {
-    const carried = new Set(this.rings.filter((r) => r.in_carry === 1).map((r) => r.id));
-    carried.add(enterId);
-    carried.delete(leaveId);
-    if (await this.putCarry(Array.from(carried), false)) {
+    if (await this.swapRingsMutation(a.ringId, b.ringId)) {
       await this.loadData();
       this.afterReliquaryReload();
     }
-  }
-
-  /**
-   * Swap two battle-slot assignments (loadout only, no carry change). `aRing` sits
-   * in `aSlot` and `bRing` in `bSlot`; after the PUT they are exchanged.
-   */
-  private async swapBattleSlots(
-    aSlot: 'thumb' | LoadoutSlot,
-    aRing: string,
-    bSlot: 'thumb' | LoadoutSlot,
-    bRing: string,
-  ): Promise<void> {
-    if (await this.putLoadout({ [aSlot]: bRing, [bSlot]: aRing })) {
-      await this.loadData();
-      this.afterReliquaryReload();
-    }
-  }
-
-  /**
-   * `inId` (from the reliquary or spare pool) takes `slot`, displacing its current
-   * occupant `outId` into `inSource`'s section. A reliquary source means inId must
-   * be carried first and outId un-carried (goes to the Reliquary); a spare source
-   * keeps both carried — outId merely loses its slot (falls into Spare).
-   */
-  private async swapIntoBattleSlot(
-    inId: string,
-    slot: 'thumb' | LoadoutSlot,
-    outId: string,
-    inSource: 'reliquary' | 'spare',
-  ): Promise<void> {
-    if (inSource === 'reliquary') {
-      // Assign the slot first so outId is cleared atomically by saveLoadout. Only
-      // then update carry — this order is safe under partial failure (if the carry
-      // PUT fails, the slot already shows inId which is uncarried but recoverable,
-      // vs the old order where the slot referenced an uncarried outId).
-      if (!(await this.putLoadout({ [slot]: inId }))) return;
-      const carried = new Set(this.rings.filter((r) => r.in_carry === 1).map((r) => r.id));
-      carried.add(inId);
-      carried.delete(outId);
-      if (!(await this.putCarry(Array.from(carried), false))) return;
-    } else {
-      // Spare source — both stay carried; inId takes the slot, outId falls to Spare.
-      if (!(await this.putLoadout({ [slot]: inId }))) return;
-    }
-    await this.loadData();
-    this.afterReliquaryReload();
   }
 
   /**
@@ -1694,9 +1591,21 @@ export class CampScene extends DualCameraScene {
       }
     }
 
-    // EPIC #302 — Heart slot moves use the dedicated PUT /api/heart-slot endpoint
-    // (atomic equip/swap + spirit recompute), never the carry/loadout machinery.
+    // EPIC #302 / #424 — Heart slot moves. An OCCUPIED heart target is a two-ring
+    // exchange → atomic PUT /api/rings/swap (same occupied-vs-empty discriminant as
+    // the battle-slot path below and BattleHandOverlay.resolveMove). PUT
+    // /api/heart-slot is reserved for empty-heart insertions and unequips (the
+    // heart ring moving out with no exchange partner).
     if (target === 'heart' || ring.heart_slot === 1) {
+      const heartId = (window.__campState?.heart_ring as RingData | null | undefined)?.id ?? null;
+      if (target === 'heart' && heartId && heartId !== ringId) {
+        const swapped = await this.swapRingsMutation(ringId, heartId);
+        this.clearReliquarySelection();
+        if (!swapped) return false;
+        await this.loadData();
+        this.afterReliquaryReload();
+        return true;
+      }
       return this.heartSlotMove(ringId, target, releaseFrom);
     }
 
@@ -1740,7 +1649,20 @@ export class CampScene extends DualCameraScene {
       return true;
     }
 
-    // target is a named battle slot — carry the ring first if needed, then assign.
+    // target is a named battle slot. #424 — if the slot is occupied, use PUT
+    // /api/rings/swap (capacity-free exchange). An empty slot uses the existing
+    // carry-first + assign path (genuine insertion).
+    const slotOccupant = this.loadout[target] ?? null;
+    if (slotOccupant && slotOccupant !== ringId) {
+      const swapped = await this.swapRingsMutation(ringId, slotOccupant);
+      this.clearReliquarySelection();
+      if (!swapped) return false;
+      await this.loadData();
+      this.afterReliquaryReload();
+      return true;
+    }
+
+    // Empty slot insertion — carry the ring first if needed, then assign.
     if (!wasCarried) {
       const ok = await this.carryRing(ringId);
       if (!ok) {
@@ -1753,6 +1675,30 @@ export class CampScene extends DualCameraScene {
     if (!assigned) return false;
     await this.loadData();
     this.afterReliquaryReload();
+    return true;
+  }
+
+  /**
+   * #424 — PUT /api/rings/swap for a capacity-free two-ring exchange. Surfaces
+   * errors via setStatus (mirrors putLoadout's error-surfacing pattern).
+   */
+  private async swapRingsMutation(ringId1: string, ringId2: string): Promise<boolean> {
+    if (!getToken()) {
+      this.scene.start('LoginScene');
+      return false;
+    }
+    try {
+      const res = await apiFetch('/api/rings/swap', { method: 'PUT', json: { ringId1, ringId2 } });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        this.setStatus(body?.error ?? `Swap failed (${res.status})`);
+        return false;
+      }
+    } catch (err: unknown) {
+      console.error('[swapRings]', err);
+      this.setStatus('Network error during ring swap');
+      return false;
+    }
     return true;
   }
 

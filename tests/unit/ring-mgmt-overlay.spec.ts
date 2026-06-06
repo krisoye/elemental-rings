@@ -1076,6 +1076,38 @@ describe('#413 drop-time guard: source-level assertions', () => {
     ).toBe(false);
   });
 
+  it('RingManagementOverlayClass.ts does NOT seed window.__reliquaryLocked (#424 removed)', () => {
+    // #424 — the __reliquaryLocked seed (benchN >= spareMax) was abolished because
+    // a full bench is no longer a lock condition; occupied cards are valid swap targets.
+    const src = readClientSrc('objects/ui/RingManagementOverlayClass.ts');
+    if (src === null) return;
+    const nonCommentLines = src.split('\n').filter((l) => {
+      const t = l.trim();
+      return !t.startsWith('//') && !t.startsWith('*') && !t.startsWith('/*');
+    });
+    const codeOnly = nonCommentLines.join('\n');
+    expect(
+      codeOnly,
+      'RingManagementOverlayClass.ts must not assign __reliquaryLocked (removed by #424)',
+    ).not.toMatch(/__reliquaryLocked\s*=/);
+  });
+
+  it('CampScene.ts applyReliquaryLockState does NOT set window.__reliquaryLocked (#424)', () => {
+    // #424 — the locked=benchFull setter is gone from applyReliquaryLockState.
+    // The function now only tracks __reliquaryFull (drop-label color hint).
+    const src = readClientSrc('scenes/CampScene.ts');
+    if (src === null) return;
+    const nonCommentLines = src.split('\n').filter((l) => {
+      const t = l.trim();
+      return !t.startsWith('//') && !t.startsWith('*') && !t.startsWith('/*');
+    });
+    const codeOnly = nonCommentLines.join('\n');
+    expect(
+      codeOnly,
+      'CampScene.ts must not assign window.__reliquaryLocked (removed by #424)',
+    ).not.toMatch(/window\.__reliquaryLocked\s*=/);
+  });
+
   it('CampScene.ts openRingwallOverlay creates SlotSwapManager per-open (not in buildPanels)', () => {
     // #395 acceptance criterion: one SlotSwapManager instance per open overlay.
     // The manager must be created inside openRingwallOverlay, not in buildPanels().
@@ -2154,28 +2186,38 @@ describe('#413 Phase 2 impl-aware: BenchHealthCombat.build() selection stroke + 
     ).toContain('setStrokeStyle(3, 0xffff00)');
   });
 
-  it('BenchHealthCombat.ts build() dims non-selected bench cards with setAlpha(0.45) when bench is full', () => {
-    // #413 spec Design §4: all OTHER bench cards (not the selected one) get alpha=0.45
-    // when benchFull=true. Previously done in renderFieldLeft on a duplicate grid.
+  it('BenchHealthCombat.ts build() does NOT dim bench cards at full bench (#424 removed)', () => {
+    // #424 — bench-full dim removed: occupied bench cards are always valid swap targets.
+    // The setAlpha(0.45) bench dim block must no longer exist in BenchHealthCombat.ts.
     const src = readClientSrc('objects/ui/BenchHealthCombat.ts');
     if (src === null) return;
+    // Strip comments before scanning so a doc-comment mention does not trip the check.
+    const nonCommentLines = src.split('\n').filter((l) => {
+      const t = l.trim();
+      return !t.startsWith('//') && !t.startsWith('*') && !t.startsWith('/*');
+    });
+    const codeOnly = nonCommentLines.join('\n');
     expect(
-      src,
-      'BenchHealthCombat.build() must call setAlpha(0.45) when dimming non-selected bench cards',
-    ).toContain('setAlpha(0.45)');
+      codeOnly.includes('benchFull') && codeOnly.includes('setAlpha(0.45)'),
+      'BenchHealthCombat.ts must NOT contain the bench-full dim block (removed by #424)',
+    ).toBe(false);
   });
 
-  it('BenchHealthCombat.ts build() skips dimming the selected card (early return on id match)', () => {
-    // #413 spec Design §4 P3 fix: the selected card must be SKIPPED in the dim loop
-    // (`if (r.id === selectedRingId) return;`). Without this, the selected ring itself
-    // would be dimmed to 0.45 alpha — making the yellow-stroked card nearly invisible.
+  it('BenchHealthCombat.ts build() has no bench-full dim loop with early return on id match (#424)', () => {
+    // #424 — the dim loop and its selectedRingId early-return guard are removed.
+    // The benchFull conditional dim must not appear in code (only comments are allowed).
     const src = readClientSrc('objects/ui/BenchHealthCombat.ts');
     if (src === null) return;
-    // The guard pattern: `if (r.id === selectedRingId) return;`
+    const nonCommentLines = src.split('\n').filter((l) => {
+      const t = l.trim();
+      return !t.startsWith('//') && !t.startsWith('*') && !t.startsWith('/*');
+    });
+    const codeOnly = nonCommentLines.join('\n');
+    // The guard `if (r.id === selectedRingId) return;` inside a benchFull block is gone.
     expect(
-      src,
-      'BenchHealthCombat.build() dim loop must skip the selected ring via early return',
-    ).toMatch(/if\s*\(\s*r\.id\s*===\s*selectedRingId\s*\)\s*return/);
+      /if\s*\(\s*benchFull\b/.test(codeOnly),
+      'BenchHealthCombat.ts must not contain `if (benchFull` dim logic — removed by #424',
+    ).toBe(false);
   });
 
   it('BenchHealthCombat.ts build() selectedRingId parameter defaults to null (backward-compatible)', () => {

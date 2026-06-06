@@ -139,19 +139,13 @@ export class BenchHealthCombat extends Phaser.GameObjects.Container {
     benchGrid.populate(benchRings);
     benchGrid.setVisibleRows(RINGWALL_VISIBLE_ROWS);
 
-    // Apply yellow selection stroke to the currently-selected bench ring,
-    // and dim all OTHER bench cards when the bench is full (selected card stays
-    // at full alpha so the user can see which ring is held).
+    // Apply yellow selection stroke to the currently-selected bench ring.
+    // #424 — bench-full dim removed: occupied bench cards are always valid swap
+    // targets regardless of pool fullness. Only ghost (empty) cells are insertion
+    // targets and they are hidden when the bench is at capacity.
     if (selectedRingId !== null) {
       const selBg = benchGrid.getCardBg(selectedRingId);
       if (selBg) selBg.setStrokeStyle(3, 0xffff00);
-    }
-    if (benchFull) {
-      benchRings.forEach((r) => {
-        if (r.id === selectedRingId) return; // keep selected card at full alpha
-        const bg = benchGrid.getCardBg(r.id);
-        if (bg) bg.setAlpha(0.45);
-      });
     }
 
     // ── Bench ghost placeholder (#423) ─────────────────────────────────────────

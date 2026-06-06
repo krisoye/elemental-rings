@@ -68,6 +68,7 @@ import {
   grantShard,
   isShrineUnlocked,
   consumeAndUnlockShrine,
+  swapRings,
 } from '../persistence/PlayerRepo';
 import { ElementEnum } from '../../../shared/types';
 import { insertRing as insertRingRow, makeRing, getRingById } from '../persistence/ringRows';
@@ -361,6 +362,54 @@ apiRouter.put('/api/heart-slot', requireAuth, requirePlayer, (req: Request, res:
   res.status(200).json({
     player: buildMePlayerBlock(playerId),
     rings: getRingsByOwner(playerId),
+  });
+});
+
+/**
+ * PUT /api/rings/swap — atomically exchange the positions of two rings (#424).
+ * Body: { ringId1: string, ringId2: string }
+ *
+ * A swap is a permutation: no capacity check is ever needed because every ring
+ * entering a section is offset by one leaving it. The only guards are ownership,
+ * self-swap, and escrow. Same-pool swaps (spare↔spare, reliquary↔reliquary) are
+ * positionally meaningless and return 200 as a no-op.
+ *
+ * Any swap involving the heart ring recomputes spirit_max and clamps the gauge.
+ *
+ * Returns the full /api/me shape: { player, rings, loadout } where rings excludes
+ * heart_slot=1 rings (identical filter to GET /api/me). Requires auth.
+ */
+apiRouter.put('/api/rings/swap', requireAuth, requirePlayer, (req: Request, res: Response): void => {
+  const playerId = req.playerId as string;
+  const { ringId1, ringId2 } = req.body ?? {};
+  if (typeof ringId1 !== 'string' || !ringId1 || typeof ringId2 !== 'string' || !ringId2) {
+    fail(res, 400, 'ringId1 and ringId2 must be non-empty strings');
+    return;
+  }
+  try {
+    swapRings(playerId, ringId1, ringId2);
+  } catch (err: unknown) {
+    // Only the three expected business-rule rejections are surfaced verbatim as
+    // 400s. Anything else (e.g. a raw SQLite error) is an internal failure: log
+    // it server-side and return a generic 500 so DB details never leak to clients.
+    const msg = err instanceof Error ? err.message : '';
+    const expected = [
+      'ring not found or not owned',
+      'cannot swap a ring with itself',
+      'ring is locked in a duel',
+    ];
+    if (expected.includes(msg)) {
+      fail(res, 400, msg);
+      return;
+    }
+    console.error('[PUT /api/rings/swap] unexpected error:', err);
+    fail(res, 500, 'Internal error during ring swap');
+    return;
+  }
+  res.status(200).json({
+    player: buildMePlayerBlock(playerId),
+    rings: getRingsByOwner(playerId).filter((r) => r.heart_slot !== 1),
+    loadout: getLoadout(playerId) ?? null,
   });
 });
 
