@@ -25,17 +25,19 @@ import type { RingData } from '../InventoryGrid';
  */
 
 // #395 — 'fusion' added for Sub-B (rendering wired in Sub-B; mode type extended here).
-export type RingMgmtMode = 'sanctum' | 'field' | 'fusion';
+// #431 — 'merge' added for same-element ring consolidation (GDD §4.7).
+export type RingMgmtMode = 'sanctum' | 'field' | 'fusion' | 'merge';
 
 /**
  * Player-facing column header labels (left → right). Mode-specific LEFT column:
- * SPIRIT (sanctum), LOOT (field), FUSE (fusion). Three shared right columns are
- * identical across all modes.
+ * SPIRIT (sanctum), LOOT (field), FUSE (fusion), MERGE (merge). Three shared
+ * right columns are identical across all modes.
  */
 export const COLUMN_LABELS: Record<RingMgmtMode, readonly string[]> = {
   sanctum: ['SPIRIT', 'BENCH', 'HEALTH', 'COMBAT'],
   field:   ['BENCH',  'HEALTH', 'COMBAT'],
   fusion:  ['FUSE',   'BENCH', 'HEALTH', 'COMBAT'],
+  merge:   ['MERGE',  'BENCH', 'HEALTH', 'COMBAT'],
 } as const;
 
 /**

@@ -142,6 +142,10 @@ export abstract class BaseBiomeScene extends DualCameraScene {
   private activeZone: InteractionZone | null = null;
   /** #396 — the unified fusion overlay for the Fusion Shrine (lazy, per-open). */
   private shrineFusionOverlay: RingManagementOverlay | null = null;
+  /** #431 — the unified merge overlay for shrine merge mode (lazy, per-open). */
+  private shrineMergeOverlay: RingManagementOverlay | null = null;
+  /** #431 — id of the shrine whose merge overlay is currently open (or null). */
+  protected activeMergeShrineId: string | null = null;
   /** #423 — shared discard-confirm dialog for the shrine-fusion DISCARD slot. */
   private fusionDiscard_: DiscardConfirm | null = null;
   /** Centers of Anchorage locations (keyed by waystoneId), for compass + spawn logic. */
@@ -389,6 +393,69 @@ export abstract class BaseBiomeScene extends DualCameraScene {
       return null;
     } catch {
       return 'Fusion failed (network error)';
+    }
+  }
+
+  /**
+   * #431 — Open the unified merge overlay (RingManagementOverlay in merge mode)
+   * at an unsealed shrine. Fetches the player's current /api/me snapshot, then
+   * opens the overlay with `onMerge` dispatching POST /api/rings/merge. The
+   * server remains the sole authority on what merges. No `filterElement` — merge
+   * is element-agnostic (any same-element pair is eligible).
+   */
+  protected async openShrineMerge(shrineId: string): Promise<void> {
+    // Close any existing merge overlay first.
+    this.shrineMergeOverlay?.close();
+
+    const meData = await this.fetchMeAsOverlayData();
+
+    const overlayOpts: RingManagementOverlayOpts = {
+      resolveMove: async () => { /* shrine merge overlay does not use swap moves */ return true; },
+      onRecharge: () => { /* no recharge action in shrine context */ },
+      onMerge: async (ringId1, ringId2, ov) => {
+        const err = await this.doShrineMerge(ringId1, ringId2, shrineId, ov);
+        if (err) ov.setStatusMessage(err);
+      },
+      onRender: (c) => {
+        this.routeToUi(c);
+      },
+      onBeforeDestroy: (c) => {
+        this.unignoreMain(c);
+      },
+    };
+
+    this.shrineMergeOverlay = new RingManagementOverlay(this, 'merge', overlayOpts);
+    this.shrineMergeOverlay.open(meData, () => {
+      this.shrineMergeOverlay = null;
+    });
+  }
+
+  /**
+   * POST /api/rings/merge for the shrine overlay; on success reopens with the
+   * refreshed inventory (#431).
+   */
+  private async doShrineMerge(
+    ringId1: string,
+    ringId2: string,
+    shrineId: string,
+    ov: RingManagementOverlay,
+  ): Promise<string | null> {
+    if (!getToken()) return 'Not authenticated';
+    try {
+      const res = await apiFetch('/api/rings/merge', {
+        method: 'POST',
+        json: { ringId1, ringId2, shrineId },
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        return (body as { error?: string }).error ?? `Merge failed (${res.status})`;
+      }
+      // Success: clear selections and reopen with the refreshed inventory.
+      ov.clearMergeParents();
+      void this.openShrineMerge(shrineId);
+      return null;
+    } catch {
+      return 'Merge failed (network error)';
     }
   }
 
@@ -666,7 +733,15 @@ export abstract class BaseBiomeScene extends DualCameraScene {
         this.closeBattleHand();
       }
     });
-    this.input.keyboard!.on('keydown-M', () => this.toggleOverworldMap());
+    // #431 — M dispatches to shrine merge when a merge shrine is active; falls
+    // back to the overworld map in all other contexts.
+    this.input.keyboard!.on('keydown-M', () => {
+      if (this.activeMergeShrineId) {
+        void this.openShrineMerge(this.activeMergeShrineId);
+      } else {
+        this.toggleOverworldMap();
+      }
+    });
     window.__overworldBattleHandOpen = false;
     window.__overworldToggleBattleHand = (): void => this.toggleBattleHand();
 
@@ -729,6 +804,9 @@ export abstract class BaseBiomeScene extends DualCameraScene {
       this.merchantModal = null;
       this.campfireModal?.close();
       this.campfireModal = null;
+      this.shrineMergeOverlay?.close();
+      this.shrineMergeOverlay = null;
+      this.activeMergeShrineId = null;
       this.campfires.forEach((cf) => cf.destroy());
       this.campfires.clear();
       this.compass.destroy();

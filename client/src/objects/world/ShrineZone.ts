@@ -48,6 +48,8 @@ export class ShrineZone extends WorldInteractable {
   private readonly shrineId: string;
   private readonly shrineElement: number;
   private readonly onShrineOpen: () => void;
+  /** #431 — optional merge callback; when provided the blink prompt shows [E] FUSE / [M] MERGE. */
+  private readonly onShrineMerge: (() => void) | null;
   private readonly alwaysOpen: boolean;
   private readonly centerX: number;
   private readonly centerY: number;
@@ -78,15 +80,19 @@ export class ShrineZone extends WorldInteractable {
     shrineElement: number,
     onShrineOpen: () => void,
     alwaysOpen = false,
+    onShrineMerge: (() => void) | null = null,
   ) {
     // One zone covering the altar (via the WorldInteractable base); its callback
     // dispatches on the live sealed/open state. The arrow only runs
     // post-construction, so referencing `this` here is safe.
-    super(scene, shrineObj, () => this.handleInteract(), 'Examine altar [E]');
+    // #431 — when a merge callback is provided, show both keybindings in the prompt.
+    const promptText = onShrineMerge ? '[E] FUSE / [M] MERGE' : 'Examine altar [E]';
+    super(scene, shrineObj, () => this.handleInteract(), promptText);
     this.scene = scene;
     this.shrineId = shrineId;
     this.shrineElement = shrineElement;
     this.onShrineOpen = onShrineOpen;
+    this.onShrineMerge = onShrineMerge;
     this.alwaysOpen = alwaysOpen;
 
     const x = shrineObj.x ?? 0;

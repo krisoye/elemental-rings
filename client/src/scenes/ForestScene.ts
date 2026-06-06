@@ -266,12 +266,17 @@ export class ForestScene extends BaseBiomeScene {
       width: ALTAR_PX,
       height: ALTAR_PX,
     };
+    // #431 — wire [M] MERGE keybinding; set activeMergeShrineId so the BaseBiomeScene
+    // M-key handler dispatches to openShrineMerge instead of the overworld map.
+    this.activeMergeShrineId = 'forest_thornado_shrine';
     this.shrineZone = new ShrineZone(
       this,
       altarObj,
       'forest_thornado_shrine',
       ElementEnum.THORNADO,
       () => void this.openShrineFusion(ElementEnum.THORNADO),
+      false,
+      () => void this.openShrineMerge('forest_thornado_shrine'),
     );
     this.registerInteractionZone(
       this.shrineZone.interactionZone,
@@ -300,6 +305,8 @@ export class ForestScene extends BaseBiomeScene {
       width: ALTAR_PX,
       height: ALTAR_PX,
     };
+    // #431 — wire [M] MERGE keybinding for the Bloom shrine too.
+    this.activeMergeShrineId = 'forest_bloom_hollow';
     this.shrineZone = new ShrineZone(
       this,
       altarObj,
@@ -307,6 +314,7 @@ export class ForestScene extends BaseBiomeScene {
       ElementEnum.BLOOM,
       () => void this.openShrineFusion(ElementEnum.BLOOM),
       true, // alwaysOpen — the Bloom altar has no seal
+      () => void this.openShrineMerge('forest_bloom_hollow'),
     );
     this.registerInteractionZone(
       this.shrineZone.interactionZone,
