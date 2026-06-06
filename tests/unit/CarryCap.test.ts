@@ -1282,4 +1282,193 @@ describe('#424 swapRings — position matrix', () => {
     expect(player.spirit_max).toBe(repo.computeSpiritMax(p));
   });
 
+  // ---------------------------------------------------------------------------
+  // #424 adversarial edge cases — Phase 1 (spec-driven) + Phase 2 (impl-aware)
+  // ---------------------------------------------------------------------------
+
+  test('non-existent ringId1 throws "ring not found or not owned"', () => {
+    // #424 adversarial: getRingById returns undefined for a phantom id; the
+    // ownership guard must reject before any DB write occurs.
+    const p = makePlayer(dbInstance);
+    const realRing = makeRing(dbInstance, p, { inCarry: 1 });
+    const phantom = `nonexistent_${Math.random().toString(36).slice(2)}`;
+    expect(() => repo.swapRings(p, phantom, realRing)).toThrow(/ring not found or not owned/i);
+  });
+
+  test('non-existent ringId2 throws "ring not found or not owned"', () => {
+    // #424 adversarial: mirror of the above — phantom in position 2 is also caught.
+    const p = makePlayer(dbInstance);
+    const realRing = makeRing(dbInstance, p, { inCarry: 1 });
+    const phantom = `nonexistent2_${Math.random().toString(36).slice(2)}`;
+    expect(() => repo.swapRings(p, realRing, phantom)).toThrow(/ring not found or not owned/i);
+  });
+
+  test('ringId1 escrowed throws "ring is locked in a duel" (existing test covers ringId2)', () => {
+    // #424 adversarial: existing test only passed escrowed as ringId2; verify the
+    // symmetric case — r1.escrowed fires the same guard.
+    const p = makePlayer(dbInstance);
+    const escrowedRing = makeRing(dbInstance, p, { inCarry: 1, escrowed: 1 });
+    const normalRing = makeRing(dbInstance, p, { inCarry: 1 });
+    expect(() => repo.swapRings(p, escrowedRing, normalRing)).toThrow(/ring is locked in a duel/i);
+  });
+
+  test('both rings escrowed — first escrowed guard fires (ringId1)', () => {
+    // #424 adversarial: both rings escrowed; the impl checks r1 before r2, so the
+    // error is raised on r1. The exact message is the same; what matters is that it
+    // throws and does not attempt any DB write.
+    const p = makePlayer(dbInstance);
+    const esc1 = makeRing(dbInstance, p, { inCarry: 1, escrowed: 1 });
+    const esc2 = makeRing(dbInstance, p, { inCarry: 1, escrowed: 1 });
+    expect(() => repo.swapRings(p, esc1, esc2)).toThrow(/ring is locked in a duel/i);
+  });
+
+  test('classifyPosition priority: heart_slot=1 is detected before slot scan (heart takes priority)', () => {
+    // #424 Phase 2 adversarial: classifyPosition checks heart_slot=1 FIRST, before
+    // iterating loadout columns. A corrupted/edge-case row where heart_slot=1 AND
+    // the ring also appears in a loadout slot must still classify as 'heart' not
+    // 'slot'. This test injects such a row and verifies swapRings treats it as the
+    // heart position (heart_ring_id is updated) rather than a slot.
+    const p = makePlayer(dbInstance);
+    const heartId = makeRing(dbInstance, p, { inCarry: 0, heartSlot: 1 });
+    dbInstance.prepare('UPDATE players SET heart_ring_id = ? WHERE id = ?').run(heartId, p);
+    // Corrupt: put the heart ring in a slot column too (simulates bad migration).
+    assignSlot(dbInstance, p, 'a1', heartId);
+    const reliqId = makeRing(dbInstance, p, { inCarry: 0 });
+
+    // swapRings should treat heartId as 'heart' (heart_slot=1 check first).
+    // After the swap: heartId moves to 'reliquary' position (entering reliqId's position),
+    // reliqId becomes the new heart. The slot column should be cleared by writeSwapLoadout
+    // since reliqId enters pos1=heart (not a slot) and heartId enters pos2=reliquary (not a slot).
+    // The loadout update path: pos1=heart, pos2=reliquary → no changes[] entries → loadout untouched.
+    // But the DB has a1=heartId which now points at a ring that is no longer in a slot.
+    // This test primarily verifies: (a) no throw, (b) heart_ring_id swaps correctly.
+    expect(() => repo.swapRings(p, heartId, reliqId)).not.toThrow();
+    const player = dbInstance.prepare('SELECT heart_ring_id FROM players WHERE id = ?').get(p) as { heart_ring_id: string | null };
+    expect(player.heart_ring_id).toBe(reliqId);
+    const formerHeart = dbInstance.prepare('SELECT heart_slot, in_carry FROM rings WHERE id = ?').get(heartId) as { heart_slot: number; in_carry: number };
+    expect(formerHeart.heart_slot).toBe(0);
+  });
+
+  test('spirit_current is clamped when heart swap reduces spirit_max below current value', () => {
+    // #424 adversarial: clampSpiritCurrent runs after refreshSpiritMax on any heart
+    // swap. If the new heart ring contributes fewer max_uses to spirit_max than the
+    // old one, the gauge ceiling drops. A spirit_current that was valid before the
+    // swap may now exceed the new ceiling and must be clamped down.
+    const p = makePlayer(dbInstance);
+    // Two reliquary rings: 10 max_uses each → spirit_max = 20 × multiplier.
+    const reliq1 = makeRing(dbInstance, p, { inCarry: 0 });
+    const reliq2 = makeRing(dbInstance, p, { inCarry: 0 });
+    dbInstance.prepare('UPDATE rings SET max_uses = 10 WHERE id = ?').run(reliq1);
+    dbInstance.prepare('UPDATE rings SET max_uses = 10 WHERE id = ?').run(reliq2);
+    repo.refreshSpiritMax(p);
+    const spiritMaxBefore = repo.computeSpiritMax(p);
+    // Set spirit_current to the full ceiling.
+    dbInstance.prepare('UPDATE players SET spirit_current = ? WHERE id = ?').run(spiritMaxBefore, p);
+
+    // Heart ring with 1 max_use — after it enters the heart slot it leaves the
+    // reliquary pool, so spirit_max drops (the reliqId's 3 uses replace a reliquary
+    // position; the heart ring contributes 0 to the sum). The swap moves:
+    //   heartId (heart_slot=1, max_uses=1, not counted) → enters reliquary (now counted)
+    //   reliq1 (in_carry=0, max_uses=10, counted) → enters heart (no longer counted)
+    // Net change to reliquary pool: reliq1 leaves (-10 uses), heartId joins (+1 use) → spirit_max falls.
+    const heartId = makeRing(dbInstance, p, { inCarry: 0, heartSlot: 1 });
+    dbInstance.prepare('UPDATE players SET heart_ring_id = ? WHERE id = ?').run(heartId, p);
+    dbInstance.prepare('UPDATE rings SET max_uses = 1 WHERE id = ?').run(heartId);
+    repo.refreshSpiritMax(p); // baseline reflects current DB state (heartId not in pool)
+
+    // spirit_max is now 20×mult (reliq1+reliq2 both in pool, heartId excluded).
+    // Set spirit_current to the full current ceiling.
+    const spiritMaxAtStart = repo.computeSpiritMax(p);
+    dbInstance.prepare('UPDATE players SET spirit_current = ? WHERE id = ?').run(spiritMaxAtStart, p);
+
+    // Swap heart with reliq1: reliq1 enters heart slot (leaves pool, -10 uses),
+    // heartId (1 use) enters reliquary (joins pool, +1 use). Net: -9 uses → lower max.
+    repo.swapRings(p, heartId, reliq1);
+
+    const newMax = repo.computeSpiritMax(p);
+    const row = dbInstance.prepare('SELECT spirit_current, spirit_max FROM players WHERE id = ?').get(p) as { spirit_current: number; spirit_max: number };
+    // spirit_max persisted correctly.
+    expect(row.spirit_max).toBe(newMax);
+    // spirit_current must not exceed the new ceiling.
+    expect(row.spirit_current).toBeLessThanOrEqual(newMax);
+  });
+
+  test('after heart ↔ spare swap, old heart ring is accessible as a spare ring (in_carry=1, heart_slot=0)', () => {
+    // #424 adversarial: a heart swap must leave the old heart ring in the spare pool,
+    // not hidden or dangling. getSpareIds must include it so the player can see it.
+    const p = makePlayer(dbInstance);
+    const heartId = makeRing(dbInstance, p, { inCarry: 0, heartSlot: 1 });
+    dbInstance.prepare('UPDATE players SET heart_ring_id = ? WHERE id = ?').run(heartId, p);
+    const spareId = makeRing(dbInstance, p, { inCarry: 1 });
+
+    repo.swapRings(p, heartId, spareId);
+
+    const spares = repo.getSpareIds(p);
+    expect(spares).toContain(heartId);
+    const formerHeart = dbInstance.prepare('SELECT in_carry, heart_slot FROM rings WHERE id = ?').get(heartId) as { in_carry: number; heart_slot: number };
+    expect(formerHeart.in_carry).toBe(1);
+    expect(formerHeart.heart_slot).toBe(0);
+  });
+
+  test('pending WON ring ↔ spare: exactly one ring has pending=1 after swap (no duplicate pending)', () => {
+    // #424 adversarial: after swapping the WON ring with a spare, EXACTLY one ring
+    // must have pending=1. A bug where setPendingStmt fires but clearPendingStmt on
+    // the old pending ring is skipped would leave two pending rings.
+    const p = makePlayer(dbInstance);
+    const max = repo.getSpareRingMax(p);
+    for (let i = 0; i < max; i++) makeRing(dbInstance, p, { inCarry: 1 });
+    const wonId = repo.grantRing(p, ElementEnum.FIRE);
+    const spareId = repo.getSpareIds(p)[0];
+
+    repo.swapRings(p, wonId, spareId);
+
+    const pendingCount = (dbInstance
+      .prepare('SELECT COUNT(*) as n FROM rings WHERE owner_id = ? AND pending = 1')
+      .get(p) as { n: number }).n;
+    // Exactly one ring may hold pending=1 at any time.
+    expect(pendingCount).toBe(1);
+    expect(repo.getPendingRingId(p)).toBe(spareId);
+  });
+
+  test('same-pool slot↔slot where both rings occupy DIFFERENT slots: no-op guard does NOT fire', () => {
+    // #424 Phase 2 adversarial: the same-pool guard is:
+    //   pos1.kind === 'slot' && pos2.kind === 'slot' && pos1.slot === pos2.slot → no-op
+    // Two rings in DIFFERENT slots must pass through and actually swap their columns.
+    // This test is the positive case that the slot===slot guard is correctly scoped to
+    // same-slot, not same-kind.
+    const p = makePlayer(dbInstance);
+    const r1 = makeRing(dbInstance, p, { inCarry: 1 });
+    const r2 = makeRing(dbInstance, p, { inCarry: 1 });
+    assignSlot(dbInstance, p, 'thumb', r1);
+    assignSlot(dbInstance, p, 'd2', r2);
+    repo.swapRings(p, r1, r2);
+    const ld = dbInstance.prepare('SELECT thumb, d2 FROM loadout WHERE player_id = ?').get(p) as { thumb: string | null; d2: string | null };
+    // Columns exchanged — not a no-op.
+    expect(ld.thumb).toBe(r2);
+    expect(ld.d2).toBe(r1);
+  });
+
+  test('writeRingFlags: ring entering slot position clears pending flag (slot target)', () => {
+    // #424 Phase 2: when a spare or pending ring enters a slot via writeRingFlags,
+    // clearPendingStmt must run. Test that a pending ring written into a slot ends
+    // up with pending=0 even though the 'slot' case in writeRingFlags calls
+    // clearPendingStmt before the pending→pending path.
+    const p = makePlayer(dbInstance);
+    const max = repo.getSpareRingMax(p);
+    for (let i = 0; i < max; i++) makeRing(dbInstance, p, { inCarry: 1 });
+    const wonId = repo.grantRing(p, ElementEnum.FIRE);
+    const slotRing = makeRing(dbInstance, p, { inCarry: 1 });
+    assignSlot(dbInstance, p, 'thumb', slotRing);
+
+    repo.swapRings(p, wonId, slotRing); // WON ring → thumb slot; slotRing → pending
+
+    const wonRow = dbInstance.prepare('SELECT pending, in_carry FROM rings WHERE id = ?').get(wonId) as { pending: number; in_carry: number };
+    // WON ring now in thumb slot → must have pending=0 and in_carry=1.
+    expect(wonRow.pending).toBe(0);
+    expect(wonRow.in_carry).toBe(1);
+    const ld = dbInstance.prepare('SELECT thumb FROM loadout WHERE player_id = ?').get(p) as { thumb: string | null };
+    expect(ld.thumb).toBe(wonId);
+  });
+
 });
+
