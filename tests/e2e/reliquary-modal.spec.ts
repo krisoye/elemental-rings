@@ -515,9 +515,14 @@ test('reliquary: full battle loadout with spare room keeps the SPIRIT grid unloc
   await loadSanctum(page);
   await openReliquary(page);
 
-  // With a full battle hand but an empty spare pool the grid is NOT locked.
-  const locked = await page.evaluate(() => (window as any).__reliquaryLocked);
-  expect(locked).toBeFalsy();
+  // With a full battle hand but an empty spare pool the grid is interactive:
+  // the SPIRIT card renders at full alpha (#424 — would be 0.45 if dim logic returned).
+  const cardAlpha = await page.evaluate((id) => {
+    const grid = (window as any).__scene?.sanctumGrid;
+    return grid?.getCardBg?.(id)?.alpha ?? null;
+  }, reliquaryRing.id);
+  expect(cardAlpha, 'SPIRIT card bg must exist').not.toBeNull();
+  expect(cardAlpha as number, 'SPIRIT card must not be dimmed with a full battle hand').toBe(1);
 
   // The Reliquary→Bench (spare) move succeeds despite all battle slots being full.
   await page.evaluate((id) => (window as any).__reliquaryMove(id, 'spare'), reliquaryRing.id);
@@ -571,21 +576,15 @@ test('reliquary: full bench — SPIRIT cards clickable and swap-valid; drop-to-s
   );
   await openReliquary(page);
 
-  // #424 — __reliquaryLocked is NO LONGER set by bench fullness; bench-full does not
-  // lock the SPIRIT grid. The grid SPIRIT cards must NOT be dimmed.
+  // #424 — bench-full no longer locks or dims the SPIRIT grid. Positive assertion:
+  // the SPIRIT card renders at full alpha (would be 0.45 if the dim logic returned).
   await page.waitForFunction(() => (window as any).__campState !== undefined, { timeout: 5000 });
-  const isLocked = await page.evaluate(() => (window as any).__reliquaryLocked);
-  expect(isLocked, '__reliquaryLocked must not be true at full bench (#424 removed bench-full lock)').not.toBe(true);
-
-  // #424 — SPIRIT card alpha must be 1 (not dimmed) at full bench.
   const cardAlpha = await page.evaluate((id) => {
     const grid = (window as any).__scene?.sanctumGrid;
     return grid?.getCardBg?.(id)?.alpha ?? null;
   }, remainingReliquary);
-  // alpha may be null if grid not yet rendered; if present it must be 1 (not dimmed).
-  if (cardAlpha !== null) {
-    expect(cardAlpha as number, 'SPIRIT card must not be dimmed at full bench (#424)').toBe(1);
-  }
+  expect(cardAlpha, 'SPIRIT card bg must exist').not.toBeNull();
+  expect(cardAlpha as number, 'SPIRIT card must not be dimmed at full bench (#424)').toBe(1);
 
   // Pick-up (select) SUCCEEDS at full bench — no lock.
   await page.evaluate(
@@ -628,19 +627,25 @@ test('rings-swap S1 (sanctum): SPIRIT↔bench swap with both pools at cap succee
   const resting = me0.rings.filter((r: any) => r.in_carry === 0).map((r: any) => r.id);
   const nineSpares = resting.slice(0, 9);
   expect(nineSpares.length).toBe(9);
-  // A Reliquary ring left behind (resting[9]).
-  const spiritRingId = resting[9];
-  expect(spiritRingId).toBeDefined();
   const carryRes = await putCarry(token, [...slotted, ...nineSpares]);
   expect(carryRes.status).toBe(200);
 
-  // Re-read /api/me after seeding.
+  // Re-read /api/me after seeding. The grid cell-0 rings are the FIRST in the
+  // InventoryGrid canonical sort (element asc → XP desc → id asc) of each pool —
+  // real-pointer clicks land on cell 0, so the ids must come from the same sort.
   const me1 = await getMe(token);
-  const benchRings1 = (me1.rings as Array<{ id: string; in_carry: number }>).filter(
-    (r) => r.in_carry === 1 && !slotted.includes(r.id),
-  );
+  const bySort = (a: any, b: any): number =>
+    a.element !== b.element ? a.element - b.element : b.xp !== a.xp ? b.xp - a.xp : a.id.localeCompare(b.id);
+  const benchRings1 = (me1.rings as Array<{ id: string; in_carry: number; element: number; xp: number }>)
+    .filter((r) => r.in_carry === 1 && !slotted.includes(r.id))
+    .sort(bySort);
   expect(benchRings1.length, 'bench must be full after seeding').toBe(spareMax);
   const benchRing0Id = benchRings1[0].id;
+  const spiritRings1 = (me1.rings as Array<{ id: string; in_carry: number; element: number; xp: number; heart_slot?: number }>)
+    .filter((r) => r.in_carry === 0 && r.heart_slot !== 1)
+    .sort(bySort);
+  expect(spiritRings1.length, 'reliquary must have rings to swap').toBeGreaterThan(0);
+  const spiritRingId = spiritRings1[0].id;
 
   const ctx = await browser.newContext();
   await ctx.addInitScript(`localStorage.setItem('er_token', ${JSON.stringify(token)})`);
@@ -652,15 +657,25 @@ test('rings-swap S1 (sanctum): SPIRIT↔bench swap with both pools at cap succee
   );
   await openReliquary(page);
 
-  // #424 — lock must NOT be set; bench-full no longer locks the SPIRIT grid.
-  const isLocked = await page.evaluate(() => (window as any).__reliquaryLocked);
-  expect(isLocked, '__reliquaryLocked must not be true (#424)').not.toBe(true);
+  // #424 — bench-full no longer locks or dims the SPIRIT grid: card alpha must be 1.
+  const cell0Alpha = await page.evaluate((id) => {
+    const grid = (window as any).__scene?.sanctumGrid;
+    return grid?.getCardBg?.(id)?.alpha ?? null;
+  }, spiritRingId);
+  expect(cell0Alpha, 'SPIRIT card bg must exist').not.toBeNull();
+  expect(cell0Alpha as number, 'SPIRIT card must not be dimmed with both pools at cap (#424)').toBe(1);
 
-  // Two-click swap via E2E hooks: select the SPIRIT ring, then select the bench ring.
-  // The second __reliquarySelect from a different source triggers applySwap → carrySwap.
-  // Both pool counts stay the same — carry enters one and leaves one atomically.
-  await page.evaluate((id) => (window as any).__reliquarySelect(id, 'reliquary'), spiritRingId);
-  await page.evaluate((id) => (window as any).__reliquarySelect(id, 'spare'), benchRing0Id);
+  // REAL pointer gesture: click the SPIRIT cell-0 card to pick it up…
+  await clickCanvas(page, { x: SPIRIT_GRID_ORIGIN.x + 32, y: SPIRIT_GRID_ORIGIN.y + 44 });
+  await page.waitForFunction(
+    (id) => ((window as any).__scene as any)?.swapManager?.selection?.ringId === id,
+    spiritRingId,
+    { timeout: 5000 },
+  );
+
+  // …then real-click the bench cell-0 card. Two rings from different pools →
+  // applySwap → atomic PUT /api/rings/swap. Both pool counts stay the same.
+  await clickCanvas(page, BENCH_CELL0);
 
   // Wait for the server round-trip to propagate.
   await page.waitForFunction(
@@ -719,9 +734,14 @@ test('reliquary: a pending WON ring does not lock the SPIRIT grid (#388)', async
   await loadSanctum(page);
   await openReliquary(page);
 
-  // The pending ring is excluded from spareCount → the grid is NOT locked.
-  const locked = await page.evaluate(() => (window as any).__reliquaryLocked);
-  expect(locked).toBeFalsy();
+  // The pending ring must not lock the grid: the SPIRIT card renders at full
+  // alpha (#424 positive assertion — would be 0.45 if the dim logic returned).
+  const cardAlpha = await page.evaluate((id) => {
+    const grid = (window as any).__scene?.sanctumGrid;
+    return grid?.getCardBg?.(id)?.alpha ?? null;
+  }, reliquaryRing.id);
+  expect(cardAlpha, 'SPIRIT card bg must exist').not.toBeNull();
+  expect(cardAlpha as number, 'SPIRIT card must not be dimmed with a pending WON ring').toBe(1);
 
   // A Reliquary→Bench move still succeeds with the pending ring present.
   await page.evaluate((id) => (window as any).__reliquaryMove(id, 'spare'), reliquaryRing.id);
@@ -798,9 +818,14 @@ test('reliquary (#413): pick-up always succeeds at full bench; only drop to spar
   );
   expect(overlayOpen, 'Overlay must remain open after reliquary pick-up at full bench (#413)').toBe(true);
 
-  // #424 — lock badge removed; __reliquaryLocked is no longer set.
-  const stillLocked = await page.evaluate(() => (window as any).__reliquaryLocked);
-  expect(stillLocked, '__reliquaryLocked must not be set after #424').not.toBe(true);
+  // #424 — lock/dim removed; the picked-up SPIRIT card still renders at full
+  // alpha (positive assertion — would be 0.45 if the dim logic returned).
+  const pickedAlpha = await page.evaluate((id) => {
+    const grid = (window as any).__scene?.sanctumGrid;
+    return grid?.getCardBg?.(id)?.alpha ?? null;
+  }, reliquaryRing.id);
+  expect(pickedAlpha, 'SPIRIT card bg must exist').not.toBeNull();
+  expect(pickedAlpha as number, 'SPIRIT card must not be dimmed at full bench after pick-up').toBe(1);
 
   // Also verify order A still works: select spare first, then reliquary (both succeed).
   await page.evaluate(() => (window as any).__reliquarySelect(null, 'spare')); // clear
@@ -829,7 +854,7 @@ test('reliquary (#413): pick-up always succeeds at full bench; only drop to spar
 // The drop-time guard only fires when target === 'spare'. Swapping a reliquary ring ↔ A1
 // (through the two-click select pattern) is always valid because carry count stays constant.
 // Drive via __reliquarySelect twice (select reliquary ring, then select A1 battle ring) to
-// trigger applySwap → swapIntoBattleSlot (atomic: assign slot first, then update carry net-zero).
+// trigger applySwap → PUT /api/rings/swap (#424 — one atomic server-side transaction).
 test('reliquary (#413): full bench: SPIRIT-to-A1 swap succeeds without bench-full rejection', async ({
   browser,
 }) => {
@@ -868,7 +893,7 @@ test('reliquary (#413): full bench: SPIRIT-to-A1 swap succeeds without bench-ful
   // Step 1: pick up the reliquary ring (SPIRIT section) — succeeds (no pick-up-time guard in #413).
   await page.evaluate((id) => (window as any).__reliquarySelect(id, 'reliquary'), reliquaryRing);
 
-  // Step 2: click A1 battle slot ring — triggers applySwap → swapIntoBattleSlot (atomic, net-zero carry).
+  // Step 2: click A1 battle slot ring — triggers applySwap → PUT /api/rings/swap (#424, atomic).
   // The drop-time guard does NOT apply here (target is a battle slot, not 'spare').
   await page.evaluate((id) => (window as any).__reliquarySelect(id, 'battle'), a1RingId);
 

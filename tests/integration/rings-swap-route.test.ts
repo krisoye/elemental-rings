@@ -227,12 +227,24 @@ describe('PUT /api/rings/swap — #424 capacity-free ring exchange', () => {
     // Equip a heart ring directly in DB.
     const heartRingId = makeRing(playerId, { inCarry: 0, heartSlot: 1, element: ElementEnum.WIND });
     dbInstance.prepare(`UPDATE players SET heart_ring_id = ? WHERE id = ?`).run(heartRingId, playerId);
-    // Compute spirit_max now.
-    const spiritBefore = repo.refreshSpiritMax(playerId);
+    // Seed a baseline reliquary ring so the derived spirit_max is nonzero
+    // (spirit_max = SUM(max_uses) over in_carry=0, heart_slot=0 rings × multiplier).
+    const baselineReliq = makeRing(playerId, { inCarry: 0 });
+    dbInstance.prepare(`UPDATE rings SET max_uses = 5 WHERE id = ?`).run(baselineReliq);
     // A spare ring to swap with.
     const spareRing = makeRing(playerId, { inCarry: 1, element: ElementEnum.FIRE });
-    // Give it some XP so spirit_max changes when it becomes the heart ring.
     dbInstance.prepare(`UPDATE rings SET xp = 500, max_uses = 4 WHERE id = ?`).run(spareRing);
+
+    // GET /api/me derives spirit_max LIVE, so it cannot detect whether swapRings
+    // re-ran refreshSpiritMax (the persisted write). Corrupt the persisted
+    // players.spirit_max column to a sentinel: only a real refresh inside the
+    // swap transaction can overwrite it with the correctly derived value.
+    const SENTINEL = 9999;
+    dbInstance.prepare(`UPDATE players SET spirit_max = ? WHERE id = ?`).run(SENTINEL, playerId);
+    const spiritBefore = (dbInstance
+      .prepare(`SELECT spirit_max FROM players WHERE id = ?`)
+      .get(playerId) as { spirit_max: number }).spirit_max;
+    expect(spiritBefore).toBe(SENTINEL);
 
     const res = await putSwap(token, { ringId1: heartRingId, ringId2: spareRing });
     expect(res.status).toBe(200);
@@ -244,12 +256,16 @@ describe('PUT /api/rings/swap — #424 capacity-free ring exchange', () => {
     expect(formerHeart?.in_carry).toBe(1);
     // Former spare ring is now the heart ring.
     expect((me.player as any).heart_ring?.id).toBe(spareRing);
-    // spirit_max recomputed (value must differ from spiritBefore or at least be consistent).
-    const spiritAfter = (me.player as any).spirit_max as number;
-    void spiritBefore; // consumed to suppress unused warning
-    // The new heart ring's max_uses no longer contributes to spirit_max; spirit_max
-    // should reflect the updated reliquary set (former heart ring enters reliquary-equivalent).
-    expect(typeof spiritAfter).toBe('number');
+
+    // refreshSpiritMax ran inside swapRings: the persisted column no longer holds
+    // the sentinel and matches the live derivation exactly.
+    const spiritAfter = (dbInstance
+      .prepare(`SELECT spirit_max FROM players WHERE id = ?`)
+      .get(playerId) as { spirit_max: number }).spirit_max;
+    expect(spiritAfter, 'persisted spirit_max must be rewritten by the heart swap').not.toBe(spiritBefore);
+    expect(spiritAfter, 'persisted spirit_max must equal the live derivation').toBe(
+      repo.computeSpiritMax(playerId),
+    );
   });
 
   test('self-swap → 400 "cannot swap a ring with itself"', async () => {
@@ -334,23 +350,37 @@ describe('PUT /api/rings/swap — #424 capacity-free ring exchange', () => {
 
   test('swap is its own inverse: double-swap restores original state', async () => {
     const { playerId, token } = makePlayer();
+    // A slot-involved pair so the loadout columns are exercised, not just flags.
+    const slotRing = makeRing(playerId, { inCarry: 1 });
+    dbInstance.prepare(`UPDATE loadout SET a1 = ? WHERE player_id = ?`).run(slotRing, playerId);
     const spareRing = makeRing(playerId, { inCarry: 1 });
     const reliqRing = makeRing(playerId, { inCarry: 0 });
 
     const meBefore = await getMe(token);
-    // Swap once.
+
+    // slot ↔ reliquary double swap — loadout.a1 must round-trip back to slotRing.
+    await putSwap(token, { ringId1: slotRing, ringId2: reliqRing });
+    await putSwap(token, { ringId1: slotRing, ringId2: reliqRing });
+    // spare ↔ reliquary double swap — carry flags must round-trip.
     await putSwap(token, { ringId1: spareRing, ringId2: reliqRing });
-    // Swap again (inverse).
     await putSwap(token, { ringId1: spareRing, ringId2: reliqRing });
+
     const meAfter = await getMe(token);
+
+    // Loadout columns byte-identical to the pre-swap snapshot (a1 reverted).
+    expect(meAfter.loadout).toEqual(meBefore.loadout);
+    expect(meAfter.loadout.a1).toBe(slotRing);
 
     // Rings back to original positions.
     const spareAfter = meAfter.rings.find((r) => r.id === spareRing);
     const reliqAfter = meAfter.rings.find((r) => r.id === reliqRing);
+    const slotAfter = meAfter.rings.find((r) => r.id === slotRing);
     const spareBefore = meBefore.rings.find((r) => r.id === spareRing);
     const reliqBefore = meBefore.rings.find((r) => r.id === reliqRing);
+    const slotBefore = meBefore.rings.find((r) => r.id === slotRing);
     expect(spareAfter?.in_carry).toBe(spareBefore?.in_carry);
     expect(reliqAfter?.in_carry).toBe(reliqBefore?.in_carry);
+    expect(slotAfter?.in_carry).toBe(slotBefore?.in_carry);
   });
 
 });

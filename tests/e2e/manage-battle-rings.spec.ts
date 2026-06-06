@@ -2312,10 +2312,13 @@ async function expectOverflowState(tok: string): Promise<void> {
   );
 }
 
-// S1 — resolve the overflow by slotting the WON ring into a battle slot. Pre-fix
-// the outer route gate rejected the PUT /api/loadout (spare > max) and the client
-// swallowed the 400. Post-fix the move commits, draining the overflow.
-test('won-ring overflow S1: resolve by slotting into a battle slot', async ({ browser }) => {
+// S1 — #424 swap-first: slotting the WON ring into an OCCUPIED battle slot is a
+// pending↔slot swap. The WON ring takes a1 (pending=0); the displaced a1 ring
+// becomes the new pending overflow (pending=1) — per the #424 acceptance criteria
+// the gesture exchanges positions exactly, it no longer "drains" the overflow.
+// (Pre-#424 this asserted pending_ring_id === null; that PUT /api/loadout path is
+// gone for occupied targets.)
+test('won-ring overflow S1: WON ring into occupied battle slot swaps and transfers pending', async ({ browser }) => {
   const ctx = await browser.newContext();
   await seedAuthToken(ctx);
   const tok = await bootToken(ctx);
@@ -2333,6 +2336,13 @@ test('won-ring overflow S1: resolve by slotting into a battle slot', async ({ br
 
   // Confirm we are in the overflow state the bug is about (bench at capacity + WON ring).
   await expectOverflowState(tok);
+
+  // The occupied a1 ring — the swap's exchange partner.
+  const me0 = (await (
+    await fetch(`${API_URL}/api/me`, { headers: { Authorization: `Bearer ${tok}` } })
+  ).json()) as { loadout: Record<string, string | null> };
+  const a1Before = me0.loadout.a1;
+  expect(a1Before, 'fresh player must have an occupied a1 slot').toBeTruthy();
 
   const page = await ctx.newPage();
   await loadForest(page);
@@ -2361,25 +2371,28 @@ test('won-ring overflow S1: resolve by slotting into a battle slot', async ({ br
     { timeout: 5000 },
   );
 
-  // …then click the A1 combat card to drop it. Pre-fix the resulting PUT
-  // /api/loadout was rejected by the outer spare gate and the 400 was swallowed.
+  // …then click the OCCUPIED A1 combat card — #424 routes this to PUT /api/rings/swap.
   await clickCanvas(page, A1_CARD);
 
-  // Wait for the refresh to clear the pending ring.
+  // Wait for the pending ring to become the displaced a1 ring (the swap committed).
   await page.waitForFunction(
-    () => {
+    (id) => {
       const scene = (window as any).__game?.scene?.getScene('ForestScene') as any;
-      return scene?.battleHand?.pendingRingId === null;
+      return scene?.battleHand?.pendingRingId === id;
     },
+    a1Before,
     { timeout: 8000 },
   );
 
-  // Server confirms: pending cleared and the WON ring now occupies a1.
+  // Server confirms the exchange: WON ring occupies a1 (pending=0); the displaced
+  // ring is the new pending overflow, carried as a spare.
   const meAfter = (await (
     await fetch(`${API_URL}/api/me`, { headers: { Authorization: `Bearer ${tok}` } })
-  ).json()) as { player: { pending_ring_id: string | null }; loadout: Record<string, string | null> };
-  expect(meAfter.player.pending_ring_id).toBeNull();
+  ).json()) as { player: { pending_ring_id: string | null }; loadout: Record<string, string | null>; rings: Array<{ id: string; in_carry: number }> };
   expect(meAfter.loadout.a1).toBe(wonRingId);
+  expect(meAfter.player.pending_ring_id).toBe(a1Before);
+  const displaced = meAfter.rings.find((r) => r.id === a1Before);
+  expect(displaced?.in_carry, 'displaced a1 ring must be carried as the pending spare').toBe(1);
 
   await ctx.close();
 });
@@ -2475,12 +2488,15 @@ test('rings-swap S3: pending transfer — WON ring swap with bench ring transfer
   const wonRingId = grantPlayer.pending_ring_id!;
   expect(wonRingId).toBeTruthy();
 
-  // Record bench composition before swap.
+  // Record bench composition before swap. BENCH_CELL0 holds the sorted-first
+  // bench ring (InventoryGrid canonical sort: element asc → XP desc → id asc).
   const me0 = (await (
     await fetch(`${API_URL}/api/me`, { headers: { Authorization: `Bearer ${tok}` } })
-  ).json()) as { rings: Array<{ id: string; in_carry: number }>; loadout: Record<string, string | null>; player: { spare_ring_max: number; pending_ring_id: string | null } };
+  ).json()) as { rings: Array<{ id: string; in_carry: number; element: number; xp: number }>; loadout: Record<string, string | null>; player: { spare_ring_max: number; pending_ring_id: string | null } };
   const slotted0 = new Set(Object.values(me0.loadout).filter(Boolean) as string[]);
-  const benchRings0 = me0.rings.filter((r) => r.in_carry === 1 && !slotted0.has(r.id) && r.id !== wonRingId);
+  const benchRings0 = me0.rings
+    .filter((r) => r.in_carry === 1 && !slotted0.has(r.id) && r.id !== wonRingId)
+    .sort((a, b) => a.element !== b.element ? a.element - b.element : b.xp !== a.xp ? b.xp - a.xp : a.id.localeCompare(b.id));
   const benchRing0Id = benchRings0[0].id;
   const benchCount0 = benchRings0.length;
 
@@ -2529,11 +2545,12 @@ test('rings-swap S3: pending transfer — WON ring swap with bench ring transfer
   expect(me1.player.pending_ring_id, 'bench ring must now be the pending WON ring').toBe(benchRing0Id);
   const formerWon = me1.rings.find((r) => r.id === wonRingId);
   expect(formerWon?.in_carry, 'former WON ring must be a spare (in_carry=1)').toBe(1);
-  // Spare count (carried, not slotted, not pending) grows by 1 — the former WON ring
-  // (pending=1, excluded from benchCount0) is now a regular spare.
+  // Spare count (carried, not slotted, not pending) is UNCHANGED — the former WON
+  // ring joined the pool (+1) while the displaced bench ring left it (now pending, −1).
+  // This is the issue's scenario-3 criterion: "total spare count unchanged".
   const slotted1 = new Set(Object.values(me1.loadout).filter(Boolean) as string[]);
   const benchCount1 = me1.rings.filter((r) => r.in_carry === 1 && !slotted1.has(r.id) && r.id !== me1.player.pending_ring_id).length;
-  expect(benchCount1, 'spare count must be benchCount0+1 (former WON is now spare)').toBe(benchCount0 + 1);
+  expect(benchCount1, 'spare count must be unchanged after the pending transfer swap').toBe(benchCount0);
 
   await ctx.close();
 });
@@ -2546,24 +2563,44 @@ test('rings-swap S4: heart swap recomputes spirit_max', async ({ browser }) => {
   await seedAuthToken(ctx);
   const tok = await bootToken(ctx);
 
+  // A fresh player has an empty bench. Seed ONE real (non-pending) bench ring:
+  // grant-ring would mint a PENDING ring, which renders in the WON slot — not the
+  // bench grid — so BENCH_CELL0 would click an empty cell. seed-resting-rings +
+  // PUT /api/carry produces a genuine bench occupant at cell 0.
   const me0 = (await (
     await fetch(`${API_URL}/api/me`, { headers: { Authorization: `Bearer ${tok}` } })
-  ).json()) as { rings: Array<{ id: string; in_carry: number }>; loadout: Record<string, string | null>; player: { heart_ring?: { id: string } | null; spirit_max: number; spare_ring_max: number } };
-
-  // Ensure bench has at least one ring to swap with.
+  ).json()) as { rings: Array<{ id: string; in_carry: number }>; loadout: Record<string, string | null>; player: { heart_ring?: { id: string } | null; spirit_max: number; spare_ring_max: number; pending_ring_id?: string | null } };
   const slotted0 = new Set(Object.values(me0.loadout).filter(Boolean) as string[]);
-  const benchRings0 = me0.rings.filter((r) => r.in_carry === 1 && !slotted0.has(r.id));
+  const benchRings0 = me0.rings.filter(
+    (r) => r.in_carry === 1 && !slotted0.has(r.id) && r.id !== (me0.player.pending_ring_id ?? null),
+  );
   if (benchRings0.length === 0) {
-    // Grant a ring and carry it to the bench.
-    const gr = await fetch(`${API_URL}/api/test/grant-ring`, { method: 'POST', headers: { Authorization: `Bearer ${tok}` } });
-    expect(gr.ok).toBe(true);
+    const seedRes = await fetch(`${API_URL}/api/test/seed-resting-rings`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${tok}` },
+      body: JSON.stringify({ count: 1 }),
+    });
+    expect(seedRes.ok, 'seed-resting-rings must succeed').toBe(true);
+    const seeded = (await (
+      await fetch(`${API_URL}/api/me`, { headers: { Authorization: `Bearer ${tok}` } })
+    ).json()) as { rings: Array<{ id: string; in_carry: number }> };
+    const carried = seeded.rings.filter((r) => r.in_carry === 1).map((r) => r.id);
+    const newResting = seeded.rings.find((r) => r.in_carry === 0)!.id;
+    const carryRes = await fetch(`${API_URL}/api/carry`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${tok}` },
+      body: JSON.stringify({ ringIds: [...carried, newResting] }),
+    });
+    expect(carryRes.ok, 'bench-seed PUT /api/carry must succeed').toBe(true);
   }
-  // Reload me.
+  // Reload me. BENCH_CELL0 holds the sorted-first bench ring (element→XP→id).
   const me1 = (await (
     await fetch(`${API_URL}/api/me`, { headers: { Authorization: `Bearer ${tok}` } })
-  ).json()) as { rings: Array<{ id: string; in_carry: number }>; loadout: Record<string, string | null>; player: { heart_ring?: { id: string } | null; spirit_max: number } };
+  ).json()) as { rings: Array<{ id: string; in_carry: number; element: number; xp: number }>; loadout: Record<string, string | null>; player: { heart_ring?: { id: string } | null; spirit_max: number; pending_ring_id?: string | null } };
   const slotted1 = new Set(Object.values(me1.loadout).filter(Boolean) as string[]);
-  const benchRings1 = me1.rings.filter((r) => r.in_carry === 1 && !slotted1.has(r.id));
+  const benchRings1 = me1.rings
+    .filter((r) => r.in_carry === 1 && !slotted1.has(r.id) && r.id !== (me1.player.pending_ring_id ?? null))
+    .sort((a, b) => a.element !== b.element ? a.element - b.element : b.xp !== a.xp ? b.xp - a.xp : a.id.localeCompare(b.id));
   expect(benchRings1.length, 'bench must have at least one ring to swap').toBeGreaterThan(0);
   const benchRingId = benchRings1[0].id;
   const oldHeartId = me1.player.heart_ring?.id ?? null;
@@ -2670,6 +2707,7 @@ test('rings-swap S5: bench insertion still rejected at full bench (error surface
     return scene?.battleHand?.swap?.selection ?? null;
   });
   expect(sel, 'selection must remain held after rejected insertion').not.toBeNull();
+  expect((sel as { source?: string } | null)?.source, 'held selection must still be the a1 pick-up').toBe('a1');
 
   // Server loadout unchanged — a1 still holds its ring; carry count unchanged.
   const me1 = (await (
@@ -2681,9 +2719,12 @@ test('rings-swap S5: bench insertion still rejected at full bench (error surface
   await ctx.close();
 });
 
-// S3 — equipping the pending WON ring into the HEALTH heart slot clears pending
-// (regression guard: the heart route is the other overflow-resolution path).
-test('won-ring overflow S3: heart-slot equip of pending ring clears pending (regression guard)', async ({ browser }) => {
+// S3 — #424 swap-first: equipping the pending WON ring into the OCCUPIED heart slot
+// is a pending↔heart swap. The WON ring becomes the heart ring (pending=0); the
+// displaced heart ring becomes the new pending overflow — positions exchange exactly.
+// (Pre-#424 this asserted pending_ring_id === null via PUT /api/heart-slot; occupied
+// heart targets now route through PUT /api/rings/swap.)
+test('won-ring overflow S3: WON ring into occupied heart slot swaps and transfers pending', async ({ browser }) => {
   const ctx = await browser.newContext();
   await seedAuthToken(ctx);
   const tok = await bootToken(ctx);
@@ -2697,6 +2738,13 @@ test('won-ring overflow S3: heart-slot equip of pending ring clears pending (reg
   const { player: grantPlayer } = (await grantRes.json()) as { player: { pending_ring_id: string | null } };
   const wonRingId = grantPlayer.pending_ring_id!;
   expect(wonRingId).toBeTruthy();
+
+  // The occupied heart ring — the swap's exchange partner.
+  const me0 = (await (
+    await fetch(`${API_URL}/api/me`, { headers: { Authorization: `Bearer ${tok}` } })
+  ).json()) as { player: { heart_ring?: { id: string } | null } };
+  const heartBefore = me0.player.heart_ring?.id ?? null;
+  expect(heartBefore, 'fresh player must have an occupied heart slot').toBeTruthy();
 
   const page = await ctx.newPage();
   await loadForest(page);
@@ -2725,23 +2773,28 @@ test('won-ring overflow S3: heart-slot equip of pending ring clears pending (reg
     { timeout: 5000 },
   );
 
-  // …then click the HEALTH heart card to equip it.
+  // …then click the OCCUPIED HEALTH heart card — #424 routes this to PUT /api/rings/swap.
   await clickCanvas(page, HEALTH_CARD);
 
+  // Wait for the pending ring to become the displaced heart ring (the swap committed).
   await page.waitForFunction(
-    () => {
+    (id) => {
       const scene = (window as any).__game?.scene?.getScene('ForestScene') as any;
-      return scene?.battleHand?.pendingRingId === null;
+      return scene?.battleHand?.pendingRingId === id;
     },
+    heartBefore,
     { timeout: 8000 },
   );
 
-  // Server confirms pending cleared and the heart ring is the WON ring.
+  // Server confirms the exchange: WON ring is the heart ring (pending=0); the
+  // displaced heart ring is the new pending overflow, carried as a spare.
   const meAfter = (await (
     await fetch(`${API_URL}/api/me`, { headers: { Authorization: `Bearer ${tok}` } })
-  ).json()) as { player: { pending_ring_id: string | null; heart_ring?: { id: string } | null } };
-  expect(meAfter.player.pending_ring_id).toBeNull();
+  ).json()) as { player: { pending_ring_id: string | null; heart_ring?: { id: string } | null }; rings: Array<{ id: string; in_carry: number }> };
   expect(meAfter.player.heart_ring?.id).toBe(wonRingId);
+  expect(meAfter.player.pending_ring_id).toBe(heartBefore);
+  const displaced = meAfter.rings.find((r) => r.id === heartBefore);
+  expect(displaced?.in_carry, 'displaced heart ring must be carried as the pending spare').toBe(1);
 
   await ctx.close();
 });

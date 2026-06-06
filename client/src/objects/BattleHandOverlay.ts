@@ -129,8 +129,9 @@ export class BattleHandOverlay {
       onBenchGridSelect: async (ring, ov) => {
         if (!ring) { ov.clearSelection(); await this.refresh(ov); return; }
         const sel = ov.selection;
-        // #424: non-spare + occupied bench card → swap; error keeps selection held.
-        if (sel && sel.source !== 'spare') { const ok = await this.send('PUT', '/api/rings/swap', { ringId1: sel.ringId, ringId2: ring.id }); if (ok) ov.clearSelection(); await this.refresh(ov); return; }
+        // #424: cross-pool selection on an occupied bench card → swap (the WON ring uses
+        // source='spare' by BHC convention but sits in the pending pool, so test by id too).
+        if (sel && (sel.source !== 'spare' || sel.ringId === this.pendingRingId_)) { let em = ''; const ok = await this.send('PUT', '/api/rings/swap', { ringId1: sel.ringId, ringId2: ring.id }, (m) => { em = m; }); if (ok) ov.clearSelection(); await this.refresh(ov); if (!ok && em) ov.setStatusMessage(em); return; }
         if (ov.selection?.ringId === ring.id) ov.clearSelection(); else ov.selectRing(ring.id, 'spare');
         await this.refresh(ov);
       },

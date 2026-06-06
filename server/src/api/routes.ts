@@ -389,8 +389,21 @@ apiRouter.put('/api/rings/swap', requireAuth, requirePlayer, (req: Request, res:
   try {
     swapRings(playerId, ringId1, ringId2);
   } catch (err: unknown) {
-    const msg = err instanceof Error ? err.message : 'Unknown error';
-    fail(res, 400, msg);
+    // Only the three expected business-rule rejections are surfaced verbatim as
+    // 400s. Anything else (e.g. a raw SQLite error) is an internal failure: log
+    // it server-side and return a generic 500 so DB details never leak to clients.
+    const msg = err instanceof Error ? err.message : '';
+    const expected = [
+      'ring not found or not owned',
+      'cannot swap a ring with itself',
+      'ring is locked in a duel',
+    ];
+    if (expected.includes(msg)) {
+      fail(res, 400, msg);
+      return;
+    }
+    console.error('[PUT /api/rings/swap] unexpected error:', err);
+    fail(res, 500, 'Internal error during ring swap');
     return;
   }
   res.status(200).json({

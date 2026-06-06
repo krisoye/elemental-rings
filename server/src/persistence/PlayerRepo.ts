@@ -1159,6 +1159,13 @@ export const packLoadout = db.transaction(
 
     clearCarryForOwner.run(playerId);
     for (const id of unique) setRingCarry(id, 1);
+
+    // Carrying rings into/out of the Reliquary changes the spirit pool
+    // (spirit_max = Σ max_uses over in_carry=0, heart_slot=0 rings). Recompute
+    // and clamp the gauge so spirit_current never reads above the new ceiling —
+    // the same contract as setHeartRing, swapRings, and PUT /api/difficulty.
+    const spiritMax = refreshSpiritMax(playerId);
+    clampSpiritCurrent(playerId, spiritMax);
   },
 );
 

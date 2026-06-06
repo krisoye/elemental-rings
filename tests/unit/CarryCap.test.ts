@@ -1197,4 +1197,89 @@ describe('#424 swapRings — position matrix', () => {
     expect(reliqRow.in_carry).toBe(0);
   });
 
+  test('heart ↔ reliquary: heart_ring_id reassigned, heart_slot flags swapped, spirit_max recomputed', () => {
+    const p = makePlayer(dbInstance);
+    const heartId = makeRing(dbInstance, p, { inCarry: 0, heartSlot: 1 });
+    dbInstance.prepare('UPDATE players SET heart_ring_id = ? WHERE id = ?').run(heartId, p);
+    const reliqId = makeRing(dbInstance, p, { inCarry: 0 });
+    // Different max_uses so the derived spirit_max genuinely changes: the heart
+    // ring (5 uses) enters the reliquary pool while the reliquary ring (3 uses)
+    // leaves it — spirit_max moves from 3×mult to 5×mult.
+    dbInstance.prepare('UPDATE rings SET max_uses = 5 WHERE id = ?').run(heartId);
+    const spiritBefore = repo.refreshSpiritMax(p);
+
+    repo.swapRings(p, heartId, reliqId);
+
+    const player = dbInstance
+      .prepare('SELECT heart_ring_id, spirit_max FROM players WHERE id = ?')
+      .get(p) as { heart_ring_id: string | null; spirit_max: number };
+    // heart pointer reassigned to the former reliquary ring.
+    expect(player.heart_ring_id).toBe(reliqId);
+    // heart_slot flags swapped; both rest at in_carry=0.
+    const formerHeart = dbInstance.prepare('SELECT in_carry, heart_slot FROM rings WHERE id = ?').get(heartId) as { in_carry: number; heart_slot: number };
+    expect(formerHeart.heart_slot).toBe(0);
+    expect(formerHeart.in_carry).toBe(0);
+    const newHeart = dbInstance.prepare('SELECT in_carry, heart_slot FROM rings WHERE id = ?').get(reliqId) as { in_carry: number; heart_slot: number };
+    expect(newHeart.heart_slot).toBe(1);
+    expect(newHeart.in_carry).toBe(0);
+    // spirit_max recomputed AND the value genuinely changed (3→5 uses in pool).
+    expect(player.spirit_max).not.toBe(spiritBefore);
+    expect(player.spirit_max).toBe(repo.computeSpiritMax(p));
+  });
+
+  test('pending ↔ reliquary: pending flag and carry transfer to the reliquary ring', () => {
+    const p = makePlayer(dbInstance);
+    const max = repo.getSpareRingMax(p);
+    for (let i = 0; i < max; i++) makeRing(dbInstance, p, { inCarry: 1 });
+    const wonId = repo.grantRing(p, ElementEnum.FIRE); // in_carry=1, pending=1
+    const reliqId = makeRing(dbInstance, p, { inCarry: 0 });
+
+    repo.swapRings(p, wonId, reliqId);
+
+    // Former WON ring rests in the reliquary: in_carry=0, pending=0.
+    const wonRow = dbInstance.prepare('SELECT in_carry, pending FROM rings WHERE id = ?').get(wonId) as { in_carry: number; pending: number };
+    expect(wonRow.in_carry).toBe(0);
+    expect(wonRow.pending).toBe(0);
+    // Former reliquary ring is the new pending overflow: in_carry=1, pending=1.
+    const reliqRow = dbInstance.prepare('SELECT in_carry, pending FROM rings WHERE id = ?').get(reliqId) as { in_carry: number; pending: number };
+    expect(reliqRow.in_carry).toBe(1);
+    expect(reliqRow.pending).toBe(1);
+    expect(repo.getPendingRingId(p)).toBe(reliqId);
+  });
+
+  test('heart ↔ slot: slot column updated, heart_ring_id transfers, spirit_max recomputed', () => {
+    const p = makePlayer(dbInstance);
+    const heartId = makeRing(dbInstance, p, { inCarry: 0, heartSlot: 1 });
+    dbInstance.prepare('UPDATE players SET heart_ring_id = ? WHERE id = ?').run(heartId, p);
+    const slotRing = makeRing(dbInstance, p, { inCarry: 1 });
+    assignSlot(dbInstance, p, 'd2', slotRing);
+    // A heart↔slot swap keeps the reliquary pool (in_carry=0, heart_slot=0)
+    // unchanged on both sides, so the derived value cannot differ. Detect that
+    // refreshSpiritMax ran via a sentinel: corrupt the persisted column and
+    // assert the swap overwrote it with the correct derivation.
+    const SENTINEL = 7777;
+    dbInstance.prepare('UPDATE players SET spirit_max = ? WHERE id = ?').run(SENTINEL, p);
+
+    repo.swapRings(p, heartId, slotRing);
+
+    // Loadout column: the former heart ring now occupies d2.
+    const ld = dbInstance.prepare('SELECT d2 FROM loadout WHERE player_id = ?').get(p) as { d2: string | null };
+    expect(ld.d2).toBe(heartId);
+    // heart pointer transferred to the former slot ring.
+    const player = dbInstance
+      .prepare('SELECT heart_ring_id, spirit_max FROM players WHERE id = ?')
+      .get(p) as { heart_ring_id: string | null; spirit_max: number };
+    expect(player.heart_ring_id).toBe(slotRing);
+    // Former heart ring is carried in the slot; new heart ring rests.
+    const formerHeart = dbInstance.prepare('SELECT in_carry, heart_slot FROM rings WHERE id = ?').get(heartId) as { in_carry: number; heart_slot: number };
+    expect(formerHeart.in_carry).toBe(1);
+    expect(formerHeart.heart_slot).toBe(0);
+    const newHeart = dbInstance.prepare('SELECT in_carry, heart_slot FROM rings WHERE id = ?').get(slotRing) as { in_carry: number; heart_slot: number };
+    expect(newHeart.in_carry).toBe(0);
+    expect(newHeart.heart_slot).toBe(1);
+    // refreshSpiritMax ran: sentinel overwritten with the live derivation.
+    expect(player.spirit_max).not.toBe(SENTINEL);
+    expect(player.spirit_max).toBe(repo.computeSpiritMax(p));
+  });
+
 });
