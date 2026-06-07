@@ -28,6 +28,7 @@ export class BattleHandOverlay {
   private readonly scene: Phaser.Scene;
   private readonly onStatus?: (msg: string) => void;
   private readonly onModalRender?: (c: Phaser.GameObjects.Container) => void;
+  private readonly onAfterRecharge?: () => void;
   private onCloseCb?: () => void;
   private overlay: RingManagementOverlay | null = null;
   private readonly discard_: DiscardConfirm;
@@ -37,8 +38,8 @@ export class BattleHandOverlay {
   private loadout: Record<string, string | null> = {};
   private pendingRingId_: string | null = null; private spareRingMax_: number | undefined;
 
-  constructor(scene: Phaser.Scene, onStatus?: (msg: string) => void, onModalRender?: (c: Phaser.GameObjects.Container) => void) {
-    this.scene = scene; this.onStatus = onStatus; this.onModalRender = onModalRender;
+  constructor(scene: Phaser.Scene, onStatus?: (msg: string) => void, onModalRender?: (c: Phaser.GameObjects.Container) => void, onAfterRecharge?: () => void) {
+    this.scene = scene; this.onStatus = onStatus; this.onModalRender = onModalRender; this.onAfterRecharge = onAfterRecharge;
     this.discard_ = new DiscardConfirm(scene, onModalRender);
   }
 
@@ -104,6 +105,7 @@ export class BattleHandOverlay {
       },
       onRecharge: async () => {
         await this.send('POST', '/api/spirit/recharge-all', {}); if (this.overlay) await this.refresh(this.overlay);
+        this.onAfterRecharge?.(); // #460 — e.g. BaseBiomeScene repaints the overworld spirit HUD
       },
       getThumbTooltip: () => {
         const t = this.allRings.find((r) => r.id === (this.loadout.thumb ?? ''));

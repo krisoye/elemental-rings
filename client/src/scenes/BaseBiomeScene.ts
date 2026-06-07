@@ -721,8 +721,13 @@ export abstract class BaseBiomeScene extends DualCameraScene {
     // #87 Part D — Tab toggles the battle-hand overlay; Escape closes it.
     // #137 — the overlay's modal container is built lazily on open; route it to the
     // 1:1 UI camera (cameras.main.ignore) each time it renders so it never zooms.
-    this.battleHand = new BattleHandOverlay(this, undefined, (container) =>
-      this.routeToUi(container),
+    this.battleHand = new BattleHandOverlay(
+      this,
+      undefined,
+      (container) => this.routeToUi(container),
+      // #460 — field-modal recharge spends spirit server-side; repaint the
+      // overworld resource HUD so it doesn't show a stale spirit value.
+      () => void this.refreshHud(),
     );
     this.input.keyboard!.on('keydown-TAB', (e: KeyboardEvent) => {
       e?.preventDefault?.();
