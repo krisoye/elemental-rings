@@ -1,5 +1,5 @@
 import Phaser from 'phaser';
-import { InventoryGrid, type RingData, GRID_CARD_W, GRID_COL_GAP, GRID_ROW_GAP } from '../objects/InventoryGrid';
+import { InventoryGrid, type RingData } from '../objects/InventoryGrid';
 import { RingCard, usePips } from '../objects/ui/RingCard';
 import { attachTooltip } from '../objects/ui/Tooltip';
 import { SlotSwapManager, type SwapSlot } from '../objects/ui/SlotSwapManager';
@@ -824,40 +824,24 @@ export class CampScene extends DualCameraScene {
         this.adoptPanel(c, this.sanctumGrid, COL_RELIQUARY_X, 148);
         this.sanctumGrid.setVisibleRows(RINGWALL_VISIBLE_ROWS);
 
-        // SPIRIT ghost (#423) — always-visible ghost cell at index reliquaryCount
-        // when the reliquary pool is below cap. Click with selection = move to reliquary.
-        // Added unconditionally to the card container — the InventoryGrid scroll mask
-        // hides off-screen cells naturally, so no visibility guard is needed.
-        {
-          const campS = window.__campState;
-          // Same count source as applyReliquaryLockState / renderReliquaryHeader:
-          // authoritative __campState.reliquaryCount with the resting-rings fallback.
-          const reliqCount: number = campS?.reliquaryCount ??
-            (campS?.rings ?? []).filter(
-              (r: RingData) => r.in_carry === 0 && !(r as { escrowed?: number }).escrowed && r.heart_slot !== 1,
-            ).length;
-          const reliqCap: number = campS?.reliquaryCap ?? 0;
-          if (reliqCount < reliqCap) {
-            const G_NUM_COLS = 3;
-            const G_CARD_H = 88; // CARD_H in InventoryGrid (not exported)
-            // Next open cell index = reliqCount → row = floor(n/3), col = n%3.
-            const phY = Math.floor(reliqCount / G_NUM_COLS) * GRID_ROW_GAP + G_CARD_H / 2;
-            const nextCol = reliqCount % G_NUM_COLS;
-            const phX = nextCol * GRID_COL_GAP + GRID_CARD_W / 2;
-            const spiritGhost = this.add
-              .rectangle(phX, phY, GRID_CARD_W, G_CARD_H, 0x1a2233)
-              .setScrollFactor(0)
-              .setStrokeStyle(2, 0x446688)
-              .setAlpha(0.7)
-              .setInteractive({ useHandCursor: true })
-              .on('pointerdown', () => {
-                const sel = this.sanctumOverlay?.selection;
-                if (!sel) return;
-                void this.reliquaryMove(sel.ringId, 'reliquary');
-              });
-            this.sanctumGrid.getCardContainer().add(spiritGhost);
-          }
-        }
+        // #434 — SPIRIT ghost: delegate to InventoryGrid.setGhost() so populate()
+        // rebuilds the ghost at the correct next-free index after every ring drop.
+        // The cap is read from __campState.reliquaryCap (same source as the former
+        // ad-hoc block). The callback reads swapManager.selection at click-time so
+        // it is always fresh regardless of when the callback fires.
+        // After setGhost(), repopulate immediately so the ghost appears on modal open
+        // without waiting for the first ring move (populate() already ran in loadData()
+        // before setGhost() was registered).
+        const reliquaryCap: number = window.__campState?.reliquaryCap ?? 0;
+        const spiritGhostCb = (): void => {
+          const sel = this.swapManager?.selection;
+          if (!sel) return;
+          void this.reliquaryMove(sel.ringId, 'reliquary');
+        };
+        this.sanctumGrid.setGhost(spiritGhostCb, reliquaryCap);
+        this.sanctumGrid.populate(
+          this.rings.filter((r) => r.in_carry === 0 && r.heart_slot !== 1),
+        );
 
         // Live status echo, inside the modal above the bottom edge.
         c.add(
@@ -940,6 +924,9 @@ export class CampScene extends DualCameraScene {
       onBeforeDestroy: (c) => {
         this.sanctumGrid.setVisibleRows(0);
         this.sanctumGrid.setMaskOrigin(null, null);
+        // #434 — clear the ghost so loadData() calls outside the modal don't render
+        // a ghost into other grid contexts (the grid is reused across overlay opens).
+        this.sanctumGrid.setGhost(null);
         this.releasePanel(c, this.sanctumGrid);
         // Clear the discard confirm dialog if open.
         this.sanctumDiscard_?.dismiss();

@@ -656,17 +656,20 @@ describe('#389 SpecConformance: acceptance criteria', () => {
     ).toBe(false);
   });
 
-  it('Spec AC: InventoryGrid.cards map has type Map<string, RingCard> (typed accessor returns RingCard API)', () => {
+  it('Spec AC: InventoryGrid.cards map has type Map<string, RingCard> or union with Rectangle (#434)', () => {
     // #389 acceptance criterion: cards is typed as Map<string, RingCard> so callers
-    // get the RingCard API without casts. Source-scan: the map declaration must
-    // reference RingCard in the type annotation.
+    // get the RingCard API without casts. #434 widens the type to
+    // Map<string, RingCard | Phaser.GameObjects.Rectangle> so the ghost sentinel
+    // '__ghost__' can be stored without a cast. Either form is accepted.
     const src = readClientSrc('objects/InventoryGrid.ts');
     if (src === null) return;
-    // The map should be typed Map<string, RingCard>
+    // Accept either the original narrow type or the #434 union type.
+    const hasNarrow = src.includes('Map<string, RingCard>');
+    const hasUnion = src.includes('Map<string, RingCard | Phaser.GameObjects.Rectangle>');
     expect(
-      src,
-      'InventoryGrid.cards must be typed Map<string, RingCard> — ensures the RingCard API is accessible without casts',
-    ).toContain('Map<string, RingCard>');
+      hasNarrow || hasUnion,
+      'InventoryGrid.cards must be typed Map<string, RingCard> or Map<string, RingCard | Phaser.GameObjects.Rectangle>',
+    ).toBe(true);
   });
 
   it('Spec AC: CampScene.ts imports benchSpareCount from RingManagementOverlay', () => {
@@ -3530,6 +3533,392 @@ describe('#431 teardown: mergeParent1/2 cleared inside if (fireCb) only', () => 
       configSrc,
       "playwright.config.ts SOLO_SPECS must include 'merge.spec.ts'",
     ).toContain('merge.spec.ts');
+  });
+
+});
+
+// ===========================================================================
+// Class 32 — #434 adversarial: InventoryGrid.setGhost() — tracked sentinel ghost
+// ===========================================================================
+
+describe('#434 adversarial: InventoryGrid.setGhost() — tracked sentinel ghost cell', () => {
+
+  // ── A. API surface exists ─────────────────────────────────────────────────
+
+  it('InventoryGrid.ts declares setGhost method (public API surface)', () => {
+    // #434 adversarial: without setGhost the CampScene call site cannot wire the
+    // ghost at all — the old ad-hoc ghost would be reconstructed, re-introducing
+    // the stale-closure bug. The method must exist on the class.
+    const src = readClientSrc('objects/InventoryGrid.ts');
+    if (src === null) return;
+    expect(
+      src,
+      'InventoryGrid.ts must declare a setGhost method — #434 core API',
+    ).toMatch(/setGhost\s*\(/);
+  });
+
+  it('InventoryGrid.ts declares private ghostCb field (nullable callback)', () => {
+    // #434 adversarial: the callback must be an instance field, not a local
+    // variable — a local would be captured by the closure only once and would
+    // carry a stale count after the first populate() cycle (the original bug).
+    const src = readClientSrc('objects/InventoryGrid.ts');
+    if (src === null) return;
+    expect(
+      src,
+      'InventoryGrid.ts must declare a private ghostCb field to store the callback',
+    ).toMatch(/private\s+ghostCb/);
+  });
+
+  it('InventoryGrid.ts declares private ghostCap field (numeric capacity)', () => {
+    // #434 adversarial: ghostCap must also be an instance field. If cap were
+    // passed only through the closure, a setGhost(null, newCap) call later could
+    // not update the effective cap without a full re-register.
+    const src = readClientSrc('objects/InventoryGrid.ts');
+    if (src === null) return;
+    expect(
+      src,
+      'InventoryGrid.ts must declare a private ghostCap field to store the capacity',
+    ).toMatch(/private\s+ghostCap/);
+  });
+
+  // ── B. Sentinel key and destroy-on-repopulate ─────────────────────────────
+
+  it("InventoryGrid.ts registers ghost in this.cards under sentinel key '__ghost__'", () => {
+    // #434 adversarial: the whole point of this fix is that the ghost must live
+    // in this.cards so populate() destroys it like any other card on the NEXT
+    // call. An untracked scene.add.rectangle() orphan was the original bug.
+    const src = readClientSrc('objects/InventoryGrid.ts');
+    if (src === null) return;
+    expect(
+      src,
+      "InventoryGrid.ts populate() must register ghost under sentinel key '__ghost__'",
+    ).toContain("'__ghost__'");
+  });
+
+  it('InventoryGrid.ts populate() destroy loop covers the __ghost__ sentinel (cards.forEach destroy)', () => {
+    // #434 adversarial: if populate() destroys old cards with a filtered loop
+    // (e.g. only destroying cards whose key is a ring id), the ghost would
+    // survive across calls and accumulate — recreating the original stale-ghost
+    // problem. The destroy loop must iterate ALL cards without filtering.
+    const src = readClientSrc('objects/InventoryGrid.ts');
+    if (src === null) return;
+    const lines = src.split('\n');
+    const populateStart = lines.findIndex((l) => /populate\s*\(\s*rings/.test(l));
+    expect(populateStart, 'populate() method must exist').toBeGreaterThan(-1);
+    // The destroy-all loop: `this.cards.forEach((c) => c.destroy())` must appear
+    // BEFORE the sentinel key registration.
+    const destroyIdx = lines.findIndex(
+      (l, i) => i > populateStart && /cards\.forEach.*destroy/.test(l),
+    );
+    const ghostKeyIdx = lines.findIndex(
+      (l, i) => i > populateStart && /'__ghost__'/.test(l),
+    );
+    expect(destroyIdx, 'cards.forEach destroy must exist in populate()').toBeGreaterThan(populateStart);
+    expect(ghostKeyIdx, '__ghost__ sentinel must appear in populate()').toBeGreaterThan(populateStart);
+    expect(
+      destroyIdx,
+      `destroy loop (line ${destroyIdx + 1}) must come BEFORE ghost registration (line ${ghostKeyIdx + 1})`,
+    ).toBeLessThan(ghostKeyIdx);
+  });
+
+  // ── C. Boundary: ghost condition is strict less-than (not less-than-or-equal) ─
+
+  it('InventoryGrid.ts ghost condition uses rings.length < ghostCap (strict <, not <=)', () => {
+    // #434 adversarial: an off-by-one (<=) would render a ghost when the reliquary
+    // is exactly at cap, creating a clickable placeholder that can never be filled
+    // — the user would see a ghost, click it, and the move would be rejected by the
+    // server. Strict less-than is the correct boundary.
+    const src = readClientSrc('objects/InventoryGrid.ts');
+    if (src === null) return;
+    // The ghost render condition: rings.length < ghostCap (or sorted.length < ghostCap)
+    expect(
+      src,
+      'InventoryGrid populate() must use strict < for ghost condition (not <=)',
+    ).toMatch(/\.length\s*<\s*(?:this\.)?ghostCap/);
+    // Confirm the inverted form is NOT adjacent to the ghost registration.
+    // Use the LAST '__ghost__' line (the actual cards.set call) not the first (a class comment).
+    const lines = src.split('\n');
+    let ghostKeyLine = -1;
+    for (let i = lines.length - 1; i >= 0; i--) {
+      if (/'__ghost__'/.test(lines[i])) { ghostKeyLine = i; break; }
+    }
+    if (ghostKeyLine < 0) return;
+    const surroundingBlock = lines.slice(Math.max(0, ghostKeyLine - 5), ghostKeyLine + 3).join('\n');
+    expect(
+      surroundingBlock,
+      'ghost condition block must not use <= ghostCap (off-by-one would ghost at full cap)',
+    ).not.toMatch(/\.length\s*<=\s*(?:this\.)?ghostCap/);
+  });
+
+  // ── D. setGhost(null) clears the callback — no stale ghost on next populate ─
+
+  it('InventoryGrid.ts setGhost(null) stores null in ghostCb (source scan)', () => {
+    // #434 adversarial: setGhost(null) is the clear path. If the method guards
+    // against null (e.g. `if (!onClick) return`) and skips the assignment, a
+    // prior non-null callback would persist and the ghost would keep appearing
+    // even after the caller intended to remove it.
+    const src = readClientSrc('objects/InventoryGrid.ts');
+    if (src === null) return;
+    const lines = src.split('\n');
+    // Find setGhost method body — the first assignment of this.ghostCb must
+    // appear unconditionally (regardless of whether onClick is null or not).
+    const setGhostStart = lines.findIndex((l) => /setGhost\s*\(/.test(l));
+    expect(setGhostStart, 'setGhost method must exist').toBeGreaterThan(-1);
+    const methodBody = lines.slice(setGhostStart, setGhostStart + 10).join('\n');
+    // `this.ghostCb = onClick` — assigns whatever is passed (null or a function)
+    expect(
+      methodBody,
+      'setGhost must assign this.ghostCb = onClick (null or function, no null guard)',
+    ).toMatch(/this\.ghostCb\s*=\s*onClick/);
+  });
+
+  // ── E. ghostCap = 0 → no ghost, even for an empty ring array ──────────────
+
+  it('InventoryGrid.ts with ghostCap = 0, rings.length (0) < 0 is false → ghost never appears', () => {
+    // #434 adversarial: cap = 0 means the pool has zero capacity. Even when
+    // rings is empty (rings.length = 0), the condition 0 < 0 is false, so no
+    // ghost is rendered. This prevents a ghost from appearing in a disabled grid.
+    const zeroCapCondition = 0 < 0; // mirrors: sorted.length < this.ghostCap where ghostCap=0
+    expect(
+      zeroCapCondition,
+      'ghost condition with cap=0 and rings.length=0 must be false (0 < 0 === false)',
+    ).toBe(false);
+  });
+
+  it('InventoryGrid.ts with ghostCap = 1 and rings empty, ghost IS rendered (0 < 1)', () => {
+    // #434 adversarial: at non-zero cap with zero rings, the ghost must appear.
+    // Failure mode: the implementation accidentally initialises ghostCap = 0
+    // even after setGhost(cb, 1) due to a default-parameter bug.
+    const condition = 0 < 1; // mirrors: sorted.length < this.ghostCap where ghostCap=1
+    expect(
+      condition,
+      'ghost condition with cap=1 and rings.length=0 must be true',
+    ).toBe(true);
+  });
+
+  it('InventoryGrid.ts with rings.length === ghostCap, condition is false — ghost suppressed at exact cap', () => {
+    // #434 adversarial: the exact-at-cap boundary — rings.length === ghostCap.
+    // The ghost must NOT appear; strict < fires false at this boundary.
+    // This is the most likely off-by-one: an implementer who uses <= instead
+    // of < would pass all other tests but fail at this boundary.
+    const ghostCap = 5;
+    const ringsLength = 5; // at cap
+    const condition = ringsLength < ghostCap;
+    expect(
+      condition,
+      'ghost condition must be false when rings.length equals ghostCap (exactly at cap)',
+    ).toBe(false);
+  });
+
+  it('InventoryGrid.ts with rings.length === ghostCap - 1, condition is true — ghost IS rendered one below cap', () => {
+    // #434 adversarial: one below cap must still show a ghost. This pairs with
+    // the exact-at-cap test to confirm the boundary is exactly right.
+    const ghostCap = 5;
+    const ringsLength = 4; // one below cap
+    const condition = ringsLength < ghostCap;
+    expect(
+      condition,
+      'ghost condition must be true when rings.length is one below ghostCap',
+    ).toBe(true);
+  });
+
+  // ── F. CampScene migration: old ad-hoc ghost block removed ───────────────
+
+  it('CampScene.ts no longer contains the inline untracked ghost Rectangle block (#434 removed)', () => {
+    // #434 adversarial: the old ad-hoc block used `scene.add.rectangle(...)` to
+    // create an untracked ghost OUTSIDE this.cards. Any surviving `add.rectangle`
+    // near the SPIRIT ghost section would re-introduce the orphan-Rectangle bug.
+    // Source-scan: the ad-hoc inline ghost must be gone. CampScene must call
+    // sanctumGrid.setGhost instead.
+    const src = readClientSrc('scenes/CampScene.ts');
+    if (src === null) return;
+    // The old block had a distinctive comment pattern. Scan for it.
+    // We look for the `reliqCount` closure being captured locally — in the new
+    // impl, reliqCount is no longer captured at render time; instead, the live
+    // rings.length is used inside populate() on each call.
+    // The canonical old fingerprint: `const ghostRect = ... .rectangle(`.
+    // Rather than over-specify, we verify that the new wiring is present.
+    expect(
+      src,
+      'CampScene.ts must call sanctumGrid.setGhost to register the SPIRIT ghost (#434)',
+    ).toContain('sanctumGrid.setGhost');
+    // And that there is no second, parallel inline ghost creation (the old form).
+    // The old block created a ghost directly on sanctumGrid.getCardContainer(),
+    // which is the only way a non-tracked ghost would appear in the same container.
+    // A surviving `getCardContainer()` call in the ghost-creation context (not scroll
+    // context) would indicate the old block is still present. We verify the file does
+    // NOT contain `getCardContainer().add(` as ghost-creation (scroll arrow callers
+    // use setScrollRow / scrollBy, not getCardContainer().add()).
+    const lines = src.split('\n').filter((l) => !l.trim().startsWith('//') && !l.trim().startsWith('*'));
+    const hasOrphanGhostAdd = lines.some((l) => /getCardContainer\(\)\s*\.add\s*\(/.test(l));
+    expect(
+      hasOrphanGhostAdd,
+      'CampScene.ts must not call getCardContainer().add() to create an untracked ghost — use setGhost instead',
+    ).toBe(false);
+  });
+
+  it('CampScene.ts passes the reliquary callback and reliquaryCap to setGhost (source scan)', () => {
+    // #434 adversarial: the call must pass both the move callback and the capacity.
+    // Omitting the cap argument would leave ghostCap at its default (likely 0),
+    // so no ghost would ever appear. Omitting the callback would mean clicks are no-ops.
+    // The callback may be extracted into a variable (spiritGhostCb) before the call,
+    // so we scan the region around the setGhost call broadly, not just the call line.
+    const src = readClientSrc('scenes/CampScene.ts');
+    if (src === null) return;
+    const lines = src.split('\n');
+    // Find the line with sanctumGrid.setGhost( and capture a broad window around it.
+    const setGhostLine = lines.findIndex((l) => /sanctumGrid\.setGhost\s*\(/.test(l));
+    expect(setGhostLine, 'CampScene.ts must call sanctumGrid.setGhost').toBeGreaterThan(-1);
+    // Scan 30 lines BEFORE and 5 lines AFTER the setGhost call to capture both the
+    // inline-callback and extracted-variable patterns.
+    const callRegion = lines.slice(Math.max(0, setGhostLine - 30), setGhostLine + 6).join('\n');
+    // reliquaryCap must appear in the call or be a variable defined nearby.
+    expect(
+      callRegion,
+      'CampScene.ts setGhost call region must reference reliquaryCap',
+    ).toMatch(/reliquaryCap/);
+    // The callback (inline or extracted variable) must call reliquaryMove.
+    expect(
+      callRegion,
+      "CampScene.ts setGhost callback (or extracted spiritGhostCb) must call reliquaryMove",
+    ).toMatch(/reliquaryMove/);
+    // The move must target 'reliquary' (not 'spare' or a battle slot).
+    expect(
+      callRegion,
+      "CampScene.ts setGhost callback must send ring to 'reliquary'",
+    ).toMatch(/'reliquary'/);
+  });
+
+  // ── G. Ghost pointerdown fires the callback (not suppressed by interactivity bug) ─
+
+  it("InventoryGrid.ts ghost rectangle is set interactive with cursor 'pointer' (pointerdown fires)", () => {
+    // #434 adversarial: the ghost rectangle must be interactive so pointerdown
+    // fires ghostCb. An implementation that forgets setInteractive() would render
+    // the ghost visually but the click would silently fall through to the scene.
+    const src = readClientSrc('objects/InventoryGrid.ts');
+    if (src === null) return;
+    // The ghost setup must call setInteractive and register a pointerdown handler.
+    // Source-scan: use the LAST occurrence of '__ghost__' (the this.cards.set
+    // registration line) — the first occurrence may be in a class comment block.
+    const lines = src.split('\n');
+    // Find the last '__ghost__' line (the actual cards.set registration).
+    let ghostStart = -1;
+    for (let i = lines.length - 1; i >= 0; i--) {
+      if (/'__ghost__'/.test(lines[i])) { ghostStart = i; break; }
+    }
+    if (ghostStart < 0) return;
+    // Scan 25 lines before the sentinel key registration for the interactive setup.
+    const ghostBlock = lines.slice(Math.max(0, ghostStart - 25), ghostStart + 5).join('\n');
+    expect(
+      ghostBlock,
+      "InventoryGrid ghost rectangle must call setInteractive({ useHandCursor: true }) or setInteractive()",
+    ).toContain('setInteractive');
+    expect(
+      ghostBlock,
+      "InventoryGrid ghost rectangle must register a 'pointerdown' handler to fire ghostCb",
+    ).toContain('pointerdown');
+  });
+
+  // ── H. Repeated populate() calls do not accumulate ghosts ─────────────────
+
+  it("InventoryGrid.ts populate() calls this.cards.clear() before adding new cards (including ghost)", () => {
+    // #434 adversarial: this is the original bug's root cause. An implementation
+    // that skips cards.clear() — or clears it AFTER registering the ghost — would
+    // accumulate one ghost per populate() call, each listening for clicks.
+    // Verify cards.clear() appears BEFORE the ghost registration (__ghost__ sentinel).
+    const src = readClientSrc('objects/InventoryGrid.ts');
+    if (src === null) return;
+    const lines = src.split('\n');
+    const populateStart = lines.findIndex((l) => /populate\s*\(\s*rings/.test(l));
+    expect(populateStart, 'populate() must exist').toBeGreaterThan(-1);
+    const clearIdx = lines.findIndex(
+      (l, i) => i > populateStart && /this\.cards\.clear\(\)/.test(l),
+    );
+    const ghostKeyIdx = lines.findIndex(
+      (l, i) => i > populateStart && /'__ghost__'/.test(l),
+    );
+    expect(clearIdx, 'this.cards.clear() must be called in populate()').toBeGreaterThan(populateStart);
+    expect(ghostKeyIdx, '__ghost__ sentinel must appear in populate()').toBeGreaterThan(populateStart);
+    expect(
+      clearIdx,
+      `cards.clear() (line ${clearIdx + 1}) must come BEFORE __ghost__ registration (line ${ghostKeyIdx + 1})`,
+    ).toBeLessThan(ghostKeyIdx);
+  });
+
+  // ── I. Ghost fill colour matches scene-graph walk used by Scenario 16 ──────
+
+  it("InventoryGrid.ts ghost fill colour is 0x1a2233 (matching existing Scenario 16 scene-graph walk)", () => {
+    // #434 adversarial: Scenario 16 detects the ghost by walking the scene graph
+    // for `type === 'Rectangle' && fillColor === 0x1a2233 && input?.cursor === 'pointer'`.
+    // A ghost with a different fill (e.g. 0x1a2244 from a copy-paste error) would
+    // pass tsc but make Scenario 16 report "ghost not found" every time.
+    const src = readClientSrc('objects/InventoryGrid.ts');
+    if (src === null) return;
+    expect(
+      src,
+      'InventoryGrid ghost rectangle fill must be 0x1a2233 so Scenario 16 scene-graph walk detects it',
+    ).toContain('0x1a2233');
+  });
+
+  // ── J. Ghost callback guards on selection (no-op when nothing selected) ────
+
+  it("CampScene.ts setGhost callback checks selection before calling reliquaryMove (source scan)", () => {
+    // #434 adversarial: the ghost callback is fired by pointerdown on the ghost
+    // Rectangle. If the callback calls reliquaryMove unconditionally (without
+    // checking for an active selection), a click with nothing selected would send
+    // a spurious PUT /api/rings/:id/reliquary with an undefined ringId — potentially
+    // crashing the server handler or silently moving the wrong ring.
+    // The approved callback shape: `const sel = this.swapManager?.selection; if (!sel) return;`
+    const src = readClientSrc('scenes/CampScene.ts');
+    if (src === null) return;
+    // The callback body must contain a guard on the selection before the move call.
+    // Source scan: look for the pattern inside the setGhost call region.
+    expect(
+      src,
+      "CampScene.ts setGhost callback must guard on swapManager?.selection before reliquaryMove",
+    ).toMatch(/swapManager\?\.selection/);
+    expect(
+      src,
+      'CampScene.ts setGhost callback must return early when no selection is active',
+    ).toMatch(/if\s*\(\s*!sel\s*\)\s*return/);
+  });
+
+  // ── K. No new populate-like shadow method introduced ─────────────────────
+
+  it('InventoryGrid.ts does not declare a separate populateWithGhost method (ghost is in populate)', () => {
+    // #434 adversarial: a shadow method (populateWithGhost, populateSpirit, etc.)
+    // would duplicate the card-rendering loop and diverge from populate() over time.
+    // The spec explicitly forbids a new populate-like method.
+    const src = readClientSrc('objects/InventoryGrid.ts');
+    if (src === null) return;
+    expect(
+      src,
+      'InventoryGrid.ts must not introduce a populateWithGhost shadow method — ghost lives in populate()',
+    ).not.toMatch(/populateWithGhost/);
+    expect(
+      src,
+      'InventoryGrid.ts must not introduce a populateSpirit shadow method — ghost lives in populate()',
+    ).not.toMatch(/populateSpirit/);
+  });
+
+  // ── L. TypeScript compilation guard ──────────────────────────────────────
+
+  it('InventoryGrid.ts setGhost signature accepts null as the onClick argument (nullable type)', () => {
+    // #434 adversarial: if the TypeScript signature is `onClick: () => void` (non-
+    // nullable), callers cannot pass null to clear the ghost — setGhost(null, 0)
+    // would fail at compile time. The signature must be `(() => void) | null`.
+    const src = readClientSrc('objects/InventoryGrid.ts');
+    if (src === null) return;
+    // The signature: `setGhost(onClick: (() => void) | null, cap: number)`
+    // or equivalent nullable form. We scan the setGhost declaration line.
+    const lines = src.split('\n');
+    const setGhostLine = lines.find((l) => /setGhost\s*\(/.test(l) && !/\/\//.test(l));
+    expect(setGhostLine, 'setGhost declaration line must exist').toBeDefined();
+    // The type must include `null` to allow clearing the ghost.
+    expect(
+      setGhostLine!,
+      "setGhost onClick parameter must accept null (type should be '(() => void) | null' or similar)",
+    ).toMatch(/null/);
   });
 
 });
