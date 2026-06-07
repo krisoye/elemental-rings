@@ -639,3 +639,101 @@ test('overworld DOM (#362): NPC prompt is a DOM node that shows when detected an
 
   await ctx.close();
 });
+
+// ══════════════════════════════════════════════════════════════════════════════
+// #460 — field-modal [RECHARGE] must repaint the overworld spirit HUD
+// ══════════════════════════════════════════════════════════════════════════════
+
+/**
+ * Convert logical canvas coordinates (1024×576) to page coordinates via the
+ * canvas bounding rect — mirrors the helper in manage-battle-rings.spec.ts.
+ */
+async function canvasCoords(
+  page: Page,
+  logicalX: number,
+  logicalY: number,
+): Promise<{ x: number; y: number }> {
+  const box = await page.locator('canvas').first().boundingBox();
+  if (!box) throw new Error('canvas element not found');
+  return {
+    x: Math.round(box.x + logicalX * (box.width / 1024)),
+    y: Math.round(box.y + logicalY * (box.height / 576)),
+  };
+}
+
+// ── #460 — [RECHARGE] click in the field overlay repaints the HUD behind it ──
+// Regression: BattleHandOverlay.onRecharge refreshed only the overlay; nothing
+// called back into BaseBiomeScene.refreshHud(), so the overworld HUD kept the
+// stale spirit value until the next unrelated repaint. The fix wires an
+// onAfterRecharge callback through the overlay constructor.
+//
+// Setup note: there is no test route to deplete a carried ring's uses without a
+// full duel, so the server-side recharge is a no-op here; the divergence between
+// the painted HUD and the server's spirit value is seeded via /api/test/set-spirit
+// instead. That detects the exact regression — a stale HUD that only the new
+// post-recharge repaint can correct. The [RECHARGE] gesture itself is REAL
+// pointer input (page.mouse.click on the canvas), never a hook.
+test('overworld HUD (#460): field-modal [RECHARGE] repaints the spirit segment without closing the overlay', async ({ browser }) => {
+  const ctx = await browser.newContext();
+  await seedAuthToken(ctx);
+  const page = await ctx.newPage();
+  await loadForest(page);
+  await waitForHudRefresh(page);
+
+  const tok = await page.evaluate(() => localStorage.getItem('er_token') ?? '');
+  const me = (await (
+    await fetch(`${API_URL}/api/me`, { headers: { Authorization: `Bearer ${tok}` } })
+  ).json()) as { player: { spirit_current?: number; spirit_max?: number } };
+  const spiritMax = me.player.spirit_max ?? 0;
+  const painted = me.player.spirit_current ?? 0;
+  expect(spiritMax).toBeGreaterThan(0);
+
+  // HUD currently shows the painted (full) spirit value.
+  expect(await getHudText(page)).toContain(`Spirit ${painted}/${spiritMax}`);
+
+  // Seed the server/HUD divergence: server spirit drops; the HUD must NOT know yet.
+  const target = painted - 5;
+  expect(target).toBeGreaterThanOrEqual(0);
+  const setRes = await fetch(`${API_URL}/api/test/set-spirit`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${tok}` },
+    body: JSON.stringify({ spirit: target }),
+  });
+  expect(setRes.ok).toBe(true);
+  expect(await getHudText(page)).toContain(`Spirit ${painted}/${spiritMax}`); // still stale
+
+  // Open the field battle-hand overlay (setup — hook allowed).
+  await page.evaluate(() => (window as any).__overworldToggleBattleHand());
+  await page.waitForFunction(() => (window as any).__overworldBattleHandOpen === true, {
+    timeout: 5000,
+  });
+  await page.waitForFunction(() => !!(window as any).__heartCardState, { timeout: 5000 });
+
+  // Gesture under test: REAL pointer click on [RECHARGE] at logical (660, 389)
+  // (COL_HEALTH_X, ROW_COMBAT1_Y in BenchHealthCombat.ts).
+  const pt = await canvasCoords(page, 660, 389);
+  await page.mouse.click(pt.x, pt.y);
+
+  // The overworld HUD behind the modal must repaint to the server value (all
+  // carried rings are full on a fresh player, so recharge-all leaves spirit at
+  // the seeded target).
+  await page.waitForFunction(
+    (expected) => {
+      const node = document.querySelector('[data-label="overworld-hud"]');
+      return (node?.textContent ?? '').includes(expected);
+    },
+    `Spirit ${target}/${spiritMax}`,
+    { timeout: 5000 },
+  );
+
+  // The overlay stayed open throughout — the repaint must not close it.
+  expect(await page.evaluate(() => (window as any).__overworldBattleHandOpen)).toBe(true);
+
+  // Server-authoritative cross-check: the HUD now matches /api/me exactly.
+  const after = (await (
+    await fetch(`${API_URL}/api/me`, { headers: { Authorization: `Bearer ${tok}` } })
+  ).json()) as { player: { spirit_current?: number } };
+  expect(after.player.spirit_current).toBe(target);
+
+  await ctx.close();
+});
