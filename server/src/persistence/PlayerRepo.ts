@@ -139,7 +139,7 @@ const STARTER_TIER = 0;
 const STARTER_MAX_USES = 3;
 
 const insertPlayer = db.prepare(
-  `INSERT INTO players (id, username, password_hash) VALUES (?, ?, ?)`,
+  `INSERT INTO players (id, username, password_hash, reliquary_cap) VALUES (?, ?, ?, ?)`,
 );
 // #299 — base ring INSERT now lives in ringRows.ts (insertRingRow). Fusion
 // inserts persist the extra parent_dominant column via their own statement below.
@@ -258,7 +258,7 @@ function insertStarterRing(playerId: string, element: number): string {
 export const createPlayer = db.transaction(
   (username: string, passwordHash: string): string => {
     const playerId = uuidv4();
-    insertPlayer.run(playerId, username, passwordHash);
+    insertPlayer.run(playerId, username, passwordHash, RELIQUARY_BASE_CAP);
 
     // Heart-slot ring: a Wind ring that rests (in_carry = 0) outside the battle
     // hand and Reliquary. heart_slot = 1 excludes it from the spirit/carry sums,
