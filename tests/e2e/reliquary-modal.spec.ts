@@ -1162,3 +1162,280 @@ test('reliquary (#423 S4): SPIRIT ghost visible below cap; click moves ring to r
 
   await ctx.close();
 });
+
+// ── Scenario 17 (#434): ghost re-appears after first drop without reopening modal ─
+// The original bug: after a ghost-slot drop the reliqCount closure was stale and
+// no new ghost appeared until the modal was closed and reopened. The fix promotes
+// the ghost into populate() so it always rebuilds at the correct next-free index.
+// This scenario is the primary regression lock for #434.
+test('reliquary (#434 S17): ghost re-appears at new index after first drop — no modal reopen needed', async ({
+  browser,
+}) => {
+  // #434 adversarial: original bug's exact shape — ghost must re-appear after first
+  // ghost-slot drop, at the new index (reliqCount+1), without closing the modal.
+  const token = await registerAndToken();
+  // Seed two bench rings: one to move on the first drop, one to confirm the second
+  // ghost is reachable.
+  await seedRestingRings(token, 1);
+  const me = await getMe(token);
+  const slotted = BATTLE_SLOTS.map((s) => (me.loadout as any)[s]).filter(Boolean) as string[];
+  // Carry both the existing resting ring and an extra one so there are two bench rings.
+  const restingIds = me.rings.filter((r: any) => r.in_carry === 0).map((r: any) => r.id);
+  await putCarry(token, [...slotted, ...restingIds]);
+
+  // Re-read to get the carry state that was just set.
+  const me2 = await getMe(token);
+  const reliqCount: number =
+    me2.player.reliquaryCount ??
+    me2.rings.filter((r: any) => r.in_carry === 0 && !r.escrowed && r.heart_slot !== 1).length;
+  const reliqCap: number = me2.player.reliquaryCap ?? 20;
+  // Need at least 1 free slot PLUS room for a second ghost after the drop.
+  expect(reliqCount + 2, 'test requires reliquary at least 2 below cap').toBeLessThanOrEqual(reliqCap);
+  expect(reliqCount, 'ghost must be within the visible 3-row window').toBeLessThan(9);
+
+  // Identify all bench rings (carried, non-battle-slotted) — any of them is valid.
+  const slottedSet = new Set(slotted);
+  const benchRingIds = new Set(
+    me2.rings
+      .filter((r: any) => r.in_carry === 1 && !slottedSet.has(r.id))
+      .map((r: any) => r.id as string),
+  );
+  expect(benchRingIds.size, 'need at least 2 bench rings for this test').toBeGreaterThanOrEqual(2);
+
+  const ctx = await browser.newContext();
+  await ctx.addInitScript(`localStorage.setItem('er_token', ${JSON.stringify(token)})`);
+  const page = await ctx.newPage();
+  await loadSanctum(page);
+  await openReliquary(page);
+
+  // ── Step 1: real-click bench cell 0 — wait for ANY bench ring to be selected ─
+  // The bench grid sorts by element/xp/id; the ring at cell 0 may not match API
+  // response order. We read back whichever ring was actually selected.
+  await clickCanvas(page, BENCH_CELL0);
+  const firstSelectedId: string = await page.waitForFunction(
+    (ids) => {
+      const sel = ((window as any).__scene as any)?.swapManager?.selection;
+      return sel?.ringId && (ids as string[]).includes(sel.ringId) ? sel.ringId : null;
+    },
+    [...benchRingIds],
+    { timeout: 5000 },
+  ).then((h) => h.jsonValue() as Promise<string>);
+
+  // ── Step 2: real-click the ghost at index reliqCount ─────────────────────
+  const ghost0 = {
+    x: SPIRIT_GRID_ORIGIN.x + (reliqCount % 3) * 72 + 32,
+    y: SPIRIT_GRID_ORIGIN.y + Math.floor(reliqCount / 3) * 92 + 44,
+  };
+  await clickCanvas(page, ghost0);
+
+  // Wait for the selected ring to land in the reliquary.
+  await page.waitForFunction(
+    async (id) => {
+      const r = await fetch('http://localhost:2568/api/me', {
+        headers: { Authorization: `Bearer ${localStorage.getItem('er_token')}` },
+      });
+      const d = await r.json();
+      return d.rings.find((x: any) => x.id === id)?.in_carry === 0;
+    },
+    firstSelectedId,
+    { timeout: 8000 },
+  );
+
+  // ── Step 3: WITHOUT closing the modal, assert ghost re-appears at reliqCount+1 ─
+  // This is the regression assertion — the original bug produced no ghost here.
+  const ghostStillPresent = await page.evaluate(() => {
+    const scene = (window as any).__scene as any;
+    const walk = (c: any): boolean => {
+      for (const o of c.getAll ? c.getAll() : []) {
+        if (o.type === 'Rectangle' && o.fillColor === 0x1a2233 && o.input?.cursor === 'pointer') {
+          return true;
+        }
+        if (o.getAll && walk(o)) return true;
+      }
+      return false;
+    };
+    return walk({ getAll: () => scene.children.getAll() });
+  });
+  expect(
+    ghostStillPresent,
+    '#434 regression: ghost must re-appear at new index after first drop, without closing the modal',
+  ).toBe(true);
+
+  // ── Step 4: assert SPIRIT header DOM text incremented ────────────────────
+  const spiritDomLabel = await page.evaluate(() => {
+    for (const n of Array.from(document.querySelectorAll('.er-dom-label'))) {
+      const el = n as HTMLElement;
+      if (el.dataset['label'] === 'spirit-header') return el.textContent ?? null;
+    }
+    return null;
+  });
+  // After one drop, the spirit count should be reliqCount + 1.
+  expect(spiritDomLabel, 'SPIRIT header must reflect new ring count after ghost drop').toContain(
+    String(reliqCount + 1),
+  );
+
+  // ── Step 5: second consecutive drop — click bench cell 0 then the new ghost ─
+  // After the first drop the next bench ring moves to cell 0.
+  // The new ghost is at index reliqCount+1.
+  const newReliqCount = reliqCount + 1;
+  const newGhostLogical = {
+    x: SPIRIT_GRID_ORIGIN.x + (newReliqCount % 3) * 72 + 32,
+    y: SPIRIT_GRID_ORIGIN.y + Math.floor(newReliqCount / 3) * 92 + 44,
+  };
+  // The remaining bench rings exclude the one we just dropped.
+  const remainingBenchIds = [...benchRingIds].filter((id) => id !== firstSelectedId);
+  await clickCanvas(page, BENCH_CELL0);
+  const secondSelectedId: string = await page.waitForFunction(
+    (ids) => {
+      const sel = ((window as any).__scene as any)?.swapManager?.selection;
+      return sel?.ringId && (ids as string[]).includes(sel.ringId) ? sel.ringId : null;
+    },
+    remainingBenchIds,
+    { timeout: 5000 },
+  ).then((h) => h.jsonValue() as Promise<string>);
+  await clickCanvas(page, newGhostLogical);
+
+  // Second ring also moved to the reliquary — server-authoritative.
+  await page.waitForFunction(
+    async (id) => {
+      const r = await fetch('http://localhost:2568/api/me', {
+        headers: { Authorization: `Bearer ${localStorage.getItem('er_token')}` },
+      });
+      const d = await r.json();
+      return d.rings.find((x: any) => x.id === id)?.in_carry === 0;
+    },
+    secondSelectedId,
+    { timeout: 8000 },
+  );
+  const finalMe = await getMe(token);
+  expect(finalMe.rings.find((r: any) => r.id === secondSelectedId)?.in_carry).toBe(0);
+  expect(finalMe.rings.find((r: any) => r.id === firstSelectedId)?.in_carry).toBe(0);
+
+  await ctx.close();
+});
+
+// ── Scenario 18 (#434): ghost suppressed when reliquary is at exact cap ──────
+// The ghost must not appear when rings.length === reliquaryCap. The boundary is
+// `<` (strict), so at-cap returns false and no ghost Rectangle is created.
+// Adversarial: if the impl uses `<=` the ghost appears at cap, creating a
+// clickable placeholder whose server call would be rejected (cap exceeded).
+test('reliquary (#434 S18): no ghost rendered when reliquary pool is exactly at cap', async ({
+  browser,
+}) => {
+  // #434 adversarial: strict less-than boundary — at-cap must suppress the ghost.
+  // Seed enough resting rings to fill the reliquary pool to reliquaryCap.
+  const token = await registerAndToken();
+  const me0 = await getMe(token);
+  const reliqCap: number = me0.player.reliquaryCap ?? 20;
+  const reliqCount0: number =
+    me0.player.reliquaryCount ??
+    me0.rings.filter((r: any) => r.in_carry === 0 && !r.escrowed && r.heart_slot !== 1).length;
+  const toSeed = reliqCap - reliqCount0;
+  if (toSeed > 0) {
+    await seedRestingRings(token, toSeed);
+  }
+
+  // Verify the pool is now at cap server-side before opening the modal.
+  const me1 = await getMe(token);
+  const reliqCountAtCap: number =
+    me1.player.reliquaryCount ??
+    me1.rings.filter((r: any) => r.in_carry === 0 && !r.escrowed && r.heart_slot !== 1).length;
+  // seed-resting-rings bypasses cap guards so this should hold.
+  expect(reliqCountAtCap, 'reliquary must be at cap for this test').toBeGreaterThanOrEqual(reliqCap);
+
+  const ctx = await browser.newContext();
+  await ctx.addInitScript(`localStorage.setItem('er_token', ${JSON.stringify(token)})`);
+  const page = await ctx.newPage();
+  await loadSanctum(page);
+  await openReliquary(page);
+
+  // Assert NO ghost Rectangle with fill 0x1a2233 exists in the scene graph.
+  const ghostPresent = await page.evaluate(() => {
+    const scene = (window as any).__scene as any;
+    const walk = (c: any): boolean => {
+      for (const o of c.getAll ? c.getAll() : []) {
+        if (o.type === 'Rectangle' && o.fillColor === 0x1a2233 && o.input?.cursor === 'pointer') {
+          return true;
+        }
+        if (o.getAll && walk(o)) return true;
+      }
+      return false;
+    };
+    return walk({ getAll: () => scene.children.getAll() });
+  });
+  expect(
+    ghostPresent,
+    '#434 boundary: ghost must NOT be present when reliquary is at exact cap (strict < guards the off-by-one)',
+  ).toBe(false);
+
+  await ctx.close();
+});
+
+// ── Scenario 19 (#434): ghost click with no selection is a no-op ─────────────
+// The callback registered via setGhost guards on swapManager.selection before
+// calling reliquaryMove. A click on the ghost with nothing selected must not
+// trigger a server call or corrupt state.
+// Adversarial: without the guard, reliquaryMove(undefined, 'reliquary') reaches
+// the server with an undefined ringId, potentially crashing the handler.
+test('reliquary (#434 S19): ghost click with no selection is a no-op (no server call made)', async ({
+  browser,
+}) => {
+  // #434 adversarial: ghost callback guards on selection — pointerdown with nothing
+  // selected must not send reliquaryMove and must not crash the overlay.
+  const token = await registerAndToken();
+  await seedRestingRings(token, 1);
+  const me = await getMe(token);
+  const slotted = BATTLE_SLOTS.map((s) => (me.loadout as any)[s]).filter(Boolean) as string[];
+  const benchRing = me.rings.find((r: any) => r.in_carry === 0)?.id as string;
+  await putCarry(token, [...slotted, benchRing]);
+
+  const me2 = await getMe(token);
+  const reliqCount: number =
+    me2.player.reliquaryCount ??
+    me2.rings.filter((r: any) => r.in_carry === 0 && !r.escrowed && r.heart_slot !== 1).length;
+  const reliqCap: number = me2.player.reliquaryCap ?? 20;
+  expect(reliqCount, 'ghost must be within the visible 3-row window').toBeLessThan(9);
+  expect(reliqCount, 'test requires reliquary below cap').toBeLessThan(reliqCap);
+
+  const ctx = await browser.newContext();
+  await ctx.addInitScript(`localStorage.setItem('er_token', ${JSON.stringify(token)})`);
+  const page = await ctx.newPage();
+  await loadSanctum(page);
+  await openReliquary(page);
+
+  // Confirm no selection is active (fresh open, nothing clicked yet).
+  const selectionBefore = await page.evaluate(
+    () => ((window as any).__scene as any)?.swapManager?.selection ?? null,
+  );
+  expect(selectionBefore, 'no selection should be active on fresh modal open').toBeNull();
+
+  // Snapshot the reliquary count before the ghost click.
+  const beforeMe = await getMe(token);
+  const beforeReliqCount: number =
+    beforeMe.rings.filter((r: any) => r.in_carry === 0 && !r.escrowed && r.heart_slot !== 1).length;
+
+  // Real-click the ghost with no selection — must be a no-op.
+  const ghostLogical = {
+    x: SPIRIT_GRID_ORIGIN.x + (reliqCount % 3) * 72 + 32,
+    y: SPIRIT_GRID_ORIGIN.y + Math.floor(reliqCount / 3) * 92 + 44,
+  };
+  await clickCanvas(page, ghostLogical);
+
+  // Give any (spurious) round-trip a beat, then assert state is unchanged.
+  await page.waitForTimeout(600);
+
+  const afterMe = await getMe(token);
+  const afterReliqCount: number =
+    afterMe.rings.filter((r: any) => r.in_carry === 0 && !r.escrowed && r.heart_slot !== 1).length;
+
+  expect(
+    afterReliqCount,
+    '#434 ghost no-op: reliquary count must not change when ghost is clicked with no selection',
+  ).toBe(beforeReliqCount);
+
+  // Overlay must still be open (no crash, no unexpected close).
+  const overlayOpen = await page.evaluate(() => (window as any).__sanctumOverlayOpen === 'ringwall');
+  expect(overlayOpen, 'overlay must remain open after no-op ghost click').toBe(true);
+
+  await ctx.close();
+});

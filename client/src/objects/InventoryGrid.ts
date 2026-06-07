@@ -57,7 +57,9 @@ export class InventoryGrid extends Phaser.GameObjects.Container {
   private selected: RingData | null = null;
   // #389 — cells are RingCard instances (the inline card body was migrated onto the
   // shared RingCard). Typed precisely so callers get the RingCard API without casts.
-  private readonly cards: Map<string, RingCard> = new Map();
+  // #434 — also stores the ghost Rectangle under sentinel key '__ghost__' so
+  // populate() destroys it on the next call like any other tracked cell.
+  private readonly cards: Map<string, RingCard | Phaser.GameObjects.Rectangle> = new Map();
   // Background rectangle per ring id, used to toggle selection stroke without
   // relying on the card container's child ordering.
   private readonly cardBgs: Map<string, Phaser.GameObjects.Rectangle> = new Map();
@@ -91,6 +93,13 @@ export class InventoryGrid extends Phaser.GameObjects.Container {
   // Reliquary modal are 3-wide; legacy callers default to 2. Drives populate()'s
   // col wrap and the scroll-arrow x.
   private readonly numCols: number;
+
+  // #434 — ghost cell state. When ghostCb is non-null and the ring count is below
+  // ghostCap, populate() appends an interactive ghost Rectangle at index rings.length.
+  // Stored as instance fields so populate() rebuilds the ghost automatically on every
+  // call without any external re-invocation.
+  private ghostCb: (() => void) | null = null;
+  private ghostCap = 0;
 
   constructor(
     scene: Phaser.Scene,
@@ -126,6 +135,17 @@ export class InventoryGrid extends Phaser.GameObjects.Container {
    */
   private arrowX(): number {
     return (this.numCols - 1) * COL_GAP + CARD_W + 12;
+  }
+
+  /**
+   * #434 — Register a ghost cell callback and capacity. When onClick is non-null
+   * and the ring count is below cap, populate() renders an interactive ghost
+   * Rectangle at the next free index. Call setGhost(null) to suppress the ghost
+   * (e.g. when the grid is used outside a context that should show one).
+   */
+  setGhost(onClick: (() => void) | null, cap = 0): void {
+    this.ghostCb = onClick;
+    this.ghostCap = cap;
   }
 
   /**
@@ -198,6 +218,30 @@ export class InventoryGrid extends Phaser.GameObjects.Container {
       this.cardBgs.set(ring.id, bg);
       this.cardRows.set(ring.id, row);
     });
+
+    // #434 — ghost cell: render an interactive placeholder at the next free index
+    // when a callback is registered and the ring count is below the capacity limit.
+    // Registered under sentinel key '__ghost__' in this.cards so the next populate()
+    // call destroys it alongside regular ring cards. Also registered in cardRows so
+    // scroll windowing shows/hides it correctly.
+    if (this.ghostCb !== null && sorted.length < this.ghostCap) {
+      const gIdx = sorted.length;
+      const gCol = gIdx % this.numCols;
+      const gRow = Math.floor(gIdx / this.numCols);
+      const gx = gCol * COL_GAP + CARD_W / 2;
+      const gy = gRow * ROW_GAP + CARD_H / 2;
+      const ghostCb = this.ghostCb;
+      const ghost = this.scene.add
+        .rectangle(gx, gy, CARD_W, CARD_H, 0x1a2233)
+        .setScrollFactor(0)
+        .setStrokeStyle(2, 0x446688)
+        .setAlpha(0.7)
+        .setInteractive({ useHandCursor: true })
+        .on('pointerdown', () => ghostCb());
+      this.cardContainer.add(ghost);
+      this.cards.set('__ghost__', ghost);
+      this.cardRows.set('__ghost__', gRow);
+    }
 
     this.totalRows = Math.ceil(sorted.length / this.numCols);
     this.scrollRow = 0;
