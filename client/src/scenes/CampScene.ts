@@ -726,9 +726,16 @@ export class CampScene extends DualCameraScene {
         else this.clearReliquarySelection();
       },
 
-      // ── onRecharge: Sanctum RECHARGE includes reliquary resting pool (#397) ──
+      // ── onRecharge: Sanctum RECHARGE ALL includes reliquary resting pool (#397) ──
       onRecharge: () => {
         void this.doRechargeAll(true);
+      },
+
+      // ── onRechargeSlotClick: per-ring targeted recharge (#462) ───────────────
+      onRechargeSlotClick: (ringId, ov) => {
+        void this.doRechargeById(ringId).then(() => {
+          if (ov.isOpen()) ov.refresh(this.buildOverlayData());
+        });
       },
 
       // ── renderLeft: build the SPIRIT left column into the overlay container ──

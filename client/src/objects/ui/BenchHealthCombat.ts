@@ -18,11 +18,12 @@ import { benchSpareCount } from './RingManagementOverlay';
  *
  * Canonical geometry (760×500 frame, matching #384 / corrected #394 / gap-equalised #426):
  *   BENCH grid   origin (388, 148)   3-col × 3 visible rows
- *   HEALTH card  center (660, 193)   70×90
- *   STATUS card  center (759, 193)   70×90
- *   A1 / A2      center (759/837, 291)
- *   D1 / D2      center (759/837, 389)
- *   [RECHARGE]   center (660, 389) — same row as D1/D2
+ *   HEALTH card   center (660, 193)   70×90
+ *   STATUS card   center (759, 193)   70×90
+ *   A1 / A2       center (759/837, 291)
+ *   D1 / D2       center (759/837, 389)
+ *   RECHARGE slot center (660, 389) — same row as D1/D2 (gold, gated on onRechargeClick)
+ *   [RECHARGE ALL] center (660, 487) — renamed from [RECHARGE], shifted below the RECHARGE slot
  *
  * Architecture: display-only — no game logic, server is the only source of truth.
  */
@@ -49,6 +50,8 @@ const COL_COMBAT_RIGHT_X = 837;
 const ROW_STATUS_Y = 193;
 const ROW_COMBAT0_Y = 291;
 const ROW_COMBAT1_Y = 389;
+/** Y position for [RECHARGE ALL] button — shifted down to make room for the RECHARGE slot. */
+const ROW_RECHARGE_BTN_Y = 487;
 const CARD_W = 70;
 const CARD_H = 90;
 const LABEL_ABOVE_Y_OFFSET = 34;
@@ -71,13 +74,16 @@ export class BenchHealthCombat extends Phaser.GameObjects.Container {
 
   /**
    * @param scene             host Phaser scene
-   * @param onRecharge        fired when `[RECHARGE]` is clicked
+   * @param onRecharge        fired when `[RECHARGE ALL]` is clicked
    * @param onSlotClick       fired when a HEALTH or COMBAT slot card is clicked
    * @param getThumbTooltip   lazy supplier for the STATUS hover tooltip text
    * @param onBenchSelect     fired when a bench card is clicked (ring | null for deselect)
    * @param onWonSelect       fired when the WON card is clicked (#423)
    * @param onDiscardClick    fired when the DISCARD slot is clicked (#423)
    * @param onBenchGhostClick fired when the bench ghost placeholder is clicked (#423)
+   * @param onRechargeClick   fired when the RECHARGE slot is clicked (#462); when
+   *                          undefined, the RECHARGE slot rectangle is not rendered
+   *                          (fusion/merge modes suppress it)
    */
   constructor(
     scene: Phaser.Scene,
@@ -88,6 +94,7 @@ export class BenchHealthCombat extends Phaser.GameObjects.Container {
     private readonly onWonSelect?: () => void,
     private readonly onDiscardClick?: () => void,
     private readonly onBenchGhostClick?: () => void,
+    private readonly onRechargeClick?: () => void,
   ) {
     super(scene, 0, 0);
     scene.add.existing(this);
@@ -220,15 +227,27 @@ export class BenchHealthCombat extends Phaser.GameObjects.Container {
     this.add(heartCard);
     this.heartCard = heartCard;
 
-    // ── [RECHARGE] link (below heart card, D1/D2 row) ──────────────────────
-    // DOM label "Recharge" is added by the host container (RingManagementOverlayClass)
-    // alongside the [RECHARGE] canvas button so it appears as a direct child of the
-    // modal container. The backing ♥ HP label pair is also hoisted to the root.
-    // DOM label "Recharge" above the button (E2E checks texts.includes('Recharge')).
-    this.addDomLbl(COL_HEALTH_X, ROW_COMBAT1_Y - LABEL_ABOVE_Y_OFFSET, 'Recharge', 10, '#ffcc44');
+    // ── RECHARGE slot (#462) — gold rectangle at ROW_COMBAT1_Y (389), HEALTH column ──
+    // Only rendered when onRechargeClick is defined (fusion/merge modes omit it).
+    // The slot triggers per-ring recharge; the host overlay reads its selection at click time.
+    if (this.onRechargeClick !== undefined) {
+      this.addDomLbl(COL_HEALTH_X, ROW_COMBAT1_Y - LABEL_ABOVE_Y_OFFSET, 'RECHARGE', 11, '#ffcc44', true);
+      const rechargeSlot = this.scene.add
+        .rectangle(COL_HEALTH_X, ROW_COMBAT1_Y, CARD_W, CARD_H, 0x443300, 0.6)
+        .setScrollFactor(0)
+        .setStrokeStyle(2, 0xffcc44)
+        .setName('recharge-slot')
+        .setInteractive({ useHandCursor: true })
+        .on('pointerdown', () => this.onRechargeClick!());
+      this.add(rechargeSlot);
+    }
+
+    // ── [RECHARGE ALL] button (below RECHARGE slot, ROW_RECHARGE_BTN_Y=487) ──────
+    // DOM label "Recharge All" above the button (E2E checks texts.includes('Recharge All')).
+    this.addDomLbl(COL_HEALTH_X, ROW_RECHARGE_BTN_Y - LABEL_ABOVE_Y_OFFSET, 'Recharge All', 10, '#ffcc44');
     const rechargeBtn = crispCanvasText(
       this.scene.add
-        .text(COL_HEALTH_X, ROW_COMBAT1_Y, '[RECHARGE]', {
+        .text(COL_HEALTH_X, ROW_RECHARGE_BTN_Y, '[RECHARGE ALL]', {
           fontSize: '13px',
           color: '#ffcc44',
         })

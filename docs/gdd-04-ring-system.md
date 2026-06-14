@@ -76,6 +76,7 @@ Tier thresholds follow a **triangular-number × 500** pattern. Each tier's XP ra
 - After sleeping at camp (costs 25 food, restores full spirit gauge), the player chooses which rings to recharge with their restored spirit
 - A ring extinguished mid-battle (uses reach 0) cannot be used for the rest of that duel
 - Rings left at camp recharge passively on the game day timer even while the player is in the field
+- The ring management overlay (field and sanctum modes) exposes both a targeted **RECHARGE slot** (select a ring, then click RECHARGE to top off that one ring) and a **`[RECHARGE ALL]`** action that tops off all carried rings in priority order; the mechanism and spirit cost are unchanged in both cases
 
 ### 4.4 Ring XP
 - **Battle use is the only source of XP.** A ring earns XP only when the protagonist uses it in a duel — more uses in a duel = more XP for that ring
