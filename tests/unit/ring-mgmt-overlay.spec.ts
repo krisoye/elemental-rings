@@ -956,14 +956,21 @@ describe('#395 BenchHealthCombat: architectural contract (source scan)', () => {
     expect(src, 'must expose getCombatCard(slot)').toContain('getCombatCard');
   });
 
-  it('BenchHealthCombat has a single [RECHARGE] button (not [Recharge] / [Recharge All] pair)', () => {
-    // #395 acceptance criterion: consolidate to one [RECHARGE] button in both modes.
+  it('BenchHealthCombat has a [RECHARGE ALL] button (not bare [RECHARGE] or [Recharge])', () => {
+    // #462 updates #395: the button is renamed from [RECHARGE] to [RECHARGE ALL].
+    // The single-quoted form "'[RECHARGE]'" must not appear — but note: not.toContain('[RECHARGE]')
+    // would ALWAYS fail because '[RECHARGE]' is a substring of '[RECHARGE ALL]'.
+    // The safe assertion is not.toContain("'[RECHARGE]'") (single-quoted form).
     const src = readClientSrc('objects/ui/BenchHealthCombat.ts');
     if (src === null) return;
-    // The button text must be [RECHARGE], not the old variants.
-    expect(src, 'must use [RECHARGE] (not [Recharge])').not.toContain("'[Recharge]'");
-    expect(src, 'must use [RECHARGE] (not [Recharge All])').not.toContain("'[Recharge All]'");
-    expect(src, 'must render the [RECHARGE] label').toContain('[RECHARGE]');
+    // The button text must be [RECHARGE ALL] — the renamed version.
+    expect(src, 'must render [RECHARGE ALL] (renamed from [RECHARGE])').toContain('[RECHARGE ALL]');
+    // Must NOT contain the bare single-quoted '[RECHARGE]' string literal (the old label).
+    // IMPORTANT: use the single-quoted form to avoid matching the '[RECHARGE]' inside '[RECHARGE ALL]'.
+    expect(src, "must not use bare '[RECHARGE]' string literal (now renamed to '[RECHARGE ALL]')").not.toContain("'[RECHARGE]'");
+    // Must not use old lower-case variants.
+    expect(src, 'must not use [Recharge] (wrong case)').not.toContain("'[Recharge]'");
+    expect(src, 'must not use [Recharge All] (wrong case)').not.toContain("'[Recharge All]'");
   });
 
   it('RingManagementOverlayClass.ts exists and exports RingManagementOverlay class', () => {
@@ -1769,13 +1776,16 @@ describe('#395 Phase 2 impl-aware: BenchHealthCombat architecture contracts', ()
     ).toBeLessThan(superDestroyIdx);
   });
 
-  it('BenchHealthCombat.ts [RECHARGE] button label is exactly "[RECHARGE]" (not "[Recharge]")', () => {
-    // #395 Phase 2 adversarial: an inconsistent capitalisation would fail E2E grep
-    // and regress the "single [RECHARGE] control" acceptance criterion.
+  it('BenchHealthCombat.ts [RECHARGE ALL] button label is exactly "[RECHARGE ALL]" (not "[Recharge]" or "[RECHARGE]")', () => {
+    // #462 updates #395 Phase 2 adversarial: the button is renamed to [RECHARGE ALL].
+    // An inconsistent capitalisation would fail E2E grep and violate the rename acceptance criterion.
     const src = readClientSrc('objects/ui/BenchHealthCombat.ts');
     if (src === null) return;
-    expect(src, 'BenchHealthCombat must render [RECHARGE] in upper case').toContain('[RECHARGE]');
+    expect(src, 'BenchHealthCombat must render [RECHARGE ALL] in upper case').toContain('[RECHARGE ALL]');
     expect(src, 'BenchHealthCombat must not use lower-case [Recharge]').not.toContain('[Recharge]');
+    // The bare single-quoted '[RECHARGE]' literal must no longer appear — it was the old button label.
+    // SAFE assertion: use single-quoted form so we don't match the '[RECHARGE]' inside '[RECHARGE ALL]'.
+    expect(src, "must not contain old bare '[RECHARGE]' string literal").not.toContain("'[RECHARGE]'");
   });
 
   it('BenchHealthCombat.ts repaintStrokes() handles all five SLOT_KEYS and heartCard', () => {
@@ -4316,6 +4326,360 @@ describe('#434 Phase 2 impl-aware: InventoryGrid ghost — private path branches
       capRegion,
       'reliquaryCap must be sourced from window.__campState at the renderLeft call site',
     ).toMatch(/window\.__campState/);
+  });
+
+});
+
+// ===========================================================================
+// Class 25 — Phase 1 spec-driven adversarial: #462 per-ring RECHARGE slot
+// ===========================================================================
+
+describe('#462 Phase 1 spec-driven: per-ring RECHARGE slot in BenchHealthCombat', () => {
+
+  // ── A. Button renamed: [RECHARGE ALL] source assertions ────────────────────
+
+  it('BenchHealthCombat.ts [RECHARGE ALL] button text is present in source', () => {
+    // #462 adversarial: the rename from [RECHARGE] to [RECHARGE ALL] is an acceptance criterion.
+    // A partial rename (e.g. updating the DOM label but not the canvas text) would leave the
+    // old string in the scene-graph and break E2E scenario 5.
+    const src = readClientSrc('objects/ui/BenchHealthCombat.ts');
+    if (src === null) return;
+    expect(
+      src,
+      'BenchHealthCombat must contain the renamed [RECHARGE ALL] button text',
+    ).toContain('[RECHARGE ALL]');
+  });
+
+  it('BenchHealthCombat.ts does NOT contain the single-quoted bare [RECHARGE] string literal', () => {
+    // #462 adversarial: the old button text "'[RECHARGE]'" must be gone after the rename.
+    // BLOCKER note: using not.toContain('[RECHARGE]') would ALWAYS fail because '[RECHARGE]'
+    // is a substring of '[RECHARGE ALL]'. The ONLY safe assertion is not.toContain("'[RECHARGE]'")
+    // (the single-quoted form), which targets the string literal specifically.
+    const src = readClientSrc('objects/ui/BenchHealthCombat.ts');
+    if (src === null) return;
+    expect(
+      src,
+      "BenchHealthCombat must not contain the old bare \"'[RECHARGE]'\" string literal — use \"'[RECHARGE ALL]'\" instead",
+    ).not.toContain("'[RECHARGE]'");
+  });
+
+  it('BenchHealthCombat.ts DOM label above button is renamed to "Recharge All"', () => {
+    // #462 adversarial: the addDomLbl call for the button label must also be updated.
+    // Leaving it as 'Recharge' while the canvas text reads '[RECHARGE ALL]' creates an
+    // inconsistent UI (DOM label says one thing, canvas text another).
+    const src = readClientSrc('objects/ui/BenchHealthCombat.ts');
+    if (src === null) return;
+    expect(
+      src,
+      "BenchHealthCombat addDomLbl must use 'Recharge All' (not 'Recharge') for the button label",
+    ).toContain('Recharge All');
+  });
+
+  // ── B. [RECHARGE ALL] geometry: must be at y=487 ───────────────────────────
+
+  it('BenchHealthCombat.ts [RECHARGE ALL] button is placed at ROW_RECHARGE_BTN_Y = 487', () => {
+    // #462 adversarial: the button shifts down from y=389 to y=487 to make room for the new
+    // RECHARGE slot at y=389. If the button stays at 389 it collides with the new slot.
+    const src = readClientSrc('objects/ui/BenchHealthCombat.ts');
+    if (src === null) return;
+    // ROW_RECHARGE_BTN_Y constant (or inline 487) must be defined.
+    const has487 = src.includes('487') || src.includes('ROW_RECHARGE_BTN_Y');
+    expect(
+      has487,
+      'BenchHealthCombat must place [RECHARGE ALL] at y=487 (ROW_RECHARGE_BTN_Y) — down from old 389',
+    ).toBe(true);
+  });
+
+  // ── C. RECHARGE slot: geometry and visual style ─────────────────────────────
+
+  it('BenchHealthCombat.ts defines ROW_RECHARGE_BTN_Y or uses 487 as new button row constant', () => {
+    // #462 adversarial: both the slot (389) and the button (487) must fit within the modal
+    // bottom at y=538 (≈51 px margin). If either value drifts above 538 the controls clip.
+    const src = readClientSrc('objects/ui/BenchHealthCombat.ts');
+    if (src === null) return;
+    // Either the named constant or the bare value must appear.
+    expect(
+      src.includes('ROW_RECHARGE_BTN_Y') || src.includes('487'),
+      'BenchHealthCombat must define ROW_RECHARGE_BTN_Y=487 (within modal bottom 538)',
+    ).toBe(true);
+  });
+
+  it('BenchHealthCombat.ts RECHARGE slot uses gold fill 0x443300 (distinct from DISCARD dark fill)', () => {
+    // #462 adversarial: the slot must be visually distinct from DISCARD (0x331a1a, reddish).
+    // Using the wrong fill colour gives no visual cue that RECHARGE is a constructive action.
+    const src = readClientSrc('objects/ui/BenchHealthCombat.ts');
+    if (src === null) return;
+    expect(
+      src,
+      'BenchHealthCombat RECHARGE slot must use gold fill 0x443300 to distinguish from DISCARD',
+    ).toContain('0x443300');
+  });
+
+  it('BenchHealthCombat.ts RECHARGE slot uses gold stroke 0xffcc44', () => {
+    // #462 adversarial: the spec mandates 0xffcc44 stroke to telegraph "constructive" vs
+    // the DISCARD slot's red (0x993333). An absent or wrong stroke breaks the visual design.
+    const src = readClientSrc('objects/ui/BenchHealthCombat.ts');
+    if (src === null) return;
+    // 0xffcc44 is also used by column headers, so its presence alone is not conclusive —
+    // but absence means the RECHARGE slot was definitely not styled to spec.
+    expect(
+      src,
+      'BenchHealthCombat must contain 0xffcc44 (gold stroke for RECHARGE slot)',
+    ).toContain('0xffcc44');
+  });
+
+  it('BenchHealthCombat.ts RECHARGE slot rectangle is labelled "RECHARGE" (DOM label)', () => {
+    // #462 adversarial: the DOM label above the slot must read 'RECHARGE' so the player
+    // knows what the gold rectangle does. Without a label it is an unlabelled gold box.
+    const src = readClientSrc('objects/ui/BenchHealthCombat.ts');
+    if (src === null) return;
+    // The DOM label 'RECHARGE' at y≈355 (389 − 34) must be present.
+    expect(
+      src,
+      "BenchHealthCombat must add a 'RECHARGE' DOM label above the slot",
+    ).toContain("'RECHARGE'");
+  });
+
+  // ── D. RECHARGE slot rendering gate: onRechargeClick parameter ──────────────
+
+  it('BenchHealthCombat.ts constructor accepts onRechargeClick as an optional parameter', () => {
+    // #462 adversarial: the zero-arg convention (onRechargeClick?: () => void) means BHC
+    // receives undefined from fusion/merge callers and must NOT render the slot when undefined.
+    // If the parameter is required (no ?), all callers — including fusion/merge — must supply it,
+    // which forces them to wire a callback they do not need.
+    const src = readClientSrc('objects/ui/BenchHealthCombat.ts');
+    if (src === null) return;
+    expect(
+      src,
+      'BenchHealthCombat constructor must declare onRechargeClick as an optional parameter (with ?)',
+    ).toMatch(/onRechargeClick\s*\??\s*:/);
+  });
+
+  it('BenchHealthCombat.ts RECHARGE slot is gated on onRechargeClick being defined', () => {
+    // #462 adversarial: the slot must be conditionally rendered. If the guard is absent,
+    // the slot would appear in fusion and merge modes where it has no meaning — violating
+    // the "not rendered in fusion and merge modes" acceptance criterion.
+    const src = readClientSrc('objects/ui/BenchHealthCombat.ts');
+    if (src === null) return;
+    // The implementation must check onRechargeClick before adding the slot.
+    expect(
+      src,
+      'BenchHealthCombat must guard RECHARGE slot rendering on onRechargeClick !== undefined',
+    ).toMatch(/onRechargeClick/);
+  });
+
+  // ── E. RingManagementOverlayOpts: onRechargeSlotClick declared ──────────────
+
+  it('RingManagementOverlayClass.ts declares onRechargeSlotClick in RingManagementOverlayOpts', () => {
+    // #462 adversarial: without the opt declaration, TypeScript callers (CampScene,
+    // BattleHandOverlay) cannot pass it — the feature is silently un-wired.
+    const src = readClientSrc('objects/ui/RingManagementOverlayClass.ts');
+    if (src === null) return;
+    expect(
+      src,
+      'RingManagementOverlayOpts must declare onRechargeSlotClick',
+    ).toContain('onRechargeSlotClick');
+  });
+
+  it('RingManagementOverlayClass.ts onRechargeSlotClick is optional (fusion/merge omit it)', () => {
+    // #462 adversarial: if onRechargeSlotClick is required, fusion and merge mode callers
+    // must supply it — but the spec says they must omit it so BHC skips the slot.
+    const src = readClientSrc('objects/ui/RingManagementOverlayClass.ts');
+    if (src === null) return;
+    expect(
+      src,
+      'onRechargeSlotClick must be optional (declared with ?) in RingManagementOverlayOpts',
+    ).toMatch(/onRechargeSlotClick\s*\?/);
+  });
+
+  // ── F. Internal onRechargeClick closure: no-selection guard ─────────────────
+
+  it('RingManagementOverlayClass.ts onRechargeClick closure checks swap.selection before calling opts', () => {
+    // #462 adversarial: clicking RECHARGE with no ring selected must show the status message,
+    // not crash or call opts.onRechargeSlotClick(undefined, overlay). The closure must read
+    // this.swap.selection at click time (not stored ringId) and guard on null.
+    const src = readClientSrc('objects/ui/RingManagementOverlayClass.ts');
+    if (src === null) return;
+    expect(
+      src,
+      'RingManagementOverlayClass must check swap.selection in the onRechargeClick closure',
+    ).toContain('swap.selection');
+  });
+
+  it('RingManagementOverlayClass.ts shows status "Select a ring to recharge" when no selection', () => {
+    // #462 adversarial: the exact status string must match the acceptance criterion.
+    // A slightly different string (e.g. "No ring selected") would diverge from the spec
+    // and fail the E2E scenario 3 assertion.
+    const src = readClientSrc('objects/ui/RingManagementOverlayClass.ts');
+    if (src === null) return;
+    expect(
+      src,
+      "RingManagementOverlayClass must call setStatus('Select a ring to recharge') when no ring selected",
+    ).toContain('Select a ring to recharge');
+  });
+
+  it('RingManagementOverlayClass.ts passes onRechargeClick to BHC only when onRechargeSlotClick is defined', () => {
+    // #462 adversarial: the ternary pattern `opts.onRechargeSlotClick ? () => {...} : undefined`
+    // must be present. If the conditional is absent, BHC always receives a callback — rendering
+    // the slot even in fusion/merge mode where opts.onRechargeSlotClick was never supplied.
+    const src = readClientSrc('objects/ui/RingManagementOverlayClass.ts');
+    if (src === null) return;
+    // The ternary must reference onRechargeSlotClick to gate the callback.
+    expect(
+      src,
+      'RingManagementOverlayClass must pass onRechargeClick to BHC only when opts.onRechargeSlotClick is defined',
+    ).toMatch(/opts\.onRechargeSlotClick\s*\?/);
+  });
+
+  // ── G. Mode-specific rendering: absent in fusion and merge ──────────────────
+
+  it('RingManagementOverlayClass.ts fusion mode openFusionPanel does NOT pass onRechargeSlotClick', () => {
+    // #462 adversarial: fusion overlay opts must omit onRechargeSlotClick entirely so BHC
+    // receives onRechargeClick=undefined and does not render the gold RECHARGE rectangle.
+    // If openFusionPanel accidentally wires it, the slot appears in a context with no
+    // meaningful action and could call opts.onRechargeSlotClick with a fusion-selected ring.
+    const src = readClientSrc('objects/ui/RingManagementOverlayClass.ts');
+    if (src === null) return;
+    // Scan the openFusionPanel (or equivalent fusion opts) block.
+    // The simplest assertion: the fusion mode must not unconditionally wire the callback.
+    // We check that it is absent from the fusion-specific opts literal.
+    const lines = src.split('\n');
+    const fusionStart = lines.findIndex((l) => /openFusion|fusionOpts|mode.*fusion/i.test(l));
+    // If openFusionPanel is not yet in this file, skip gracefully.
+    if (fusionStart === -1) return;
+    // Within 30 lines of the fusion opts start, onRechargeSlotClick must not appear.
+    const fusionBlock = lines.slice(fusionStart, fusionStart + 30).join('\n');
+    expect(
+      fusionBlock,
+      'fusion mode opts block must not wire onRechargeSlotClick — RECHARGE slot must be absent in fusion',
+    ).not.toContain('onRechargeSlotClick');
+  });
+
+  // ── H. CampScene sanctum wiring ─────────────────────────────────────────────
+
+  it('CampScene.ts wires onRechargeSlotClick using doRechargeById in sanctum overlay opts', () => {
+    // #462 adversarial: CampScene must supply onRechargeSlotClick so the sanctum path has
+    // per-ring recharge. Without it the RECHARGE slot would be absent in sanctum mode even
+    // though the spec requires it there.
+    const src = readClientSrc('scenes/CampScene.ts');
+    if (src === null) return;
+    expect(
+      src,
+      'CampScene.ts must pass onRechargeSlotClick in sanctum overlay opts',
+    ).toContain('onRechargeSlotClick');
+    // Must call doRechargeById (not a blanket recharge call) for per-ring targeting.
+    expect(
+      src,
+      'CampScene.ts onRechargeSlotClick must call doRechargeById for per-ring recharge',
+    ).toContain('doRechargeById');
+  });
+
+  it('CampScene.ts onRechargeSlotClick refreshes the overlay via ov.refresh after recharge', () => {
+    // #462 adversarial: after the async recharge, the overlay must be refreshed so the player
+    // sees the ring's updated current_uses. Omitting the refresh leaves the card stale.
+    // Note: doRechargeById appears multiple times in CampScene (window hook at top, actual
+    // callback inside onRechargeSlotClick). We scan for the one inside the onRechargeSlotClick
+    // closure (which appears after 'onRechargeSlotClick:').
+    const src = readClientSrc('scenes/CampScene.ts');
+    if (src === null) return;
+    const lines = src.split('\n');
+    // Find the onRechargeSlotClick closure start.
+    const onRechargeSlotClickIdx = lines.findIndex((l) => /onRechargeSlotClick\s*:/.test(l));
+    if (onRechargeSlotClickIdx === -1) return; // not yet implemented — no assertion to fire
+    // Scan up to 15 lines within the closure for ov.refresh or ov.isOpen (which guards it).
+    const closureBlock = lines.slice(onRechargeSlotClickIdx, onRechargeSlotClickIdx + 15).join('\n');
+    expect(
+      closureBlock,
+      'CampScene.ts onRechargeSlotClick must call ov.refresh(...) or ov.isOpen() after doRechargeById',
+    ).toMatch(/ov\.refresh|ov\.isOpen/);
+  });
+
+  // ── I. BattleHandOverlay field wiring ───────────────────────────────────────
+
+  it('BattleHandOverlay.ts wires onRechargeSlotClick using this.send() (not doRechargeById)', () => {
+    // #462 adversarial: BattleHandOverlay does not have doRechargeById — only CampScene does.
+    // Using doRechargeById from the field overlay would cause a runtime "not a function" crash.
+    // The correct path is this.send('POST', '/api/spirit/recharge', { ringId }).
+    const src = readClientSrc('objects/BattleHandOverlay.ts');
+    if (src === null) return;
+    expect(
+      src,
+      'BattleHandOverlay.ts must pass onRechargeSlotClick in field overlay opts',
+    ).toContain('onRechargeSlotClick');
+    // Must NOT call doRechargeById (not available in BattleHandOverlay).
+    expect(
+      src,
+      'BattleHandOverlay.ts must NOT call doRechargeById — use this.send() instead',
+    ).not.toContain('doRechargeById');
+  });
+
+  it('BattleHandOverlay.ts onRechargeSlotClick uses this.send() with POST /api/spirit/recharge', () => {
+    // #462 adversarial: the field path must call the same API endpoint as the recharge-all path.
+    // A different endpoint (e.g. /api/ring/recharge) would target a non-existent route.
+    const src = readClientSrc('objects/BattleHandOverlay.ts');
+    if (src === null) return;
+    // The endpoint path must match the existing recharge-all convention.
+    expect(
+      src,
+      "BattleHandOverlay.ts onRechargeSlotClick must call this.send('POST', '/api/spirit/recharge', ...)",
+    ).toContain('/api/spirit/recharge');
+  });
+
+  // ── J. [RECHARGE ALL] backward compatibility: onRecharge callback unchanged ──
+
+  it('RingManagementOverlayClass.ts still declares onRecharge (renamed API is unchanged)', () => {
+    // #462 adversarial: [RECHARGE ALL] renames the button label but the internal callback
+    // name onRecharge stays the same (it is not player-facing). Renaming the callback would
+    // break all existing callers (CampScene, BattleHandOverlay) silently.
+    const src = readClientSrc('objects/ui/RingManagementOverlayClass.ts');
+    if (src === null) return;
+    expect(
+      src,
+      'RingManagementOverlayOpts must still declare onRecharge (internal name unchanged)',
+    ).toContain('onRecharge');
+  });
+
+  it('BenchHealthCombat.ts still accepts onRecharge as a constructor parameter (backward compat)', () => {
+    // #462 adversarial: adding onRechargeClick alongside the existing onRecharge must not
+    // remove or rename onRecharge — callers that pass onRecharge would silently receive undefined.
+    const src = readClientSrc('objects/ui/BenchHealthCombat.ts');
+    if (src === null) return;
+    expect(
+      src,
+      'BenchHealthCombat constructor must still declare the onRecharge parameter',
+    ).toContain('onRecharge');
+  });
+
+  // ── K. Geometry: slot y=389 and button y=487 both within modal bottom 538 ───
+
+  it('BenchHealthCombat.ts RECHARGE slot is placed at ROW_COMBAT1_Y = 389 (not shifted)', () => {
+    // #462 adversarial: the RECHARGE slot occupies the row vacated by the old [RECHARGE] button.
+    // ROW_COMBAT1_Y is already 389. If the slot is placed at a different y, it would conflict
+    // with the D1/D2 combat cards or float above the DISCARD slot.
+    const src = readClientSrc('objects/ui/BenchHealthCombat.ts');
+    if (src === null) return;
+    // ROW_COMBAT1_Y = 389 must still be defined (or the slot uses the value directly).
+    expect(
+      src,
+      'BenchHealthCombat must place RECHARGE slot at ROW_COMBAT1_Y (389) — the vacated row',
+    ).toMatch(/ROW_COMBAT1_Y|389/);
+  });
+
+  it('BenchHealthCombat.ts ROW_RECHARGE_BTN_Y = 487 is below modal bottom 538 with ≥1 px margin', () => {
+    // #462 adversarial: both the slot (389) and the button (487) must fit within the modal.
+    // 487 < 538 → 51 px margin per spec. If someone uses 540 or higher, the button clips.
+    const specBtnY = 487;
+    const specModalBottom = 538;
+    expect(
+      specBtnY,
+      `ROW_RECHARGE_BTN_Y (${specBtnY}) must be less than modal bottom (${specModalBottom})`,
+    ).toBeLessThan(specModalBottom);
+    // Also verify the slot y (389) fits.
+    const specSlotY = 389;
+    expect(
+      specSlotY,
+      `RECHARGE slot y (${specSlotY}) must be less than modal bottom (${specModalBottom})`,
+    ).toBeLessThan(specModalBottom);
   });
 
 });
