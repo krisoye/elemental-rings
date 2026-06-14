@@ -215,4 +215,15 @@ export const BOSS_MODIFIERS: Record<BossTier, BossModifier> = {
   },
 };
 
+// #464 — Per-biome boss spirit bonus. Flat spirit addition stacked on top of the
+// base NPC spirit formula for boss-tier NPCs only. Roamers (no boss descriptor)
+// are unaffected. The bonus table is future-ready for all four biomes even though
+// Snow/Swamp/Desert bosses are not yet authored — the lookup is a no-op until
+// those biomes are referenced in NPC_SPAWNS.
+export const BIOME_BOSS_SPIRIT_BONUS: Record<string, Partial<Record<BossTier, number>>> = {
+  forest: { gate: 15, sub: 25, major: 40 },
+  snow:   { gate: 40, sub: 50, major: 65 },
+  swamp:  { gate: 65, sub: 75, major: 90 },
+  desert: { gate: 90, sub: 100, major: 115 },
+};
 

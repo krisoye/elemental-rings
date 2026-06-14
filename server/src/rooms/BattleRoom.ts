@@ -42,6 +42,7 @@ import {
   AMBUSH_SPIRIT_COST,
   SPIRIT_PER_RING_USE,
   GOLD_FORFEIT_PENALTY,
+  BIOME_BOSS_SPIRIT_BONUS,
   BOSS_MODIFIERS,
   type BossModifier,
 } from '../game/constants';
@@ -157,6 +158,13 @@ export class BattleRoom extends Room<{ state: BattleState }> {
    * passives (#261).
    */
   private boss: BossDescriptor | undefined;
+
+  /**
+   * #464 — the biome of this duel's NPC, resolved from NPC_SPAWNS in onCreate.
+   * Used to look up the per-biome boss spirit bonus (if this is a boss duel).
+   * undefined for non-boss vsAI duels and all PvP.
+   */
+  private npcBiome: string | undefined;
 
   /**
    * #261 — remaining Thornwood "Heartwood" charges: the first N heart-losses the
@@ -282,6 +290,7 @@ export class BattleRoom extends Room<{ state: BattleState }> {
         ? NPC_SPAWNS.find((n) => n.id === options.npcId)
         : undefined;
       this.boss = bossSpawn?.boss;
+      if (this.boss) this.npcBiome = bossSpawn?.biome;
       const personality = options.personality ?? 'AGGRESSIVE';
       const seed = options.aiSeed ?? (Date.now() & 0xffffffff);
       // Use a separate RNG stream for loadout generation so the combat RNG
@@ -637,6 +646,11 @@ export class BattleRoom extends Room<{ state: BattleState }> {
         // npcSpiritMult is 0 for PvP rooms (no AI) — guard so we don't touch _npcSpirit there.
         if (this.ai && this.npcSpiritMult > 0) {
           this._npcSpirit = Math.floor(spirit_max * this.npcSpiritMult);
+          // #464 — apply per-biome boss spirit bonus (flat addition) to boss-tier NPCs only.
+          if (this.boss && this.npcBiome) {
+            const bonus = BIOME_BOSS_SPIRIT_BONUS[this.npcBiome]?.[this.boss.tier] ?? 0;
+            this._npcSpirit += bonus;
+          }
           // #313 — broadcast the AI's finite spirit pool so the opponent panel can
           // render ⚡ current/max. The AI seat is created at room setup (seatPlayer
           // AI_ID) before any human joins, so this get() always resolves here.
