@@ -4683,3 +4683,433 @@ describe('#462 Phase 1 spec-driven: per-ring RECHARGE slot in BenchHealthCombat'
   });
 
 });
+
+// ===========================================================================
+// Class 26 — Phase 2 impl-aware: #462 BHC gate, OverlayClass ternary, CampScene
+//            doRechargeById return paths, BattleHandOverlay ok-guard
+// ===========================================================================
+
+describe('#462 Phase 2 impl-aware: RECHARGE slot private-path branches', () => {
+
+  // ── A. BHC build() gate: `if (this.onRechargeClick !== undefined)` ──────────
+
+  it('BenchHealthCombat.ts build() uses strict !== undefined to gate RECHARGE slot (not truthiness)', () => {
+    // #462 Phase 2 adversarial: a truthiness check (`if (this.onRechargeClick)`) would
+    // behave identically in practice but diverges from the impl contract and could silently
+    // pass a non-function value. The impl uses `!== undefined` — assert that form exactly.
+    const src = readClientSrc('objects/ui/BenchHealthCombat.ts');
+    if (src === null) return;
+    expect(
+      src,
+      'BenchHealthCombat build() must gate RECHARGE slot with strict `!== undefined` check',
+    ).toContain('this.onRechargeClick !== undefined');
+  });
+
+  it('BenchHealthCombat.ts RECHARGE slot pointerdown calls onRechargeClick with non-null assertion (!)', () => {
+    // #462 Phase 2 adversarial: inside the `if (onRechargeClick !== undefined)` block,
+    // calling `this.onRechargeClick()` without the non-null assertion `!` would produce a
+    // TypeScript error (onRechargeClick is typed `() => void | undefined`). The impl uses
+    // `this.onRechargeClick!()` — this also documents that the call is safe because we are
+    // inside the guard. Verify the exclamation form is present.
+    const src = readClientSrc('objects/ui/BenchHealthCombat.ts');
+    if (src === null) return;
+    expect(
+      src,
+      'BenchHealthCombat pointerdown must call this.onRechargeClick!() (non-null assertion inside guard)',
+    ).toContain('this.onRechargeClick!()');
+  });
+
+  it('BenchHealthCombat.ts RECHARGE slot is added to this (the container) not scene directly', () => {
+    // #462 Phase 2 adversarial: the DISCARD slot and all other BHC sub-objects are added
+    // with `this.add(...)` so they become children of the BHC Container and get destroyed
+    // with it. If the RECHARGE slot were added via `this.scene.add.rectangle(...)` without
+    // `this.add(rechargeSlot)`, it would leak on BHC teardown.
+    const src = readClientSrc('objects/ui/BenchHealthCombat.ts');
+    if (src === null) return;
+    const lines = src.split('\n');
+    const gateIdx = lines.findIndex((l) => /this\.onRechargeClick\s*!==\s*undefined/.test(l));
+    expect(gateIdx, 'onRechargeClick gate must exist').toBeGreaterThan(-1);
+    // Scan the block (up to 15 lines) for `this.add(rechargeSlot)`.
+    const block = lines.slice(gateIdx, gateIdx + 15).join('\n');
+    expect(
+      block,
+      'BenchHealthCombat RECHARGE slot must be added to this container via this.add()',
+    ).toMatch(/this\.add\s*\(\s*rechargeSlot\s*\)/);
+  });
+
+  it('BenchHealthCombat.ts [RECHARGE ALL] button is always rendered (not gated on onRechargeClick)', () => {
+    // #462 Phase 2 adversarial: [RECHARGE ALL] is a distinct action from the RECHARGE slot —
+    // it recharges ALL rings via onRecharge (unchanged). It must appear in all modes (field,
+    // sanctum, fusion, merge). If someone accidentally moved the button inside the gate block,
+    // fusion/merge would lose the recharge-all button entirely.
+    const src = readClientSrc('objects/ui/BenchHealthCombat.ts');
+    if (src === null) return;
+    const lines = src.split('\n');
+    const gateIdx = lines.findIndex((l) => /this\.onRechargeClick\s*!==\s*undefined/.test(l));
+    // Find the closing `}` of the gate block (look for `}` alone on a line within 15 lines).
+    let gateEnd = gateIdx;
+    for (let i = gateIdx + 1; i < Math.min(gateIdx + 15, lines.length); i++) {
+      if (/^\s*\}\s*$/.test(lines[i])) { gateEnd = i; break; }
+    }
+    // [RECHARGE ALL] must appear AFTER the closing brace of the gate block.
+    const afterGate = lines.slice(gateEnd + 1).join('\n');
+    expect(
+      afterGate,
+      'BenchHealthCombat [RECHARGE ALL] button must appear OUTSIDE the onRechargeClick gate block',
+    ).toContain('[RECHARGE ALL]');
+  });
+
+  // ── B. OverlayClass ternary: undefined branch when onRechargeSlotClick absent ─
+
+  it('RingManagementOverlayClass.ts ternary assigns undefined to onRechargeClick when opts.onRechargeSlotClick absent', () => {
+    // #462 Phase 2 adversarial: the `undefined` branch of the ternary is the mechanism that
+    // suppresses the RECHARGE slot in fusion/merge modes. If the ternary were replaced with
+    // a direct assignment (e.g. always a function), BHC would always render the slot.
+    const src = readClientSrc('objects/ui/RingManagementOverlayClass.ts');
+    if (src === null) return;
+    // The ternary: `const onRechargeClick = this.opts.onRechargeSlotClick ? ... : undefined`
+    // Note: the ternary body spans ~300 chars (multi-line arrow function); use {0,400} lookahead.
+    expect(
+      src,
+      'OverlayClass ternary must assign undefined when opts.onRechargeSlotClick is absent',
+    ).toMatch(/const\s+onRechargeClick\s*=\s*this\.opts\.onRechargeSlotClick\s*\?[\s\S]{0,400}:\s*undefined/);
+  });
+
+  it('RingManagementOverlayClass.ts onRechargeClick closure reads swap.selection at call time (not construction time)', () => {
+    // #462 Phase 2 adversarial: if `sel` were captured at construction (e.g. `const sel = this.swap.selection`
+    // outside the closure), it would be stale by click time — always the ring that was selected
+    // when the overlay was built, not the ring selected just before the click.
+    // The impl reads `const sel = this.swap.selection` INSIDE the arrow function body.
+    const src = readClientSrc('objects/ui/RingManagementOverlayClass.ts');
+    if (src === null) return;
+    const lines = src.split('\n');
+    const onRechargeClickStart = lines.findIndex((l) =>
+      /const\s+onRechargeClick\s*=\s*this\.opts\.onRechargeSlotClick/.test(l),
+    );
+    expect(onRechargeClickStart, 'onRechargeClick ternary must exist').toBeGreaterThan(-1);
+    // The `const sel = this.swap.selection` must appear inside the closure (after the arrow `=> {`).
+    const closureLines = lines.slice(onRechargeClickStart, onRechargeClickStart + 12).join('\n');
+    expect(
+      closureLines,
+      'swap.selection must be read inside the closure body (not captured at construction)',
+    ).toMatch(/=>\s*\{[\s\S]*const\s+sel\s*=\s*this\.swap\.selection/);
+  });
+
+  it('RingManagementOverlayClass.ts onRechargeClick closure calls setStatus (not setStatusMessage) on null selection', () => {
+    // #462 Phase 2 adversarial: setStatus is the private method; setStatusMessage is the public
+    // alias. The closure is inside the class — it has access to private members and must use
+    // `this.setStatus(...)` directly (the private path). If it used setStatusMessage it would
+    // add an unnecessary indirection through the public method.
+    const src = readClientSrc('objects/ui/RingManagementOverlayClass.ts');
+    if (src === null) return;
+    const lines = src.split('\n');
+    const onRechargeClickStart = lines.findIndex((l) =>
+      /const\s+onRechargeClick\s*=\s*this\.opts\.onRechargeSlotClick/.test(l),
+    );
+    expect(onRechargeClickStart, 'onRechargeClick ternary must exist').toBeGreaterThan(-1);
+    const closureLines = lines.slice(onRechargeClickStart, onRechargeClickStart + 12).join('\n');
+    expect(
+      closureLines,
+      'onRechargeClick closure must call this.setStatus() (private path) — not setStatusMessage()',
+    ).toContain('this.setStatus(');
+    // Must NOT use setStatusMessage (public alias) inside the closure.
+    expect(
+      closureLines,
+      'onRechargeClick closure must NOT call setStatusMessage (use private setStatus instead)',
+    ).not.toContain('setStatusMessage');
+  });
+
+  it('RingManagementOverlayClass.ts onRechargeClick is passed as the 9th argument to new BenchHealthCombat()', () => {
+    // #462 Phase 2 adversarial: BHC constructor takes onRechargeClick as the 9th positional
+    // argument (after onBenchGhostClick). If onRechargeClick is passed at the wrong position,
+    // BHC silently assigns it to the wrong field — e.g. onBenchGhostClick gets a function and
+    // the RECHARGE slot gets undefined, or vice versa.
+    const src = readClientSrc('objects/ui/RingManagementOverlayClass.ts');
+    if (src === null) return;
+    const lines = src.split('\n');
+    const bhcStart = lines.findIndex((l) => /new BenchHealthCombat\s*\(/.test(l));
+    expect(bhcStart, 'new BenchHealthCombat() call must exist').toBeGreaterThan(-1);
+    // Scan 12 lines for the arg list — onRechargeClick must appear after onBenchGhostClick.
+    const ctorBlock = lines.slice(bhcStart, bhcStart + 12).join('\n');
+    const ghostIdx = ctorBlock.indexOf('onBenchGhostClick');
+    const rechargeIdx = ctorBlock.indexOf('onRechargeClick');
+    expect(ghostIdx, 'onBenchGhostClick must appear in BHC ctor call').toBeGreaterThan(-1);
+    expect(rechargeIdx, 'onRechargeClick must appear in BHC ctor call').toBeGreaterThan(-1);
+    expect(
+      rechargeIdx,
+      'onRechargeClick must be passed AFTER onBenchGhostClick (9th arg, not 8th)',
+    ).toBeGreaterThan(ghostIdx);
+  });
+
+  // ── C. CampScene doRechargeById: return paths ────────────────────────────────
+
+  it('CampScene.ts doRechargeById returns Promise<boolean> (declared return type)', () => {
+    // #462 Phase 2 adversarial: the return type must be Promise<boolean> so that callers
+    // (onRechargeSlotClick, E2E hook) can branch on the result. A Promise<void> return type
+    // would cause TypeScript to reject `then((ok) => { if (ok) ... })` call sites.
+    const src = readClientSrc('scenes/CampScene.ts');
+    if (src === null) return;
+    expect(
+      src,
+      'CampScene.ts doRechargeById must declare Promise<boolean> return type',
+    ).toMatch(/doRechargeById\s*\([^)]*\)\s*:\s*Promise<boolean>/);
+  });
+
+  it('CampScene.ts doRechargeById returns false on 400 (insufficient spirit / ring full)', () => {
+    // #462 Phase 2 adversarial: a 400 means the server rejected the recharge (e.g. ring
+    // already full, or insufficient spirit). The impl must return false so callers do NOT
+    // refresh the overlay (which would show misleading "success" state).
+    const src = readClientSrc('scenes/CampScene.ts');
+    if (src === null) return;
+    const lines = src.split('\n');
+    const doRechargeStart = lines.findIndex((l) => /async doRechargeById\s*\(/.test(l));
+    expect(doRechargeStart, 'doRechargeById must exist').toBeGreaterThan(-1);
+    const body = lines.slice(doRechargeStart, doRechargeStart + 25).join('\n');
+    // 400 branch must set status and return false.
+    expect(body, 'doRechargeById 400 branch must check res.status === 400').toContain('400');
+    expect(body, 'doRechargeById 400 branch must return false').toMatch(/status\s*===\s*400[\s\S]{0,200}return false/);
+  });
+
+  it('CampScene.ts doRechargeById returns false on non-ok non-400 (server error 5xx)', () => {
+    // #462 Phase 2 adversarial: a 5xx response (server crash, DB timeout) must also return
+    // false. Without this branch, the impl would fall through to `await this.loadData()` on
+    // a 500, potentially refreshing with stale data or crashing on an empty payload.
+    const src = readClientSrc('scenes/CampScene.ts');
+    if (src === null) return;
+    const lines = src.split('\n');
+    const doRechargeStart = lines.findIndex((l) => /async doRechargeById\s*\(/.test(l));
+    expect(doRechargeStart, 'doRechargeById must exist').toBeGreaterThan(-1);
+    const body = lines.slice(doRechargeStart, doRechargeStart + 25).join('\n');
+    // The non-ok branch: `if (!res.ok) { this.setStatus(...); return false; }`
+    expect(body, 'doRechargeById must have a !res.ok branch that returns false').toMatch(
+      /!res\.ok[\s\S]{0,100}return false/,
+    );
+  });
+
+  it('CampScene.ts doRechargeById returns false in catch block (network error)', () => {
+    // #462 Phase 2 adversarial: a network timeout or DNS failure throws, bypassing both
+    // the 400 and !res.ok branches. The catch block must return false so callers do not
+    // attempt a post-recharge refresh on a response that never arrived.
+    const src = readClientSrc('scenes/CampScene.ts');
+    if (src === null) return;
+    const lines = src.split('\n');
+    const doRechargeStart = lines.findIndex((l) => /async doRechargeById\s*\(/.test(l));
+    expect(doRechargeStart, 'doRechargeById must exist').toBeGreaterThan(-1);
+    const body = lines.slice(doRechargeStart, doRechargeStart + 25).join('\n');
+    expect(body, 'doRechargeById catch block must return false').toMatch(
+      /catch[\s\S]{0,150}return false/,
+    );
+  });
+
+  it('CampScene.ts doRechargeById calls loadData() only on success (after the try/catch)', () => {
+    // #462 Phase 2 adversarial: loadData() triggers a full /api/me refresh. It must only
+    // run after a confirmed successful recharge (all error paths return false before it).
+    // If loadData() were called before the error checks, failed recharges would still trigger
+    // a data reload — masking the error with a misleading "fresh" state.
+    const src = readClientSrc('scenes/CampScene.ts');
+    if (src === null) return;
+    const lines = src.split('\n');
+    const doRechargeStart = lines.findIndex((l) => /async doRechargeById\s*\(/.test(l));
+    expect(doRechargeStart, 'doRechargeById must exist').toBeGreaterThan(-1);
+    const body = lines.slice(doRechargeStart, doRechargeStart + 25).join('\n');
+    // loadData must appear AFTER the closing `}` of the try/catch block.
+    const catchCloseIdx = body.lastIndexOf('return false');
+    const loadDataIdx = body.indexOf('loadData');
+    expect(loadDataIdx, 'loadData() must be called in doRechargeById').toBeGreaterThan(-1);
+    expect(
+      loadDataIdx,
+      'loadData() must appear after all return-false paths (only runs on success)',
+    ).toBeGreaterThan(catchCloseIdx);
+  });
+
+  it('CampScene.ts doRechargeById checks getToken() before the API call (auth guard)', () => {
+    // #462 Phase 2 adversarial: without the auth guard, a logged-out player clicking RECHARGE
+    // would fire a POST /api/spirit/recharge that returns 401, hitting the !res.ok branch and
+    // showing "Recharge failed (401)" rather than redirecting to LoginScene. The guard must
+    // appear before the try/catch.
+    const src = readClientSrc('scenes/CampScene.ts');
+    if (src === null) return;
+    const lines = src.split('\n');
+    const doRechargeStart = lines.findIndex((l) => /async doRechargeById\s*\(/.test(l));
+    expect(doRechargeStart, 'doRechargeById must exist').toBeGreaterThan(-1);
+    const body = lines.slice(doRechargeStart, doRechargeStart + 25).join('\n');
+    const tokenIdx = body.indexOf('getToken');
+    const tryIdx = body.indexOf('try {');
+    expect(tokenIdx, 'doRechargeById must call getToken()').toBeGreaterThan(-1);
+    expect(tryIdx, 'doRechargeById must have a try block').toBeGreaterThan(-1);
+    expect(
+      tokenIdx,
+      'getToken() auth guard must appear BEFORE the try block',
+    ).toBeLessThan(tryIdx);
+  });
+
+  it('CampScene.ts doRechargeSelected discards the doRechargeById boolean (await without assignment)', () => {
+    // #462 Phase 2 adversarial: doRechargeSelected is the old button path (meditation circle).
+    // It calls `await this.doRechargeById(ring.id)` without assigning the result.
+    // This is correct: doRechargeById calls loadData() on success internally, so no explicit
+    // refresh is needed in doRechargeSelected. Reviewer confirmed this is intentional.
+    // Assert the boolean IS discarded (no `const ok = await`, no `if (await ...)`).
+    const src = readClientSrc('scenes/CampScene.ts');
+    if (src === null) return;
+    const lines = src.split('\n');
+    const doRechargeSelectedStart = lines.findIndex((l) => /async doRechargeSelected\s*\(/.test(l));
+    expect(doRechargeSelectedStart, 'doRechargeSelected must exist').toBeGreaterThan(-1);
+    const body = lines.slice(doRechargeSelectedStart, doRechargeSelectedStart + 10).join('\n');
+    // The call must be a bare `await this.doRechargeById(...)` — no assignment.
+    expect(
+      body,
+      'doRechargeSelected must call doRechargeById as a bare await (no result assignment)',
+    ).toMatch(/await\s+this\.doRechargeById/);
+    // Must NOT assign the result.
+    expect(
+      body,
+      'doRechargeSelected must NOT assign the doRechargeById result (boolean is intentionally discarded)',
+    ).not.toMatch(/(?:const|let|var)\s+\w+\s*=\s*await\s+this\.doRechargeById/);
+  });
+
+  it('CampScene.ts onRechargeSlotClick uses void + .then() for the doRechargeById call (fire-and-forget pattern)', () => {
+    // #462 Phase 2 adversarial: the onRechargeSlotClick closure is a sync callback (not async).
+    // It must fire doRechargeById with `void ... .then(...)` — not `await` (which would require
+    // the callback to be async and risks hanging the UI event loop). Verify the void-then pattern.
+    const src = readClientSrc('scenes/CampScene.ts');
+    if (src === null) return;
+    const lines = src.split('\n');
+    const closureStart = lines.findIndex((l) => /onRechargeSlotClick\s*:/.test(l));
+    expect(closureStart, 'onRechargeSlotClick closure must exist in CampScene').toBeGreaterThan(-1);
+    const closureBlock = lines.slice(closureStart, closureStart + 8).join('\n');
+    expect(
+      closureBlock,
+      'onRechargeSlotClick must use void + .then() to call doRechargeById (not await)',
+    ).toMatch(/void\s+this\.doRechargeById.*\.then\s*\(/);
+  });
+
+  it('CampScene.ts onRechargeSlotClick .then() checks ok && ov.isOpen() before refreshing', () => {
+    // #462 Phase 2 adversarial: if the overlay is closed while the recharge is in-flight
+    // (e.g. player taps [x] immediately after clicking RECHARGE), calling ov.refresh() on
+    // a closed/destroyed overlay would crash. The `ov.isOpen()` guard prevents this.
+    // Also, refreshing on ok=false would show misleading success state.
+    const src = readClientSrc('scenes/CampScene.ts');
+    if (src === null) return;
+    const lines = src.split('\n');
+    const closureStart = lines.findIndex((l) => /onRechargeSlotClick\s*:/.test(l));
+    expect(closureStart, 'onRechargeSlotClick closure must exist').toBeGreaterThan(-1);
+    const closureBlock = lines.slice(closureStart, closureStart + 8).join('\n');
+    expect(
+      closureBlock,
+      'onRechargeSlotClick .then() must check ok before refreshing',
+    ).toContain('ok');
+    expect(
+      closureBlock,
+      'onRechargeSlotClick .then() must check ov.isOpen() before refreshing',
+    ).toContain('ov.isOpen()');
+  });
+
+  // ── D. BattleHandOverlay: send() ok-guard prevents refresh on failed recharge ─
+
+  it('BattleHandOverlay.ts onRechargeSlotClick uses void + .then() pattern (sync callback)', () => {
+    // #462 Phase 2 adversarial: same pattern as CampScene — the callback is sync, so it
+    // must not be declared async. Using `void ... .then(ok => ...)` keeps the callback sync
+    // while still handling the result.
+    const src = readClientSrc('objects/BattleHandOverlay.ts');
+    if (src === null) return;
+    const lines = src.split('\n');
+    const closureStart = lines.findIndex((l) => /onRechargeSlotClick\s*:/.test(l));
+    expect(closureStart, 'onRechargeSlotClick must exist in BattleHandOverlay').toBeGreaterThan(-1);
+    const closureBlock = lines.slice(closureStart, closureStart + 4).join('\n');
+    expect(
+      closureBlock,
+      'BattleHandOverlay onRechargeSlotClick must use void + .then() (not async/await)',
+    ).toMatch(/void\s+this\.send\s*\(.*\.then\s*\(/);
+  });
+
+  it('BattleHandOverlay.ts onRechargeSlotClick guards refresh with ok && ov.isOpen()', () => {
+    // #462 Phase 2 adversarial: two independent guards:
+    // (1) `ok` — if send() returned false (network error, 4xx), don't refresh the overlay
+    //     with stale data that doesn't reflect the failed recharge.
+    // (2) `ov.isOpen()` — the overlay may have been closed while the HTTP call was in-flight.
+    //     Calling refresh() on a closed overlay would call into a destroyed container.
+    const src = readClientSrc('objects/BattleHandOverlay.ts');
+    if (src === null) return;
+    const lines = src.split('\n');
+    const closureStart = lines.findIndex((l) => /onRechargeSlotClick\s*:/.test(l));
+    expect(closureStart, 'onRechargeSlotClick must exist in BattleHandOverlay').toBeGreaterThan(-1);
+    const closureBlock = lines.slice(closureStart, closureStart + 4).join('\n');
+    expect(
+      closureBlock,
+      'BattleHandOverlay onRechargeSlotClick must check ok before calling refresh',
+    ).toMatch(/if\s*\(\s*ok\s*(&&|\|\|)/);
+    expect(
+      closureBlock,
+      'BattleHandOverlay onRechargeSlotClick must check ov.isOpen() before calling refresh',
+    ).toContain('ov.isOpen()');
+  });
+
+  it('BattleHandOverlay.ts onRechargeSlotClick calls this.refresh(ov) (not ov.refresh(data))', () => {
+    // #462 Phase 2 adversarial: BattleHandOverlay.refresh(ov) is the private helper that
+    // fetches /api/me then calls ov.refresh(data). Calling ov.refresh() directly would skip
+    // the data fetch and pass stale data from the previous buildOverlayData() snapshot.
+    const src = readClientSrc('objects/BattleHandOverlay.ts');
+    if (src === null) return;
+    const lines = src.split('\n');
+    const closureStart = lines.findIndex((l) => /onRechargeSlotClick\s*:/.test(l));
+    expect(closureStart, 'onRechargeSlotClick must exist in BattleHandOverlay').toBeGreaterThan(-1);
+    const closureBlock = lines.slice(closureStart, closureStart + 4).join('\n');
+    expect(
+      closureBlock,
+      'BattleHandOverlay onRechargeSlotClick must call this.refresh(ov) not ov.refresh(data)',
+    ).toContain('this.refresh(ov)');
+    // Must NOT call ov.refresh() directly.
+    expect(
+      closureBlock,
+      'BattleHandOverlay onRechargeSlotClick must NOT call ov.refresh() directly (use this.refresh(ov))',
+    ).not.toMatch(/ov\.refresh\s*\(/);
+  });
+
+  it('BattleHandOverlay.ts onRechargeSlotClick passes ringId in POST body ({ ringId })', () => {
+    // #462 Phase 2 adversarial: the per-ring recharge endpoint reads `req.body.ringId`.
+    // If the body is empty (`{}`) or uses a different key (`{ id: ringId }`), the server
+    // returns 400. Verify the body literal matches the expected shape.
+    const src = readClientSrc('objects/BattleHandOverlay.ts');
+    if (src === null) return;
+    const lines = src.split('\n');
+    const closureStart = lines.findIndex((l) => /onRechargeSlotClick\s*:/.test(l));
+    expect(closureStart, 'onRechargeSlotClick must exist in BattleHandOverlay').toBeGreaterThan(-1);
+    const closureBlock = lines.slice(closureStart, closureStart + 4).join('\n');
+    expect(
+      closureBlock,
+      'BattleHandOverlay onRechargeSlotClick must pass { ringId } in the POST body',
+    ).toContain('{ ringId }');
+  });
+
+  // ── E. RECHARGE slot setName (scene-graph name for E2E lookup) ───────────────
+
+  it('BenchHealthCombat.ts RECHARGE slot rectangle has scene-graph name "recharge-slot"', () => {
+    // #462 Phase 2 adversarial: E2E scenario 1 finds the slot via scene-graph name
+    // `recharge-slot`. If the name is absent or misspelled, the E2E assertion would find
+    // no object and the test would skip rather than pass — masking a broken feature.
+    const src = readClientSrc('objects/ui/BenchHealthCombat.ts');
+    if (src === null) return;
+    expect(
+      src,
+      "BenchHealthCombat RECHARGE slot must call .setName('recharge-slot')",
+    ).toContain("setName('recharge-slot')");
+  });
+
+  it('BenchHealthCombat.ts RECHARGE slot has setInteractive with useHandCursor (cursor affordance)', () => {
+    // #462 Phase 2 adversarial: a slot without `setInteractive({ useHandCursor: true })`
+    // does not emit pointer events — pointerdown would never fire, making the slot a
+    // decorative rectangle with no functionality. The cursor affordance also signals to
+    // the player that the slot is clickable.
+    const src = readClientSrc('objects/ui/BenchHealthCombat.ts');
+    if (src === null) return;
+    const lines = src.split('\n');
+    const gateIdx = lines.findIndex((l) => /this\.onRechargeClick\s*!==\s*undefined/.test(l));
+    expect(gateIdx, 'onRechargeClick gate must exist').toBeGreaterThan(-1);
+    const block = lines.slice(gateIdx, gateIdx + 15).join('\n');
+    expect(
+      block,
+      'BenchHealthCombat RECHARGE slot must call setInteractive({ useHandCursor: true })',
+    ).toContain('useHandCursor: true');
+  });
+
+});
