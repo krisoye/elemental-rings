@@ -119,6 +119,20 @@ export const BOSS_MODIFIERS: Record<BossTier, BossModifier>
 // Keys: 'major' | 'gate' | 'sub'
 ```
 
+**Biome boss spirit bonus table (#464)**
+
+Flat spirit bonus stacked on top of `floor(playerSpiritMax × spiritMult)` for boss-tier NPCs only. Roamers (no `boss` descriptor) receive no bonus. The table is future-ready for all four biomes even though Snow/Swamp/Desert bosses are not yet authored.
+
+```ts
+export const BIOME_BOSS_SPIRIT_BONUS: Record<string, Partial<Record<BossTier, number>>>
+// forest: { gate: 15, sub: 25, major: 40 }
+// snow:   { gate: 40, sub: 50, major: 65 }
+// swamp:  { gate: 65, sub: 75, major: 90 }
+// desert: { gate: 90, sub: 100, major: 115 }
+```
+
+Applied in `BattleRoom.onJoin` after the base spirit computation, before `aiPs.spiritMax`/`spiritCurrent` broadcast. Lookup: `BIOME_BOSS_SPIRIT_BONUS[npcBiome]?.[boss.tier] ?? 0`.
+
 ---
 
 ### `ElementSystem.ts`
