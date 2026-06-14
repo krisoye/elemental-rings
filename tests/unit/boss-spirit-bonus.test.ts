@@ -563,3 +563,184 @@ describe('BattleRoom integration — frost_sentinel (biome=forest, tier=gate): +
     await room.disconnect();
   });
 });
+
+// ============================================================================
+// 5 — IMPL-AWARE: double-guard combinations (boss × biome)
+// ============================================================================
+//
+// The implementation guard is:
+//   if (this.boss && this.npcBiome) { bonus = BIOME_BOSS_SPIRIT_BONUS[...] ?? 0; }
+//
+// Four logical combinations exist.  Only combination (true,true) applies the bonus.
+// The three negative combinations must leave _npcSpirit at the unaugmented value.
+//
+// Combination (true,true)  — boss set, biome set   → BONUS APPLIED   (already tested above)
+// Combination (false,true) — boss=undefined, biome set  → no bonus (roamer path)
+// Combination (true,false) — boss set, biome=undefined  → no bonus (impossible via normal
+//                            NPC_SPAWNS since biome is always present, but tests the guard)
+// Combination (false,false)— boss=undefined, biome=undefined → no bonus (generic vsAI)
+// ============================================================================
+
+describe('impl-aware: double-guard (boss=undefined, npcBiome set) — no bonus (#464)', () => {
+  test('vsAI roamer with explicit biome npcId: npcBiome stays undefined because boss guard fires first → no bonus', async () => {
+    // #464 impl-aware: `if (this.boss) this.npcBiome = bossSpawn?.biome` means
+    // npcBiome is ONLY set when this.boss is truthy.  For a roamer (no boss field
+    // on the spawn entry) this.boss = undefined → npcBiome stays undefined.
+    // Even though the spawn has a biome string in NPC_SPAWNS, npcBiome is never
+    // assigned.  This tests the boss-assignment guard in onCreate, not the inner
+    // bonus-application guard in onJoin.
+    // Use spiritMax=120 with AGGRESSIVE personality (mult=0.25):
+    //   floor(120 × 0.25) = 30 (no boss mod applies to roamers).
+    //   With any bonus applied it would be >= 45. Assert exactly 30.
+    const spiritMax = 120;
+    const username = `u_${Math.random().toString(36).slice(2)}`;
+    const playerId = repo.createPlayer(username, 'x');
+    const token = signToken({ playerId, username });
+    setSpiritMax(playerId, spiritMax);
+
+    // forest_npc_1: biome='forest', NO boss field → this.boss=undefined → npcBiome stays undefined.
+    const room = await colyseus.createRoom<any>('battle', {
+      vsAI: true,
+      npcId: 'forest_npc_1',
+    });
+    await colyseus.connectTo(room, { token });
+    await room.waitForNextPatch();
+
+    const aiPs = room.state.players.get('AI');
+    // Roamer personality AGGRESSIVE: npcSpiritMult = PERSONALITY_SPIRIT_MULT.AGGRESSIVE = 0.25.
+    const expectedNoBonus = Math.floor(spiritMax * 0.25); // = 30
+    expect(aiPs?.spiritMax).toBe(expectedNoBonus);
+    // npcBiome was not assigned — accessible via private field cast.
+    expect((room as any).npcBiome).toBeUndefined();
+    expect((room as any).boss).toBeUndefined();
+
+    await room.disconnect();
+  });
+});
+
+describe('impl-aware: double-guard (boss=undefined, npcBiome=undefined) — generic vsAI, no npcId → no bonus (#464)', () => {
+  test('vsAI room with no npcId: both boss and npcBiome are undefined → no bonus applied', async () => {
+    // #464 impl-aware: when vsAI=true but npcId is absent (bossSpawn=undefined),
+    // this.boss = bossSpawn?.boss = undefined and the if(this.boss) guard skips
+    // npcBiome assignment.  Both private fields stay undefined.  The inner guard
+    // if(this.boss && this.npcBiome) evaluates false → bonus block never entered.
+    // This covers the (false,false) combination.
+    const spiritMax = 120;
+    const username = `u_${Math.random().toString(36).slice(2)}`;
+    const playerId = repo.createPlayer(username, 'x');
+    const token = signToken({ playerId, username });
+    setSpiritMax(playerId, spiritMax);
+
+    // No npcId supplied — generic vsAI duel with default AGGRESSIVE personality.
+    const room = await colyseus.createRoom<any>('battle', {
+      vsAI: true,
+      // npcId intentionally absent
+    });
+    await colyseus.connectTo(room, { token });
+    await room.waitForNextPatch();
+
+    const aiPs = room.state.players.get('AI');
+    const expectedNoBonus = Math.floor(spiritMax * 0.25); // AGGRESSIVE mult=0.25 → 30
+    expect(aiPs?.spiritMax).toBe(expectedNoBonus);
+    expect((room as any).boss).toBeUndefined();
+    expect((room as any).npcBiome).toBeUndefined();
+
+    await room.disconnect();
+  });
+});
+
+describe('impl-aware: PvP room (no vsAI) — npcSpiritMult=0 guard immunises spirit (#464)', () => {
+  test('PvP room: _npcSpirit stays Infinity (npcSpiritMult=0 guard prevents both _npcSpirit write and bonus)', async () => {
+    // #464 impl-aware: the bonus block is nested inside
+    //   if (this.ai && this.npcSpiritMult > 0) { ... }
+    // PvP rooms never set vsAI=true → this.ai stays null → this.npcSpiritMult stays 0.
+    // The outer guard evaluates false → neither the floor(spiritMax × mult) line nor
+    // the bonus addition is ever reached.  _npcSpirit retains its initialised value
+    // of Infinity.  The AI seat does not exist in a PvP room, so state.players has
+    // no 'AI' key.
+    // We also verify that boss/npcBiome are never set (neither vsAI branch nor
+    // npcId branch executes in a PvP room).
+    const username = `u_${Math.random().toString(36).slice(2)}`;
+    const playerId = repo.createPlayer(username, 'x');
+    const token = signToken({ playerId, username });
+
+    // PvP room: no vsAI, no npcId.
+    const room = await colyseus.createRoom<any>('battle', {});
+    await colyseus.connectTo(room, { token });
+    await room.waitForNextPatch();
+
+    // No AI seat in a PvP room.
+    expect(room.state.players.get('AI')).toBeUndefined();
+    // Private fields confirm the bonus path was never reached.
+    expect((room as any).boss).toBeUndefined();
+    expect((room as any).npcBiome).toBeUndefined();
+    expect((room as any).npcSpiritMult).toBe(0);
+    // _npcSpirit retains its sentinel Infinity value — the floor/bonus write was skipped.
+    expect((room as any)._npcSpirit).toBe(Infinity);
+
+    await room.disconnect();
+  });
+});
+
+describe('impl-aware: ??0 fallback — tier absent from a partial biome record (#464)', () => {
+  test('BIOME_BOSS_SPIRIT_BONUS lookup for a tier key absent in a partial row returns undefined → 0 via ??', () => {
+    // #464 impl-aware: the type is Partial<Record<BossTier,number>> — any tier key
+    // may legitimately be absent.  The implementation uses ?.[this.boss.tier] ?? 0.
+    // We verify the ?? branch by directly interrogating the constant with a key that
+    // is not in BossTier (simulating a partial row), since all production rows are
+    // currently complete.  The ?? is a JS runtime operator — we test it directly on
+    // the imported constant without going through a room.
+    const bonusTable = BIOME_BOSS_SPIRIT_BONUS;
+
+    // Direct absent-tier lookup on an existing biome row.
+    const absentTierResult = bonusTable['forest']?.['nonexistent_tier' as string] ?? 0;
+    expect(absentTierResult).toBe(0);
+
+    // Absent biome row.
+    const absentBiomeResult = bonusTable['cavern']?.['gate'] ?? 0;
+    expect(absentBiomeResult).toBe(0);
+
+    // Both absent.
+    const bothAbsent = bonusTable['cavern']?.['nonexistent_tier' as string] ?? 0;
+    expect(bothAbsent).toBe(0);
+
+    // None of these accesses should throw — the ?. / ?? chain is safe.
+    expect(() => bonusTable['cavern']?.['gate'] ?? 0).not.toThrow();
+    expect(() => bonusTable['forest']?.['legendary' as string] ?? 0).not.toThrow();
+  });
+
+  test('impl-aware: roamer npcSpirit formula uses PERSONALITY_SPIRIT_MULT not BOSS_MODIFIERS (#464)', async () => {
+    // #464 impl-aware: for a roamer, npcSpiritMult = PERSONALITY_SPIRIT_MULT[personality]
+    // (not BOSS_MODIFIERS[tier].spiritMult which would be for bosses).
+    // IMPORTANT: personality in BattleRoom comes from options.personality (line 294),
+    // NOT from the NPC spawn entry. With no explicit personality option, it defaults
+    // to 'AGGRESSIVE' (PERSONALITY_SPIRIT_MULT.AGGRESSIVE = 0.25). We pass
+    // personality:'DEFENSIVE' explicitly to pin the mult at 0.30 and distinguish it
+    // from the boss mults (0.60 / 0.75 / 1.0) — proving the personality path is taken.
+    // spiritMax=200: floor(200 × 0.30) = 60. Boss sub mult: floor(200×0.60)=120. Clear gap.
+    const spiritMax = 200;
+    const username = `u_${Math.random().toString(36).slice(2)}`;
+    const playerId = repo.createPlayer(username, 'x');
+    const token = signToken({ playerId, username });
+    setSpiritMax(playerId, spiritMax);
+
+    // forest_npc_2 has no boss descriptor; personality overridden to DEFENSIVE via options.
+    const room = await colyseus.createRoom<any>('battle', {
+      vsAI: true,
+      npcId: 'forest_npc_2',
+      personality: 'DEFENSIVE',
+    });
+    await colyseus.connectTo(room, { token });
+    await room.waitForNextPatch();
+
+    const aiPs = room.state.players.get('AI');
+    // PERSONALITY_SPIRIT_MULT.DEFENSIVE = 0.30 → floor(200 × 0.30) = 60.
+    // If boss mult (major=1.0) were used: floor(200×1.0)+bonus ≥ 200.
+    // If sub mult (0.60) were used: floor(200×0.60) = 120. This value is unambiguous.
+    expect(aiPs?.spiritMax).toBe(60);
+    // npcBiome was not assigned — the boss guard (if(this.boss)) kept it undefined.
+    expect((room as any).npcBiome).toBeUndefined();
+
+    await room.disconnect();
+  });
+});
