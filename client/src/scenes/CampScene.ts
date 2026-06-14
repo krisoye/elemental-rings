@@ -343,7 +343,7 @@ export class CampScene extends DualCameraScene {
     window.__player = this.player;
     window.__campGoEncounter = (): void => this.goToEncounter();
     window.__campSleep = (): void => void this.doSleep();
-    window.__campRecharge = (ringId: string): Promise<void> => this.doRechargeById(ringId);
+    window.__campRecharge = (ringId: string): Promise<boolean> => this.doRechargeById(ringId);
     // #397 — hook proxies Sanctum RECHARGE; passes includeReliquary=true so E2E
     // tests assert reliquary ring restoration without a separate hook.
     window.__campRechargeAll = (): Promise<void> => this.doRechargeAll(true);
@@ -733,8 +733,8 @@ export class CampScene extends DualCameraScene {
 
       // ── onRechargeSlotClick: per-ring targeted recharge (#462) ───────────────
       onRechargeSlotClick: (ringId, ov) => {
-        void this.doRechargeById(ringId).then(() => {
-          if (ov.isOpen()) ov.refresh(this.buildOverlayData());
+        void this.doRechargeById(ringId).then((ok) => {
+          if (ok && ov.isOpen()) ov.refresh(this.buildOverlayData());
         });
       },
 
@@ -2693,28 +2693,29 @@ export class CampScene extends DualCameraScene {
     await this.doRechargeById(ring.id);
   }
 
-  /** POST /api/spirit/recharge for a specific ring id (full top-off). */
-  async doRechargeById(ringId: string): Promise<void> {
+  /** POST /api/spirit/recharge for a specific ring id (full top-off). Returns true on success. */
+  async doRechargeById(ringId: string): Promise<boolean> {
     if (!getToken()) {
       this.scene.start('LoginScene');
-      return;
+      return false;
     }
     try {
       const res = await apiFetch('/api/spirit/recharge', { method: 'POST', json: { ringId } });
       if (res.status === 400) {
         const body = await res.json().catch(() => ({}));
         this.setStatus(body?.error ?? 'Recharge not available');
-        return;
+        return false;
       }
       if (!res.ok) {
         this.setStatus(`Recharge failed (${res.status})`);
-        return;
+        return false;
       }
     } catch {
       this.setStatus('Network error during recharge');
-      return;
+      return false;
     }
     await this.loadData();
+    return true;
   }
 
   /**

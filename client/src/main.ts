@@ -187,7 +187,7 @@ declare global {
     __encounterSelectPvP?: (e2eRoomId: string) => void;
     __campGoEncounter?: () => void;
     __campSleep?: () => void;
-    __campRecharge?: (ringId: string) => Promise<void>;
+    __campRecharge?: (ringId: string) => Promise<boolean>;
     __campRechargeAll?: () => Promise<void>;
     // #40 carry hooks — deterministic code paths for E2E.
     __campAddToLoadout?: (ringId: string) => Promise<void>;
