@@ -2183,9 +2183,9 @@ test('manage-battle-rings (#395): BenchHealthCombat container is present in fiel
   await ctx.close();
 });
 
-// ── #395 — Single [RECHARGE] button replaces the old pair ────────────────────
-// #395 consolidates [Recharge] + [Recharge All] to a single [RECHARGE] button.
-test('manage-battle-rings (#395): single [RECHARGE] button present (no [Recharge All])', async ({ browser }) => {
+// ── #462 — [RECHARGE ALL] button (renamed from [RECHARGE]) + RECHARGE slot ───
+// #462 renames [RECHARGE] to [RECHARGE ALL] and adds a per-ring RECHARGE slot.
+test('manage-battle-rings (#462): [RECHARGE ALL] button present (not bare [RECHARGE])', async ({ browser }) => {
   const ctx = await browser.newContext();
   await seedAuthToken(ctx);
   const page = await ctx.newPage();
@@ -2193,9 +2193,11 @@ test('manage-battle-rings (#395): single [RECHARGE] button present (no [Recharge
   await openBattleHand(page);
 
   const texts = await modalTexts(page);
-  // The new single button.
-  expect(texts).toContain('[RECHARGE]');
-  // The old pair must be gone.
+  // The renamed button must be present.
+  expect(texts).toContain('[RECHARGE ALL]');
+  // The old bare [RECHARGE] label (without " ALL") must not appear as its own text node.
+  expect(texts.some((t) => t === '[RECHARGE]')).toBe(false);
+  // The old lower-case variants must remain gone.
   expect(texts.some((t) => t === '[Recharge]')).toBe(false);
   expect(texts.some((t) => t === '[Recharge All]')).toBe(false);
 

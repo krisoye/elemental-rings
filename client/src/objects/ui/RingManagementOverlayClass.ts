@@ -64,8 +64,16 @@ export interface RingManagementOverlayOpts {
     overlay: RingManagementOverlay,
   ) => Promise<boolean>;
 
-  /** Called when `[RECHARGE]` is clicked. */
+  /** Called when `[RECHARGE ALL]` is clicked. */
   onRecharge: (overlay: RingManagementOverlay) => void;
+
+  /**
+   * Called when the RECHARGE slot is clicked with a ring selected (#462).
+   * When undefined, BHC does not render the RECHARGE slot (fusion/merge modes
+   * omit it). The overlay reads `swap.selection` at click time; the host is
+   * responsible for calling `ov.refresh(newData)` after the recharge completes.
+   */
+  onRechargeSlotClick?: (ringId: string, overlay: RingManagementOverlay) => void;
 
   /**
    * Render the left column into the container. Only called for sanctum mode (field
@@ -419,6 +427,20 @@ export class RingManagementOverlay {
           ? (ring: RingData | null) => { if (ring) this.onMergeBenchClick(ring); }
           : (ring: RingData | null) => this.opts.onBenchGridSelect?.(ring, this);
 
+    // #462 — RECHARGE slot callback: reads selection at click time and delegates
+    // to the host's onRechargeSlotClick. Undefined when opts.onRechargeSlotClick
+    // is absent (fusion/merge modes) — BHC gates the slot render on this being defined.
+    const onRechargeClick = this.opts.onRechargeSlotClick
+      ? () => {
+          const sel = this.swap.selection;
+          if (!sel) {
+            this.setStatus('Select a ring to recharge');
+            return;
+          }
+          this.opts.onRechargeSlotClick!(sel.ringId, this);
+        }
+      : undefined;
+
     const bhc = new BenchHealthCombat(
       this.scene,
       () => this.opts.onRecharge(this),
@@ -428,6 +450,7 @@ export class RingManagementOverlay {
       onWonSelect,
       onDiscardClick,
       onBenchGhostClick,
+      onRechargeClick,
     );
     const me: BenchHealthCombatMe = {
       player: {

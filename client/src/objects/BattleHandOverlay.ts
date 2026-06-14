@@ -32,9 +32,7 @@ export class BattleHandOverlay {
   private onCloseCb?: () => void;
   private overlay: RingManagementOverlay | null = null;
   private readonly discard_: DiscardConfirm;
-  // Cached for discard confirm label + routing.
-  private allRings: RingData[] = [];
-  private heartRing: RingData | null = null;
+  private allRings: RingData[] = []; private heartRing: RingData | null = null; // cached for discard label + routing
   private loadout: Record<string, string | null> = {};
   private pendingRingId_: string | null = null; private spareRingMax_: number | undefined;
 
@@ -51,10 +49,7 @@ export class BattleHandOverlay {
   get pendingRingId(): string | null { return this.pendingRingId_; }
   get discardConfirm(): Phaser.GameObjects.Container | null { return this.discard_.container_; }
   async refreshManageData(): Promise<void> { if (this.overlay) await this.refresh(this.overlay); }
-  renderManageModal(): void {
-    if (!this.overlay?.isOpen()) return;
-    this.overlay.refresh({ player: { heart_ring: this.heartRing ?? null, pending_ring_id: this.pendingRingId_, spare_ring_max: this.spareRingMax_ }, rings: this.allRings, loadout: this.loadout });
-  }
+  renderManageModal(): void { if (!this.overlay?.isOpen()) return; this.overlay.refresh({ player: { heart_ring: this.heartRing ?? null, pending_ring_id: this.pendingRingId_, spare_ring_max: this.spareRingMax_ }, rings: this.allRings, loadout: this.loadout }); }
 
   async open(onClose?: () => void): Promise<void> {
     if (this.overlay?.isOpen()) return;
@@ -106,6 +101,9 @@ export class BattleHandOverlay {
       onRecharge: async () => {
         await this.send('POST', '/api/spirit/recharge-all', {}); if (this.overlay) await this.refresh(this.overlay);
         this.onAfterRecharge?.(); // #460 — e.g. BaseBiomeScene repaints the overworld spirit HUD
+      },
+      onRechargeSlotClick: (ringId, ov) => { // #462 — targeted recharge via this.send()
+        void this.send('POST', '/api/spirit/recharge', { ringId }).then((ok) => { if (ok && ov.isOpen()) void this.refresh(ov); });
       },
       getThumbTooltip: () => {
         const t = this.allRings.find((r) => r.id === (this.loadout.thumb ?? ''));
