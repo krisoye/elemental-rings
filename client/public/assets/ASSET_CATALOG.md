@@ -61,6 +61,14 @@ Gold-mine tileset: timbered shafts, support beams, ore veins, mine flooring. For
 **Dimensions:** 256×256 `16 cols × 16 rows (256 tiles @ 16×16px)`  
 Second gold-mine sheet (additional mine tiles / variant) paired with `terrain_mine_main`.
 
+### `autotile_desert_16.png`
+**Dimensions:** 160×240 `10 cols × 15 rows (150 tiles @ 16×16px)`  
+Desert autotile sheet (sand / oasis water / green foliage / wood deck / adobe brick / cobble island blocks). Desert counterpart to `autotile_snow_16`; sand is the dominant ground fill.
+
+### `terrain_desert_main.png`
+**Dimensions:** 288×800 `18 cols × 50 rows (900 tiles @ 16×16px)`  
+Desert town/oasis tileset: sandstone canyon cliffs, cave archway, palms + cacti + shrubs, market awnings, adobe buildings, shingled-roof houses, pottery props. Desert counterpart to `terrain_snow_main`.
+
 
 ---
 

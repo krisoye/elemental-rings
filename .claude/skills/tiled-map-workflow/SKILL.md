@@ -49,6 +49,8 @@ You may include an `npcs` layer in Tiled for authoring reference (painting where
 | `terrain_mine_main.md` | Gold-mine tileset (ore veins, cart rails, timber supports) — brown `_main` / grey `_b` |
 | `terrain_cave_water.md` | Cave water pools (`_main` / `_alt` recolor) |
 | `terrain_cave_boulder.md` | Cave boulder props (8 variants) |
+| `autotile_desert_16.md` | Desert autotile (sand/oasis-water/foliage/deck/brick/cobble islands) |
+| `terrain_desert_main.md` | Desert tileset (canyon cliffs, cave arch, palms/cacti, awnings, adobe + shingled buildings, pottery) |
 
 Read the relevant reference before placing tiles from these tilesets.
 

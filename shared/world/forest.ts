@@ -271,9 +271,20 @@ export const FOREST_SCREENS: ScreenDef[] = [
     id: 'forest_briar_thicket',
     name: 'The Briar Thicket',
     size: [30, 22],
-    exits: { west: 'forest_canopy_walk' },
+    exits: { west: 'forest_canopy_walk', east: 'forest_volcano_gate' },
     coord: { x: 4, y: 5 },
     danger: 3,
+  },
+  {
+    id: 'forest_volcano_gate',
+    name: 'Volcano Gate',
+    size: [32, 20],
+    exits: { west: 'forest_briar_thicket' },
+    coord: { x: 5, y: 5 },
+    danger: 2,
+    // Cinder Sentinel gates the eastern exit to the Volcano; defeated it opens the way.
+    // Mirrors forest_snow_gate (the Forest→Snow frontier). Volcano lies east (NE frontier).
+    biomeExit: { dir: 'east', target: 'VolcanoScene' },
   },
 ];
 

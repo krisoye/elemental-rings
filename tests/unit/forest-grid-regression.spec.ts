@@ -98,12 +98,12 @@ describe('FOREST_SCREENS spec conformance (#322)', () => {
     expect(screen.exits.north).toBe('forest_boss_clearing');
   });
 
-  it('all 27 screens with exits have a coord (spec: "give every Forest screen an integer coord")', () => {
+  it('all 28 screens with exits have a coord (spec: "give every Forest screen an integer coord")', () => {
     const screensWithExits = FOREST_SCREENS.filter(
       (s) => Object.keys(s.exits).length > 0,
     );
-    // Exactly 27 screens have exits per the approved coord table.
-    expect(screensWithExits).toHaveLength(27);
+    // 28 screens have exits (27 + forest_volcano_gate, the Forest→Volcano frontier).
+    expect(screensWithExits).toHaveLength(28);
     for (const s of screensWithExits) {
       expect(
         s.coord,
