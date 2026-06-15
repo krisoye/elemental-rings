@@ -45,6 +45,10 @@ You may include an `npcs` layer in Tiled for authoring reference (painting where
 | `terrain_forest_modern.md` | ModernEra GreenForest (trees, water pool, cliff rocks) |
 | `terrain_plains_fantasy.md` | Plains Fantasy (trees, brown cliffs, dirt island) |
 | `tileset_village_main_a.md` | Village Main A (grass, fence, houses, trees, gray cliff) |
+| `terrain_cave_main.md` | Cave tileset (walls, cobble floor, ladders, stair-down, crates) — grey `_main` / brown `_alt` |
+| `terrain_mine_main.md` | Gold-mine tileset (ore veins, cart rails, timber supports) — brown `_main` / grey `_b` |
+| `terrain_cave_water.md` | Cave water pools (`_main` / `_alt` recolor) |
+| `terrain_cave_boulder.md` | Cave boulder props (8 variants) |
 
 Read the relevant reference before placing tiles from these tilesets.
 
