@@ -37,8 +37,9 @@ export class SnowScene extends BaseBiomeScene {
     return 'autotile_grass_16'; // unused — buildTilesets() handles multi-tileset loading
   }
 
-  mapKeyForScreen(_id: string): string {
-    return 'snow_entry';
+  /** Snow maps are named by screen id: assets/maps/snow/<id>.json. */
+  mapKeyForScreen(id: string): string {
+    return id;
   }
 
   /** All Snow screens use 16px tiles at 2× world zoom (mirrors Swamp). */
@@ -59,6 +60,13 @@ export class SnowScene extends BaseBiomeScene {
     return ['ground', 'behind', 'in-front'];
   }
 
+  /** `behind` uses non-empty collision (cliffs, cabins, tree trunks block movement) —
+   *  matches Swamp/Forest. Without this, nothing on the behind layer is solid. */
+  protected tileLayerCollisionMode(layerName: string): 'property' | 'non-empty' {
+    if (layerName === 'behind') return 'non-empty';
+    return super.tileLayerCollisionMode(layerName);
+  }
+
   protected tileLayerDepth(layerName: string): number {
     if (layerName === 'behind') return 2;
     if (layerName === 'in-front') return 5;
@@ -75,12 +83,18 @@ export class SnowScene extends BaseBiomeScene {
       if (!this.textures.exists(key)) this.load.image(key, path);
     }
     this.loadCommonAssets();
-    this.load.tilemapTiledJSON('snow_entry', 'assets/maps/snow/snow_entry.json');
+    // Load the current screen's map, keyed by its id (mirrors ForestScene).
+    this.load.tilemapTiledJSON(
+      this.mapKeyForScreen(this.screenId),
+      `assets/maps/snow/${this.screenId}.json`,
+    );
   }
 
-  /** The Snow biome's biome_exit object drives the return to Forest; no edge transitions. */
+  /** Multi-screen Snow region: walking off an edge transitions to the neighbour
+   *  declared in SNOW_SCREENS. The south biome_exit object on snow_entry still
+   *  drives the Forest return (handled separately from screenDef edge exits). */
   protected edgeTransitionsEnabled(): boolean {
-    return false;
+    return true;
   }
 
   protected detectionRadius(): number {

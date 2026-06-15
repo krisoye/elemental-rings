@@ -74,9 +74,12 @@ describe('SpecConformance (#335)', () => {
 
   // ── SNOW_SCREENS manifest ─────────────────────────────────────────────────
 
-  it('SNOW_SCREENS contains exactly 1 screen', () => {
-    // Spec: single-screen Snow biome ("Snow Fields") mirroring single-screen Swamp.
-    expect(SNOW_SCREENS).toHaveLength(1);
+  it('SNOW_SCREENS contains snow_entry and snow_snowhaven', () => {
+    // #440: the Snow region grows past the single-screen stub. snow_entry now
+    // leads north into the haven; further screens land with their maps.
+    const ids = SNOW_SCREENS.map((s) => s.id);
+    expect(ids).toContain('snow_entry');
+    expect(ids).toContain('snow_snowhaven');
   });
 
   it('SNOW_SCREENS[0] has id "snow_entry"', () => {
