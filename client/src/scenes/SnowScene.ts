@@ -60,10 +60,12 @@ export class SnowScene extends BaseBiomeScene {
     return ['ground', 'behind', 'in-front'];
   }
 
-  /** `behind` uses non-empty collision (cliffs, cabins, tree trunks block movement) —
-   *  matches Swamp/Forest. Without this, nothing on the behind layer is solid. */
+  /** `behind` uses non-empty collision (cliffs, cabins, tree trunks block movement),
+   *  matching Swamp/Forest. snow_entry is excluded: it shipped with decorative dirt
+   *  on `behind` (including under its spawn), so it stays in property mode — same
+   *  per-screen carve-out ForestScene uses for forest_snow_gate. */
   protected tileLayerCollisionMode(layerName: string): 'property' | 'non-empty' {
-    if (layerName === 'behind') return 'non-empty';
+    if (layerName === 'behind' && this.screenId !== 'snow_entry') return 'non-empty';
     return super.tileLayerCollisionMode(layerName);
   }
 

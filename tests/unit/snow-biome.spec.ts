@@ -93,10 +93,13 @@ describe('SpecConformance (#335)', () => {
     expect(screen.danger).toBe(2);
   });
 
-  it('snow_entry exits.south points to forest_snow_gate', () => {
-    // Spec: "exits: { south: 'forest_snow_gate' }" — return path to forest.
+  it('snow_entry returns to Forest via biomeExit (not a regular south exit)', () => {
+    // #440: the Forest return is the south biome_exit overlap zone. A regular
+    // cross-biome south exit would make edge transitions start SnowScene on a
+    // Forest screen it cannot load, so it must NOT be a regular exit.
     const screen = getSnowScreen('snow_entry');
-    expect(screen.exits.south).toBe('forest_snow_gate');
+    expect(screen.exits.south).toBeUndefined();
+    expect(screen.biomeExit).toEqual({ dir: 'south', target: 'ForestScene' });
   });
 
   it('snow_entry biomeExit direction is south and target is ForestScene', () => {
@@ -311,13 +314,16 @@ describe('AdversarialNegatives (#335)', () => {
 
   // ── No SNOW_SCREENS screen has an exits field pointing to a non-existent forest screen ──
 
-  it('snow_entry south exit forest_snow_gate exists in FOREST_SCREENS', () => {
+  it('every SNOW_SCREENS exit target is a known snow screen (no dangling edges)', () => {
     // A dangling exit causes an edge-transition attempt to a screen that never
-    // loads, hanging the scene transition silently.
-    const snowEntry = getSnowScreen('snow_entry');
-    const southTarget = (snowEntry.exits as Record<string, string>).south;
-    const existsInForest = FOREST_SCREENS.some((s) => s.id === southTarget);
-    expect(existsInForest).toBe(true);
+    // loads, hanging the scene transition silently. Cross-biome links use
+    // biomeExit, not regular exits, so every regular exit must resolve in-biome.
+    const ids = new Set(SNOW_SCREENS.map((s) => s.id));
+    for (const screen of SNOW_SCREENS) {
+      for (const target of Object.values(screen.exits)) {
+        expect(ids.has(target)).toBe(true);
+      }
+    }
   });
 
   // ── Frost Sentinel is respawnDays 0 (permanent gate boss, not a daily roamer) ──
@@ -343,13 +349,14 @@ describe('AdversarialNegatives (#335)', () => {
 
   // ── snow_entry has exactly 1 exit: south only (no phantom north/east/west) ──
 
-  it('snow_entry has exactly 1 exit and it is south (no phantom exits)', () => {
-    // Extra exits on a single-screen biome entry would cause the client to try
-    // loading non-existent map files when the player approaches an empty edge.
+  it('snow_entry has exactly 1 exit and it is north → snow_snowhaven', () => {
+    // #440: snow_entry's only regular exit climbs north into the haven; the
+    // Forest return is the south biome_exit, asserted separately above.
     const screen = getSnowScreen('snow_entry');
     const dirs = Object.keys(screen.exits);
     expect(dirs).toHaveLength(1);
-    expect(dirs[0]).toBe('south');
+    expect(dirs[0]).toBe('north');
+    expect(screen.exits.north).toBe('snow_snowhaven');
   });
 
   // ── Frost Sentinel has a foodDrop set (one-time cache, like Bogwood) ──────
