@@ -13,6 +13,16 @@ interface TierRow {
   description: string; // one-line spirit feel
 }
 
+/** Options for the DifficultyModal constructor (EPIC #279). */
+export interface DifficultyModalOpts {
+  /**
+   * Called when the player taps the [Restart Game] button. The modal closes
+   * BEFORE the callback fires so the owner can open the confirm dialog into a
+   * clean slate. Optional — omit to hide the button entirely.
+   */
+  onRestartGame?: () => void;
+}
+
 /**
  * The five selectable difficulty tiers, ordered easiest → hardest. Multipliers
  * are read from the shared DIFFICULTY_MULTIPLIERS so the "×N" badge never drifts
@@ -64,6 +74,7 @@ export class DifficultyModal {
   private readonly getToken: () => string | null;
   private readonly onSelected: (tier: DifficultyTier, spiritMax: number) => void;
   private readonly onClose: (container: Phaser.GameObjects.Container | null) => void;
+  private readonly opts: DifficultyModalOpts;
   private container: Phaser.GameObjects.Container | null = null;
 
   /**
@@ -76,6 +87,7 @@ export class DifficultyModal {
    * @param onClose called when the modal is dismissed, BEFORE the container is
    *   destroyed, with the live container (or null) so the owner can clear a
    *   camera ignore flag (#118) before teardown.
+   * @param opts optional extended config (e.g. onRestartGame callback — #477).
    */
   constructor(
     scene: Phaser.Scene,
@@ -83,12 +95,14 @@ export class DifficultyModal {
     getToken: () => string | null,
     onSelected: (tier: DifficultyTier, spiritMax: number) => void,
     onClose: (container: Phaser.GameObjects.Container | null) => void,
+    opts: DifficultyModalOpts = {},
   ) {
     this.scene = scene;
     this.apiBase = apiBase;
     this.getToken = getToken;
     this.onSelected = onSelected;
     this.onClose = onClose;
+    this.opts = opts;
   }
 
   /** True while the modal is open. */
@@ -111,6 +125,10 @@ export class DifficultyModal {
   open(current: DifficultyTier): void {
     this.close();
 
+    // #477 — expand the panel height when the Restart Game button is shown.
+    const hasRestart = typeof this.opts.onRestartGame === 'function';
+    const panelH = hasRestart ? 540 : 460;
+
     const container = this.scene.add.container(0, 0).setDepth(3000);
     // Dimmed backdrop: clicking it (outside the panel) dismisses with no change.
     const backdrop = this.scene.add
@@ -119,7 +137,7 @@ export class DifficultyModal {
       .setInteractive()
       .on('pointerdown', () => this.close());
     const panel = this.scene.add
-      .rectangle(CANVAS_W / 2, CANVAS_H / 2, 560, 460, 0x161622)
+      .rectangle(CANVAS_W / 2, CANVAS_H / 2, 560, panelH, 0x161622)
       .setStrokeStyle(2, 0x6082aa);
     // #382 — all these labels are Container children → crispCanvasText.
     const title = crispCanvasText(
@@ -150,6 +168,39 @@ export class DifficultyModal {
     TIER_ROWS.forEach((row, idx) => {
       this.renderTierRow(container, startY + idx * rowH, row, current);
     });
+
+    // #477 — Danger zone: separator + [Restart Game] button below the tier list.
+    if (hasRestart) {
+      const dangerSepY = startY + TIER_ROWS.length * rowH + 12;
+      const restartBtnY = dangerSepY + 30;
+
+      const dangerSep = crispCanvasText(
+        this.scene.add
+          .text(CANVAS_W / 2, dangerSepY, '──── Danger ────', {
+            fontSize: '12px',
+            color: '#884444',
+          })
+          .setOrigin(0.5)
+          .setName('difficulty-danger-sep'),
+      );
+
+      const restartBtn = crispCanvasText(
+        this.scene.add
+          .text(CANVAS_W / 2, restartBtnY, '[Restart Game]', {
+            fontSize: '15px',
+            color: '#ff4444',
+          })
+          .setOrigin(0.5)
+          .setInteractive({ useHandCursor: true })
+          .setName('difficulty-restart-btn'),
+      );
+      restartBtn.on('pointerdown', () => {
+        this.close();
+        this.opts.onRestartGame!();
+      });
+
+      container.add([dangerSep, restartBtn]);
+    }
 
     this.container = container;
     window.__difficultyState = { current, tiers: TIER_ROWS.map((r) => r.tier) };

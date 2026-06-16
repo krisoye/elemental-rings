@@ -120,6 +120,8 @@ declare global {
     // #348 — true while the BattleHandOverlay discard-confirm modal is open. Mirrors
     // __forfeitPromptOpen so E2E can assert the safe 3-step discard without pixels.
     __discardConfirmOpen?: boolean;
+    // #477 — true while the CampScene reset-game confirm dialog is open.
+    __resetConfirmOpen?: boolean;
     // #135 — the LOCAL player's rendered HUD (Blinded `?` substitution applied).
     // E2E asserts own-HUD hiding against this without reading pixels.
     // #211 — `spirit` is the rendered ⚡ readout as 'current/max' (or undefined

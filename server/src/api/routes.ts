@@ -72,6 +72,7 @@ import {
   consumeAndUnlockShrine,
   swapRings,
   saveRingUses,
+  resetPlayer,
 } from '../persistence/PlayerRepo';
 import { ElementEnum } from '../../../shared/types';
 import { insertRing as insertRingRow, makeRing, getRingById } from '../persistence/ringRows';
@@ -240,6 +241,25 @@ apiRouter.get('/api/me', requireAuth, requirePlayer, (req: Request, res: Respons
   // dedicated slot, not the Reliquary or carry grid. Filtering here keeps
   // rings.length consistent with the 10-ring starter expectation that the E2E
   // suite and CampScene UI rely on (5 carried + 5 resting = 10 visible rings).
+  res.status(200).json({
+    player: buildMePlayerBlock(playerId),
+    rings: getRingsByOwner(playerId).filter((r) => r.heart_slot !== 1),
+    loadout: getLoadout(playerId) ?? null,
+  });
+});
+
+/**
+ * POST /api/me/reset — wipe the authenticated player's game state and re-seed
+ * the starter inventory (#476). Self-only: the player is identified from the
+ * auth token — no admin path. All rings, loadout, attunements, NPC defeats,
+ * forage nodes, and shrine unlocks are cleared; the players row is reset to
+ * starter defaults (gold=STARTER_GOLD, reliquary_cap=RELIQUARY_BASE_CAP, etc.).
+ * id, username, and password_hash are preserved. Response is identical in shape
+ * to GET /api/me so clients can refresh in one round-trip. Requires auth.
+ */
+apiRouter.post('/api/me/reset', requireAuth, requirePlayer, (req: Request, res: Response): void => {
+  const playerId = req.playerId as string;
+  resetPlayer(playerId);
   res.status(200).json({
     player: buildMePlayerBlock(playerId),
     rings: getRingsByOwner(playerId).filter((r) => r.heart_slot !== 1),

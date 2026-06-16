@@ -99,6 +99,17 @@ Note: `spareCapacity` was removed in EPIC #378 — use `spare_ring_max` instead.
 
 ---
 
+### POST /api/me/reset
+
+**Auth required:** yes (requireAuth + requirePlayer)
+**Request body:** none
+**Response (success):** `{ player: PlayerBlock, rings: Ring[], loadout: Loadout | null }` — HTTP 200
+**Response (error):** 401 — auth failure | 404 — `"Player not found"`
+
+Wipe the player's progress and re-seed starter inventory. Deletes all rings, loadout, waystone attunements, talisman loadout, NPC defeats, forage nodes, and shrine records; resets the player row to new-player defaults (`gold=200`, `game_day=0`, `carry_cap=10`, `spirit_max` recomputed from starter XP, `reliquary_cap=9`, `difficulty='seeker'`, etc.); re-seeds the 11 starter rings. Returns the same shape as `GET /api/me`. Designed for playtesting — should be hidden or removed in a production build.
+
+---
+
 ### PUT /api/carry
 
 **Auth required:** yes (requireAuth only)

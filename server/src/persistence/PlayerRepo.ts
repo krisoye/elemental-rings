@@ -28,6 +28,7 @@ import {
   MERCHANT_RING_SELL_PRICE_NEUTRAL,
   RELIQUARY_BASE_CAP,
   RELIQUARY_SHARD_INCREMENT,
+  STARTER_GOLD,
   CORE_SLOTS,
   SPARE_SLOTS,
 } from '../game/constants';
@@ -242,6 +243,59 @@ function insertStarterRing(playerId: string, element: number): string {
 }
 
 /**
+ * Seed the starter inventory for a player that already has a players row.
+ * Called by both createPlayer (after insertPlayer) and resetPlayer (after the
+ * wipe UPDATE). This is the single source of truth for the 11-ring starter
+ * package: 1 heart + 5 battle-hand + 5 reliquary, plus the forest_entry
+ * attunement and an empty talisman loadout.
+ *
+ * Must be called inside a transaction (createPlayer and resetPlayer both
+ * wrap it in db.transaction).
+ */
+export function seedStarterInventory(playerId: string): void {
+  // Heart-slot ring: a Wind ring that rests (in_carry = 0) outside the battle
+  // hand and Reliquary. heart_slot = 1 excludes it from the spirit/carry sums,
+  // and players.heart_ring_id points at it as the authoritative equipped ring.
+  const heartRingId = insertStarterRing(playerId, STARTER_HEART_ELEMENT);
+  setRingHeartSlot(heartRingId, 1);
+  updateHeartRingId.run(heartRingId, playerId);
+
+  // Battle hand: one ring per named slot (Thumb=Earth, A1/A2=Wind, D1/D2=Earth).
+  const defaultSlots = {
+    thumb: '' as string,
+    a1: '' as string,
+    a2: '' as string,
+    d1: '' as string,
+    d2: '' as string,
+  };
+  for (const { slot, element } of STARTER_BATTLE_HAND) {
+    defaultSlots[slot] = insertStarterRing(playerId, element);
+  }
+  insertLoadout.run({ player_id: playerId, ...defaultSlots });
+
+  // #40 — the five battle-slot rings start carried (in_carry = 1). The heart
+  // ring is intentionally NOT carried — it lives in the dedicated Heart slot.
+  for (const ringId of Object.values(defaultSlots)) setRingCarry(ringId, 1);
+
+  // EPIC #378 — five starter Reliquary rings (in_carry=0, heart_slot=0). These
+  // seed spirit_max > 0 from the first session and give the player rings to swap
+  // into carry. insertStarterRing defaults to in_carry=0, heart_slot=0, so no
+  // extra flags are needed. GET /api/me filters heart_slot rings from the rings
+  // array, giving clients exactly 10 visible rings (5 carried + 5 resting).
+  for (const element of STARTER_RELIQUARY_ELEMENTS) {
+    insertStarterRing(playerId, element);
+  }
+
+  // #61 — every new player starts attuned to the Forest entry waystone so the
+  // overworld's first teleport destination is available immediately (GDD §10.7).
+  insertAttunement.run(playerId, 'forest_entry', Date.now());
+
+  // #81 — seed an empty talisman loadout (no necklace, 0 charges). Starting
+  // players do not own a Sanctum Stone (GDD §14.3 — it is a mid-game upgrade).
+  insertTalismanLoadout.run({ player_id: playerId, necklace_id: null, necklace_charges: 0 });
+}
+
+/**
  * Create a player with the full starter package (EPIC #302): the player row, 6
  * starter rings (one Wind ring in the Heart slot, five rings filling the battle
  * hand), a default loadout, and the heart_ring_id pointer. Runs in a single
@@ -259,51 +313,80 @@ export const createPlayer = db.transaction(
   (username: string, passwordHash: string): string => {
     const playerId = uuidv4();
     insertPlayer.run(playerId, username, passwordHash, RELIQUARY_BASE_CAP);
-
-    // Heart-slot ring: a Wind ring that rests (in_carry = 0) outside the battle
-    // hand and Reliquary. heart_slot = 1 excludes it from the spirit/carry sums,
-    // and players.heart_ring_id points at it as the authoritative equipped ring.
-    const heartRingId = insertStarterRing(playerId, STARTER_HEART_ELEMENT);
-    setRingHeartSlot(heartRingId, 1);
-    updateHeartRingId.run(heartRingId, playerId);
-
-    // Battle hand: one ring per named slot (Thumb=Earth, A1/A2=Wind, D1/D2=Earth).
-    const defaultSlots = {
-      thumb: '' as string,
-      a1: '' as string,
-      a2: '' as string,
-      d1: '' as string,
-      d2: '' as string,
-    };
-    for (const { slot, element } of STARTER_BATTLE_HAND) {
-      defaultSlots[slot] = insertStarterRing(playerId, element);
-    }
-    insertLoadout.run({ player_id: playerId, ...defaultSlots });
-
-    // #40 — the five battle-slot rings start carried (in_carry = 1). The heart
-    // ring is intentionally NOT carried — it lives in the dedicated Heart slot.
-    for (const ringId of Object.values(defaultSlots)) setRingCarry(ringId, 1);
-
-    // EPIC #378 — five starter Reliquary rings (in_carry=0, heart_slot=0). These
-    // seed spirit_max > 0 from the first session and give the player rings to swap
-    // into carry. insertStarterRing defaults to in_carry=0, heart_slot=0, so no
-    // extra flags are needed. GET /api/me filters heart_slot rings from the rings
-    // array, giving clients exactly 10 visible rings (5 carried + 5 resting).
-    for (const element of STARTER_RELIQUARY_ELEMENTS) {
-      insertStarterRing(playerId, element);
-    }
-
-    // #61 — every new player starts attuned to the Forest entry waystone so the
-    // overworld's first teleport destination is available immediately (GDD §10.7).
-    insertAttunement.run(playerId, 'forest_entry', Date.now());
-
-    // #81 — seed an empty talisman loadout (no necklace, 0 charges). Starting
-    // players do not own a Sanctum Stone (GDD §14.3 — it is a mid-game upgrade).
-    insertTalismanLoadout.run({ player_id: playerId, necklace_id: null, necklace_charges: 0 });
-
+    seedStarterInventory(playerId);
     return playerId;
   },
 );
+
+// Prepared statements used by resetPlayer (declared here so they are only
+// compiled once, matching the module-level pattern for all other statements).
+const resetClearHeartRingId = db.prepare(
+  `UPDATE players SET heart_ring_id = NULL WHERE id = ?`,
+);
+const resetDeleteLoadout = db.prepare(`DELETE FROM loadout WHERE player_id = ?`);
+const resetDeleteRings = db.prepare(`DELETE FROM rings WHERE owner_id = ?`);
+const resetDeleteAttunements = db.prepare(
+  `DELETE FROM waystone_attunements WHERE player_id = ?`,
+);
+const resetDeleteTalismanLoadout = db.prepare(
+  `DELETE FROM talisman_loadout WHERE player_id = ?`,
+);
+const resetDeleteNpcDefeats = db.prepare(`DELETE FROM npc_defeats WHERE player_id = ?`);
+const resetDeleteForageNodes = db.prepare(`DELETE FROM forage_nodes WHERE player_id = ?`);
+const resetDeleteShrines = db.prepare(`DELETE FROM shrines WHERE player_id = ?`);
+const resetUpdatePlayers = db.prepare(
+  `UPDATE players SET
+     gold              = ${STARTER_GOLD},
+     game_day          = 0,
+     carry_cap         = 10,
+     spirit_max        = 50,
+     spirit_current    = 50,
+     food_units        = 100,
+     anchored_waystone = 'forest_entry',
+     reliquary_cap     = ${RELIQUARY_BASE_CAP},
+     reliquary_shards  = 0,
+     difficulty        = 'seeker',
+     heart_ring_id     = NULL,
+     spare_ring_max    = 9
+   WHERE id = ?`,
+);
+
+/**
+ * Wipe all game state for a player and re-seed them with the starter inventory.
+ * Runs in a single transaction (atomic wipe + re-seed). id, username, and
+ * password_hash are preserved. All rings, loadout, attunements, NPC defeats,
+ * forage nodes, and shrine unlocks are deleted. The players row is reset to
+ * starter defaults (gold=STARTER_GOLD, reliquary_cap=RELIQUARY_BASE_CAP, etc.).
+ * seedStarterInventory is called last to install the 11-ring starter package.
+ *
+ * FK-safe deletion order: heart_ring_id pointer cleared first, then loadout
+ * (references rings), then rings (referenced by loadout FK and heart_ring_id).
+ */
+export const resetPlayer = db.transaction((playerId: string): void => {
+  // 1. Clear the FK pointer so ring rows can be deleted without a FK violation.
+  resetClearHeartRingId.run(playerId);
+  // 2. Delete dependent rows in FK-safe order.
+  resetDeleteLoadout.run(playerId);
+  resetDeleteRings.run(playerId);
+  resetDeleteAttunements.run(playerId);
+  resetDeleteTalismanLoadout.run(playerId);
+  resetDeleteNpcDefeats.run(playerId);
+  resetDeleteForageNodes.run(playerId);
+  resetDeleteShrines.run(playerId);
+  // 3. Reset the players row to starter defaults (preserves id/username/password_hash).
+  //    spirit_max/spirit_current are set to a 50 floor here, then made authoritative
+  //    by the refresh in step 5 once the Reliquary rings exist.
+  resetUpdatePlayers.run(playerId);
+  // 4. Seed the fresh 11-ring starter inventory + attunement + talisman loadout.
+  seedStarterInventory(playerId);
+  // 5. Recompute spirit_max from the freshly-seeded Reliquary composition and clamp
+  //    the gauge to it — mirrors setHeartRing / packLoadout / PUT /api/difficulty.
+  //    BattleRoom reads players.spirit_max directly to seed the vsAI gauge and NPC
+  //    spirit pool, so the stored column must reflect the seeded inventory, not the
+  //    50 floor written in step 3.
+  const spiritMax = refreshSpiritMax(playerId);
+  clampSpiritCurrent(playerId, spiritMax);
+});
 
 /** Full player row including password_hash — used by the login flow only. */
 export function getPlayerByUsername(
