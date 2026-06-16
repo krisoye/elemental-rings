@@ -459,6 +459,29 @@ True when all three conditions hold:
 
 ---
 
+### `ai/AILoadout.ts`
+
+AI opponent loadout and spirit-pool derivation. Pure functions consumed by `BattleRoom` (real fight) and the overworld preview route.
+
+```ts
+import { computeNpcSpirit } from 'server/src/game/ai/AILoadout';
+```
+
+#### `computeNpcSpirit`
+
+```ts
+export function computeNpcSpirit(
+  playerSpiritMax: number,
+  personality: AIPersonality,
+  biome?: string,
+  bossTier?: BossTier,
+): number
+```
+
+The NPC's spirit pool for a duel. Returns `floor(playerSpiritMax × mult) + bonus`, where `mult` is `BOSS_MODIFIERS[bossTier].spiritMult` when `bossTier` is supplied (boss) else `PERSONALITY_SPIRIT_MULT[personality]` (roamer), and `bonus` is `BIOME_BOSS_SPIRIT_BONUS[biome][bossTier]` only when both `biome` and `bossTier` are present (0 otherwise). The floor is applied to the base before the un-floored bonus is added. Single source of truth for NPC spirit: `BattleRoom.onJoin` and `GET /api/overworld/npcs` both call it with `getSpiritAndFood(playerId).spirit_max`, so the overworld preview SP equals the value the AI fields in battle.
+
+---
+
 ## 2. `shared/types.ts` — Shared Type Definitions
 
 Types imported by both the Colyseus server and the Phaser client.
