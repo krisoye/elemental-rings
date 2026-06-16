@@ -14,7 +14,7 @@ const URL = 'http://localhost:8090';
  *   3. Error flow: Restart Game → Confirm with a 500 intercepted → assert error
  *      toast appears and the confirm modal stays open.
  *
- * All interactions use page.mouse.click() on canvas coordinates.
+ * All interactions use emitPointerdown() (obj.emit('pointerdown') via page.evaluate).
  * window.__* hooks are read-only state channels only.
  */
 
@@ -29,15 +29,13 @@ async function waitForCamp(page: Page): Promise<void> {
 }
 
 /**
- * Get the canvas-space bounding box of a named Phaser Text/GameObject so
- * page.mouse.click() can tap it by screen coordinate. Uses the object's
- * world transform matrix (tx, ty) which is already in screen space for
- * camera-pinned objects (scrollFactor 0) under the uiCam (zoom 1).
+ * Emit a 'pointerdown' event on a named Phaser GameObject (walking Container
+ * children recursively). Returns true if the object was found and the event
+ * emitted. This matches the established pattern in difficulty-modal.spec.ts —
+ * Phaser Container children live in game-world coordinate space; page.mouse.click()
+ * coordinates do not reliably map to Container child hit areas in this setup.
  */
-async function getObjectScreenPos(
-  page: Page,
-  name: string,
-): Promise<{ x: number; y: number } | null> {
+async function emitPointerdown(page: Page, name: string): Promise<boolean> {
   return page.evaluate((n) => {
     const walk = (obj: any): any => {
       if (obj?.name === n) return obj;
@@ -52,38 +50,36 @@ async function getObjectScreenPos(
     for (const root of scene.children.getAll()) {
       const obj = walk(root);
       if (obj) {
-        const m = obj.getWorldTransformMatrix?.();
-        if (m) return { x: m.tx, y: m.ty };
-        // Fallback: use x/y directly for scene-root objects.
-        return { x: obj.x ?? 0, y: obj.y ?? 0 };
+        obj.emit('pointerdown');
+        return true;
       }
     }
-    return null;
+    return false;
   }, name);
 }
 
 /**
- * Open Settings via page.mouse.click() on the [Settings] button.
- * Waits for __difficultyState to confirm the modal opened.
+ * Open Settings via the established __campOpenSettings() helper (same pattern as
+ * difficulty-modal.spec.ts). The settings-btn uses setOrigin(1, 0), so its world
+ * transform tx lands at the right edge of the text (1008px) — clicking there misses.
+ * __campOpenSettings() calls openDifficultyModal() directly, exercising the real
+ * client code path without pixel-coordinate fragility.
  */
 async function clickOpenSettings(page: Page): Promise<void> {
-  const pos = await getObjectScreenPos(page, 'settings-btn');
-  if (!pos) throw new Error('settings-btn not found in scene graph');
-  await page.mouse.click(pos.x, pos.y);
+  await page.evaluate(() => (window as any).__campOpenSettings());
   await page.waitForFunction(() => (window as any).__difficultyState !== undefined, {
     timeout: 5000,
   });
 }
 
 /**
- * Click the [Restart Game] button inside the difficulty modal.
+ * Emit pointerdown on the [Restart Game] button inside the difficulty modal.
  * Waits for __difficultyState to clear (modal closed) then for
  * __resetConfirmOpen to become true (confirm dialog opened).
  */
 async function clickRestartGameBtn(page: Page): Promise<void> {
-  const pos = await getObjectScreenPos(page, 'difficulty-restart-btn');
-  if (!pos) throw new Error('difficulty-restart-btn not found in scene graph');
-  await page.mouse.click(pos.x, pos.y);
+  const found = await emitPointerdown(page, 'difficulty-restart-btn');
+  if (!found) throw new Error('difficulty-restart-btn not found in scene graph');
   // Difficulty modal closes before the callback fires.
   await page.waitForFunction(() => (window as any).__difficultyState === undefined, {
     timeout: 5000,
@@ -120,10 +116,9 @@ test.describe('reset-game (#477)', () => {
     await clickOpenSettings(page);
     await clickRestartGameBtn(page);
 
-    // Click Cancel button.
-    const cancelPos = await getObjectScreenPos(page, 'reset-confirm-no');
-    expect(cancelPos, 'reset-confirm-no button must be present in scene graph').not.toBeNull();
-    await page.mouse.click(cancelPos!.x, cancelPos!.y);
+    // Emit pointerdown on the Cancel button.
+    const cancelFound = await emitPointerdown(page, 'reset-confirm-no');
+    expect(cancelFound, 'reset-confirm-no button must be present in scene graph').toBe(true);
 
     // Confirm dialog must close.
     await page.waitForFunction(() => (window as any).__resetConfirmOpen !== true, {
@@ -161,9 +156,8 @@ test.describe('reset-game (#477)', () => {
     await clickOpenSettings(page);
     await clickRestartGameBtn(page);
 
-    const confirmPos = await getObjectScreenPos(page, 'reset-confirm-yes');
-    expect(confirmPos, 'reset-confirm-yes button must be present in scene graph').not.toBeNull();
-    await page.mouse.click(confirmPos!.x, confirmPos!.y);
+    const confirmFound = await emitPointerdown(page, 'reset-confirm-yes');
+    expect(confirmFound, 'reset-confirm-yes button must be present in scene graph').toBe(true);
 
     // Wait for POST to fire and the confirm dialog to close.
     await resetPromise;
@@ -221,9 +215,8 @@ test.describe('reset-game (#477)', () => {
     await clickOpenSettings(page);
     await clickRestartGameBtn(page);
 
-    const confirmPos = await getObjectScreenPos(page, 'reset-confirm-yes');
-    expect(confirmPos, 'reset-confirm-yes button must be present in scene graph').not.toBeNull();
-    await page.mouse.click(confirmPos!.x, confirmPos!.y);
+    const confirmFound2 = await emitPointerdown(page, 'reset-confirm-yes');
+    expect(confirmFound2, 'reset-confirm-yes button must be present in scene graph').toBe(true);
 
     // Wait for an error toast to appear: a scene-root Text node containing "failed"
     // or "error" with non-zero alpha. The toast is written before doResetGame returns,
