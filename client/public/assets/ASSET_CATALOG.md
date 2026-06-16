@@ -33,6 +33,42 @@ Single-purpose tileset: tile id 2 (gid 3) carries `collides:true` and is painted
 **Dimensions:** 128×32 `8 cols × 2 rows (16 tiles @ 16×16px)`  
 4-tile strip for generated swamp screen: void, murky floor, swamp tree (solid), muddy path.
 
+### `terrain_cave_main.png`
+**Dimensions:** 256×256 `16 cols × 16 rows (256 tiles @ 16×16px)`  
+Cave / mine interior tileset: rock floor, walls, ledges, ore/crystal accents. For underground cave and mine screens.
+
+### `terrain_cave_alt.png`
+**Dimensions:** 256×256 `16 cols × 16 rows (256 tiles @ 16×16px)`  
+Alternate palette/variant of `terrain_cave_main` — a second cave look for visual variety across screens.
+
+### `terrain_cave_water.png`
+**Dimensions:** 480×48 `30 cols × 3 rows (90 tiles @ 16×16px)`  
+Subterranean water/pool tiles for caves (likely animation frames / a wang-style edge set — verify layout in Tiled).
+
+### `terrain_cave_water_alt.png`
+**Dimensions:** 480×48 `30 cols × 3 rows (90 tiles @ 16×16px)`  
+Alternate variant of `terrain_cave_water`.
+
+### `terrain_cave_boulder.png`
+**Dimensions:** 128×16 `8 cols × 1 row (8 tiles @ 16×16px)`  
+Boulder prop strip (8 variants) for caves/mines — decorative obstacles, place on `behind`.
+
+### `terrain_mine_main.png`
+**Dimensions:** 256×256 `16 cols × 16 rows (256 tiles @ 16×16px)`  
+Gold-mine tileset: timbered shafts, support beams, ore veins, mine flooring. For mine screens.
+
+### `terrain_mine_main_b.png`
+**Dimensions:** 256×256 `16 cols × 16 rows (256 tiles @ 16×16px)`  
+Second gold-mine sheet (additional mine tiles / variant) paired with `terrain_mine_main`.
+
+### `autotile_desert_16.png`
+**Dimensions:** 160×240 `10 cols × 15 rows (150 tiles @ 16×16px)`  
+Desert autotile sheet (sand / oasis water / green foliage / wood deck / adobe brick / cobble island blocks). Desert counterpart to `autotile_snow_16`; sand is the dominant ground fill.
+
+### `terrain_desert_main.png`
+**Dimensions:** 288×800 `18 cols × 50 rows (900 tiles @ 16×16px)`  
+Desert town/oasis tileset: sandstone canyon cliffs, cave archway, palms + cacti + shrubs, market awnings, adobe buildings, shingled-roof houses, pottery props. Desert counterpart to `terrain_snow_main`.
+
 
 ---
 

@@ -157,3 +157,17 @@ Inverted: snow/ground patch surrounded by water with a soil shore ring.
 ## Transparent (unused)
 
 Tiles 65–69, 75–79, 85–89 (rows 6–8, cols 5–9) are fully transparent — no content.
+
+---
+
+## Needs Confirmation (used in snow_entry.json)
+
+The 10 undocumented locals follow a consistent pattern: each 3×3 island block has a 2×2 inverted block beside it for rows 0–1 (or 3–4, or 6–7), but row 2 (and 5, and 8) of those inverted columns is undocumented. Of those 10 gaps, three are used in `snow_entry.json`:
+
+| GID (firstgid=56) | Local ID | Row, Col | Usage in map | Description |
+|-------------------|----------|----------|--------------|-------------|
+| 79 | 23 | r2,c3 | Ground layer — dominant fill (nearly every snow cell) | Plain snow fill tile (confirmed from tileset image) |
+| 80 | 24 | r2,c4 | Ground layer — used at dirt/snow transition edges | Snow fill variant (confirmed from tileset image) |
+| 85 | 29 | r2,c9 | Ground layer — used sparingly | Snow fill / foliage transition variant (confirmed from tileset image) |
+
+The remaining 7 undocumented locals (28, 53, 54, 58, 59, 83, 84) do not appear in `snow_entry.json`.

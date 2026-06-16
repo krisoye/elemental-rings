@@ -97,10 +97,15 @@ function biomeMapPaths(): string[] {
     .readdirSync(forestDir)
     .filter((f) => f.endsWith('.json'))
     .map((f) => path.join(forestDir, f));
+  const snowDir = path.join(MAPS_DIR, 'snow');
+  const snowMaps = fs
+    .readdirSync(snowDir)
+    .filter((f) => f.endsWith('.json'))
+    .map((f) => path.join(snowDir, f));
   return [
     ...forestMaps,
     path.join(MAPS_DIR, 'swamp', 'swamp_entry.json'),
-    path.join(MAPS_DIR, 'snow', 'snow_entry.json'),
+    ...snowMaps,
   ];
 }
 
@@ -125,10 +130,10 @@ describe('anchorage catalog ↔ map drift', () => {
     expect([...mapIds].sort()).toEqual([...catalogIds].sort());
   });
 
-  test('catalog contains exactly 7 anchorages (4 Forest + 2 Swamp + 1 Snow)', () => {
-    // 4 Forest (entry, glade, depths, hidden) + 2 Swamp + 1 Snow. Bump when a biome is added.
-    expect(WAYSTONES.length).toBe(7);
-    expect(collectMapAnchorageIds().size).toBe(7);
+  test('catalog contains exactly 8 anchorages (4 Forest + 2 Swamp + 2 Snow)', () => {
+    // 4 Forest (entry, glade, depths, hidden) + 2 Swamp + 2 Snow (Fields, Frozen Lake).
+    expect(WAYSTONES.length).toBe(8);
+    expect(collectMapAnchorageIds().size).toBe(8);
   });
 
   test('no waystone objects remain in any biome map', () => {

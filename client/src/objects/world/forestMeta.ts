@@ -29,6 +29,7 @@ export const FOREST_SCREEN_META: Record<string, ForestScreenMeta> = {
   forest_south_path:      { label: 'South Path' },
   forest_hollow:          { label: 'The Hollow' },
   forest_swamp_gate:      { label: 'Swamp Gate',      boss: 'gate' },
+  forest_volcano_gate:    { label: 'Volcano Gate',    boss: 'gate' },
   forest_east_path:       { label: 'East Path' },
   forest_glade:           { label: 'The Glade' },
   forest_heath:           { label: 'The Heath' },

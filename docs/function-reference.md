@@ -806,3 +806,45 @@ Returns the same text object for chaining.
 | Text inside a masked/scrolling container, world-space labels, or anything that must interleave in depth with canvas sprites | `crispCanvasText` |
 
 For full architectural reasoning see `docs/architecture-overview.md`.
+
+---
+
+## 4. `shared/waystones.ts` — Anchorage Catalog
+
+The single source of truth for **teleport destinations**. Each `WaystoneDef` is
+`{ id, name, biome, spiritCost }`; `spiritCost` is the absolute spiritual distance
+from `forest_entry` (cost 0), and the actual teleport cost is the absolute difference
+between origin and destination. Anchorage ids referenced by map `anchorage` objects
+MUST exist here (asserted by the `waystones.spec.ts` catalog-drift test).
+
+### `WAYSTONES`
+
+```ts
+export const WAYSTONES: WaystoneDef[]
+```
+
+Catalog of anchorages across biomes: Forest (`forest_entry` 0, `forest_glade` 3,
+`forest_depths` 6, `forest_hidden_anchor` 15), Swamp (`swamp_anchor_1` 8,
+`swamp_anchor_2` 10), and Snow (`snow_anchor_1` "Snow Fields" 9, **`snow_anchor_2`
+"Frozen Lake" 12**). Adding a biome anchorage requires an entry here plus the matching
+`anchorage` object on that biome's map.
+
+### `getWaystone`
+
+```ts
+export function getWaystone(id: string): WaystoneDef | undefined
+```
+
+Look up an anchorage by id, or `undefined` if not in the catalog.
+
+### `canTeleport`
+
+```ts
+export function canTeleport(
+  spiritCurrent: number, id: string, currentAnchorId?: string,
+): boolean
+```
+
+Teleport-gate predicate: true when the player holds at least the relative spirit cost
+from `currentAnchorId` to `id`. Unknown destinations are never teleportable; falls back
+to the absolute cost when no current anchor is given.

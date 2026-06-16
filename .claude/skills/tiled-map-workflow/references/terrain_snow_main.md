@@ -228,3 +228,79 @@ The following regions are visible in the sheet but not yet described (to be adde
 - Rows 8–10, cols 0–8 — additional cliff/ground variants
 - Rows 11–16, cols 8–17 — decorative props (figures, snowman, crates, etc.)
 - Rows 17–28 — interior furniture, flooring, and objects
+
+---
+
+## Needs Confirmation (used in snow_entry.json)
+
+These tile IDs appear in `snow_entry.json` but fall in undocumented regions of the sheet. Local ID formula: `row * 18 + col`. GIDs assume `firstgid = 146`.
+
+### Group A — Rows 0–3, cols 5–6 (cliff-adjacent snow fill)
+
+Used on the `behind` layer alongside the Rocky Cliff block. Visually these are plain snow fill tiles — no rocky border, just the snow ground texture used to extend the snowy surface area around the cliff.
+
+| GID | Local ID | Row, Col | Layer | Description |
+|-----|----------|----------|-------|-------------|
+| 151 | 5 | r0,c5 | behind | Snow fill — cliff area (top row) |
+| 152 | 6 | r0,c6 | behind | Snow fill — cliff area (top row, right) |
+| 169 | 23 | r1,c5 | behind | Snow fill — cliff area |
+| 170 | 24 | r1,c6 | behind | Snow fill — cliff area (right) |
+| 187 | 41 | r2,c5 | behind | Snow fill — cliff area |
+| 188 | 42 | r2,c6 | behind | Snow fill — cliff area (right) |
+| 205 | 59 | r3,c5 | behind | Snow fill — cliff area (bottom row) |
+| 206 | 60 | r3,c6 | behind | Snow fill — cliff area (bottom row, right) |
+
+### Group B — Rows 11–16, col 8 (5th column of round tree)
+
+The round tree is 5 columns wide (cols 4–8), not 4. The reference sheet only documented cols 4–7. This column is visually continuous with the round tree — canopy coloring at top rows, trunk/root coloring at bottom. Used on `in-front`.
+
+| GID | Local ID | Row, Col | Layer | Description |
+|-----|----------|----------|-------|-------------|
+| 352 | 206 | r11,c8 | in-front | Round tree — top canopy far right |
+| 370 | 224 | r12,c8 | in-front | Round tree — top canopy far right (lower) |
+| 388 | 242 | r13,c8 | in-front | Round tree — mid canopy far right |
+| 406 | 260 | r14,c8 | in-front | Round tree — mid canopy far right (lower) |
+| 424 | 278 | r15,c8 | in-front | Round tree — trunk / base far right |
+| 442 | 296 | r16,c8 | in-front | Round tree — ground / root far right |
+
+### Group C — Row 12, col 9 (snowman prop)
+
+One tile used in isolation on the `behind` layer near the cabin. Visually a small standing snowman figure.
+
+| GID | Local ID | Row, Col | Layer | Description |
+|-----|----------|----------|-------|-------------|
+| 371 | 225 | r12,c9 | behind | Snowman — standalone decorative prop |
+
+### Group D — Rows 13–17, cols 12–17 (wooden dock)
+
+Two sub-structures visible in the tileset: **cols 12–14** are vertical dock posts/pilings; **cols 15–17** are the horizontal dock platform (top rail, plank floor, bottom edge). Cols 15–17 tiles are used with left-cap / fill (repeating) / right-cap pattern in the map. Used on `behind` (posts and understructure) and `in-front` (platform floor overhead).
+
+| GID | Local ID | Row, Col | Layer | Description |
+|-----|----------|----------|-------|-------------|
+| 395 | 249 | r13,c15 | behind | Dock platform — top rail left cap |
+| 396 | 250 | r13,c16 | behind | Dock platform — top rail fill (repeating) |
+| 397 | 251 | r13,c17 | behind | Dock platform — top rail right cap |
+| 410 | 264 | r14,c12 | behind | Dock post — cap left |
+| 411 | 265 | r14,c13 | behind | Dock post — cap center |
+| 412 | 266 | r14,c14 | behind | Dock post — cap right |
+| 413 | 267 | r14,c15 | behind | Dock platform — upper section left |
+| 414 | 268 | r14,c16 | behind | Dock platform — upper section fill (repeating) |
+| 415 | 269 | r14,c17 | behind | Dock platform — upper section right |
+| 428 | 282 | r15,c12 | behind | Dock post — body left |
+| 429 | 283 | r15,c13 | behind | Dock post — body center |
+| 430 | 284 | r15,c14 | behind | Dock post — body right |
+| 431 | 285 | r15,c15 | behind | Dock platform — lower section left |
+| 432 | 286 | r15,c16 | behind | Dock platform — lower section fill (repeating) |
+| 433 | 287 | r15,c17 | behind | Dock platform — lower section right |
+| 446 | 300 | r16,c12 | behind | Dock post — base left |
+| 447 | 301 | r16,c13 | behind | Dock post — base center |
+| 448 | 302 | r16,c14 | behind | Dock post — base right |
+| 449 | 303 | r16,c15 | in-front | Dock floor — left edge (overhead) |
+| 450 | 304 | r16,c16 | in-front | Dock floor — fill (repeating, overhead) |
+| 451 | 305 | r16,c17 | in-front | Dock floor — right edge (overhead) |
+| 464 | 318 | r17,c12 | behind | Dock post — bottom left |
+| 465 | 319 | r17,c13 | behind | Dock post — bottom center |
+| 466 | 320 | r17,c14 | behind | Dock post — bottom right |
+| 467 | 321 | r17,c15 | in-front | Dock floor bottom edge — left (overhead) |
+| 468 | 322 | r17,c16 | in-front | Dock floor bottom edge — fill (repeating, overhead) |
+| 469 | 323 | r17,c17 | in-front | Dock floor bottom edge — right (overhead) |
