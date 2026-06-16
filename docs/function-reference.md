@@ -57,8 +57,6 @@ Re-exports the shared timing constants from `shared/timing.ts` (single source of
 | `XP_DEF_COUNTER` | `number` | 5 — defense ring XP on a successful parry/counter. |
 | `XP_DEF_BLOCK` | `number` | 2 — defense ring XP on a clean block. |
 | `XP_DEF_WEAK` | `number` | 1 — defense ring XP when the defense failed (heart lost). |
-| `XP_THUMB_BUFF` | `number` | 1 — thumb XP per use distributed by setup passives. |
-| `XP_THUMB_MID` | `number` | 2 — thumb XP per Tailwind or Precision Parry activation. |
 
 **Spirit / food economy**
 
@@ -398,7 +396,7 @@ import {
 export function applySetupPassive(ps: PlayerState): number
 ```
 
-All-in setup distributor (Fire / Water / Wood thumb). Spends ALL thumb uses, distributing +1 `currentUses` at a time round-robin to matching base-element battle rings (A1/A2/D1/D2), highest-XP first (ties broken by slot order). If no matching rings exist the passive does not fire and the thumb keeps its uses. Returns the total uses distributed (0 if passive did not apply) — the caller awards `XP_THUMB_BUFF` per use distributed.
+All-in setup distributor (Fire / Water / Wood thumb). Spends ALL thumb uses, distributing +1 `currentUses` at a time round-robin to matching base-element battle rings (A1/A2/D1/D2), highest-XP first (ties broken by slot order). If no matching rings exist the passive does not fire and the thumb keeps its uses. Returns the total uses distributed (0 if passive did not apply). The thumb (staked) ring earns no XP from this passive.
 
 #### `applyEarthParry`
 

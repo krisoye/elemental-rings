@@ -40,8 +40,7 @@ function chargeThumb(ps: PlayerState): void {
  * NOT fire and the thumb keeps all of its uses. When it does fire, the thumb
  * ends at 0 uses (extinguished, passive for the rest of the duel).
  *
- * Returns the total number of uses distributed (0 if the passive did not apply)
- * so the caller can award thumb XP (XP_THUMB_BUFF per use distributed).
+ * Returns the total number of uses distributed (0 if the passive did not apply).
  */
 export function applySetupPassive(ps: PlayerState): number {
   if (!thumbActive(ps)) return 0;

@@ -23,7 +23,7 @@ import { BattleRoom } from '../../server/src/rooms/BattleRoom';
 import { TELEGRAPH_MS, BLOCK_WINDOW_MS } from '../../server/src/game/constants';
 import { ElementEnum } from '../../shared/types';
 
-const { FIRE, WATER, WOOD, SHADOW } = ElementEnum;
+const { FIRE, WATER, WOOD, SHADOW, WIND, EARTH } = ElementEnum;
 
 const RESOLVE_BUFFER_MS = 250;
 
@@ -601,4 +601,214 @@ describe('Scenario 15: exhausted defense ring cannot block', () => {
     expect(d.fireGauge).toBe(1); // NO_BLOCK fills the gauge; a WEAK block would not
     expect(room.state.phase).toBe('ATTACK_SELECT');
   });
+});
+
+// ── #469 — Thumb passive XP removal regression ─────────────────────────────
+//
+// All three thumb passive trigger paths (Fire/Water/Wood all-in setup, Wind
+// Tailwind, Earth Precision Parry) previously awarded XP_THUMB_BUFF /
+// XP_THUMB_MID to the thumb slot. After #469 those calls are deleted: only
+// attack (a1/a2) and defense (d1/d2) slots earn XP. The thumb passive STILL
+// FIRES (combat effect unchanged) — only the XP grant is removed.
+//
+// All XP assertions read from `(room as any).xpAccumulator` — the private
+// in-memory Map that accumulates slot XP during the duel before persistence.
+// Integration test sessions are unauthenticated (no DB), but the accumulator
+// IS seeded for every joined client (line 538 of BattleRoom.ts), so these
+// assertions are live and meaningful even without DB persistence.
+//
+// Helper: read the accumulated XP for `slot` on a given session from the
+// in-memory accumulator (0 when absent — slot never received any XP).
+function thumbXp(room: any, sessionId: string): number {
+  return (room as any).xpAccumulator?.get(sessionId)?.get('thumb') ?? 0;
+}
+function slotXp(room: any, sessionId: string, slot: string): number {
+  return (room as any).xpAccumulator?.get(sessionId)?.get(slot) ?? 0;
+}
+
+describe('Scenario 16 (#469): Wind Tailwind fires but thumb earns no XP', () => {
+  test(
+    'Tailwind: thumb pays the throw, thumb XP stays 0, attacking ring accrues outcome XP',
+    async () => {
+      // #469 adversarial: Tailwind branch previously called addXp(id, 'thumb', XP_THUMB_MID).
+      // Guards against re-introducing that call — the passive fires (thumb use consumed)
+      // but the accumulator must show 0 for the thumb slot.
+      const { room, c1, c2 } = await joinBattle();
+      const attacker = attackerClient(room, c1, c2);
+      const attackerId = attacker.sessionId;
+
+      // Mutate the attacker's thumb to WIND and restore its uses so Tailwind can fire.
+      // (Default FIRE thumb exhausted its uses via applySetupPassive at seat time.)
+      const aps = room.state.players.get(attackerId);
+      aps.thumb.element = WIND;
+      aps.thumb.currentUses = 3;
+      aps.thumb.isExtinguished = false;
+      // Also reset a1 uses to the base 3 so the test is loadout-independent.
+      aps.a1.currentUses = 3;
+      aps.a1.isExtinguished = false;
+
+      const thumbBefore = aps.thumb.currentUses; // 3 — Tailwind will consume 1
+
+      // Fire a1: Tailwind fires → thumb pays (uses drop to 2); a1 NOT charged.
+      // The defender does not block → a1 earns XP_ATK_HIT (5) on no-block resolution.
+      attacker.send('selectAttack', { slot: 'a1' });
+      await waitForResolve();
+
+      // Tailwind fired: thumb use was consumed by the passive.
+      expect(aps.thumb.currentUses).toBe(thumbBefore - 1);
+
+      // The critical assertion: thumb accumulates ZERO XP despite Tailwind firing.
+      expect(thumbXp(room, attackerId)).toBe(0);
+
+      // Anti-tautology: the attack ring MUST have accrued positive XP (no-block hit).
+      expect(slotXp(room, attackerId, 'a1')).toBeGreaterThan(0);
+    },
+  );
+});
+
+describe('Scenario 17 (#469): Earth Precision Parry fires but thumb earns no XP', () => {
+  test(
+    'Precision Parry: defending ring refunded, thumb XP stays 0, defending ring accrues outcome XP',
+    async () => {
+      // #469 adversarial: applyEarthParry branch previously called addXp(defenderId, 'thumb', XP_THUMB_MID).
+      // Guards against re-introducing that call — the refund fires (defender ring use
+      // restored, thumb use consumed) but thumb accumulator slot must be 0.
+      const { room, c1, c2 } = await joinBattle();
+      const attacker = attackerClient(room, c1, c2);
+      const defender = defenderClient(room, c1, c2);
+      const defenderId = defender.sessionId;
+
+      // Mutate the defender's thumb to EARTH with full uses so Precision Parry can fire.
+      const dps = room.state.players.get(defenderId);
+      dps.thumb.element = EARTH;
+      dps.thumb.currentUses = 3;
+      dps.thumb.isExtinguished = false;
+
+      // FIRE(a1) vs EARTH(d2) = NEUTRAL. Use d2 (EARTH) at PARRY timing: applyEarthParry fires,
+      // refunds d2 use, charges thumb 1 use. Defender earns XP_DEF_BLOCK/XP_DEF_COUNTER.
+      attacker.send('selectAttack', { slot: 'a1' }); // FIRE
+      await room.waitForNextPatch();
+
+      await pressDefenseAt(room, defender, 'd2', 0); // EARTH NEUTRAL at PARRY timing
+
+      // Earth Precision Parry fired: thumb use charged (3 → 2).
+      expect(dps.thumb.currentUses).toBe(2);
+
+      // The critical assertion: thumb accumulates ZERO XP despite Parry firing.
+      expect(thumbXp(room, defenderId)).toBe(0);
+
+      // Anti-tautology: the defending ring MUST have accrued positive XP.
+      expect(slotXp(room, defenderId, 'd2')).toBeGreaterThan(0);
+    },
+  );
+});
+
+describe('Scenario 18 (#469): Fire all-in setup fires at seat but thumb earns no XP', () => {
+  test(
+    'all-in setup passive distributes uses to matching combat ring, thumb XP stays 0 at seat',
+    async () => {
+      // #469 adversarial: seatPlayer previously called addXp(sessionId, 'thumb', XP_THUMB_BUFF * buffed).
+      // Guards against re-introducing that call — applySetupPassive runs at seat time and
+      // distributes 3 uses to a1 (FIRE matches FIRE thumb), but the thumb accumulator
+      // must show 0 immediately after join (before any exchange occurs).
+      const { room, c1, c2 } = await joinBattle();
+
+      // Both clients are seated with the default loadout (thumb=FIRE, a1=FIRE).
+      // applySetupPassive distributes all 3 thumb uses to a1 at seat time.
+      for (const client of [c1, c2]) {
+        const sid = client.sessionId;
+        const ps = room.state.players.get(sid);
+
+        // Passive effect: thumb is exhausted, a1 got 3 extra uses (starts at 6).
+        expect(ps.thumb.currentUses).toBe(0); // all uses distributed
+        expect(ps.thumb.isExtinguished).toBe(true);
+        expect(ps.a1.currentUses).toBe(6); // 3 base + 3 from thumb
+
+        // The critical assertion: thumb has ZERO accumulated XP even though the
+        // setup passive distributed uses.
+        expect(thumbXp(room, sid)).toBe(0);
+      }
+    },
+  );
+
+  test(
+    'multiple Tailwind activations across exchanges accumulate to zero thumb XP',
+    async () => {
+      // #469 adversarial: a multi-exchange loop could reveal XP accumulation if the
+      // deletion was partial (e.g., only one of two call sites removed). Confirms
+      // thumb XP stays at 0 after repeated Tailwind activations.
+      const { room, c1, c2 } = await joinBattle();
+      const attacker = attackerClient(room, c1, c2);
+      const attackerId = attacker.sessionId;
+
+      // Switch attacker's thumb to WIND and give it enough uses for multiple fires.
+      const aps = room.state.players.get(attackerId);
+      aps.thumb.element = WIND;
+      aps.thumb.currentUses = 3;
+      aps.thumb.isExtinguished = false;
+
+      // Drive two exchanges where Tailwind fires each time. The defender does not
+      // block so the attacks land (stop after 2 to avoid duel end at 0 hearts).
+      for (let i = 0; i < 2; i++) {
+        if (room.state.phase === 'ENDED') break;
+        // After the first exchange initiative may swap; re-resolve who is attacker.
+        const currentAttacker =
+          room.state.currentAttackerId === c1.sessionId ? c1 : c2;
+        const currentAttackerId = currentAttacker.sessionId;
+        const currentAps = room.state.players.get(currentAttackerId);
+
+        // Only assert Tailwind fires for our instrumented WIND player.
+        if (currentAttackerId === attackerId) {
+          const thumbBefore = currentAps.thumb.currentUses;
+          currentAttacker.send('selectAttack', { slot: 'a1' });
+          await waitForResolve();
+          if (thumbBefore > 0) {
+            // Tailwind fired: use was consumed from thumb.
+            expect(currentAps.thumb.currentUses).toBe(thumbBefore - 1);
+          }
+        } else {
+          currentAttacker.send('selectAttack', { slot: 'a1' });
+          await waitForResolve();
+        }
+      }
+
+      // After all exchanges: thumb XP must still be 0 (no accumulation across fires).
+      expect(thumbXp(room, attackerId)).toBe(0);
+    },
+  );
+
+  test(
+    'SHADOW thumb (no passive) does not earn XP and does not affect combat rings',
+    async () => {
+      // #469 sanity/adversarial: a thumb element with NO applicable passive (SHADOW
+      // is not FIRE/WATER/WOOD/WIND/EARTH for passive purposes) must not accumulate
+      // any thumb XP, and the attack ring still earns XP normally from the exchange.
+      // Guards against a regression where the XP award was moved to a shared path
+      // rather than being properly deleted from the four specific call sites.
+      const { room, c1, c2 } = await joinBattle();
+      const attacker = attackerClient(room, c1, c2);
+      const attackerId = attacker.sessionId;
+
+      // Override thumb element to SHADOW (no passive applies).
+      const aps = room.state.players.get(attackerId);
+      aps.thumb.element = SHADOW;
+      aps.thumb.currentUses = 3;
+      aps.thumb.isExtinguished = false;
+
+      // Fire a1 (FIRE). No Tailwind fires (thumb is SHADOW). Attack ring pays.
+      const a1Before = aps.a1.currentUses;
+      attacker.send('selectAttack', { slot: 'a1' });
+      await waitForResolve();
+
+      // Attack ring paid (not thumb — no Tailwind).
+      expect(aps.a1.currentUses).toBe(a1Before - 1);
+      // Thumb uses unchanged (passive did not fire).
+      expect(aps.thumb.currentUses).toBe(3);
+
+      // Thumb XP stays at 0.
+      expect(thumbXp(room, attackerId)).toBe(0);
+      // Attack ring earned XP from the exchange outcome.
+      expect(slotXp(room, attackerId, 'a1')).toBeGreaterThan(0);
+    },
+  );
 });
