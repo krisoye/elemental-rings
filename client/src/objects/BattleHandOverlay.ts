@@ -103,7 +103,12 @@ export class BattleHandOverlay {
         this.onAfterRecharge?.(); // #460 — e.g. BaseBiomeScene repaints the overworld spirit HUD
       },
       onRechargeSlotClick: (ringId, ov) => { // #462 — targeted recharge via this.send()
-        void this.send('POST', '/api/spirit/recharge', { ringId }).then((ok) => { if (ok && ov.isOpen()) void this.refresh(ov); });
+        void this.send('POST', '/api/spirit/recharge', { ringId }).then((ok) => {
+          if (ok && ov.isOpen()) {
+            ov.clearSelection();
+            void this.refresh(ov);
+          }
+        });
       },
       getThumbTooltip: () => {
         const t = this.allRings.find((r) => r.id === (this.loadout.thumb ?? ''));

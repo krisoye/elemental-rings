@@ -734,7 +734,10 @@ export class CampScene extends DualCameraScene {
       // ── onRechargeSlotClick: per-ring targeted recharge (#462) ───────────────
       onRechargeSlotClick: (ringId, ov) => {
         void this.doRechargeById(ringId).then((ok) => {
-          if (ok && ov.isOpen()) ov.refresh(this.buildOverlayData());
+          if (ok && ov.isOpen()) {
+            ov.clearSelection();
+            ov.refresh(this.buildOverlayData());
+          }
         });
       },
 
