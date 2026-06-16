@@ -461,7 +461,8 @@ apiRouter.post('/api/rings/merge', requireAuth, requirePlayer, (req: Request, re
   }
   try {
     const newRingId = mergeRings(playerId, ringId1, ringId2);
-    refreshSpiritMax(playerId);
+    const spiritMax = refreshSpiritMax(playerId);
+    clampSpiritCurrent(playerId, spiritMax);
     const ring = getRingsByOwner(playerId).find((r) => r.id === newRingId);
     res.status(200).json({ ring });
   } catch (err: unknown) {
@@ -482,7 +483,8 @@ apiRouter.delete('/api/rings/:ringId', requireAuth, (req: Request, res: Response
     fail(res, 404, 'ring not found');
     return;
   }
-  refreshSpiritMax(playerId);
+  const spiritMax = refreshSpiritMax(playerId);
+  clampSpiritCurrent(playerId, spiritMax);
   res.status(200).json({ rings: getRingsByOwner(playerId) });
 });
 
@@ -773,7 +775,8 @@ apiRouter.post('/api/fusion/combine', requireAuth, (req: Request, res: Response)
   }
   try {
     const newRingId = fuseRings(playerId, ringId1, ringId2);
-    refreshSpiritMax(playerId);
+    const spiritMax = refreshSpiritMax(playerId);
+    clampSpiritCurrent(playerId, spiritMax);
     const ring = getRingsByOwner(playerId).find((r) => r.id === newRingId);
     res.status(200).json({ ring });
   } catch (err: unknown) {
