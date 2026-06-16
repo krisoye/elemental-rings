@@ -162,6 +162,7 @@ export class BattleHandOverlay {
     try {
       const d = await fetchMe<OverlayData>();
       this.cache(d); ov.refresh(d);
+      if (window.__campState) window.__campState.loadout = { ...this.loadout };
       const h = d.player?.heart_ring ?? null;
       setHCS(h ? { equipped: true, element: h.element, currentUses: h.current_uses, maxUses: h.max_uses } : { equipped: false });
     } catch { this.onStatus?.('Network error — please retry'); }
