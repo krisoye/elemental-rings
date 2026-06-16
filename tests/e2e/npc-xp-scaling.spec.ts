@@ -8,13 +8,13 @@ import { test, expect, type Page } from '@playwright/test';
  * matches the preview.
  *
  * Scaling (server, single-source: PlayerRepo.getBattleHandAvgXp + AILoadout.ts):
- *   battleHandAvgXp = thumb.xp·0.5 + ((a1.xp + a2.xp)/2)·0.25 + ((d1.xp + d2.xp)/2)·0.25
+ *   battleHandAvgXp = thumb.xp·0.35 + ((a1.xp + a2.xp)/2)·0.15 + ((d1.xp + d2.xp)/2)·0.15 + heart.xp·0.35
  *   npcEffectiveXp  = round(battleHandAvgXp · PERSONALITY_MULTIPLIER[p])
  *   thumbXp         = max(PERSONALITY_THUMB_XP[p], npcEffectiveXp)   (the floor)
  *   tier            = tierForXp(npcEffectiveXp)   (T1 begins at 500 XP, GDD §4.2)
- * The thumb carries 50% of the weight; the attack pair and defense pair share the
- * remaining 50% (25% each) — NOT an equal-thirds average (the old #196 /5 divisor
- * is gone; the weighting was corrected to 50/25/25 in ce87070).
+ * Thumb and heart share equal weight (0.35 each) — both are destruction-risk rings
+ * (thumb always transferred on loss; heart destroyed on 0-HP defeat). Attack and
+ * defense pairs each carry 0.15 (split evenly within each pair).
  *
  * DEFENSIVE (used by every scenario below):
  *   PERSONALITY_MULTIPLIER[DEFENSIVE] = 1.0
@@ -36,9 +36,10 @@ const DEFENSIVE_FLOOR = 20;
 
 /**
  * The server's battle-hand weighted average (PlayerRepo.getBattleHandAvgXp):
- * thumb is weighted 50%; the attack pair and defense pair each contribute 25%
+ * thumb and heart each carry 35%; attack pair and defense pair each carry 15%
  * (split evenly within each pair). Mirrors the production formula so the spec
  * stays in lockstep with the server instead of hardcoding per-scenario arithmetic.
+ * `heart` defaults to 0 (fresh-player heart ring has xp=0 in all scenarios below).
  */
 function battleHandAvg(xps: {
   thumb: number;
@@ -46,10 +47,11 @@ function battleHandAvg(xps: {
   a2: number;
   d1: number;
   d2: number;
+  heart?: number;
 }): number {
   const atkAvg = (xps.a1 + xps.a2) / 2;
   const defAvg = (xps.d1 + xps.d2) / 2;
-  return xps.thumb * 0.5 + atkAvg * 0.25 + defAvg * 0.25;
+  return xps.thumb * 0.35 + atkAvg * 0.15 + defAvg * 0.15 + (xps.heart ?? 0) * 0.35;
 }
 
 /** Expected scaled stake XP for DEFENSIVE given a battle-hand weighted average. */
@@ -153,34 +155,34 @@ test('scenario 1: an all-zero carried hand floors DEFENSIVE at 20', async () => 
 });
 
 // ── Scenario 2: strong hand → scaled ─────────────────────────────────────────
-// thumb=400, a1=200, a2=200, d1=100, d2=100 (50/25/25 weighting)
-//   battleHandAvgXp = 400·0.5 + ((200+200)/2)·0.25 + ((100+100)/2)·0.25
-//                   = 200 + 50 + 25 = 275
-//   npcEffectiveXp  = round(275 × 1.0) = 275
-//   stakeXp         = max(20, 275) = 275
-test('scenario 2: a strong carried hand scales DEFENSIVE to 275', async () => {
+// thumb=400, a1=200, a2=200, d1=100, d2=100, heart=0 (35/15/15/35 weighting)
+//   battleHandAvgXp = 400·0.35 + ((200+200)/2)·0.15 + ((100+100)/2)·0.15 + 0·0.35
+//                   = 140 + 30 + 15 + 0 = 185
+//   npcEffectiveXp  = round(185 × 1.0) = 185
+//   stakeXp         = max(20, 185) = 185
+test('scenario 2: a strong carried hand scales DEFENSIVE to 185', async () => {
   const token = await mintToken();
   const hand = { thumb: 400, a1: 200, a2: 200, d1: 100, d2: 100 };
   await seedBattleHand(token, hand);
 
   const preview = await fetchPreview(token);
-  const battleHandAvgXp = battleHandAvg(hand); // 275
+  const battleHandAvgXp = battleHandAvg(hand); // 185
   expect(preview.playerBattleHandAvgXp).toBeCloseTo(battleHandAvgXp, 5);
 
-  const expected = expectedDefensiveStake(battleHandAvgXp); // max(20, round(275)) = 275
-  expect(expected).toBe(275);
+  const expected = expectedDefensiveStake(battleHandAvgXp); // max(20, round(185)) = 185
+  expect(expected).toBe(185);
 
   const def = preview.DEFENSIVE as PreviewEntry;
   expect(def).toBeDefined();
-  expect(def.npcEffectiveXp).toBe(275);
-  expect(def.stakeXp).toBe(275);
+  expect(def.npcEffectiveXp).toBe(185);
+  expect(def.stakeXp).toBe(185);
 });
 
 // ── Scenario 3: high Reliquary, weak carry → floor (Reliquary ignored) ───────
-// Grant a 10000-XP Reliquary ring (in_carry = 0) and carry rings at xp=10.
-//   battleHandAvgXp = 10·0.5 + 10·0.25 + 10·0.25 = 10  (uniform hand → unchanged)
-//   npcEffectiveXp  = round(10 × 1.0) = 10
-//   stakeXp         = max(20, 10) = 20   ← floor, Reliquary plays no part
+// Grant a 10000-XP Reliquary ring (in_carry = 0) and carry rings at xp=10, heart=0.
+//   battleHandAvgXp = 10·0.35 + 10·0.15 + 10·0.15 + 0·0.35 = 3.5 + 1.5 + 1.5 = 6.5
+//   npcEffectiveXp  = round(6.5 × 1.0) = 7
+//   stakeXp         = max(20, 7) = 20   ← floor, Reliquary plays no part
 test('scenario 3: a big Reliquary with a weak carry still floors DEFENSIVE at 20', async () => {
   const token = await mintToken();
   await grantReliquaryXp(token, 10000); // Reliquary aggregate — must be ignored
@@ -188,40 +190,40 @@ test('scenario 3: a big Reliquary with a weak carry still floors DEFENSIVE at 20
   await seedBattleHand(token, hand);
 
   const preview = await fetchPreview(token);
-  const battleHandAvgXp = battleHandAvg(hand); // 10
+  const battleHandAvgXp = battleHandAvg(hand); // 6.5
   expect(preview.playerBattleHandAvgXp).toBeCloseTo(battleHandAvgXp, 5);
 
-  const expected = expectedDefensiveStake(battleHandAvgXp); // max(20, round(10)) = 20
+  const expected = expectedDefensiveStake(battleHandAvgXp); // max(20, round(6.5)) = 20
   expect(expected).toBe(DEFENSIVE_FLOOR);
 
   const def = preview.DEFENSIVE as PreviewEntry;
   expect(def).toBeDefined();
-  expect(def.npcEffectiveXp).toBe(10);
+  expect(def.npcEffectiveXp).toBe(7);
   expect(def.stakeXp).toBe(DEFENSIVE_FLOOR);
 });
 
 // ── Scenario 4: thumb-heavy hand ─────────────────────────────────────────────
-// thumb=800, a1=50, a2=50, d1=50, d2=50 (50/25/25 weighting)
-//   battleHandAvgXp = 800·0.5 + ((50+50)/2)·0.25 + ((50+50)/2)·0.25
-//                   = 400 + 12.5 + 12.5 = 425
-//   npcEffectiveXp  = round(425 × 1.0) = 425
-//   stakeXp         = max(20, 425) = 425
-test('scenario 4: a thumb-heavy carried hand scales DEFENSIVE to 425', async () => {
+// thumb=800, a1=50, a2=50, d1=50, d2=50, heart=0 (35/15/15/35 weighting)
+//   battleHandAvgXp = 800·0.35 + ((50+50)/2)·0.15 + ((50+50)/2)·0.15 + 0·0.35
+//                   = 280 + 7.5 + 7.5 + 0 = 295
+//   npcEffectiveXp  = round(295 × 1.0) = 295
+//   stakeXp         = max(20, 295) = 295
+test('scenario 4: a thumb-heavy carried hand scales DEFENSIVE to 295', async () => {
   const token = await mintToken();
   const hand = { thumb: 800, a1: 50, a2: 50, d1: 50, d2: 50 };
   await seedBattleHand(token, hand);
 
   const preview = await fetchPreview(token);
-  const battleHandAvgXp = battleHandAvg(hand); // 425
+  const battleHandAvgXp = battleHandAvg(hand); // 295
   expect(preview.playerBattleHandAvgXp).toBeCloseTo(battleHandAvgXp, 5);
 
-  const expected = expectedDefensiveStake(battleHandAvgXp); // max(20, round(425)) = 425
-  expect(expected).toBe(425);
+  const expected = expectedDefensiveStake(battleHandAvgXp); // max(20, round(295)) = 295
+  expect(expected).toBe(295);
 
   const def = preview.DEFENSIVE as PreviewEntry;
   expect(def).toBeDefined();
-  expect(def.npcEffectiveXp).toBe(425);
-  expect(def.stakeXp).toBe(425);
+  expect(def.npcEffectiveXp).toBe(295);
+  expect(def.stakeXp).toBe(295);
 });
 
 // ── Scenario 5: preview matches the BattleRoom ───────────────────────────────
@@ -236,9 +238,9 @@ test('scenario 5: the joined battle-ai AI thumb XP matches the preview stake (27
   const hand = { thumb: 400, a1: 200, a2: 200, d1: 100, d2: 100 };
   await seedBattleHand(token, hand);
 
-  const battleHandAvgXp = battleHandAvg(hand); // 275
-  const expected = expectedDefensiveStake(battleHandAvgXp); // 275
-  expect(expected).toBe(275);
+  const battleHandAvgXp = battleHandAvg(hand); // 185
+  const expected = expectedDefensiveStake(battleHandAvgXp); // 185
+  expect(expected).toBe(185);
 
   // Inject the SAME token so BootScene authenticates as this player.
   await ctx.addInitScript(`localStorage.setItem('er_token', ${JSON.stringify(token)})`);
@@ -267,7 +269,7 @@ test('scenario 5: the joined battle-ai AI thumb XP matches the preview stake (27
   const aiThumbXp = await page.evaluate(
     () => (window as any).__room?.state?.players?.get('AI')?.thumb?.xp,
   );
-  expect(aiThumbXp).toBe(expected); // 233 — preview stake == seated AI thumb XP
+  expect(aiThumbXp).toBe(expected); // preview stake == seated AI thumb XP
 
   await ctx.close();
 });
