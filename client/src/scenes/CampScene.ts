@@ -1369,11 +1369,19 @@ export class CampScene extends DualCameraScene {
       // 'heart' path (the manager's resolveMove) rather than the carry/loadout
       // machinery in applySwap.
       if (source === 'heart' || sel.source === 'heart') {
-        // A selected ring dropped onto the heart slot (equip, releasing the old
-        // heart ring to the selected ring's section), OR the heart ring dropped
-        // onto another section (unequip to that target). Both are a single move
-        // of the held ring onto `source`, routed through the manager.
-        await this.swapManager?.moveTo(source);
+        if (sel.source === 'heart' && source !== 'heart') {
+          // Heart ring held, user clicked a non-heart ring as swap partner.
+          // Re-seat selection on the clicked ring so moveTo('heart') routes through
+          // reliquaryMove(ringId, 'heart', source) -> swapRingsMutation (the working order).
+          this.swapManager?.select(ringId, source);
+          await this.swapManager?.moveTo('heart');
+        } else {
+          // A selected ring dropped onto the heart slot (equip, releasing the old
+          // heart ring to the selected ring's section), OR the heart ring dropped
+          // onto another section (unequip to that target). Both are a single move
+          // of the held ring onto `source`, routed through the manager.
+          await this.swapManager?.moveTo(source);
+        }
         return;
       }
       // Two distinct rings from distinct sources — perform the swap. The first
