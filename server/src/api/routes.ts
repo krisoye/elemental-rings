@@ -71,6 +71,7 @@ import {
   unlockShrine,
   consumeAndUnlockShrine,
   swapRings,
+  saveRingUses,
 } from '../persistence/PlayerRepo';
 import { ElementEnum } from '../../../shared/types';
 import { insertRing as insertRingRow, makeRing, getRingById } from '../persistence/ringRows';
@@ -1416,6 +1417,29 @@ if (process.env.E2E_TEST_ROUTES === '1') {
     // overflow path), which would add to carry rather than the Reliquary.
     insertRingRow(playerId, makeRing({ element: 0, tier: 0, xp, maxUses: 3, currentUses: 3, escrowed: 0, inCarry: 0, pending: 0 }));
     res.status(200).json({ ok: true, aggregateXp: getSpiritStats(playerId).aggregateXp });
+  });
+
+  /**
+   * POST /api/test/spend-ring-uses — set a ring's current_uses to `uses` (clamped
+   * to [0, max_uses]). Used by E2E specs that need a partially-drained ring to
+   * exercise recharge-success paths. Body: { ringId: string, uses: number }.
+   * Test-only.
+   */
+  apiRouter.post('/api/test/spend-ring-uses', requireAuth, (req: Request, res: Response): void => {
+    const { ringId, uses } = req.body ?? {};
+    if (typeof ringId !== 'string' || !ringId) {
+      fail(res, 400, 'ringId (string) is required');
+      return;
+    }
+    if (typeof uses !== 'number' || !Number.isInteger(uses) || uses < 0) {
+      fail(res, 400, 'uses (non-negative integer) is required');
+      return;
+    }
+    const ring = getRingById(ringId);
+    if (!ring) { fail(res, 404, 'ring not found'); return; }
+    const clamped = Math.min(uses, ring.max_uses);
+    saveRingUses(ringId, clamped);
+    res.status(200).json({ ok: true, ringId, current_uses: clamped });
   });
 
   /**

@@ -532,6 +532,17 @@ Set a ring's XP to an absolute value. Used to deterministically max a parent rin
 
 ---
 
+### POST /api/test/spend-ring-uses
+
+**Auth required:** yes (requireAuth only)
+**Request body:** `{ ringId: string, uses: number }`
+**Response (success):** `{ ok: true, ringId: string, current_uses: number }` — HTTP 200
+**Response (error):** 400 — `"ringId (string) is required"` | 400 — `"uses (non-negative integer) is required"` | 404 — `"ring not found"`
+
+Set a ring's `current_uses` to an exact value, clamped to `[0, max_uses]`. Used by recharge E2E specs that need a partially-drained ring to exercise recharge-success paths.
+
+---
+
 ### POST /api/test/set-gold
 
 **Auth required:** yes (requireAuth only)
