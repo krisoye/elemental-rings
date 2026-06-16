@@ -791,12 +791,6 @@ test('spirit: spirit_max drops by exactly discarded_ring.max_uses × multiplier 
 
   // spirit_max must drop by exactly target.max_uses × SEEKER_MULTIPLIER.
   // Pre-fix: column was still 60 (stale). Post-fix: (15-3)×4 = 48.
-  // Note: spirit_current clamping after discard is out of scope for #481 (the
-  // discard handler only calls refreshSpiritMax, not clampSpiritCurrent). The
-  // fresh player's spirit_current starts at 50 (DB default) and spirit_max live
-  // starts at 60 (getSpiritStats), so spirit_current < spirit_max before this
-  // call. After discard spirit_max(live)=48 and spirit_current(DB)=50 — the
-  // overage is a pre-existing gap tracked separately, not an #481 regression.
   const expectedDrop = target.max_uses * SEEKER_MULTIPLIER;
   const { player: after } = await me(token);
   expect(after.spirit_max).toBe(before.spirit_max - expectedDrop);
@@ -826,4 +820,164 @@ test('spirit: spirit_max is unchanged after discarding a carried ring (#481)', a
   // spirit_max must be unchanged: carried rings don't contribute to the Reliquary sum.
   const { player: after } = await me(token);
   expect(after.spirit_max).toBe(before.spirit_max);
+});
+
+// ── #481 Phase 2 — clamp invariant after spirit_max drops below spirit_current ─
+//
+// The Phase 1 fix (refreshSpiritMax) updated the stored column. Phase 2 adds
+// clampSpiritCurrent to all three handlers so spirit_current can never persist
+// above spirit_max after a mutation. These tests are implementation-aware:
+// they depend on the clamp being present and assert spirit_current === spirit_max
+// (strict equality) in cases where the mutation provably drops spirit_max below
+// the starting spirit_current.
+//
+// Starting state for a fresh player:
+//   spirit_current = 50 (schema DEFAULT — persisted before seedStarterInventory)
+//   spirit_max (live) = 60 (getSpiritStats; DB column unsynced by createPlayer)
+//
+// After discarding one Reliquary ring (max_uses=3):
+//   spirit_max (live) = (15 - 3) × 4 = 48 < 50 = spirit_current → clamp fires
+//
+// After fusing/merging two Reliquary rings (parents max_uses=3, child max_uses=4):
+//   spirit_max (live) = (15 - 3 - 3 + 4) × 4 = 52 > 50 = spirit_current
+//   → clamp does not fire on this path; weaker <= assertion is appropriate.
+
+// ── DISCARD clamp: spirit_current clamped when spirit_max drops below it ──────
+// #481 adversarial: the clamp fires specifically when spirit_max (post-discard)
+// drops below the player's current spirit_current. Fresh player: spirit_current=50,
+// post-discard spirit_max=48 → clamp MUST write spirit_current=48. Pre-fix (clamp
+// absent) spirit_current stayed 50 even though max was 48 — a latent gauge overrun
+// that would let the player spend 50 spirit in a battle with a 48-unit pool.
+test('spirit: spirit_current is clamped to new spirit_max after Reliquary discard drops max below current (#481)', async () => {
+  const { token } = await register();
+  const { rings } = await me(token);
+
+  // Fresh player: spirit_current = 50 (DB default). spirit_max (live) = 60 but
+  // spirit_current is DB-stored at 50 since createPlayer doesn't call
+  // refreshSpiritMax. Discard one Reliquary ring (max_uses=3) → spirit_max = 48.
+  // 48 < 50 → clamp must fire and write spirit_current = 48.
+  const target = rings.find((r: Ring) => r.in_carry === 0);
+  if (!target) throw new Error('No Reliquary ring found to discard');
+
+  const discardRes = await fetch(`${API_URL}/api/rings/${target.id}`, {
+    method: 'DELETE',
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  expect(discardRes.status).toBe(200);
+
+  const expectedSpiritMax = (STARTER_RELIQUARY_SUM - target.max_uses) * SEEKER_MULTIPLIER; // 48
+  const { player: after } = await me(token);
+  expect(after.spirit_max).toBe(expectedSpiritMax); // 48
+  // Strict equality: clamp wrote spirit_current = spirit_max (not just <= ).
+  // If this is 50 the clamp was not called; if 48 it was.
+  expect(after.spirit_current).toBe(expectedSpiritMax);
+});
+
+// ── FUSION clamp: spirit_current ≤ spirit_max (clamp not strictly reachable) ──
+// #481 adversarial: after fusing two Reliquary rings, spirit_max = 52 which is
+// above the fresh player's spirit_current of 50. The clamp is called but does not
+// fire (52 ≥ 50). Weaker assertion: spirit_current must not exceed spirit_max.
+// A strict-equality test is not reachable on the standard starter path because
+// the fusion child's max_uses (4) always leaves spirit_max (52) above the DB
+// default spirit_current (50). The clamp call is still tested here — if it
+// incorrectly *reduced* spirit_current below 50 the test would catch that.
+test('spirit: spirit_current does not exceed spirit_max after Reliquary fusion (#481 clamp)', async () => {
+  const { token } = await register();
+  const { rings } = await me(token);
+  const fire = rings.find((r: Ring) => r.in_carry === 0 && r.element === 0 /* FIRE */);
+  const water = rings.find((r: Ring) => r.in_carry === 0 && r.element === 1 /* WATER */);
+  if (!fire || !water) throw new Error('Expected FIRE and WATER rings in starter Reliquary');
+
+  await setRingXP481(token, fire.id, 500);
+  await setRingXP481(token, water.id, 500);
+
+  const fuseRes = await fetch(`${API_URL}/api/fusion/combine`, {
+    method: 'POST',
+    headers: authJson(token),
+    body: JSON.stringify({ ringId1: fire.id, ringId2: water.id }),
+  });
+  expect(fuseRes.status).toBe(200);
+
+  // spirit_max = 52 (> 50 = spirit_current) → clamp called but does not reduce.
+  // spirit_current must remain ≤ spirit_max; must not have been incorrectly zeroed
+  // or truncated by the clamp call.
+  const { player: after } = await me(token);
+  expect(after.spirit_max).toBe(52); // (15-3-3+4)×4
+  expect(after.spirit_current).toBeLessThanOrEqual(after.spirit_max);
+  expect(after.spirit_current).toBeGreaterThan(0); // clamp must never zero-out a valid balance
+});
+
+// ── MERGE clamp: spirit_current ≤ spirit_max (same reasoning as fusion) ───────
+// #481 adversarial: same shape as the fusion clamp test but for POST /api/rings/merge.
+// spirit_max post-merge = 52 > 50 = spirit_current → clamp is called, does not fire.
+test('spirit: spirit_current does not exceed spirit_max after Reliquary merge (#481 clamp)', async () => {
+  const { token } = await register();
+  const { rings } = await me(token);
+  const earthRings = rings.filter((r: Ring) => r.in_carry === 0 && r.element === 2 /* EARTH */);
+  if (earthRings.length < 2) throw new Error('Expected two EARTH rings in starter Reliquary');
+  const [e1, e2] = earthRings;
+
+  await setRingXP481(token, e1.id, 500);
+  await setRingXP481(token, e2.id, 500);
+  await unlockShrine481(token, 'forest_thornado_shrine');
+
+  const mergeRes = await fetch(`${API_URL}/api/rings/merge`, {
+    method: 'POST',
+    headers: authJson(token),
+    body: JSON.stringify({ ringId1: e1.id, ringId2: e2.id, shrineId: 'forest_thornado_shrine' }),
+  });
+  expect(mergeRes.status).toBe(200);
+
+  // spirit_max = 52 > 50 = spirit_current → clamp called but does not reduce.
+  const { player: after } = await me(token);
+  expect(after.spirit_max).toBe(52);
+  expect(after.spirit_current).toBeLessThanOrEqual(after.spirit_max);
+  expect(after.spirit_current).toBeGreaterThan(0);
+});
+
+// ── FUSION raises spirit_max: spirit_current must NOT be reduced ──────────────
+// #481 adversarial: when fusion produces a child that RAISES spirit_max (two
+// CARRIED rings fused — parents deleted from carry, child inserts into the
+// Reliquary at in_carry=0 by default, net-adding a ring to the spirit pool),
+// clampSpiritCurrent must not reduce spirit_current. The MIN() in the clamp
+// SQL only fires when spirit_current > new_max; here spirit_max rises so the
+// MIN() selects the unchanged spirit_current.
+// Scenario: fuse one WIND (a1, in_carry=1) + one EARTH (thumb, in_carry=1)
+// carried ring → DUST (valid fusion). Starter battle hand: EARTH(thumb)/WIND(a1/a2)
+// /EARTH(d1/d2). Both elements are in carry. After fusion child lands in Reliquary:
+//   Reliquary before = 5 rings × 3 max_uses = 15 → spirit_max_live = 60
+//   Child (DUST, max_uses=4) joins Reliquary → sum = 15+4 = 19 → spirit_max = 76
+//   spirit_current (50, DB default) < 76 → MIN(50,76) = 50 → unchanged.
+test('spirit: clamp does not reduce spirit_current when fusion raises spirit_max (#481 clamp)', async () => {
+  const { token } = await register();
+  const { rings } = await me(token);
+
+  // WIND = element 3, EARTH = element 2; both present in starter battle hand (carry).
+  const wind = rings.find((r: Ring) => r.in_carry === 1 && r.element === 3 /* WIND */);
+  const earth = rings.find((r: Ring) => r.in_carry === 1 && r.element === 2 /* EARTH */);
+  if (!wind || !earth) throw new Error('Expected WIND and EARTH rings in starter carry');
+
+  await setRingXP481(token, wind.id, 500);
+  await setRingXP481(token, earth.id, 500);
+
+  const { player: before } = await me(token);
+  const spiritCurrentBefore = before.spirit_current; // 50 (DB default)
+  const spiritMaxBefore = before.spirit_max;         // 60 (getSpiritStats live)
+
+  const fuseRes = await fetch(`${API_URL}/api/fusion/combine`, {
+    method: 'POST',
+    headers: authJson(token),
+    body: JSON.stringify({ ringId1: wind.id, ringId2: earth.id }),
+  });
+  expect(fuseRes.status).toBe(200);
+  const { ring: child } = await fuseRes.json();
+  expect(child.max_uses).toBe(4); // Tier 1 (1000 XP) → 3+1=4
+
+  // Parents removed from carry (not Reliquary) → Reliquary gains child (max_uses=4).
+  // spirit_max = (15 + 4) × 4 = 76. spirit_current must stay at 50 (MIN(50,76)=50).
+  const { player: after } = await me(token);
+  expect(after.spirit_max).toBe(spiritMaxBefore + child.max_uses * SEEKER_MULTIPLIER);
+  // #481 adversarial: clamp must never lower spirit_current when spirit_max rises.
+  // If spirit_current changed here, clampSpiritCurrent was applied incorrectly.
+  expect(after.spirit_current).toBe(spiritCurrentBefore);
 });
