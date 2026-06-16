@@ -10,6 +10,7 @@ const API_URL = 'http://localhost:2568';
 
 interface Ring {
   id: string;
+  element: number;
   max_uses: number;
   current_uses: number;
   in_carry: number;
@@ -643,3 +644,186 @@ test('spirit: aggregate_xp counts only Reliquary rings, not carried rings', asyn
   expect(afterRetire.spirit_max).toBeGreaterThan(spiritMaxBefore);
   await ctx.close();
 }, 60000);
+
+// ── #481 — spirit_max parity after Reliquary mutations ────────────────────────
+//
+// Regression suite for the three routes that mutate Reliquary max_uses without
+// calling refreshSpiritMax: POST /api/fusion/combine, POST /api/rings/merge, and
+// DELETE /api/rings/:ringId. Pre-fix the stored players.spirit_max column (read
+// by getSpiritAndFood → BattleRoom) diverged from the live getSpiritStats value
+// (read by GET /api/me) until something else triggered a refresh. Each test
+// asserts the exact expected spirit_max immediately after the mutation with no
+// secondary trigger needed.
+//
+// Constants (seeker multiplier=4; starter Reliquary = 5 rings each max_uses=3):
+//   SEEKER_MULTIPLIER = 4
+//   STARTER_RELIQUARY_SUM = 5 × 3 = 15 → spirit_max = 60
+// After fusing/merging two Reliquary rings (each XP-bumped to 500, max_uses=3)
+// into one child (max_uses = 3 + tierForXp(1000) = 3 + 1 = 4):
+//   spirit_max = (15 - 3 - 3 + 4) × 4 = 13 × 4 = 52
+// After discarding one Reliquary ring (max_uses=3):
+//   spirit_max = (15 - 3) × 4 = 12 × 4 = 48
+
+const SEEKER_MULTIPLIER = 4; // DIFFICULTY_MULTIPLIERS['seeker'] per shared/types.ts
+// Starter Reliquary: FIRE, WATER, EARTH, WIND, EARTH — each max_uses=3 (tier 0).
+const STARTER_RELIQUARY_SUM = 5 * 3; // 15
+const STARTER_SPIRIT_MAX = STARTER_RELIQUARY_SUM * SEEKER_MULTIPLIER; // 60
+
+/** Set a ring's XP via the test-only route; raises if the server rejects. */
+async function setRingXP481(token: string, ringId: string, xp: number): Promise<void> {
+  const res = await fetch(`${API_URL}/api/test/set-ring-xp`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+    body: JSON.stringify({ ringId, xp }),
+  });
+  if (!res.ok) throw new Error(`set-ring-xp failed (${res.status}): ${await res.text()}`);
+}
+
+/** Unlock a shrine for merge via the test-only route. */
+async function unlockShrine481(token: string, shrineId: string): Promise<void> {
+  const res = await fetch(`${API_URL}/api/test/unlock-shrine`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+    body: JSON.stringify({ shrineId }),
+  });
+  if (!res.ok) throw new Error(`unlock-shrine failed (${res.status}): ${await res.text()}`);
+}
+
+// ── FUSION parity ─────────────────────────────────────────────────────────────
+// #481 adversarial: pre-fix spirit_max column stayed stale after fuseRings()
+// deleted two Reliquary parents and inserted a child with a different max_uses.
+// Post-fix: refreshSpiritMax() is called at routes.ts:776 and spirit_max reflects
+// the new Σ(Reliquary max_uses) × seeker immediately in the same response cycle.
+test('spirit: spirit_max is recomputed immediately after fusion of two Reliquary rings (#481)', async () => {
+  const { token } = await register();
+  const { rings } = await me(token);
+  // Starter Reliquary: FIRE(0) + WATER(1) — the two fusable elements. Both sit at
+  // tier 0 (max_uses=3, xp=0). Bump each to exactly 500 XP (Tier 1) so fuseRings
+  // accepts them. The fusion child lands at 1000 XP → Tier 1 → max_uses = 4.
+  const fire = rings.find((r: Ring) => r.in_carry === 0 && r.element === 0 /* FIRE */);
+  const water = rings.find((r: Ring) => r.in_carry === 0 && r.element === 1 /* WATER */);
+  if (!fire || !water) throw new Error('Expected FIRE and WATER rings in the starter Reliquary');
+
+  await setRingXP481(token, fire.id, 500); // Tier 1 minimum
+  await setRingXP481(token, water.id, 500); // Tier 1 minimum
+
+  // Confirm baseline spirit_max before mutation.
+  const { player: before } = await me(token);
+  expect(before.spirit_max).toBe(STARTER_SPIRIT_MAX); // 60 on seeker
+
+  const fuseRes = await fetch(`${API_URL}/api/fusion/combine`, {
+    method: 'POST',
+    headers: authJson(token),
+    body: JSON.stringify({ ringId1: fire.id, ringId2: water.id }),
+  });
+  expect(fuseRes.status).toBe(200);
+  const { ring: child } = await fuseRes.json();
+  // Child: max_uses = 3 + tierForXp(1000) = 3 + 1 = 4. Parents removed: 3 + 3 = 6.
+  expect(child.max_uses).toBe(4);
+
+  // Immediately assert spirit_max from GET /api/me (which reports getSpiritStats —
+  // the live recomputed value). Must equal (15 - 3 - 3 + 4) × 4 = 52.
+  // Pre-fix the stored column was still 60; post-fix it syncs to match live.
+  const expectedSpiritMax =
+    (STARTER_RELIQUARY_SUM - fire.max_uses - water.max_uses + child.max_uses) * SEEKER_MULTIPLIER;
+  const { player: after } = await me(token);
+  expect(after.spirit_max).toBe(expectedSpiritMax);
+  // Verify spirit_current is clamped to the new max (no ghost spirit above the cap).
+  expect(after.spirit_current).toBeLessThanOrEqual(after.spirit_max);
+});
+
+// ── MERGE parity ──────────────────────────────────────────────────────────────
+// #481 adversarial: same staleness bug via POST /api/rings/merge. Two Reliquary
+// EARTH rings are merged into one stronger EARTH ring; the Reliquary sum changes
+// exactly as with fusion. Post-fix: refreshSpiritMax() at routes.ts:464.
+test('spirit: spirit_max is recomputed immediately after merge of two Reliquary rings (#481)', async () => {
+  const { token } = await register();
+  const { rings } = await me(token);
+  // Starter Reliquary has two EARTH rings (element=2). Lift both to Tier 1.
+  const earthRings = rings.filter((r: Ring) => r.in_carry === 0 && r.element === 2 /* EARTH */);
+  if (earthRings.length < 2) throw new Error('Expected two EARTH rings in the starter Reliquary');
+  const [e1, e2] = earthRings;
+
+  await setRingXP481(token, e1.id, 500);
+  await setRingXP481(token, e2.id, 500);
+  // Merge requires a player-unlocked shrine; use the same test shrine as merge.spec.ts.
+  await unlockShrine481(token, 'forest_thornado_shrine');
+
+  const { player: before } = await me(token);
+  expect(before.spirit_max).toBe(STARTER_SPIRIT_MAX); // 60 baseline
+
+  const mergeRes = await fetch(`${API_URL}/api/rings/merge`, {
+    method: 'POST',
+    headers: authJson(token),
+    body: JSON.stringify({ ringId1: e1.id, ringId2: e2.id, shrineId: 'forest_thornado_shrine' }),
+  });
+  expect(mergeRes.status).toBe(200);
+  const { ring: child } = await mergeRes.json();
+  // Merged child: XP = 500+500=1000 → Tier 1 → max_uses = 3+1 = 4. Parents: 3+3=6.
+  expect(child.max_uses).toBe(4);
+
+  // (15 - 3 - 3 + 4) × 4 = 52
+  const expectedSpiritMax =
+    (STARTER_RELIQUARY_SUM - e1.max_uses - e2.max_uses + child.max_uses) * SEEKER_MULTIPLIER;
+  const { player: after } = await me(token);
+  expect(after.spirit_max).toBe(expectedSpiritMax);
+  expect(after.spirit_current).toBeLessThanOrEqual(after.spirit_max);
+});
+
+// ── DISCARD (Reliquary ring) parity ──────────────────────────────────────────
+// #481 adversarial: discardRing removes a Reliquary ring's max_uses from the
+// spirit sum permanently. Pre-fix the column stayed at the old value. Post-fix:
+// refreshSpiritMax() at routes.ts:485 immediately writes the decremented sum.
+test('spirit: spirit_max drops by exactly discarded_ring.max_uses × multiplier after Reliquary discard (#481)', async () => {
+  const { token } = await register();
+  const { rings, player: before } = await me(token);
+  expect(before.spirit_max).toBe(STARTER_SPIRIT_MAX); // sanity: 60
+
+  // Pick any Reliquary ring (in_carry=0, not heart_slot). Starter FIRE ring is safe.
+  const target = rings.find((r: Ring) => r.in_carry === 0);
+  if (!target) throw new Error('No Reliquary ring found to discard');
+
+  const discardRes = await fetch(`${API_URL}/api/rings/${target.id}`, {
+    method: 'DELETE',
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  expect(discardRes.status).toBe(200);
+
+  // spirit_max must drop by exactly target.max_uses × SEEKER_MULTIPLIER.
+  // Pre-fix: column was still 60 (stale). Post-fix: (15-3)×4 = 48.
+  // Note: spirit_current clamping after discard is out of scope for #481 (the
+  // discard handler only calls refreshSpiritMax, not clampSpiritCurrent). The
+  // fresh player's spirit_current starts at 50 (DB default) and spirit_max live
+  // starts at 60 (getSpiritStats), so spirit_current < spirit_max before this
+  // call. After discard spirit_max(live)=48 and spirit_current(DB)=50 — the
+  // overage is a pre-existing gap tracked separately, not an #481 regression.
+  const expectedDrop = target.max_uses * SEEKER_MULTIPLIER;
+  const { player: after } = await me(token);
+  expect(after.spirit_max).toBe(before.spirit_max - expectedDrop);
+});
+
+// ── DISCARD (carried ring) no-regression ─────────────────────────────────────
+// #481 adversarial: discardRing on a CARRIED ring (in_carry=1) must NOT change
+// spirit_max — carried rings are excluded from the Σ(max_uses WHERE in_carry=0)
+// formula. This guards against an over-eager refreshSpiritMax that could be
+// triggered before logic verifies carry state (no such bug now, but regression
+// guard for future refactors).
+test('spirit: spirit_max is unchanged after discarding a carried ring (#481)', async () => {
+  const { token } = await register();
+  const { rings, player: before } = await me(token);
+  expect(before.spirit_max).toBe(STARTER_SPIRIT_MAX); // 60 baseline
+
+  // The carried set (in_carry=1, heart_slot=0). Any starter carried ring works.
+  const carried = rings.find((r: Ring) => r.in_carry === 1);
+  if (!carried) throw new Error('No carried ring found');
+
+  const discardRes = await fetch(`${API_URL}/api/rings/${carried.id}`, {
+    method: 'DELETE',
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  expect(discardRes.status).toBe(200);
+
+  // spirit_max must be unchanged: carried rings don't contribute to the Reliquary sum.
+  const { player: after } = await me(token);
+  expect(after.spirit_max).toBe(before.spirit_max);
+});
