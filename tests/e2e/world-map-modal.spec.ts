@@ -434,3 +434,34 @@ test('world-map S4: reopen resets fit zoom and clears pan from previous session'
   await stopEdgeWatchdog(page);
   await ctx.close();
 });
+
+// ── Regression: P1 — shared cursor keys must survive hide() ──────────────────
+
+test('world-map regression #438 P1: keyboard works after hide() — shared cursor keys not destroyed', async ({ browser }) => {
+  // #438 P1 adversarial: hide() previously called removeKey(arrowKey, true) which
+  // destroyed the shared Key objects returned by BaseBiomeScene.createCursorKeys().
+  // Destroying them broke ALL keyboard input (movement + keydown-M) permanently
+  // after the first map close.
+  //
+  // The fix: store handler refs in show() and call key.off('down', ref) in hide()
+  // instead of removeKey(key, true). This test FAILS if that destroy call returns.
+  const { page, ctx } = await setupPage(browser);
+  await enterForestSafe(page);
+
+  // One complete open/close cycle. closeMap() calls modal.hide() directly —
+  // that is the exact call site where the P1 bug lived.
+  await openMap(page);
+  await closeMap(page);
+
+  // If hide() destroyed the shared cursor keys, BaseBiomeScene's keyboard handling
+  // is now broken. Pressing M would never trigger toggleOverworldMap() and the map
+  // would never open — the waitForFunction below times out.
+  await page.keyboard.press('m');
+  await page.waitForFunction(
+    () => !!(window as any).__scene?.overworldMap,
+    { timeout: 5000 },  // FAILS if hide() destroyed shared cursor keys
+  );
+
+  await stopEdgeWatchdog(page);
+  await ctx.close();
+});
