@@ -152,7 +152,7 @@ Equip a ring into the Heart slot, or swap the heart ring with a battle-hand slot
 **Response (success):** `{ rings: Ring[] }` — HTTP 200
 **Response (error):** 404 — `"ring not found"`
 
-Permanently discard a ring the player owns. Returns the full updated ring list.
+Permanently discard a ring the player owns. Returns the full updated ring list. Side effect (#481): when the discarded ring was in the Reliquary (`in_carry=0, heart_slot=0`), `spirit_max` is recomputed and persisted, and `spirit_current` is clamped to the new max.
 
 ---
 
@@ -187,7 +187,7 @@ Returns the same shape as `GET /api/me`: the canonical player block, the full ri
 **Response (success):** `{ ring: Ring }` — HTTP 200; the newly created merged ring
 **Response (error):** 400 — `"ringId1 and ringId2 must be non-empty strings and shrineId must be a non-empty string"` | 400 — `"Ring not found or not owned"` | 400 — `"Cannot merge a ring with itself"` | 400 — `"Ring is locked in a duel (escrowed)"` | 400 — `"Ring is the pending WON ring"` | 400 — `"Rings must be the same element to merge"` | 400 — `"Both rings must reach Tier 1 (≥ 500 XP) to merge"` | 400 — `"Shrine is sealed or not found"` | 401 — not authenticated
 
-Merge two same-element rings into a single consolidated ring at an unsealed shrine. Both parents are consumed atomically; the resulting ring carries the summed XP (`xp = r1.xp + r2.xp`), tier derived from that sum (`tier = tierForXp(xp)`), and `max_uses = 3 + tier` (starts fully charged). Fusion-element rings (e.g. Steam, Storm) may be merged with another ring of the same fusion element. The `parent_dominant` field on the result is the element of the higher-XP parent, or −1 on an exact tie. Unlike fusion (`POST /api/fusion/combine`), merge never changes the element — the result is always the same element as both inputs. The `shrineId` must correspond to a shrine the player has already unsealed; sealed shrines are rejected server-side regardless of what the client sends.
+Merge two same-element rings into a single consolidated ring at an unsealed shrine. Both parents are consumed atomically; the resulting ring carries the summed XP (`xp = r1.xp + r2.xp`), tier derived from that sum (`tier = tierForXp(xp)`), and `max_uses = 3 + tier` (starts fully charged). Fusion-element rings (e.g. Steam, Storm) may be merged with another ring of the same fusion element. The `parent_dominant` field on the result is the element of the higher-XP parent, or −1 on an exact tie. Unlike fusion (`POST /api/fusion/combine`), merge never changes the element — the result is always the same element as both inputs. The `shrineId` must correspond to a shrine the player has already unsealed; sealed shrines are rejected server-side regardless of what the client sends. Side effect (#481): `spirit_max` is recomputed and persisted after the merge (the consolidated ring changes the Reliquary `max_uses` sum), and `spirit_current` is clamped to the new max.
 
 ---
 
@@ -309,7 +309,7 @@ Return the list of boss NPCs this player has already defeated. Intersects the pl
 **Response (success):** `{ ring: Ring }` — HTTP 200
 **Response (error):** 400 — `"ringId1 and ringId2 are required"` | 400 — descriptive message from `fuseRings` (not owned, already a fusion, below 500 XP, invalid pair)
 
-Fuse two parent rings into a fusion ring. Each parent must have `xp ≥ 500` (independently); neither may itself be a fusion ring; their elements must form a valid fusion pair. The same-tier requirement was removed in #390. Returns the new fusion ring row.
+Fuse two parent rings into a fusion ring. Each parent must have `xp ≥ 500` (independently); neither may itself be a fusion ring; their elements must form a valid fusion pair. The same-tier requirement was removed in #390. Returns the new fusion ring row. Side effect (#481): `spirit_max` is recomputed and persisted after the fusion (the child ring changes the Reliquary `max_uses` sum), and `spirit_current` is clamped to the new max.
 
 ---
 
