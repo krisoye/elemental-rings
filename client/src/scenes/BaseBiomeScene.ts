@@ -873,7 +873,10 @@ export abstract class BaseBiomeScene extends DualCameraScene {
 
   update(): void {
     // #87 Part D — while the Tab battle-hand overlay is open, freeze the player.
-    if (this.overlayOpen) {
+    // #438 — also freeze while the world-map modal is open (arrow keys must pan
+    // the map, not walk the player; the map does not set overlayOpen so we check
+    // isOpen() directly).
+    if (this.overlayOpen || this.overworldMap?.isOpen()) {
       this.player.halt();
       return;
     }

@@ -365,11 +365,17 @@ export class OverworldMapModal {
   private keyReset: Phaser.Input.Keyboard.Key | null = null;
   private keyNumpadAdd: Phaser.Input.Keyboard.Key | null = null;
   private keyNumpadSub: Phaser.Input.Keyboard.Key | null = null;
-  // #438 — Arrow-key pan handles.
+  // #438 — Arrow-key pan: Key refs (shared with BaseBiomeScene's createCursorKeys — must NOT
+  // be destroyed in hide(); only the modal's 'down' listener is attached/detached).
   private keyLeft:  Phaser.Input.Keyboard.Key | null = null;
   private keyRight: Phaser.Input.Keyboard.Key | null = null;
   private keyUp:    Phaser.Input.Keyboard.Key | null = null;
   private keyDown:  Phaser.Input.Keyboard.Key | null = null;
+  // Stored handler refs so hide() can call key.off('down', ref) without destroying the key.
+  private arrowLeftHandler:  (() => void) | null = null;
+  private arrowRightHandler: (() => void) | null = null;
+  private arrowUpHandler:    (() => void) | null = null;
+  private arrowDownHandler:  (() => void) | null = null;
   // #438 — Mouse-wheel zoom handler (stored so it can be removed in hide()).
   private onWheelHandler: ((ptr: Phaser.Input.Pointer, _go: unknown[], _dx: number, dy: number) => void) | null = null;
   private isDragging = false;
@@ -757,10 +763,15 @@ export class OverworldMapModal {
       this.panX = c.x; this.panY = c.y;
       this.applyTransform();
     };
-    this.keyLeft.on('down',  () => panStep(-ARROW_PAN_STEP, 0));
-    this.keyRight.on('down', () => panStep(ARROW_PAN_STEP, 0));
-    this.keyUp.on('down',    () => panStep(0, -ARROW_PAN_STEP));
-    this.keyDown.on('down',  () => panStep(0,  ARROW_PAN_STEP));
+    // Store handler refs so hide() can detach them by reference (key.off requires the same ref).
+    this.arrowLeftHandler  = () => panStep(-ARROW_PAN_STEP, 0);
+    this.arrowRightHandler = () => panStep(ARROW_PAN_STEP, 0);
+    this.arrowUpHandler    = () => panStep(0, -ARROW_PAN_STEP);
+    this.arrowDownHandler  = () => panStep(0,  ARROW_PAN_STEP);
+    this.keyLeft.on('down',  this.arrowLeftHandler);
+    this.keyRight.on('down', this.arrowRightHandler);
+    this.keyUp.on('down',    this.arrowUpHandler);
+    this.keyDown.on('down',  this.arrowDownHandler);
 
     // #438 — Mouse-wheel zoom: anchored at cursor position in panel-local coords.
     // Invariant: onWheelHandler is null on entry here (guaranteed by hide() clearing it and the
@@ -888,11 +899,14 @@ export class OverworldMapModal {
     if (this.keyReset)     { kb.removeKey(this.keyReset, true);     this.keyReset     = null; }
     if (this.keyNumpadAdd) { kb.removeKey(this.keyNumpadAdd, true); this.keyNumpadAdd = null; }
     if (this.keyNumpadSub) { kb.removeKey(this.keyNumpadSub, true); this.keyNumpadSub = null; }
-    // #438 — Arrow-key pan handles.
-    if (this.keyLeft)  { kb.removeKey(this.keyLeft, true);  this.keyLeft  = null; }
-    if (this.keyRight) { kb.removeKey(this.keyRight, true); this.keyRight = null; }
-    if (this.keyUp)    { kb.removeKey(this.keyUp, true);    this.keyUp    = null; }
-    if (this.keyDown)  { kb.removeKey(this.keyDown, true);  this.keyDown  = null; }
+    // #438 / P1 regression fix — Arrow keys are SHARED with BaseBiomeScene.createCursorKeys().
+    // removeKey(key, true) would DESTROY the shared Key objects and break player movement after
+    // any single map close. Instead, detach ONLY the modal's 'down' listeners by stored ref.
+    if (this.keyLeft  && this.arrowLeftHandler)  { this.keyLeft.off('down',  this.arrowLeftHandler);  this.arrowLeftHandler  = null; }
+    if (this.keyRight && this.arrowRightHandler) { this.keyRight.off('down', this.arrowRightHandler); this.arrowRightHandler = null; }
+    if (this.keyUp    && this.arrowUpHandler)    { this.keyUp.off('down',    this.arrowUpHandler);    this.arrowUpHandler    = null; }
+    if (this.keyDown  && this.arrowDownHandler)  { this.keyDown.off('down',  this.arrowDownHandler);  this.arrowDownHandler  = null; }
+    this.keyLeft = null; this.keyRight = null; this.keyUp = null; this.keyDown = null;
     // #438 — Mouse-wheel zoom handler.
     if (this.onWheelHandler) {
       this.scene.input.off('wheel', this.onWheelHandler, this);
