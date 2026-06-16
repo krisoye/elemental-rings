@@ -82,9 +82,13 @@ export class SnowScene extends BaseBiomeScene {
       .filter((t): t is Phaser.Tilemaps.Tileset => t !== null);
   }
 
-  /** 3-layer contract: ground (depth 0) / behind (depth 2) / in-front (depth 5). */
+  /** Layer contract: ground (0) / behind (2) / in-front (5), plus optional
+   *  mid-front (6) / max-front (7) overhead layers for the hand-authored shrine
+   *  + settlement screens (dust_shrine, snowhaven, frozen_lake) that stack
+   *  multiple canopy/roof tiers above the player. Screens without the extra
+   *  layers are unaffected — a missing layer is simply skipped. */
   protected tileLayerNames(): string[] {
-    return ['ground', 'behind', 'in-front'];
+    return ['ground', 'behind', 'in-front', 'mid-front', 'max-front'];
   }
 
   /** `behind` uses non-empty collision (cliffs, cabins, tree trunks block movement),
@@ -99,6 +103,8 @@ export class SnowScene extends BaseBiomeScene {
   protected tileLayerDepth(layerName: string): number {
     if (layerName === 'behind') return 2;
     if (layerName === 'in-front') return 5;
+    if (layerName === 'mid-front') return 6;   // above in-front + player (3)
+    if (layerName === 'max-front') return 7;   // topmost overhead canopy/roof tier
     return 0; // ground
   }
 
