@@ -7,7 +7,7 @@ import { canDoubleAttack } from '../game/DoubleAttack';
 import * as StatusEffects from '../game/StatusEffects';
 import { AIController, type EnrageConfig } from '../game/ai/AIController';
 import { makeRng, AI_PROFILES, type AIProfile } from '../game/ai/AIProfiles';
-import { generateAILoadout, PERSONALITY_SPIRIT_MULT, type SlotSpec } from '../game/ai/AILoadout';
+import { generateAILoadout, PERSONALITY_SPIRIT_MULT, computeNpcSpirit, type SlotSpec } from '../game/ai/AILoadout';
 import * as StakeResolver from '../game/StakeResolver';
 import {
   consumeUse,
@@ -40,7 +40,6 @@ import {
   AMBUSH_SPIRIT_COST,
   SPIRIT_PER_RING_USE,
   GOLD_FORFEIT_PENALTY,
-  BIOME_BOSS_SPIRIT_BONUS,
   BOSS_MODIFIERS,
   type BossModifier,
 } from '../game/constants';
@@ -182,6 +181,8 @@ export class BattleRoom extends Room<{ state: BattleState }> {
   private _npcSpirit = Infinity;
   /** Spirit-pool multiplier computed in onCreate from personality + boss tier. */
   private npcSpiritMult = 0;
+  /** #478 — NPC personality stored in onCreate so onJoin can pass it to computeNpcSpirit. */
+  private npcPersonality: AIPersonality = 'AGGRESSIVE';
 
   get npcSpirit(): number {
     return this._npcSpirit;
@@ -325,6 +326,8 @@ export class BattleRoom extends Room<{ state: BattleState }> {
       // Spirit pool multiplier: boss tier overrides personality (bosses have fixed
       // spiritMult in their BossModifier); roamers use the per-personality fraction.
       this.npcSpiritMult = mod?.spiritMult ?? PERSONALITY_SPIRIT_MULT[personality];
+      // #478 — stash for onJoin where computeNpcSpirit needs it.
+      this.npcPersonality = personality;
 
       // Deterministic-test AI-strength overrides (see BattleRoomOptions): a weak
       // AI yields a guaranteed protagonist win; a tanky AI a guaranteed loss.
@@ -637,12 +640,15 @@ export class BattleRoom extends Room<{ state: BattleState }> {
         // Set the NPC spirit pool now that we have the player's spirit_max.
         // npcSpiritMult is 0 for PvP rooms (no AI) — guard so we don't touch _npcSpirit there.
         if (this.ai && this.npcSpiritMult > 0) {
-          this._npcSpirit = Math.floor(spirit_max * this.npcSpiritMult);
-          // #464 — apply per-biome boss spirit bonus (flat addition) to boss-tier NPCs only.
-          if (this.boss && this.npcBiome) {
-            const bonus = BIOME_BOSS_SPIRIT_BONUS[this.npcBiome]?.[this.boss.tier] ?? 0;
-            this._npcSpirit += bonus;
-          }
+          // #478 — delegate to computeNpcSpirit (single source of truth shared with the
+          // overworld detection preview). Behavior-identical to the former inline formula:
+          //   floor(spirit_max × mult) + biome-boss-bonus.
+          this._npcSpirit = computeNpcSpirit(
+            spirit_max,
+            this.npcPersonality,
+            this.npcBiome,
+            this.boss?.tier,
+          );
           // #313 — broadcast the AI's finite spirit pool so the opponent panel can
           // render ⚡ current/max. The AI seat is created at room setup (seatPlayer
           // AI_ID) before any human joins, so this get() always resolves here.
