@@ -29,30 +29,6 @@ async function waitForCamp(page: Page): Promise<void> {
 }
 
 /**
- * Recursively walk the Phaser scene display list (including container children)
- * to find a named GameObject, returning it or null.
- */
-async function findNamedObject(page: Page, name: string): Promise<any> {
-  return page.evaluate((n) => {
-    const walk = (obj: any): any => {
-      if (obj?.name === n) return obj;
-      const kids: any[] = typeof obj?.getAll === 'function' ? obj.getAll() : [];
-      for (const k of kids) {
-        const hit = walk(k);
-        if (hit) return hit;
-      }
-      return null;
-    };
-    const scene = (window as any).__scene as { children: { getAll: () => any[] } };
-    for (const root of scene.children.getAll()) {
-      const hit = walk(root);
-      if (hit) return hit;
-    }
-    return null;
-  }, name);
-}
-
-/**
  * Get the canvas-space bounding box of a named Phaser Text/GameObject so
  * page.mouse.click() can tap it by screen coordinate. Uses the object's
  * world transform matrix (tx, ty) which is already in screen space for
@@ -249,30 +225,29 @@ test.describe('reset-game (#477)', () => {
     expect(confirmPos, 'reset-confirm-yes button must be present in scene graph').not.toBeNull();
     await page.mouse.click(confirmPos!.x, confirmPos!.y);
 
-    // The confirm modal must remain open after the 500 response.
-    // Give a brief moment for the response to be processed.
-    await page.waitForTimeout(1000);
+    // Wait for an error toast to appear: a scene-root Text node containing "failed"
+    // or "error" with non-zero alpha. The toast is written before doResetGame returns,
+    // so its appearance is the reliable sync point. Once it appears we also assert
+    // that the confirm modal remained open — both conditions checked in one poll.
+    await page.waitForFunction(
+      () => {
+        const scene = (window as any).__scene as { children: { getAll: () => any[] } };
+        const all = scene?.children?.getAll() ?? [];
+        return all.some((obj: any) => {
+          const t: string = obj?.text ?? '';
+          return (
+            typeof t === 'string' &&
+            (t.toLowerCase().includes('failed') || t.toLowerCase().includes('error')) &&
+            obj?.alpha > 0
+          );
+        });
+      },
+      { timeout: 5000 },
+    );
 
+    // Confirm modal must still be open (doResetGame does not close it on error).
     const resetConfirmOpen = await page.evaluate(() => (window as any).__resetConfirmOpen);
     expect(resetConfirmOpen, 'confirm modal must stay open after a 500 error').toBe(true);
-
-    // An error toast text object must be present in the scene graph (transient text
-    // lives at the scene root; check for a Text node containing "failed" or "error").
-    const toastVisible = await page.evaluate(() => {
-      const scene = (window as any).__scene as { children: { getAll: () => any[] } };
-      const all = scene?.children?.getAll() ?? [];
-      return all.some((obj: any) => {
-        const t: string = obj?.text ?? '';
-        return (
-          typeof t === 'string' &&
-          (t.toLowerCase().includes('failed') || t.toLowerCase().includes('error')) &&
-          obj?.alpha > 0
-        );
-      });
-    });
-    expect(toastVisible, 'error toast must be visible after a 500 from POST /api/me/reset').toBe(
-      true,
-    );
 
     await ctx.close();
   });
