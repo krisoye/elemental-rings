@@ -281,11 +281,14 @@ test('world-map S3: zoom-in pan is clamped; reset-0 returns to fit zoom', async 
       return { error: `modal=${modal ? 'exists' : 'null'}, applyZoom=${typeof modal?.applyZoom}` };
     }
 
-    const fitScale = modal.currentScale;
-    if (!fitScale || fitScale <= 0) return { error: `fitScale=${fitScale}` };
+    const openZoom = modal.currentScale; // #438: opens at OPEN_ZOOM (player-centered), not FIT_SCALE
+    if (!openZoom || openZoom <= 0) return { error: `openZoom=${openZoom}` };
+    // #438: __FIT_SCALE is the full-fit constant (what the 0-key resets to).
+    // It is distinct from OPEN_ZOOM which is the player-centered open scale.
+    const trueFitScale = (window as any).__FIT_SCALE ?? openZoom;
 
-    // ── Zoom in 1.2x ──────────────────────────────────────────────────────────
-    const zoomedScale = fitScale * 1.2;
+    // ── Zoom in 1.2x from open zoom ───────────────────────────────────────────
+    const zoomedScale = openZoom * 1.2;
     modal.applyZoom(zoomedScale);
     const afterZoomScale = modal.currentScale;
 
@@ -298,15 +301,17 @@ test('world-map S3: zoom-in pan is clamped; reset-0 returns to fit zoom', async 
     const mcYAfterPan = mc ? (mc.y as number) : null;
     const panYAfterPan = modal.panY;
 
-    // ── Reset to fit ──────────────────────────────────────────────────────────
-    modal.applyZoom(fitScale); // returns to fit scale, zeroes pan, re-clamps
+    // ── Full-fit reset (0-key / reset button) ─────────────────────────────────
+    // #438: reset-0 still calls applyZoom(FIT_SCALE), not applyZoom(OPEN_ZOOM).
+    modal.applyZoom(trueFitScale); // returns to full-fit scale, zeroes pan, re-clamps
     const resetScale = modal.currentScale;
     const resetPanX = modal.panX;
     const resetPanY = modal.panY;
     const mcYAfterReset = mc ? (mc.y as number) : null;
 
     return {
-      fitScale,
+      openZoom,
+      trueFitScale,
       afterZoomScale,
       mcYAfterPan,
       panYAfterPan,
@@ -321,8 +326,8 @@ test('world-map S3: zoom-in pan is clamped; reset-0 returns to fit zoom', async 
   expect(result).not.toHaveProperty('error');
   const r = result as any;
 
-  // Zoom must have increased
-  expect(r.afterZoomScale).toBeGreaterThan(r.fitScale);
+  // #438: open scale is OPEN_ZOOM (>= FIT_SCALE); zoom-in must go above that
+  expect(r.afterZoomScale).toBeGreaterThan(r.openZoom);
 
   // After extreme pan + re-clamp, the container Y must not exceed MAP_AREA_SCREEN_Y
   // (no empty gap at the top). MAP_AREA_SCREEN_Y = 72.
@@ -331,10 +336,10 @@ test('world-map S3: zoom-in pan is clamped; reset-0 returns to fit zoom', async 
     expect(r.mcYAfterPan).toBeLessThanOrEqual(72 + 1); // +1 float tolerance
   }
 
-  // After reset, scale returns to fit
-  expect(Math.abs(r.resetScale - r.fitScale)).toBeLessThan(0.001);
+  // After full-fit reset (0-key), scale returns to FIT_SCALE (not OPEN_ZOOM)
+  expect(Math.abs(r.resetScale - r.trueFitScale)).toBeLessThan(0.001);
 
-  // After reset, pan is centered (>= 0, < half-canvas)
+  // After full-fit reset, pan is centered (>= 0) — at FIT_SCALE content fits the area
   expect(r.resetPanX).toBeGreaterThanOrEqual(0);
   expect(r.resetPanY).toBeGreaterThanOrEqual(0);
 
@@ -351,59 +356,111 @@ test('world-map S4: reopen resets fit zoom and clears pan from previous session'
   const { page, ctx } = await setupPage(browser);
   await enterForestSafe(page);
 
-  // First open: zoom in + pan synchronously, capture state, then close.
+  // First open — use M key (reliable for first open; no prior DOM destruction).
   await openMap(page);
 
-  // Perform all zoom/pan operations in a single evaluate so the game loop
-  // cannot fire a scene transition between Playwright→browser round trips.
-  const firstOpenResult = await page.evaluate(() => {
-    const modal = (window as any).__scene?.overworldMap;
-    if (!modal || typeof modal.applyZoom !== 'function') return null;
-    const fitScale = modal.currentScale;
-    if (!fitScale || fitScale <= 0) return null;
+  // Perform ALL of: zoom/pan the first session, close, reopen, and verify — in a SINGLE
+  // page.evaluate so the Phaser game loop cannot fire a scene transition between
+  // Playwright↔browser round trips.
+  //
+  // Between every two Playwright messages (waitForFunction → evaluate, evaluate → evaluate)
+  // requestAnimationFrame fires and update() runs. A spurious edge-transition (the player
+  // spawns at x=24 = EDGE in forest_glade before loadWaystones repositions them) can
+  // change window.__scene in that gap, making the next read return null.
+  //
+  // Fusing close + reopen + verify into one synchronous JS task eliminates every such
+  // race window.  TypeScript private access is not enforced at runtime.
+  const result = await page.evaluate(() => {
+    const scene = (window as any).__scene as any;
+    const modal = scene?.overworldMap;
+    if (!modal || typeof modal.applyZoom !== 'function') {
+      return { error: 'no-modal' };
+    }
 
-    // Zoom in
-    const zoomedScale = fitScale * 1.2;
-    modal.applyZoom(zoomedScale);
-    const scaleAfterZoom = modal.currentScale;
+    // ── First session: zoom in + pan ──────────────────────────────────────────
+    const openZoom = modal.currentScale as number; // OPEN_ZOOM set by show()
+    if (!openZoom || openZoom <= 0) return { error: 'bad-scale' };
 
-    // Pan (set panY then re-apply to clamp)
+    modal.applyZoom(openZoom * 1.2);
+    const scaleAfterZoom = modal.currentScale as number;
+
     modal.panY = -50;
-    modal.applyZoom(modal.currentScale);
-    const panYAfter = modal.panY;
+    modal.applyZoom(modal.currentScale); // re-clamp
+    const panYAfterPan = modal.panY as number;
 
-    return { fitScale, scaleAfterZoom, panYAfter, modalOpen: true };
+    // ── Atomic close + reopen ─────────────────────────────────────────────────
+    // hide() fires onClose() synchronously → scene.overworldMap = null.
+    modal.hide();
+
+    // toggleOverworldMap: sees overworldMap null, overlayOpen false → creates new
+    // OverworldMapModal and calls show(), which resets currentScale = OPEN_ZOOM
+    // and re-centers panX/panY.
+    scene.toggleOverworldMap();
+
+    // ── Verify reopened state ─────────────────────────────────────────────────
+    const reopened = scene.overworldMap;
+    if (!reopened) return { error: 'reopen-failed' };
+
+    return {
+      openZoom,
+      scaleAfterZoom,
+      panYAfterPan,
+      reopenedScale: reopened.currentScale as number,
+      reopenedPanX:  reopened.panX as number,
+      reopenedPanY:  reopened.panY as number,
+      // #438: __OPEN_ZOOM is exposed by show(); used as the authoritative baseline.
+      expectedScale: (window as any).__OPEN_ZOOM as number | undefined,
+    };
   });
 
-  expect(firstOpenResult).not.toBeNull();
-  expect(firstOpenResult!.scaleAfterZoom).toBeGreaterThan(firstOpenResult!.fitScale);
+  // First-session zoom check
+  expect(result).not.toHaveProperty('error');
+  const r = result as Exclude<typeof result, { error: string }>;
+  expect(r.scaleAfterZoom).toBeGreaterThan(r.openZoom);
 
-  // Close.
+  // #438: show() resets currentScale to OPEN_ZOOM on every open — the 1.2× zoom
+  // from session 1 must be gone.
+  const expectedOpenZoom = r.expectedScale ?? r.openZoom;
+  expect(Math.abs(r.reopenedScale - expectedOpenZoom)).toBeLessThan(0.001);
+
+  // Pan must be within sane map-area bounds.
+  // At OPEN_ZOOM the content can extend beyond the viewport vertically (content
+  // height > MAP_AREA_H), so panY is clamped to [MAP_AREA_H − scaledH, 0] which
+  // is legitimately negative.  The scale assertion above (≈ OPEN_ZOOM, not 1.2×)
+  // is the primary proof that show() reset the modal state on reopen.
+  expect(Math.abs(r.reopenedPanX)).toBeLessThan(CANVAS_W);
+  expect(Math.abs(r.reopenedPanY)).toBeLessThan(CANVAS_H);
+
+  await stopEdgeWatchdog(page);
+  await ctx.close();
+});
+
+// ── Regression: P1 — shared cursor keys must survive hide() ──────────────────
+
+test('world-map regression #438 P1: keyboard works after hide() — shared cursor keys not destroyed', async ({ browser }) => {
+  // #438 P1 adversarial: hide() previously called removeKey(arrowKey, true) which
+  // destroyed the shared Key objects returned by BaseBiomeScene.createCursorKeys().
+  // Destroying them broke ALL keyboard input (movement + keydown-M) permanently
+  // after the first map close.
+  //
+  // The fix: store handler refs in show() and call key.off('down', ref) in hide()
+  // instead of removeKey(key, true). This test FAILS if that destroy call returns.
+  const { page, ctx } = await setupPage(browser);
+  await enterForestSafe(page);
+
+  // One complete open/close cycle. closeMap() calls modal.hide() directly —
+  // that is the exact call site where the P1 bug lived.
+  await openMap(page);
   await closeMap(page);
 
-  // Reopen — should start fresh at fit zoom + centered pan (state reset in show()).
-  await openMap(page);
-
-  // Verify the reopened state: all operations in a single evaluate.
-  const reopenResult = await page.evaluate((fs) => {
-    const modal = (window as any).__scene?.overworldMap;
-    if (!modal) return null;
-    return {
-      reopenedScale: modal.currentScale,
-      reopenedPanX: modal.panX,
-      reopenedPanY: modal.panY,
-    };
-  }, firstOpenResult!.fitScale);
-
-  expect(reopenResult).not.toBeNull();
-  // currentScale must equal FIT_SCALE (prior zoom is gone — show() resets it).
-  expect(Math.abs(reopenResult!.reopenedScale - firstOpenResult!.fitScale)).toBeLessThan(0.001);
-
-  // Pan should be the clean fit-centered value: >= 0, < half-canvas.
-  expect(reopenResult!.reopenedPanX).toBeGreaterThanOrEqual(0);
-  expect(reopenResult!.reopenedPanY).toBeGreaterThanOrEqual(0);
-  expect(reopenResult!.reopenedPanX).toBeLessThan(500);
-  expect(reopenResult!.reopenedPanY).toBeLessThan(300);
+  // If hide() destroyed the shared cursor keys, BaseBiomeScene's keyboard handling
+  // is now broken. Pressing M would never trigger toggleOverworldMap() and the map
+  // would never open — the waitForFunction below times out.
+  await page.keyboard.press('m');
+  await page.waitForFunction(
+    () => !!(window as any).__scene?.overworldMap,
+    { timeout: 5000 },  // FAILS if hide() destroyed shared cursor keys
+  );
 
   await stopEdgeWatchdog(page);
   await ctx.close();
