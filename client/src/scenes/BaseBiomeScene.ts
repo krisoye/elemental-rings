@@ -1271,6 +1271,14 @@ export abstract class BaseBiomeScene extends DualCameraScene {
         return;
       }
     }
+    // #438 — Sealed exit guard: if the target scene is not yet registered (unbuilt
+    // region), show a stub message rather than crashing Phaser with an unknown key.
+    // GDD §10.17: unbuilt regions show "the path is sealed" instead of throwing.
+    const targetScene = this.scene.manager.getScene(target);
+    if (!targetScene) {
+      this.showSealedExitMessage();
+      return;
+    }
     this.isTransitioning = true;
     const data: Record<string, string> = {};
     if (targetScreen) data.screenId = targetScreen;
@@ -1293,6 +1301,15 @@ export abstract class BaseBiomeScene extends DualCameraScene {
   /** Show a brief, camera-pinned barrier message that fades out. */
   private showBarrierMessage(text: string): void {
     this.showFadingMessage('biome-barrier', text, CANVAS_H - 80, '#ffdddd');
+  }
+
+  /**
+   * #438 — Show a "the path is sealed" toast when navigating to an unregistered
+   * scene key. Reuses the boss-gate barrier message pattern so no new UI component
+   * is needed (same toast style, same DOM element name, same fade behaviour).
+   */
+  private showSealedExitMessage(): void {
+    this.showBarrierMessage('The path forward is sealed.');
   }
 
   /**

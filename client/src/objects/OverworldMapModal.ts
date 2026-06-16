@@ -4,6 +4,7 @@ import { createOverlay } from './ui/ModalShell';
 import { addDomLabel, crispCanvasText } from './ui/DomLabel';
 import { FOREST_SCREENS } from '../../../shared/world/forest';
 import { FOREST_SCREEN_META, type BossTier } from './world/forestMeta';
+import { SNOW_SCREENS } from '../../../shared/world/snow';
 
 // ── Layout constants ────────────────────────────────────────────────────────
 
@@ -20,8 +21,16 @@ if (_coords.length === 0)
   throw new Error(
     'OverworldMapModal: FOREST_SCREENS has no coordinated screens — cannot compute grid bounds',
   );
+// #438 — Snow render rows use a different formula than Forest (SNOW_ROW_OFFSET + (−local_y))
+// so they cannot be folded into _coords. Extend the north bound to cover all 9 Snow nodes
+// (snow_blizzard_peak at Snow coord y=5 → render row SNOW_ROW_OFFSET − 5 = −8).
+const SNOW_ROW_OFFSET = -3;  // snow_entry one row north of forest_snow_gate (row −2)
+const _snowRenderRows = SNOW_SCREENS.filter((s) => s.coord).map((s) => SNOW_ROW_OFFSET + (-s.coord!.y));
 const MIN_COL = Math.min(..._coords.map((c) => c.x));
-const MIN_ROW = Math.min(..._coords.map((c) => -c.y));
+const MIN_ROW = Math.min(
+  Math.min(..._coords.map((c) => -c.y)),
+  Math.min(..._snowRenderRows),
+);
 const MAX_COL = Math.max(..._coords.map((c) => c.x));
 const MAX_ROW = Math.max(..._coords.map((c) => -c.y));
 
@@ -41,16 +50,9 @@ const SWAMP_NODE = {
   biome: 'swamp' as const,
 };
 
-// snow_entry is not a Forest ScreenDef — it belongs to the Snow biome.
-// Placed one step north of forest_snow_gate (coord (0,2) → col=0, row=−2;
-// the snow entry sits one step further north at row=−3).
-const SNOW_NODE = {
-  id: 'snow_entry',
-  label: 'Snow Fields',
-  col: 0,
-  row: -3,
-  biome: 'snow' as const,
-};
+// Snow nodes are derived from SNOW_SCREENS (see SNOW_RENDER_NODES below, after the
+// RenderNode interface). Unlike the old static SNOW_NODE, all 9 Snow screens render
+// as individual nodes whose render row = SNOW_ROW_OFFSET + (−local_y).
 
 // ── Panel + grid layout (computed at show() time from CANVAS_W/CANVAS_H) ──
 // PANEL_MARGIN: gap between canvas edge and panel edge (both sides).
@@ -99,6 +101,19 @@ const MAP_AREA_SCREEN_Y = PANEL_Y + TITLE_STRIP_H + CTRL_STRIP_H;
 const ZOOM_MIN = FIT_SCALE;           // can never zoom below fit
 const ZOOM_MAX = FIT_SCALE * 3;       // max 3× from fit
 const ZOOM_STEP = 0.10;               // 10% per step (relative to FIT_SCALE)
+
+// #438 — OPEN_ZOOM: the scale at which the map opens. Ensures NODE_W * scale ≈ 78px
+// (legible minimum); clamped to [FIT_SCALE, ZOOM_MAX] so small graphs open at fit
+// and large graphs open at a readable zoom level.
+const READABLE_SCALE = 78 / NODE_W;  // scale → NODE_W * scale ≈ 78px
+const OPEN_ZOOM = Math.max(FIT_SCALE, Math.min(READABLE_SCALE, ZOOM_MAX));
+
+// Map-area center in screen space — focal point for keyboard ± and on-panel ± buttons.
+const MAP_CENTER_X = MAP_AREA_SCREEN_X + MAP_AREA_W / 2;
+const MAP_CENTER_Y = MAP_AREA_SCREEN_Y + MAP_AREA_H / 2;
+
+// Arrow-key pan step (px in content space at current scale).
+const ARROW_PAN_STEP = CELL_W / 2;
 
 // ── Node color palette ──────────────────────────────────────────────────────
 
@@ -162,6 +177,7 @@ interface RenderNode {
  * `coord` (`col = x`, `row = −y`); the isolated alcove (no coord) gets the only
  * static position. Display label + boss tier are looked up in FOREST_SCREEN_META.
  * The static `SWAMP_NODE` is appended last (not a Forest ScreenDef).
+ * #438 — Snow nodes are derived from SNOW_SCREENS via SNOW_RENDER_NODES below.
  */
 const RENDER_NODES: RenderNode[] = FOREST_SCREENS.map((screen) => {
   const meta = FOREST_SCREEN_META[screen.id];
@@ -182,7 +198,25 @@ const RENDER_NODES: RenderNode[] = FOREST_SCREENS.map((screen) => {
   };
 });
 RENDER_NODES.push(SWAMP_NODE);
-RENDER_NODES.push(SNOW_NODE);
+
+/**
+ * #438 — Snow biome nodes derived from SNOW_SCREENS (same algorithm as Forest
+ * derivation). Render row = SNOW_ROW_OFFSET + (−local_y). All 9 Snow screens get
+ * individual nodes; short labels use the manifest `name` field directly (no
+ * SNOW_SCREEN_META needed — names are already concise and no Snow boss info lives
+ * in the manifest). anchorage dots appear for screens with anchorage ids.
+ */
+const SNOW_RENDER_NODES: RenderNode[] = SNOW_SCREENS.filter((s) => s.coord).map((screen) => ({
+  id: screen.id,
+  label: screen.name,
+  col: screen.coord!.x,
+  row: SNOW_ROW_OFFSET + (-screen.coord!.y),
+  biome: 'snow' as const,
+  danger: screen.danger,
+  safe: screen.safe,
+  anchorage: screen.anchorage,
+}));
+RENDER_NODES.push(...SNOW_RENDER_NODES);
 
 /**
  * Undirected edge list derived from `FOREST_SCREENS.exits`. Each reciprocal pair
@@ -194,6 +228,7 @@ RENDER_NODES.push(SNOW_NODE);
 const DERIVED_EDGES: Array<{ a: string; b: string; type?: EdgeType }> = [];
 {
   const seenEdges = new Set<string>();
+  // Intra-Forest edges (from FOREST_SCREENS exits).
   for (const screen of FOREST_SCREENS) {
     for (const neighborId of Object.values(screen.exits)) {
       const key = [screen.id, neighborId].sort().join('|');
@@ -202,6 +237,17 @@ const DERIVED_EDGES: Array<{ a: string; b: string; type?: EdgeType }> = [];
       DERIVED_EDGES.push({ a: screen.id, b: neighborId });
     }
   }
+  // #438 — Intra-Snow edges (from SNOW_SCREENS exits, same dedup as Forest).
+  // biomeExit fields (cross-biome) are NOT in exits — only intra-snow neighbours.
+  for (const screen of SNOW_SCREENS) {
+    for (const neighborId of Object.values(screen.exits)) {
+      const key = [screen.id, neighborId].sort().join('|');
+      if (seenEdges.has(key)) continue;
+      seenEdges.add(key);
+      DERIVED_EDGES.push({ a: screen.id, b: neighborId });
+    }
+  }
+  // Cross-biome edges (static: each biome has one entry gate).
   DERIVED_EDGES.push({ a: 'forest_swamp_gate', b: 'swamp_entry', type: 'biome' });
   DERIVED_EDGES.push({ a: 'forest_snow_gate',  b: 'snow_entry',  type: 'biome' });
 }
@@ -314,6 +360,13 @@ export class OverworldMapModal {
   private keyReset: Phaser.Input.Keyboard.Key | null = null;
   private keyNumpadAdd: Phaser.Input.Keyboard.Key | null = null;
   private keyNumpadSub: Phaser.Input.Keyboard.Key | null = null;
+  // #438 — Arrow-key pan handles.
+  private keyLeft:  Phaser.Input.Keyboard.Key | null = null;
+  private keyRight: Phaser.Input.Keyboard.Key | null = null;
+  private keyUp:    Phaser.Input.Keyboard.Key | null = null;
+  private keyDown:  Phaser.Input.Keyboard.Key | null = null;
+  // #438 — Mouse-wheel zoom handler (stored so it can be removed in hide()).
+  private onWheelHandler: ((ptr: Phaser.Input.Pointer, _go: unknown[], _dx: number, dy: number) => void) | null = null;
   private isDragging = false;
   private dragStartX = 0;
   private dragStartY = 0;
@@ -356,11 +409,27 @@ export class OverworldMapModal {
   ): void {
     if (this.container) return;
 
-    // Reset zoom/pan state each time so reopening starts at fit.
-    this.currentScale = FIT_SCALE;
-    const clamped = clampPan(0, 0, FIT_SCALE);
-    this.panX = clamped.x;
-    this.panY = clamped.y;
+    // #438 — Reset zoom/pan to OPEN_ZOOM, centered on the player's current screen.
+    this.currentScale = OPEN_ZOOM;
+    const playerNode = RENDER_NODES.find((n) => n.id === currentScreenId);
+    if (playerNode) {
+      // Set pan so the player's node center is at the map-area center.
+      const nc = nodeCenter(playerNode.col, playerNode.row);
+      const targetPanX = MAP_AREA_W / 2 - nc.x * this.currentScale;
+      const targetPanY = MAP_AREA_H / 2 - nc.y * this.currentScale;
+      const clamped = clampPan(targetPanX, targetPanY, this.currentScale);
+      this.panX = clamped.x;
+      this.panY = clamped.y;
+    } else {
+      // Fallback: center the whole graph (no known node for currentScreenId).
+      const clamped = clampPan(0, 0, this.currentScale);
+      this.panX = clamped.x;
+      this.panY = clamped.y;
+    }
+
+    // Expose constants for E2E access (window.__FIT_SCALE / window.__OPEN_ZOOM).
+    (window as any).__FIT_SCALE = FIT_SCALE;
+    (window as any).__OPEN_ZOOM = OPEN_ZOOM;
 
     const s = this.scene;
 
@@ -537,6 +606,7 @@ export class OverworldMapModal {
       .setOrigin(1, 0)
       .setScrollFactor(0)
       .setInteractive({ useHandCursor: true })
+      // Reset-to-fit: zero pan + re-clamp (no focal point — existing behavior).
       .on('pointerdown', () => this.applyZoom(FIT_SCALE));
     c.add(resetBtn);
 
@@ -545,7 +615,8 @@ export class OverworldMapModal {
       .setOrigin(1, 0)
       .setScrollFactor(0)
       .setInteractive({ useHandCursor: true })
-      .on('pointerdown', () => this.applyZoom(this.currentScale - FIT_SCALE * ZOOM_STEP));
+      // #438 — on-panel buttons use map-area center as focal point.
+      .on('pointerdown', () => this.applyZoom(this.currentScale - FIT_SCALE * ZOOM_STEP, MAP_CENTER_X, MAP_CENTER_Y));
     c.add(minusBtn);
 
     const plusBtn = s.add
@@ -553,7 +624,8 @@ export class OverworldMapModal {
       .setOrigin(1, 0)
       .setScrollFactor(0)
       .setInteractive({ useHandCursor: true })
-      .on('pointerdown', () => this.applyZoom(this.currentScale + FIT_SCALE * ZOOM_STEP));
+      // #438 — on-panel buttons use map-area center as focal point.
+      .on('pointerdown', () => this.applyZoom(this.currentScale + FIT_SCALE * ZOOM_STEP, MAP_CENTER_X, MAP_CENTER_Y));
     c.add(plusBtn);
 
     // Legend — pinned to the bottom of the panel
@@ -652,6 +724,8 @@ export class OverworldMapModal {
     // ── Keyboard zoom/pan ────────────────────────────────────────────────────
     // PLUS (187) fires on both = and +; NUMPAD_ADD covers numpad users.
     // MINUS (189) / NUMPAD_SUBTRACT are the matching zoom-out pair.
+    // #438 — keyboard ± uses map-area center as focal point (same as on-panel buttons).
+    // Reset-0 keeps existing behavior (no focal point → zero pan + re-clamp to fit).
     const kb = s.input.keyboard!;
     this.keyPlus      = kb.addKey(Phaser.Input.Keyboard.KeyCodes.PLUS);
     this.keyMinus     = kb.addKey(Phaser.Input.Keyboard.KeyCodes.MINUS);
@@ -659,13 +733,37 @@ export class OverworldMapModal {
     this.keyNumpadAdd = kb.addKey(Phaser.Input.Keyboard.KeyCodes.NUMPAD_ADD);
     this.keyNumpadSub = kb.addKey(Phaser.Input.Keyboard.KeyCodes.NUMPAD_SUBTRACT);
 
-    const zoomIn  = (): void => this.applyZoom(this.currentScale + FIT_SCALE * ZOOM_STEP);
-    const zoomOut = (): void => this.applyZoom(this.currentScale - FIT_SCALE * ZOOM_STEP);
+    const zoomIn  = (): void => this.applyZoom(this.currentScale + FIT_SCALE * ZOOM_STEP, MAP_CENTER_X, MAP_CENTER_Y);
+    const zoomOut = (): void => this.applyZoom(this.currentScale - FIT_SCALE * ZOOM_STEP, MAP_CENTER_X, MAP_CENTER_Y);
     this.keyPlus.on('down',      zoomIn);
     this.keyNumpadAdd.on('down', zoomIn);
     this.keyMinus.on('down',     zoomOut);
     this.keyNumpadSub.on('down', zoomOut);
     this.keyReset.on('down', () => this.applyZoom(FIT_SCALE));
+
+    // #438 — Arrow-key pan: step by ARROW_PAN_STEP, clamp via clampPan.
+    this.keyLeft  = kb.addKey(Phaser.Input.Keyboard.KeyCodes.LEFT);
+    this.keyRight = kb.addKey(Phaser.Input.Keyboard.KeyCodes.RIGHT);
+    this.keyUp    = kb.addKey(Phaser.Input.Keyboard.KeyCodes.UP);
+    this.keyDown  = kb.addKey(Phaser.Input.Keyboard.KeyCodes.DOWN);
+
+    const panStep = (dx: number, dy: number): void => {
+      const c = clampPan(this.panX + dx, this.panY + dy, this.currentScale);
+      this.panX = c.x; this.panY = c.y;
+      this.applyTransform();
+    };
+    this.keyLeft.on('down',  () => panStep(-ARROW_PAN_STEP, 0));
+    this.keyRight.on('down', () => panStep(ARROW_PAN_STEP, 0));
+    this.keyUp.on('down',    () => panStep(0, -ARROW_PAN_STEP));
+    this.keyDown.on('down',  () => panStep(0,  ARROW_PAN_STEP));
+
+    // #438 — Mouse-wheel zoom: anchored at cursor position in panel-local coords.
+    this.onWheelHandler = (ptr: Phaser.Input.Pointer, _go: unknown[], _dx: number, dy: number): void => {
+      const step = FIT_SCALE * ZOOM_STEP;
+      const newScale = dy < 0 ? this.currentScale + step : this.currentScale - step;
+      this.applyZoom(newScale, ptr.x, ptr.y);
+    };
+    s.input.on('wheel', this.onWheelHandler, this);
 
     // ── Pointer drag-to-pan ──────────────────────────────────────────────────
     s.input.on('pointerdown', this.onPointerDown, this);
@@ -680,16 +778,35 @@ export class OverworldMapModal {
 
   /**
    * Apply a new zoom scale, clamping to [ZOOM_MIN, ZOOM_MAX], and re-clamp the
-   * pan offset. When resetting to fit, also zero the pan so the map re-centers.
+   * pan offset.
+   *
+   * #438 — Focal-point zoom: when `focalX`/`focalY` are provided the point at
+   * those screen-space coordinates stays fixed after zoom (wheel or keyboard ±).
+   * Formula: newPanX = fx − (fx − panX) × (newScale / prevScale), where
+   * fx = focalX − MAP_AREA_SCREEN_X (panel-local focal x offset).
+   *
+   * When resetting to fit (newScale → ZOOM_MIN from a larger scale), pan is
+   * zeroed before clamping so the map re-centers — focal point is ignored.
+   *
+   * @param focalX – focal point X in screen space (panel-local); omit for reset.
+   * @param focalY – focal point Y in screen space (panel-local); omit for reset.
    */
-  private applyZoom(newScale: number): void {
+  private applyZoom(newScale: number, focalX?: number, focalY?: number): void {
     const prevScale = this.currentScale;
+    const prevPanX  = this.panX;
+    const prevPanY  = this.panY;
     this.currentScale = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, newScale));
 
     // When returning to fit, also zero pan before clamping (which will center it).
     if (this.currentScale === ZOOM_MIN && prevScale !== ZOOM_MIN) {
       this.panX = 0;
       this.panY = 0;
+    } else if (focalX !== undefined && focalY !== undefined) {
+      // Focal-point zoom: keep (focalX, focalY) fixed in screen space.
+      const fx = focalX - MAP_AREA_SCREEN_X;
+      const fy = focalY - MAP_AREA_SCREEN_Y;
+      this.panX = fx - (fx - prevPanX) * (this.currentScale / prevScale);
+      this.panY = fy - (fy - prevPanY) * (this.currentScale / prevScale);
     }
 
     const clamped = clampPan(this.panX, this.panY, this.currentScale);
@@ -713,8 +830,8 @@ export class OverworldMapModal {
 
   private onPointerDown(ptr: Phaser.Input.Pointer): void {
     if (!this.container) return;
-    // Only start a drag when zoomed beyond fit (no pan needed at fit scale).
-    if (this.currentScale <= ZOOM_MIN + 0.001) return;
+    // #438 — Scale gate removed: drag-pan works at any zoom level (clampPan
+    // already prevents empty-edge gaps when content fits inside the map area).
     this.isDragging = true;
     this.dragStartX = ptr.x;
     this.dragStartY = ptr.y;
@@ -758,6 +875,20 @@ export class OverworldMapModal {
     if (this.keyReset)     { kb.removeKey(this.keyReset, true);     this.keyReset     = null; }
     if (this.keyNumpadAdd) { kb.removeKey(this.keyNumpadAdd, true); this.keyNumpadAdd = null; }
     if (this.keyNumpadSub) { kb.removeKey(this.keyNumpadSub, true); this.keyNumpadSub = null; }
+    // #438 — Arrow-key pan handles.
+    if (this.keyLeft)  { kb.removeKey(this.keyLeft, true);  this.keyLeft  = null; }
+    if (this.keyRight) { kb.removeKey(this.keyRight, true); this.keyRight = null; }
+    if (this.keyUp)    { kb.removeKey(this.keyUp, true);    this.keyUp    = null; }
+    if (this.keyDown)  { kb.removeKey(this.keyDown, true);  this.keyDown  = null; }
+    // #438 — Mouse-wheel zoom handler.
+    if (this.onWheelHandler) {
+      this.scene.input.off('wheel', this.onWheelHandler, this);
+      this.onWheelHandler = null;
+    }
+
+    // Clear E2E window globals exposed by show().
+    (window as any).__FIT_SCALE = undefined;
+    (window as any).__OPEN_ZOOM = undefined;
 
     this.isDragging = false;
     this.mapContainer = null;
