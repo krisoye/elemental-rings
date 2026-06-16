@@ -35,8 +35,6 @@ import {
   XP_DEF_COUNTER,
   XP_DEF_BLOCK,
   XP_DEF_WEAK,
-  XP_THUMB_BUFF,
-  XP_THUMB_MID,
   GAUGE_SOFT_CAP,
   SHADOW_GAUGE_CAP,
   AMBUSH_SPIRIT_COST,
@@ -471,16 +469,13 @@ export class BattleRoom extends Room<{ state: BattleState }> {
    * (with currentUses = maxUses = STARTING_USES). After seating, the thumb's
    * all-in setup passive is applied (Fire/Water/Wood) — a no-op for other
    * elements or when no matching base-element ring is in the hand.
-   *
-   * Returns the number of uses distributed by the setup passive so the caller
-   * can award thumb XP (XP_THUMB_BUFF per use distributed).
    */
   private seatPlayer(
     id: string,
     displayName: string,
     spec?: Partial<Record<SlotKey, SlotSpec>>,
     overrides?: { hearts?: number; uses?: number; bonusUses?: number },
-  ): number {
+  ): void {
     const ps = new PlayerState();
     ps.playerId = id;
     ps.displayName = displayName;
@@ -525,9 +520,8 @@ export class BattleRoom extends Room<{ state: BattleState }> {
     this.state.players.set(id, ps);
 
     // Apply the all-in setup passive (Fire/Water/Wood). No-op for other
-    // elements or when no matching base-element ring is in the hand. Returns how
-    // many uses were distributed so the caller can award thumb XP.
-    return StakeResolver.applySetupPassive(ps);
+    // elements or when no matching base-element ring is in the hand.
+    StakeResolver.applySetupPassive(ps);
   }
 
   onJoin(client: Client, options: BattleRoomOptions = {}): void {
@@ -581,11 +575,9 @@ export class BattleRoom extends Room<{ state: BattleState }> {
         }
       }
 
-      const buffed = this.seatPlayer(sessionId, '', spec);
+      this.seatPlayer(sessionId, '', spec);
       this.sessionToPlayerId.set(sessionId, playerId);
       this.sessionToRingIds.set(sessionId, ringIds);
-      // All-in setup thumb XP: 1 per use distributed at seat time.
-      if (buffed > 0) this.addXp(sessionId, 'thumb', XP_THUMB_BUFF * buffed);
 
       // EPIC #302 / #304 — a human's starting HP comes from their equipped heart
       // ring (current_uses, clamped to max_uses), NOT the default STARTING_HEARTS.
@@ -683,8 +675,7 @@ export class BattleRoom extends Room<{ state: BattleState }> {
       }
     } else {
       // No/invalid token: seat with default loadout (backward-compat for E2E / integration tests).
-      const buffed = this.seatPlayer(sessionId, '');
-      if (buffed > 0) this.addXp(sessionId, 'thumb', XP_THUMB_BUFF * buffed);
+      this.seatPlayer(sessionId, '');
     }
 
     if (this.ai) {
@@ -1028,9 +1019,6 @@ export class BattleRoom extends Room<{ state: BattleState }> {
     const usePaidByStake = StakeResolver.applyTailwind(attacker, ring);
     if (!usePaidByStake) {
       consumeUse(ring);
-    } else {
-      // Tailwind fired: thumb pays the throw. Award the attacker's thumb mid-tier XP.
-      this.addXp(id, 'thumb', XP_THUMB_MID);
     }
 
     state.attackerSlot = payload.slot;
@@ -1371,11 +1359,9 @@ export class BattleRoom extends Room<{ state: BattleState }> {
     if (aiHeartActuallyLost) this.updateBossEnrage();
 
     // Earth passive: timing-only parry refund (fires on PARRY regardless of
-    // element match). Awards the defender's thumb mid-tier XP when it fires.
+    // element match).
     if (result.timing === 'PARRY' && defenderRing) {
-      if (StakeResolver.applyEarthParry(defenderPlayer, defenderRing)) {
-        this.addXp(defenderId, 'thumb', XP_THUMB_MID);
-      }
+      StakeResolver.applyEarthParry(defenderPlayer, defenderRing);
     }
 
     // Four-case gauge model (GDD §7.1). Apply the resolver's gauge directives to
