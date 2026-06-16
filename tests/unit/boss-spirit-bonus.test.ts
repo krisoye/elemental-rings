@@ -36,6 +36,8 @@ let signToken: (typeof import('../../server/src/auth/auth'))['signToken'];
 let BIOME_BOSS_SPIRIT_BONUS: Record<string, Partial<Record<string, number>>>;
 let BOSS_MODIFIERS: Record<string, { spiritMult: number }>;
 let NPC_SPAWNS: Array<{ id: string; biome: string; boss?: { tier: string } }>;
+// #478 — loaded in beforeAll alongside the other AILoadout exports.
+let computeNpcSpirit: (playerSpiritMax: number, personality: string, biome?: string, bossTier?: string) => number;
 
 beforeAll(async () => {
   const dbFile = path.join(
@@ -55,6 +57,9 @@ beforeAll(async () => {
   BOSS_MODIFIERS = (constants as any).BOSS_MODIFIERS;
   const spawns = await import('../../server/src/persistence/NpcSpawns');
   NPC_SPAWNS = (spawns as any).NPC_SPAWNS;
+  // #478 — load computeNpcSpirit for Phase 2 parity assertions.
+  const aiLoadout = await import('../../server/src/game/ai/AILoadout');
+  computeNpcSpirit = (aiLoadout as any).computeNpcSpirit;
 
   const { BattleRoom } = await import('../../server/src/rooms/BattleRoom');
   const server = new Server();
@@ -743,4 +748,223 @@ describe('impl-aware: ??0 fallback — tier absent from a partial biome record (
 
     await room.disconnect();
   });
+});
+
+// ============================================================================
+// 6 — PHASE 2 IMPL-AWARE: computeNpcSpirit parity + npcPersonality threading (#478)
+// ============================================================================
+//
+// These tests exercise branches the Phase 1 spec tests could not reach without
+// seeing the implementation:
+//
+//   a) True parity: computeNpcSpirit(spirit_max, npcPersonality, npcBiome, bossTier)
+//      MUST return the same value as aiPs.spiritMax produced by the actual BattleRoom
+//      onJoin seating path. Phase 1 tests verified the helper in isolation; these
+//      tests verify it against the real seating code — locking the preview-vs-fight
+//      invariant against a future divergence between the helper and BattleRoom.
+//
+//   b) npcPersonality threading: BattleRoom.onCreate sets npcPersonality from
+//      options.personality (line 293: `const personality = options.personality ?? 'AGGRESSIVE'`).
+//      If options.personality is absent the field defaults to 'AGGRESSIVE'. This
+//      threading must survive for all four personalities when explicitly supplied.
+//      A regression that hard-coded or forgot to store personality would seat every
+//      roamer at AGGRESSIVE spirit (the minimum), silently under-reporting spirit.
+//
+//   c) npcPersonality default: When options.personality is absent, npcPersonality
+//      stays 'AGGRESSIVE'. Assert the private field and the aiPs.spiritMax explicitly
+//      so a future change to the default is immediately visible.
+// ============================================================================
+
+describe('impl-aware (#478): computeNpcSpirit parity — helper result === BattleRoom aiPs.spiritMax (roamer)', () => {
+  // #478 adversarial: the overworld preview calls computeNpcSpirit; BattleRoom
+  // calls computeNpcSpirit internally. If either path diverges the player sees a
+  // different spirit total in the readout vs the actual battle.
+  // This test calls BOTH and asserts equality — not against a hardcoded number.
+
+  const PERSONALITIES = [
+    { personality: 'AGGRESSIVE',    mult: 0.25 },
+    { personality: 'DEFENSIVE',     mult: 0.30 },
+    { personality: 'STATUS_HUNTER', mult: 0.35 },
+    { personality: 'RESILIENT',     mult: 0.40 },
+  ] as const;
+
+  test.each(PERSONALITIES)(
+    // #478 adversarial: a drift between computeNpcSpirit and BattleRoom.onJoin would
+    // silently break the "what you see is what you fight" invariant for every personality
+    'parity: computeNpcSpirit === aiPs.spiritMax for personality=$personality (roamer, no boss)',
+    async ({ personality, mult }) => {
+      const spiritMax = 160;
+      const username = `u_${Math.random().toString(36).slice(2)}`;
+      const playerId = repo.createPlayer(username, 'x');
+      const token = signToken({ playerId, username });
+      setSpiritMax(playerId, spiritMax);
+
+      // Expected value from the helper (roamer: biome and bossTier both undefined).
+      const helperResult = computeNpcSpirit(spiritMax, personality);
+      // Must match the formula to confirm the test itself is correct.
+      expect(helperResult).toBe(Math.floor(spiritMax * mult));
+
+      // Seat through the real BattleRoom.onJoin path with this personality.
+      const room = await colyseus.createRoom<any>('battle', {
+        vsAI: true,
+        personality,
+        // No npcId — roamer with no biome or boss descriptor.
+      });
+      await colyseus.connectTo(room, { token });
+      await room.waitForNextPatch();
+
+      const aiPs = room.state.players.get('AI');
+      // The helper result MUST equal the seated value — this is the parity invariant.
+      expect(aiPs?.spiritMax).toBe(helperResult);
+      expect(aiPs?.spiritCurrent).toBe(helperResult);
+
+      await room.disconnect();
+    },
+  );
+});
+
+describe('impl-aware (#478): computeNpcSpirit parity — helper result === BattleRoom aiPs.spiritMax (boss)', () => {
+  // #478 adversarial: boss path parity check. The helper uses BOSS_MODIFIERS[bossTier].spiritMult
+  // + BIOME_BOSS_SPIRIT_BONUS[biome][bossTier]. BattleRoom derives these from the NPC spawn entry.
+  // If the npcBiome or boss.tier is mis-threaded between onCreate and onJoin, the helper
+  // and the room would diverge on any spiritMax where bonus != 0.
+
+  test('parity: computeNpcSpirit === aiPs.spiritMax for forest gate boss (Bogwood Warden)', async () => {
+    // #478 adversarial: boss parity — helper called with the same inputs BattleRoom
+    // reads from NpcSpawns (biome='forest', tier='gate', spiritMult=0.75, bonus=+15).
+    // A regression that read npcBiome or boss.tier incorrectly in onJoin would
+    // produce a different aiPs.spiritMax than the helper, breaking the preview invariant.
+    const spiritMax = 120;
+    const username = `u_${Math.random().toString(36).slice(2)}`;
+    const playerId = repo.createPlayer(username, 'x');
+    const token = signToken({ playerId, username });
+    setSpiritMax(playerId, spiritMax);
+
+    // The helper call mirrors what the overworld route would compute for the same player.
+    // forest_bogwood_warden: biome='forest', tier='gate', spiritMult=0.75, bonus=+15.
+    const helperResult = computeNpcSpirit(spiritMax, 'AGGRESSIVE', 'forest', 'gate');
+    // floor(120 × 0.75) + 15 = 90 + 15 = 105.
+    expect(helperResult).toBe(105);
+
+    const room = await colyseus.createRoom<any>('battle', {
+      vsAI: true,
+      npcId: 'forest_bogwood_warden',
+    });
+    await colyseus.connectTo(room, { token });
+    await room.waitForNextPatch();
+
+    const aiPs = room.state.players.get('AI');
+    // The room's seated value must equal the helper — parity invariant.
+    expect(aiPs?.spiritMax).toBe(helperResult);
+    expect(aiPs?.spiritCurrent).toBe(helperResult);
+
+    await room.disconnect();
+  });
+
+  test('parity: computeNpcSpirit === aiPs.spiritMax for forest major boss (Thornwood Warden)', async () => {
+    // #478 adversarial: major tier parity. forest_thornwood_warden: biome='forest',
+    // tier='major', spiritMult=1.0, bonus=+40. A mis-read tier ('gate' instead of
+    // 'major') would produce floor(100×0.75)+15=90 vs correct floor(100×1.0)+40=140.
+    const spiritMax = 100;
+    const username = `u_${Math.random().toString(36).slice(2)}`;
+    const playerId = repo.createPlayer(username, 'x');
+    const token = signToken({ playerId, username });
+    setSpiritMax(playerId, spiritMax);
+
+    const helperResult = computeNpcSpirit(spiritMax, 'RESILIENT', 'forest', 'major');
+    // floor(100 × 1.0) + 40 = 140.
+    expect(helperResult).toBe(140);
+
+    const room = await colyseus.createRoom<any>('battle', {
+      vsAI: true,
+      npcId: 'forest_thornwood_warden',
+    });
+    await colyseus.connectTo(room, { token });
+    await room.waitForNextPatch();
+
+    const aiPs = room.state.players.get('AI');
+    expect(aiPs?.spiritMax).toBe(helperResult);
+
+    await room.disconnect();
+  });
+});
+
+describe('impl-aware (#478): npcPersonality defaults to AGGRESSIVE when options.personality absent', () => {
+  test('no options.personality → npcPersonality is AGGRESSIVE → aiPs.spiritMax uses 0.25 mult', async () => {
+    // #478 impl-aware: BattleRoom.onCreate line 293:
+    //   const personality = options.personality ?? 'AGGRESSIVE';
+    // and line 330:
+    //   this.npcPersonality = personality;
+    // When options.personality is omitted, npcPersonality defaults to 'AGGRESSIVE' (0.25).
+    // A regression that changed the default (e.g., to DEFENSIVE=0.30) would produce
+    // floor(160×0.30)=48 instead of floor(160×0.25)=40 — a detectable difference.
+    const spiritMax = 160;
+    const username = `u_${Math.random().toString(36).slice(2)}`;
+    const playerId = repo.createPlayer(username, 'x');
+    const token = signToken({ playerId, username });
+    setSpiritMax(playerId, spiritMax);
+
+    const room = await colyseus.createRoom<any>('battle', {
+      vsAI: true,
+      // options.personality intentionally absent
+    });
+    await colyseus.connectTo(room, { token });
+    await room.waitForNextPatch();
+
+    // npcPersonality defaults to 'AGGRESSIVE' → mult=0.25.
+    expect((room as any).npcPersonality).toBe('AGGRESSIVE');
+    const aiPs = room.state.players.get('AI');
+    // floor(160 × 0.25) = 40; if default were DEFENSIVE it would be 48.
+    expect(aiPs?.spiritMax).toBe(40);
+    // Helper called with the same explicit 'AGGRESSIVE' must match.
+    expect(aiPs?.spiritMax).toBe(computeNpcSpirit(spiritMax, 'AGGRESSIVE'));
+
+    await room.disconnect();
+  });
+});
+
+describe('impl-aware (#478): npcPersonality threading — all four personalities seat correct spirit', () => {
+  // #478 adversarial: npcPersonality is stored in onCreate and read in onJoin.
+  // If the field assignment is missing or overwrites with a constant, all roamers
+  // would use AGGRESSIVE (0.25) regardless of the actual personality option.
+  // This table drives all four personalities and asserts aiPs.spiritMax equals
+  // computeNpcSpirit — both to verify the threading AND the parity invariant.
+
+  const CASES = [
+    { personality: 'AGGRESSIVE',    spiritMax: 200, expected: 50  }, // floor(200×0.25)
+    { personality: 'DEFENSIVE',     spiritMax: 200, expected: 60  }, // floor(200×0.30)
+    { personality: 'STATUS_HUNTER', spiritMax: 200, expected: 70  }, // floor(200×0.35)
+    { personality: 'RESILIENT',     spiritMax: 200, expected: 80  }, // floor(200×0.40)
+  ] as const;
+
+  test.each(CASES)(
+    // #478 adversarial: npcPersonality not stored → all roamers seat at AGGRESSIVE (50),
+    // DEFENSIVE/STATUS_HUNTER/RESILIENT would be indistinguishable from AGGRESSIVE
+    'personality=$personality spiritMax=$spiritMax → aiPs.spiritMax=$expected + npcPersonality field matches',
+    async ({ personality, spiritMax, expected }) => {
+      const username = `u_${Math.random().toString(36).slice(2)}`;
+      const playerId = repo.createPlayer(username, 'x');
+      const token = signToken({ playerId, username });
+      setSpiritMax(playerId, spiritMax);
+
+      const room = await colyseus.createRoom<any>('battle', {
+        vsAI: true,
+        personality,
+      });
+      await colyseus.connectTo(room, { token });
+      await room.waitForNextPatch();
+
+      // Verify the private field was stored correctly in onCreate.
+      // #478 impl-aware: the field exists so onJoin can call computeNpcSpirit with it.
+      expect((room as any).npcPersonality).toBe(personality);
+
+      const aiPs = room.state.players.get('AI');
+      // Seated spirit must match the spec value (floor(spiritMax × mult)).
+      expect(aiPs?.spiritMax).toBe(expected);
+      // And must match the helper called with the same personality (parity invariant).
+      expect(aiPs?.spiritMax).toBe(computeNpcSpirit(spiritMax, personality));
+
+      await room.disconnect();
+    },
+  );
 });
