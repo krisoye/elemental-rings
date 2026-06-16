@@ -337,6 +337,16 @@ Sell price = **base + floor(xp / 100)** GP, where base is element-type determine
 
 ---
 
+### 10.13 Sealed Exits (Unbuilt Regions)
+
+When a player enters a transition zone that leads to a region whose Phaser scene has not yet been registered (i.e., the destination key is unknown to `SceneManager`), the game shows a fading barrier message — **"The path forward is sealed."** — instead of attempting to start the missing scene (which would crash Phaser with an unknown-scene error).
+
+This is a development-phase stub behaviour, not a permanent mechanic. As new region scenes are added and registered, their gates automatically unlock without any guard-list update — the check is purely "is the scene registered?", so the path unseals the moment the scene exists. The player is never permanently locked out; they can move away from the gate and re-enter normally once the region is built.
+
+The sealed message reuses the same `showBarrierMessage` channel as other overworld barriers (e.g., level-gated gates) so the presentation is consistent. No navigation state is modified on a sealed exit: `isTransitioning` is not set, and the player retains full control after the toast fades.
+
+---
+
 ### 10.12 Design-Change Log (Overworld)
 
 This log records how the overworld's design has evolved — what it *became* and why. It is not a build log; implementation status, issues, and PRs live in GitHub.

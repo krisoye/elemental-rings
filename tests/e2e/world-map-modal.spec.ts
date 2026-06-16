@@ -390,21 +390,25 @@ test('world-map S4: reopen resets fit zoom and clears pan from previous session'
   await openMap(page);
 
   // Verify the reopened state: all operations in a single evaluate.
-  const reopenResult = await page.evaluate((fs) => {
+  const reopenResult = await page.evaluate(() => {
     const modal = (window as any).__scene?.overworldMap;
     if (!modal) return null;
     return {
       reopenedScale: modal.currentScale,
       reopenedPanX: modal.panX,
       reopenedPanY: modal.panY,
+      // #438: __OPEN_ZOOM is exposed by show() — use it as the explicit expected baseline
+      // rather than the scale captured at first open (which is also OPEN_ZOOM but circular).
+      expectedScale: (window as any).__OPEN_ZOOM as number | undefined,
     };
-  }, firstOpenResult!.fitScale);
+  });
 
   expect(reopenResult).not.toBeNull();
-  // #438: currentScale after reopen equals OPEN_ZOOM (show() now opens at OPEN_ZOOM, not FIT_SCALE).
-  // firstOpenResult.fitScale was captured as modal.currentScale at first open → also OPEN_ZOOM.
-  // So this assertion checks |OPEN_ZOOM - OPEN_ZOOM| < 0.001, which is always true and correct.
-  expect(Math.abs(reopenResult!.reopenedScale - firstOpenResult!.fitScale)).toBeLessThan(0.001);
+  // #438: show() resets currentScale to OPEN_ZOOM on every open.
+  // Using window.__OPEN_ZOOM (set by show()) as the reference avoids the circular comparison
+  // where both sides derive from modal.currentScale.
+  const expectedOpenZoom = reopenResult!.expectedScale ?? firstOpenResult!.fitScale;
+  expect(Math.abs(reopenResult!.reopenedScale - expectedOpenZoom)).toBeLessThan(0.001);
 
   // Pan should be the clean fit-centered value: >= 0, < half-canvas.
   expect(reopenResult!.reopenedPanX).toBeGreaterThanOrEqual(0);

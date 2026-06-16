@@ -26,12 +26,17 @@ if (_coords.length === 0)
 // (snow_blizzard_peak at Snow coord y=5 → render row SNOW_ROW_OFFSET − 5 = −8).
 const SNOW_ROW_OFFSET = -3;  // snow_entry one row north of forest_snow_gate (row −2)
 const _snowRenderRows = SNOW_SCREENS.filter((s) => s.coord).map((s) => SNOW_ROW_OFFSET + (-s.coord!.y));
-const MIN_COL = Math.min(..._coords.map((c) => c.x));
+// #438: Include Snow x-coords in MIN_COL / MAX_COL so future Snow screens with
+// col < −2 or col > Forest's MAX_COL don't silently underflow nodeCenter.
+// Current Snow cols: −1, 0, 1 — all within Forest range [−2..6]. Guard is
+// forward-compatibility only.
+const _snowCols = SNOW_SCREENS.filter((s) => s.coord).map((s) => s.coord!.x);
+const MIN_COL = Math.min(..._coords.map((c) => c.x), ..._snowCols);
 const MIN_ROW = Math.min(
   Math.min(..._coords.map((c) => -c.y)),
   Math.min(..._snowRenderRows),
 );
-const MAX_COL = Math.max(..._coords.map((c) => c.x));
+const MAX_COL = Math.max(..._coords.map((c) => c.x), ..._snowCols);
 const MAX_ROW = Math.max(..._coords.map((c) => -c.y));
 
 // The hidden alcove is teleport-only (no coord, exits {}). It is the ONLY
@@ -758,6 +763,9 @@ export class OverworldMapModal {
     this.keyDown.on('down',  () => panStep(0,  ARROW_PAN_STEP));
 
     // #438 — Mouse-wheel zoom: anchored at cursor position in panel-local coords.
+    // Invariant: onWheelHandler is null on entry here (guaranteed by hide() clearing it and the
+    // `if (this.container) return` guard at the top of show() preventing double-registration).
+    // If that invariant ever breaks, the old handler would be overwritten — leaking a listener.
     this.onWheelHandler = (ptr: Phaser.Input.Pointer, _go: unknown[], _dx: number, dy: number): void => {
       const step = FIT_SCALE * ZOOM_STEP;
       const newScale = dy < 0 ? this.currentScale + step : this.currentScale - step;
@@ -791,6 +799,11 @@ export class OverworldMapModal {
    * @param focalX – focal point X in screen space (panel-local); omit for reset.
    * @param focalY – focal point Y in screen space (panel-local); omit for reset.
    */
+  // Overload signatures enforce that focalX and focalY are always provided together.
+  // TypeScript does not support "both-or-neither" optional pairs natively, so these
+  // overloads make the paired-focal contract explicit at call sites.
+  private applyZoom(newScale: number): void;
+  private applyZoom(newScale: number, focalX: number, focalY: number): void;
   private applyZoom(newScale: number, focalX?: number, focalY?: number): void {
     const prevScale = this.currentScale;
     const prevPanX  = this.panX;

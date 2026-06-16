@@ -1273,7 +1273,7 @@ export abstract class BaseBiomeScene extends DualCameraScene {
     }
     // #438 — Sealed exit guard: if the target scene is not yet registered (unbuilt
     // region), show a stub message rather than crashing Phaser with an unknown key.
-    // GDD §10.17: unbuilt regions show "the path is sealed" instead of throwing.
+    // GDD §10.13: unbuilt regions show "the path is sealed" instead of throwing.
     const targetScene = this.scene.manager.getScene(target);
     if (!targetScene) {
       this.showSealedExitMessage();
