@@ -36,7 +36,7 @@ Environmental passives (e.g. Fire rings losing uses faster in snow) are flagged 
 
 ### 10.3 Detection and Approach
 - When the player gets within a certain distance of an enemy both parties begin to see each other's information
-- **Visible from detection range:** element types in loadout, hearts, aggregate uses per element type, Thumb ring element (reveals passive)
+- **Visible from detection range:** element types in loadout, hearts, aggregate uses per element type, Thumb ring element (reveals passive), enemy spirit pool (SP)
 - As both parties continue to approach they can **formally agree to duel**
 - The player can always turn back and flee before formally agreeing — no penalty
 - Once formally agreed the duel begins and the battle hand management screen appears
