@@ -2199,7 +2199,8 @@
    "visible": true,
    "width": 20,
    "x": 0,
-   "y": 0
+   "y": 0,
+   "height": 36
   },
   {
    "draworder": "topdown",

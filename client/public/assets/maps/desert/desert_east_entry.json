@@ -2019,7 +2019,8 @@
    "visible": true,
    "width": 30,
    "x": 0,
-   "y": 0
+   "y": 0,
+   "height": 22
   },
   {
    "draworder": "topdown",

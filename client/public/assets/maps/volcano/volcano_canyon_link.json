@@ -1839,7 +1839,8 @@
    "visible": true,
    "width": 20,
    "x": 0,
-   "y": 0
+   "y": 0,
+   "height": 30
   },
   {
    "draworder": "topdown",
