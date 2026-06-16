@@ -281,11 +281,14 @@ test('world-map S3: zoom-in pan is clamped; reset-0 returns to fit zoom', async 
       return { error: `modal=${modal ? 'exists' : 'null'}, applyZoom=${typeof modal?.applyZoom}` };
     }
 
-    const fitScale = modal.currentScale;
-    if (!fitScale || fitScale <= 0) return { error: `fitScale=${fitScale}` };
+    const openZoom = modal.currentScale; // #438: opens at OPEN_ZOOM (player-centered), not FIT_SCALE
+    if (!openZoom || openZoom <= 0) return { error: `openZoom=${openZoom}` };
+    // #438: __FIT_SCALE is the full-fit constant (what the 0-key resets to).
+    // It is distinct from OPEN_ZOOM which is the player-centered open scale.
+    const trueFitScale = (window as any).__FIT_SCALE ?? openZoom;
 
-    // ── Zoom in 1.2x ──────────────────────────────────────────────────────────
-    const zoomedScale = fitScale * 1.2;
+    // ── Zoom in 1.2x from open zoom ───────────────────────────────────────────
+    const zoomedScale = openZoom * 1.2;
     modal.applyZoom(zoomedScale);
     const afterZoomScale = modal.currentScale;
 
@@ -298,15 +301,17 @@ test('world-map S3: zoom-in pan is clamped; reset-0 returns to fit zoom', async 
     const mcYAfterPan = mc ? (mc.y as number) : null;
     const panYAfterPan = modal.panY;
 
-    // ── Reset to fit ──────────────────────────────────────────────────────────
-    modal.applyZoom(fitScale); // returns to fit scale, zeroes pan, re-clamps
+    // ── Full-fit reset (0-key / reset button) ─────────────────────────────────
+    // #438: reset-0 still calls applyZoom(FIT_SCALE), not applyZoom(OPEN_ZOOM).
+    modal.applyZoom(trueFitScale); // returns to full-fit scale, zeroes pan, re-clamps
     const resetScale = modal.currentScale;
     const resetPanX = modal.panX;
     const resetPanY = modal.panY;
     const mcYAfterReset = mc ? (mc.y as number) : null;
 
     return {
-      fitScale,
+      openZoom,
+      trueFitScale,
       afterZoomScale,
       mcYAfterPan,
       panYAfterPan,
@@ -321,8 +326,8 @@ test('world-map S3: zoom-in pan is clamped; reset-0 returns to fit zoom', async 
   expect(result).not.toHaveProperty('error');
   const r = result as any;
 
-  // Zoom must have increased
-  expect(r.afterZoomScale).toBeGreaterThan(r.fitScale);
+  // #438: open scale is OPEN_ZOOM (>= FIT_SCALE); zoom-in must go above that
+  expect(r.afterZoomScale).toBeGreaterThan(r.openZoom);
 
   // After extreme pan + re-clamp, the container Y must not exceed MAP_AREA_SCREEN_Y
   // (no empty gap at the top). MAP_AREA_SCREEN_Y = 72.
@@ -331,10 +336,10 @@ test('world-map S3: zoom-in pan is clamped; reset-0 returns to fit zoom', async 
     expect(r.mcYAfterPan).toBeLessThanOrEqual(72 + 1); // +1 float tolerance
   }
 
-  // After reset, scale returns to fit
-  expect(Math.abs(r.resetScale - r.fitScale)).toBeLessThan(0.001);
+  // After full-fit reset (0-key), scale returns to FIT_SCALE (not OPEN_ZOOM)
+  expect(Math.abs(r.resetScale - r.trueFitScale)).toBeLessThan(0.001);
 
-  // After reset, pan is centered (>= 0, < half-canvas)
+  // After full-fit reset, pan is centered (>= 0) — at FIT_SCALE content fits the area
   expect(r.resetPanX).toBeGreaterThanOrEqual(0);
   expect(r.resetPanY).toBeGreaterThanOrEqual(0);
 
@@ -396,7 +401,9 @@ test('world-map S4: reopen resets fit zoom and clears pan from previous session'
   }, firstOpenResult!.fitScale);
 
   expect(reopenResult).not.toBeNull();
-  // currentScale must equal FIT_SCALE (prior zoom is gone — show() resets it).
+  // #438: currentScale after reopen equals OPEN_ZOOM (show() now opens at OPEN_ZOOM, not FIT_SCALE).
+  // firstOpenResult.fitScale was captured as modal.currentScale at first open → also OPEN_ZOOM.
+  // So this assertion checks |OPEN_ZOOM - OPEN_ZOOM| < 0.001, which is always true and correct.
   expect(Math.abs(reopenResult!.reopenedScale - firstOpenResult!.fitScale)).toBeLessThan(0.001);
 
   // Pan should be the clean fit-centered value: >= 0, < half-canvas.

@@ -390,20 +390,22 @@ describe('SpecConformance: applyZoom clamps to [ZOOM_MIN, ZOOM_MAX] (#334)', () 
 
 });
 
-describe('SpecConformance: show() resets scale and pan on every open (#334)', () => {
+describe('SpecConformance: show() resets scale and pan on every open (#334, #438)', () => {
 
-  it('initial state: clampPan(0, 0, FIT_SCALE) yields a stable centering value', () => {
-    // show() sets currentScale = FIT_SCALE then calls clampPan(0, 0, FIT_SCALE).
+  it('fallback state: clampPan(0, 0, OPEN_ZOOM) yields a stable centering value', () => {
+    // #438: show() now sets currentScale = OPEN_ZOOM (not FIT_SCALE) and centers on the
+    // player node. For unknown screenId the fallback path calls clampPan(0, 0, OPEN_ZOOM).
     // After two calls the result is identical (no leftover state from prior calls).
-    const first  = clampPan(0, 0, FIT_SCALE);
-    const second = clampPan(0, 0, FIT_SCALE);
+    const first  = clampPan(0, 0, OPEN_ZOOM);
+    const second = clampPan(0, 0, OPEN_ZOOM);
     expect(second.x).toBeCloseTo(first.x, 10);
     expect(second.y).toBeCloseTo(first.y, 10);
   });
 
-  it('fit-zoom pan state is unchanged regardless of any prior zoomed-in pan value', () => {
-    // Simulate: zoom in + pan, then reset via applyZoom(FIT_SCALE).
-    // After reset, the pan should be identical to a fresh show() call.
+  it('0-key / reset-button: applyZoom(FIT_SCALE) pan is deterministic regardless of prior state', () => {
+    // #438: The 0-key and reset button still call applyZoom(FIT_SCALE) for a full fit reset.
+    // show() now opens at OPEN_ZOOM; the full-fit reset is distinct from the open state.
+    // This test verifies the 0-reset pan is deterministic (no state bleed from prior zoom+pan).
     const { panX: freshX, panY: freshY } = applyZoom(FIT_SCALE, 0, 0, FIT_SCALE);
 
     // Simulate dirty state from a prior session
@@ -411,6 +413,16 @@ describe('SpecConformance: show() resets scale and pan on every open (#334)', ()
 
     expect(panX).toBeCloseTo(freshX, 9);
     expect(panY).toBeCloseTo(freshY, 9);
+  });
+
+  it('OPEN_ZOOM >= FIT_SCALE (show() opens at a more readable zoom than full-fit)', () => {
+    // #438 adversarial: if this fails, the player-centered open actually zoomed OUT vs fit,
+    // which defeats the purpose of OPEN_ZOOM (readability at open).
+    expect(OPEN_ZOOM).toBeGreaterThanOrEqual(FIT_SCALE);
+  });
+
+  it('OPEN_ZOOM <= ZOOM_MAX (show() does not open beyond the ceiling)', () => {
+    expect(OPEN_ZOOM).toBeLessThanOrEqual(ZOOM_MAX);
   });
 
 });
