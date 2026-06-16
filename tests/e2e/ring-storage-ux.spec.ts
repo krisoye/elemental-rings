@@ -367,6 +367,119 @@ test('manage-passive: WATER Thumb full text in the field overlay STATUS tooltip'
   await ctx.close();
 });
 
+// ── #473 SANCTUM mode: recharge slot clears ring selection ────────────────────
+//
+// The bug: CampScene.onRechargeSlotClick called ov.refresh() but NOT clearSelection()
+// before it. After the recharge completed, the ring was still highlighted as selected,
+// so the next ring click was treated as a swap target instead of a new selection.
+test('recharge deselect (sanctum): clicking RECHARGE slot in the Ringwall overlay clears selection', async ({ browser }) => {
+  // #473 adversarial: sanctum-mode selection must be null after per-ring recharge —
+  // previously CampScene's onRechargeSlotClick omitted ov.clearSelection() unlike
+  // every other mutation callback in the same overlay.
+  const token = await registerAndToken();
+
+  // Locate the bench (spare) ring — a fresh player has all 5 starter rings
+  // battle-slotted, so any ring in_carry=1 and not in a loadout slot is a bench ring.
+  const me = await getMe(token);
+  const slotted = new Set(Object.values(me.loadout).filter(Boolean) as string[]);
+  let benchRingId: string | null =
+    (me.rings.find((r: any) => r.in_carry === 1 && !slotted.has(r.id)) as any)?.id ?? null;
+
+  if (!benchRingId) {
+    // No spare bench ring — seed one via the resting pool and carry it.
+    await seedRestingRings(token, 1);
+    const me2 = await getMe(token);
+    const slotted2 = new Set(Object.values(me2.loadout).filter(Boolean) as string[]);
+    const resting = me2.rings.find((r: any) => r.in_carry === 0);
+    if (resting) {
+      const carried = me2.rings.filter((r: any) => r.in_carry === 1).map((r: any) => r.id);
+      await putCarry(token, [...carried, resting.id]);
+      benchRingId = resting.id;
+    }
+  }
+
+  if (!benchRingId) throw new Error('Setup failed: no bench ring available for recharge test');
+
+  // Drain the bench ring to current_uses=1 so recharge (POST /api/spirit/recharge)
+  // will succeed (server returns 200). The RECHARGE slot only calls clearSelection()
+  // on ok=true — a full ring returns 400 so we cannot test the fix without draining.
+  const drainRes = await fetch(`${API_URL}/api/test/spend-ring-uses`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+    body: JSON.stringify({ ringId: benchRingId, uses: 1 }),
+  });
+  if (!drainRes.ok) throw new Error(`spend-ring-uses failed (${drainRes.status}): ${await drainRes.text()}`);
+
+  const ctx = await browser.newContext();
+  await ctx.addInitScript(`localStorage.setItem('er_token', ${JSON.stringify(token)})`);
+  const page = await ctx.newPage();
+  await loadSanctum(page);
+  await openReliquary(page);
+
+  // BHC bench grid first cell center: BENCH_GRID_X(388) + CARD_W/2(32) = 420, y=192.
+  const BENCH_CELL0 = { x: 420, y: 192 };
+  // RECHARGE slot in BHC: COL_HEALTH_X(660), ROW_COMBAT1_Y(389).
+  const RECHARGE_SLOT_SANCTUM = { x: 660, y: 389 };
+
+  async function clickCanvas(pt: { x: number; y: number }): Promise<void> {
+    const box = await page.locator('canvas').first().boundingBox();
+    if (!box) throw new Error('canvas not found');
+    const scaleX = box.width / 1024;
+    const scaleY = box.height / 576;
+    await page.mouse.click(
+      Math.round(box.x + pt.x * scaleX),
+      Math.round(box.y + pt.y * scaleY),
+    );
+  }
+
+  // Step 1: real-click bench cell 0 to select the (drained) bench ring.
+  await clickCanvas(BENCH_CELL0);
+
+  // Wait for the swapManager to register the selection.
+  await page.waitForFunction(
+    () => ((window as any).__scene as any)?.swapManager?.selection?.ringId != null,
+    { timeout: 5000 },
+  );
+
+  // Step 2: real-click the RECHARGE slot. Because the ring has current_uses=1 < max_uses,
+  // the server returns 200 → ok=true → CampScene.onRechargeSlotClick calls clearSelection().
+  await clickCanvas(RECHARGE_SLOT_SANCTUM);
+
+  // Wait for the overlay to re-render after the recharge round-trip.
+  await page.waitForTimeout(800);
+
+  // #473 core assertion: selection must be null — fix: clearSelection() in CampScene
+  // onRechargeSlotClick was missing before this PR.
+  const selAfterRecharge = await page.evaluate(
+    () => ((window as any).__scene as any)?.swapManager?.selection ?? null,
+  );
+  expect(
+    selAfterRecharge,
+    '#473 sanctum: selection must be null after successful RECHARGE (fix: clearSelection() in CampScene.onRechargeSlotClick)',
+  ).toBeNull();
+
+  // #473 adversarial: re-clicking bench cell 0 after recharge selects the ring, does not swap.
+  // Regression guard: previously the stale selection caused the next click to swap.
+  const swapFired: boolean[] = [];
+  page.on('request', (req) => {
+    if (
+      (req.url().includes('/api/rings/swap') || req.url().includes('/api/loadout')) &&
+      req.method() === 'PUT'
+    ) {
+      swapFired.push(true);
+    }
+  });
+  const beforeCount = swapFired.length;
+  await clickCanvas(BENCH_CELL0);
+  await page.waitForTimeout(300);
+  expect(
+    swapFired.length,
+    '#473 sanctum: clicking a ring after recharge must select it, not swap (no PUT /api/rings/swap or /api/loadout)',
+  ).toBe(beforeCount);
+
+  await ctx.close();
+});
+
 // ── Scenario 7: Encounter personality labels fit within the card width ───────
 test('encounter-labels: all personality labels fit within 90px card width', async ({ browser }) => {
   const token = await registerAndToken();

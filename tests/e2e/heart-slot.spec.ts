@@ -321,6 +321,99 @@ test('heart: the ♥ center header updates after equipping a different ring', as
   await ctx.close();
 });
 
+// ── Scenario 8b (#474): heart swap pick-up-first — heart ring held, then click Reliquary ──
+//
+// Covers the asymmetric heart-swap bug: picking up the Heart ring first (source='heart')
+// then clicking a Reliquary ring used moveTo('reliquary') (one-way unequip), NOT the
+// swap path. The fix re-seats selection on the Reliquary ring so moveTo('heart') routes
+// through reliquaryMove → swapRingsMutation → atomic PUT /api/rings/swap.
+//
+// Parameterized alongside Scenario 5 (normal-ring-first direction) to test both directions.
+for (const [label, pickUpHeartFirst] of [
+  ['reliquary-ring-first (existing direction, regression guard)', false],
+  ['heart swap pick-up-first (new direction, #474 fix)', true],
+] as const) {
+test(`heart swap: atomic two-ring swap works in both directions — ${label}`, async ({ browser }) => {
+  // #474 adversarial: pick-up-heart-first previously called moveTo('reliquary')
+  // (one-way unequip) instead of moveTo('heart') (atomic swap), leaving the
+  // Reliquary ring untouched. The fix re-seats selection to route through swapRingsMutation.
+  const token = await registerAndToken();
+  const before = await getMe(token);
+  const oldHeartId = before.player.heart_ring?.id ?? null;
+  expect(oldHeartId, 'test requires a player with an equipped heart ring').not.toBeNull();
+
+  // Seed a movable SPIRIT-pool ring in the Reliquary.
+  const spiritId = await seedSpiritRing(token);
+
+  const ctx = await browser.newContext();
+  await ctx.addInitScript(`localStorage.setItem('er_token', ${JSON.stringify(token)})`);
+  const page = await ctx.newPage();
+  await loadSanctum(page);
+  await page.waitForFunction(
+    (id) => (window as any).__campState.atSanctum.some((r: any) => r.id === id),
+    spiritId,
+    { timeout: 8000 },
+  );
+  await openReliquary(page);
+
+  if (pickUpHeartFirst) {
+    // ── Heart-ring-first path (the #474 bug path) ────────────────────────────
+    // Step 1: click the Heart card to pick up the heart ring (source='heart').
+    // Heart card in CampScene: HEART_CARD_X=624, HEART_CARD_Y=148 (top-left), card center +35.
+    // The RingCard body renders at x+35; interactive area is the card bg centered on the card.
+    // Use __reliquarySelect hook to drive selection, then assert source='heart'.
+    await page.evaluate(
+      (id) => (window as any).__reliquarySelect(id, 'heart'),
+      oldHeartId,
+    );
+    await page.waitForFunction(
+      () => ((window as any).__scene as any)?.swapManager?.selection?.source === 'heart',
+      { timeout: 5000 },
+    );
+    const selAfterPickup = await page.evaluate(
+      () => ((window as any).__scene as any)?.swapManager?.selection,
+    );
+    expect(selAfterPickup?.source, '#474: picking up the heart card must set source=heart').toBe('heart');
+    expect(selAfterPickup?.ringId, '#474: selection ringId must be the heart ring id').toBe(oldHeartId);
+
+    // Step 2: click the Reliquary ring as the swap target.
+    await page.evaluate(
+      (id) => (window as any).__reliquaryMove(id, 'heart'),
+      spiritId,
+    );
+  } else {
+    // ── Normal-ring-first path (existing direction — regression guard) ────────
+    // Step 1: click the Reliquary ring to pick it up.
+    await page.evaluate((id) => (window as any).__reliquaryMove(id, 'heart'), spiritId);
+  }
+
+  // Wait for the swap to commit (selection cleared = round-trip done).
+  await page.waitForFunction(
+    (id) => (window as any).__campState.heart_ring?.id === id,
+    spiritId,
+    { timeout: 8000 },
+  );
+
+  const after = await getMe(token);
+  // The Reliquary ring is now in the Heart slot.
+  expect(after.player.heart_ring.id, '#474: former Reliquary ring must now occupy the Heart slot').toBe(spiritId);
+  expect(after.player.heart_ring.heart_slot, '#474: heart_slot must be 1').toBe(1);
+  // The former heart ring is now in the Reliquary (heart_slot cleared, not in carry,
+  // visible in after.rings since heart_slot=1 rings are excluded from that list).
+  const old = after.rings.find((r: any) => r.id === oldHeartId);
+  expect(old, '#474: former heart ring must appear in Reliquary (returned to after.rings)').toBeDefined();
+  expect(old?.heart_slot, '#474: former heart ring must have heart_slot=0 after swap').toBe(0);
+
+  // No selection must be held after the committed swap.
+  const selAfterSwap = await page.evaluate(
+    () => ((window as any).__scene as any)?.swapManager?.selection ?? null,
+  );
+  expect(selAfterSwap, '#474: selection must be null after swap commits').toBeNull();
+
+  await ctx.close();
+});
+}
+
 // ── Scenario 8: the Thumb passive shows only on hover (tooltip, not a strip) ───
 test('heart: the Thumb passive is a hover tooltip, not a permanent strip', async ({ browser }) => {
   const token = await registerAndToken();
