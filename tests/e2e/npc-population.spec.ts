@@ -313,13 +313,14 @@ test('overworld npc spirit: API npcSpirit equals computeNpcSpirit(spirit_max, pe
   await loadSanctum(page);
 
   // Fetch the player's spirit_max from /api/me to use in computeNpcSpirit.
+  // /api/me returns { player: { spirit_max, ... }, rings, loadout } — spirit_max is nested.
   const spiritMax = await page.evaluate(async ([api]) => {
     const token = localStorage.getItem('er_token');
     const res = await fetch(`${api}/api/me`, {
       headers: { Authorization: `Bearer ${token}` },
     });
-    const data = (await res.json()) as { spirit_max: number };
-    return data.spirit_max;
+    const data = (await res.json()) as { player: { spirit_max: number } };
+    return data.player.spirit_max;
   }, [API_URL] as const);
   expect(typeof spiritMax).toBe('number');
   expect(spiritMax).toBeGreaterThan(0);
@@ -398,46 +399,36 @@ test('overworld npc spirit: walking within DETECTION_RADIUS shows "/ N SP" in np
   // #478 adversarial: the client must render the npcSpirit from the API response
   // as a "/ N SP" segment in the detection readout. A missing client-side guard
   // (npcSpirit undefined or 0) silently omits the segment even when data is present.
-  // Use real page.mouse.move() to walk into range (project rule: no __* for actions).
   const ctx = await browser.newContext();
   await seedAuthToken(ctx);
   const page = await ctx.newPage();
   await loadSanctum(page);
   await enterOverworld(page);
 
-  // Walk to forest_npc_1's world position using real mouse movement along the canvas.
-  // The canvas renders at its natural size (the game world units match the canvas
-  // coordinate system at scale 1). We move to where the NPC is to trigger detection.
-  const canvas = page.locator('canvas');
-  const canvasBounds = await canvas.boundingBox();
-  expect(canvasBounds, 'canvas not found').not.toBeNull();
+  // Teleport the player to forest_npc_1's world position to enter DETECTION_RADIUS.
+  // The overworld does not use pointer for player locomotion — mouse events do not walk
+  // the avatar. We use __player.setPosition() for teleportation, mirroring the existing
+  // passing Scenario 3 (detection test at line 200). __detectedNpc is the read-only hook.
+  // #478 adversarial: page.mouse.move() was previously used here and always timed out
+  // because movement is keyboard/server-authoritative, not pointer-driven.
+  await page.evaluate(([x, y]) => (window as any).__player.setPosition(x, y), [
+    FOREST_NPC_1.x,
+    FOREST_NPC_1.y,
+  ] as const);
 
-  // Walk from a clear position toward the NPC's world center (496, 400).
-  // The canvas origin is at canvasBounds.x, canvasBounds.y in page coordinates.
-  // We move to the NPC's tile to trigger DETECTION_RADIUS.
-  const canvasX = canvasBounds!.x + FOREST_NPC_1.x;
-  const canvasY = canvasBounds!.y + FOREST_NPC_1.y;
-
-  // Move to clear position first, then walk to NPC.
-  await page.mouse.move(
-    canvasBounds!.x + FAR_FROM_NPCS.x,
-    canvasBounds!.y + FAR_FROM_NPCS.y,
-  );
-  await page.mouse.move(canvasX, canvasY, { steps: 20 });
-
-  // Wait for detection to register via the read-only hook (hook is for reading only).
+  // Wait for detection to register via the read-only hook.
   await page.waitForFunction(
     () => (window as any).__detectedNpc?.id === 'forest_npc_1',
     { timeout: E2E_FAST ? 5000 : 10000 },
   );
 
-  // Read the prompt text from the DOM or from the overworld readout element.
-  // BaseBiomeScene.showNpcPrompt renders to a DOM label (addDomLabel pattern).
+  // Read the prompt text from the DOM label created by BaseBiomeScene.showNpcPrompt.
+  // addDomLabel stores the id option as data-label="npc-prompt" (not as an id or class
+  // attribute) — the node class is 'er-dom-label'. Select by data-label attribute.
   const promptText = await page.evaluate((): string | null => {
-    // Prefer the DOM label if the scene exposes it; fall back to __npcPromptText hook.
-    const el = document.querySelector('.npc-prompt');
+    const el = document.querySelector('[data-label="npc-prompt"]');
     if (el) return el.textContent;
-    return (window as any).__npcPromptText ?? null;
+    return null;
   });
 
   // #478 adversarial: the prompt must contain the SP segment when npcSpirit > 0.
