@@ -14,6 +14,8 @@ import {
   type RingManagementOverlayOpts,
 } from '../objects/ui/RingManagementOverlayClass';
 import { DifficultyModal } from '../objects/DifficultyModal';
+import { createOverlay } from '../objects/ui/ModalShell';
+import { showTransientText } from '../objects/ui/toast';
 import { ELEMENT_NAMES, CANVAS_W, CANVAS_H, THUMB_PASSIVE_INFO, SLOT_KEYS } from '../Constants';
 import { type DifficultyTier } from '../../../shared/types';
 import { Player } from '../objects/world/Player';
@@ -206,6 +208,8 @@ export class CampScene extends DualCameraScene {
   private sanctumOverlay: RingManagementOverlay | null = null;
   /** #423 — shared discard-confirm dialog for the sanctum DISCARD slot. */
   private sanctumDiscard_: DiscardConfirm | null = null;
+  /** #477 — the reset-confirm overlay container while it is open. */
+  private resetConfirmContainer: Phaser.GameObjects.Container | null = null;
   // #78 ④ — last-computed Thumb passive reminder (recomputed every refreshPools),
   // mirrored into __campState and surfaced as the Thumb hover tooltip (EPIC #302).
   private stakedPassive: { name: string | null; effect: string } | null = null;
@@ -405,6 +409,11 @@ export class CampScene extends DualCameraScene {
       // listeners) behind on scene shutdown.
       this.sanctumDiscard_?.dismiss();
       this.sanctumDiscard_ = null;
+      // #477 — clean up any open reset-confirm overlay on shutdown.
+      if (this.resetConfirmContainer) {
+        this.resetConfirmContainer.destroy(true);
+        this.resetConfirmContainer = null;
+      }
     });
 
     // ── Initial data load ─────────────────────────────────────────────────
@@ -2393,6 +2402,9 @@ export class CampScene extends DualCameraScene {
         // #118: clear the main-camera ignore flag before the modal destroys it.
         if (container) this.unignoreMain(container);
       },
+      // #477 — wire the Restart Game button: close the difficulty modal first,
+      // then open the destructive confirm dialog.
+      { onRestartGame: () => this.openResetConfirm() },
     );
 
     // Off-screen header/stat/status texts the panels & overlays update. These
@@ -2850,6 +2862,133 @@ export class CampScene extends DualCameraScene {
     }
     this.statLineText.setText(this.buildStatLine(s?.player ?? {}));
     this.renderReliquaryHeader();
+  }
+
+  // ── Restart Game (#477) ──────────────────────────────────────────────────
+
+  /**
+   * #477 — Open the irreversible-wipe confirm dialog. Uses `createOverlay` from
+   * ModalShell (DiscardConfirm is ring-specific and does not accommodate the reset
+   * copy or button labels). A single "Danger" stroke border distinguishes it from
+   * the standard blue modal. The ESC key is intentionally not wired here — the
+   * player must tap Cancel explicitly.
+   */
+  private openResetConfirm(): void {
+    if (this.resetConfirmContainer) return; // already open
+
+    const W = 520;
+    const H = 160;
+    const shell = createOverlay(this, {
+      width: W,
+      height: H,
+      title: 'Restart Game',
+      depth: 5000, // above the difficulty modal depth (3000) and normal modals (4000)
+      strokeColor: 0xaa2222,
+      onClose: () => this.closeResetConfirm(),
+    });
+
+    const c = shell.container;
+    this.routeToUi(c);
+
+    const warningText = crispCanvasText(
+      this.add
+        .text(
+          CANVAS_W / 2,
+          CANVAS_H / 2 - 18,
+          'This will erase ALL progress and return your account to a fresh\nstart. This cannot be undone.',
+          { fontSize: '13px', color: '#ffcccc', align: 'center', wordWrap: { width: W - 40 } },
+        )
+        .setOrigin(0.5)
+        .setScrollFactor(0),
+    );
+
+    const confirmBtn = crispCanvasText(
+      this.add
+        .text(CANVAS_W / 2 - 80, CANVAS_H / 2 + 42, '[Confirm]', {
+          fontSize: '15px',
+          color: '#ff4444',
+        })
+        .setOrigin(0.5)
+        .setScrollFactor(0)
+        .setInteractive({ useHandCursor: true })
+        .setName('reset-confirm-yes')
+        .on('pointerdown', () => void this.doResetGame()),
+    );
+
+    const cancelBtn = crispCanvasText(
+      this.add
+        .text(CANVAS_W / 2 + 80, CANVAS_H / 2 + 42, '[Cancel]', {
+          fontSize: '15px',
+          color: '#aaccff',
+        })
+        .setOrigin(0.5)
+        .setScrollFactor(0)
+        .setInteractive({ useHandCursor: true })
+        .setName('reset-confirm-no')
+        .on('pointerdown', () => this.closeResetConfirm()),
+    );
+
+    c.add([warningText, confirmBtn, cancelBtn]);
+    this.resetConfirmContainer = c;
+    window.__resetConfirmOpen = true;
+  }
+
+  /** Dismiss the reset confirm overlay without side effects. */
+  private closeResetConfirm(): void {
+    if (!this.resetConfirmContainer) return;
+    this.unignoreMain(this.resetConfirmContainer);
+    this.resetConfirmContainer.destroy(true);
+    this.resetConfirmContainer = null;
+    window.__resetConfirmOpen = false;
+  }
+
+  /**
+   * #477 — POST /api/me/reset to wipe all progress and return to a fresh start.
+   * On 200: update `window.__campState` from the returned payload and close all
+   * overlays. On non-200: show a toast error and leave overlays open so the
+   * player can retry.
+   */
+  private async doResetGame(): Promise<void> {
+    if (!getToken()) {
+      this.scene.start('LoginScene');
+      return;
+    }
+    let res: Response;
+    try {
+      res = await apiFetch('/api/me/reset', { method: 'POST' });
+    } catch {
+      showTransientText(this, {
+        x: CANVAS_W / 2,
+        y: CANVAS_H / 2 - 60,
+        text: 'Reset failed — network error',
+        color: '#ff6666',
+        depth: 6000,
+        onSetup: (t) => this.routeToUi(t),
+        onDestroy: (t) => this.unignoreMain(t),
+      });
+      return;
+    }
+    if (!res.ok) {
+      const body = (await res.json().catch(() => ({}))) as { error?: string };
+      showTransientText(this, {
+        x: CANVAS_W / 2,
+        y: CANVAS_H / 2 - 60,
+        text: body.error ?? `Reset failed (${res.status})`,
+        color: '#ff6666',
+        depth: 6000,
+        onSetup: (t) => this.routeToUi(t),
+        onDestroy: (t) => this.unignoreMain(t),
+      });
+      return;
+    }
+    // Success: close the confirm dialog, reload state from the response payload.
+    this.closeResetConfirm();
+    const data = (await res.json()) as { player: any; rings: any[]; loadout: Record<string, string | null> };
+    this.rings = data.rings ?? [];
+    this.loadout = data.loadout ?? {};
+    this.carryCap = data.player?.carry_cap ?? 5;
+    this.ringMap = new Map(this.rings.map((r) => [r.id, r]));
+    this.refreshPools(data.player);
   }
 
   /**
