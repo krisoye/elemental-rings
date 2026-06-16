@@ -240,6 +240,21 @@ describe('POST /api/me/reset (#476)', () => {
     expect(attunements).toEqual(['forest_entry']);
   });
 
+  test('after reset: stored players.spirit_max reflects seeded Reliquary (not the 50 floor)', async () => {
+    // BattleRoom reads players.spirit_max directly to seed the vsAI gauge / NPC
+    // pool, so resetPlayer must refresh the stored column after re-seeding.
+    // 5 reliquary rings × 3 max_uses × seeker multiplier (4) = 60.
+    const { playerId, token } = makePlayer();
+    await postReset(token);
+    const row = dbInstance
+      .prepare('SELECT spirit_max, spirit_current FROM players WHERE id = ?')
+      .get(playerId) as { spirit_max: number; spirit_current: number };
+    expect(row.spirit_max).toBe(60);
+    // spirit_current is clamped to spirit_max (60); the 50 floor is below the cap,
+    // so it remains 50 per the issue's starter-default contract.
+    expect(row.spirit_current).toBe(50);
+  });
+
   test('after reset: talisman_loadout has exactly one row (empty necklace)', async () => {
     const { playerId, token } = makePlayer();
 

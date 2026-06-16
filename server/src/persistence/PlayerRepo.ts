@@ -374,9 +374,18 @@ export const resetPlayer = db.transaction((playerId: string): void => {
   resetDeleteForageNodes.run(playerId);
   resetDeleteShrines.run(playerId);
   // 3. Reset the players row to starter defaults (preserves id/username/password_hash).
+  //    spirit_max/spirit_current are set to a 50 floor here, then made authoritative
+  //    by the refresh in step 5 once the Reliquary rings exist.
   resetUpdatePlayers.run(playerId);
   // 4. Seed the fresh 11-ring starter inventory + attunement + talisman loadout.
   seedStarterInventory(playerId);
+  // 5. Recompute spirit_max from the freshly-seeded Reliquary composition and clamp
+  //    the gauge to it — mirrors setHeartRing / packLoadout / PUT /api/difficulty.
+  //    BattleRoom reads players.spirit_max directly to seed the vsAI gauge and NPC
+  //    spirit pool, so the stored column must reflect the seeded inventory, not the
+  //    50 floor written in step 3.
+  const spiritMax = refreshSpiritMax(playerId);
+  clampSpiritCurrent(playerId, spiritMax);
 });
 
 /** Full player row including password_hash — used by the login flow only. */
