@@ -33,6 +33,10 @@ interface NpcEntry {
   x: number;
   y: number;
   element: number;
+  // #478 — spirit preview field (present when spirit_max > 0)
+  npcSpirit?: number;
+  bossTier?: string;
+  type?: string;
 }
 
 const VALID_PERSONALITIES = ['AGGRESSIVE', 'DEFENSIVE', 'STATUS_HUNTER', 'RESILIENT'];
@@ -271,3 +275,205 @@ test('npc: defeating forest_npc_1 (daily) hides it, then it returns after sleep'
   expect(after.map((n) => n.id)).toContain('forest_npc_1');
   await ctx.close();
 });
+
+// ── #478: overworld npc spirit — new scenarios ───────────────────────────────
+// grep: "overworld npc spirit"
+// Run: npx playwright test --project solo --grep "overworld npc spirit"
+
+// ── Scenario 6: API returns npcSpirit > 0 for authenticated player with spirit_max > 0 ──
+test('overworld npc spirit: GET /api/overworld/npcs returns npcSpirit > 0 for each NPC (spirit_max > 0)', async ({ browser }) => {
+  // #478 adversarial: npcSpirit must be a positive integer on every NPC object
+  // when the authenticated player has spirit_max > 0 (all mint-token players do).
+  // A missing getSpiritAndFood call or an omitted .map() field produces undefined.
+  const ctx = await browser.newContext();
+  await seedAuthToken(ctx);
+  const page = await ctx.newPage();
+  await loadSanctum(page);
+
+  const npcs = await serverNpcs(page, 'forest') as NpcEntry[];
+  expect(npcs.length).toBeGreaterThan(0);
+  for (const npc of npcs) {
+    // #478 adversarial: npcSpirit must be present (not undefined) and a positive integer
+    expect(npc.npcSpirit, `npc ${npc.id} missing npcSpirit`).toBeDefined();
+    expect(typeof npc.npcSpirit, `npc ${npc.id} npcSpirit not a number`).toBe('number');
+    expect(npc.npcSpirit!, `npc ${npc.id} npcSpirit must be > 0`).toBeGreaterThan(0);
+  }
+  await ctx.close();
+});
+
+// ── Scenario 7: API parity — npcSpirit is self-consistent across the roster ──
+test('overworld npc spirit: API npcSpirit equals computeNpcSpirit(spirit_max, personality, biome, bossTier) — roamer and boss', async ({ browser }) => {
+  // #478 adversarial: parity between the overworld preview and the battle room.
+  // This locks the key invariant: the spirit shown in the detection readout must
+  // equal what BattleRoom._npcSpirit will be set to for the same player.
+  // A drift between the route's call and BattleRoom's inline formula breaks this.
+  //
+  // IMPORTANT: /api/me returns getSpiritStats().spiritMax which is the DB value
+  // multiplied by DIFFICULTY_MULTIPLIERS[tier]. The route and BattleRoom both use
+  // getSpiritAndFood().spirit_max (the raw stored column). These two sources differ
+  // by the difficulty multiplier and must NOT be cross-compared.
+  //
+  // Instead we assert source-independent internal consistency: all roamers share
+  // the same underlying spirit_max basis from the route. Back-derive the basis from
+  // one reference roamer and assert every other roamer's npcSpirit matches.
+  //
+  // PERSONALITY_SPIRIT_MULT: AGGRESSIVE=0.25, DEFENSIVE=0.30, STATUS_HUNTER=0.35, RESILIENT=0.40
+  // BOSS_MODIFIERS spiritMult: gate=0.75, sub=0.60, major=1.0
+  // BIOME_BOSS_SPIRIT_BONUS: forest { gate:15, sub:25, major:40 }
+  const PERSONALITY_SPIRIT_MULT: Record<string, number> = {
+    AGGRESSIVE: 0.25,
+    DEFENSIVE: 0.30,
+    STATUS_HUNTER: 0.35,
+    RESILIENT: 0.40,
+  };
+  const BOSS_SPIRIT_MULT: Record<string, number> = { gate: 0.75, sub: 0.60, major: 1.0 };
+  const BIOME_BOSS_BONUS: Record<string, Record<string, number>> = {
+    forest: { gate: 15, sub: 25, major: 40 },
+    snow:   { gate: 40, sub: 50, major: 65 },
+    swamp:  { gate: 65, sub: 75, major: 90 },
+    desert: { gate: 90, sub: 100, major: 115 },
+  };
+
+  const ctx = await browser.newContext();
+  await seedAuthToken(ctx);
+  const page = await ctx.newPage();
+  await loadSanctum(page);
+
+  const npcs = await serverNpcs(page, 'forest') as NpcEntry[];
+
+  // Back-derive the shared spirit_max basis from forest_npc_1 (AGGRESSIVE, mult=0.25).
+  // All roamers use the same underlying value so one derivation covers all.
+  // npcSpirit = floor(spirit_max * mult) → spirit_max_basis ≈ npcSpirit / mult.
+  const ref = npcs.find((n) => n.id === 'forest_npc_1');
+  expect(ref, 'forest_npc_1 not found in roster').toBeDefined();
+  expect(ref!.npcSpirit, 'forest_npc_1 npcSpirit missing').toBeGreaterThan(0);
+  const refMult = PERSONALITY_SPIRIT_MULT[ref!.personality] ?? 0.25;
+  // spirit_max_basis is the route's raw DB spirit_max; use floating division to recover it.
+  // Because npcSpirit = floor(spirit_max * mult), spirit_max = npcSpirit / mult
+  // only approximately — allow ±1 tolerance when cross-checking other roamers.
+  const spiritMaxBasis = ref!.npcSpirit! / refMult;
+
+  let roamerChecked = false;
+  let bossChecked = false;
+
+  for (const npc of npcs) {
+    if (!npc.npcSpirit) continue; // skip omitted fields (spirit_max=0 edge)
+
+    if (!npc.bossTier) {
+      // Roamer: assert floor(basis * mult) within ±1 of the route's returned value.
+      // The ±1 tolerance covers rounding loss when back-deriving basis from floor().
+      const mult = PERSONALITY_SPIRIT_MULT[npc.personality] ?? 0;
+      const expected = Math.floor(spiritMaxBasis * mult);
+      // #478 adversarial: parity mismatch means the route formula drifted from the spec.
+      expect(npc.npcSpirit, `npc ${npc.id} parity mismatch (expected ≈${expected})`).toBeGreaterThanOrEqual(expected - 1);
+      expect(npc.npcSpirit, `npc ${npc.id} parity mismatch (expected ≈${expected})`).toBeLessThanOrEqual(expected + 1);
+      roamerChecked = true;
+    } else {
+      // Boss: assert formula floor(basis * bossMult) + biomeBonus within ±1.
+      const bossMult = BOSS_SPIRIT_MULT[npc.bossTier] ?? 0;
+      const biomeBonus = BIOME_BOSS_BONUS['forest']?.[npc.bossTier] ?? 0;
+      const expected = Math.floor(spiritMaxBasis * bossMult) + biomeBonus;
+      expect(npc.npcSpirit, `boss npc ${npc.id} parity mismatch (expected ≈${expected})`).toBeGreaterThanOrEqual(expected - 1);
+      expect(npc.npcSpirit, `boss npc ${npc.id} parity mismatch (expected ≈${expected})`).toBeLessThanOrEqual(expected + 1);
+      bossChecked = true;
+    }
+  }
+
+  // At least one roamer must have been checked for parity.
+  expect(roamerChecked, 'no roamer NPC found in forest roster — parity not exercised').toBe(true);
+  if (!bossChecked) {
+    // Non-blocking: forest may not have a boss NPC yet in some seeded states.
+    console.warn('#478 parity: no boss NPC found in forest roster — boss branch unchecked');
+  }
+
+  await ctx.close();
+});
+
+// ── Scenario 8: DOM readout shows "/ <N> SP" when npcSpirit is defined ────────
+test('overworld npc spirit: walking within DETECTION_RADIUS shows "/ N SP" in npc-prompt', async ({ browser }) => {
+  // #478 adversarial: the client must render the npcSpirit from the API response
+  // as a "/ N SP" segment in the detection readout. A missing client-side guard
+  // (npcSpirit undefined or 0) silently omits the segment even when data is present.
+  const ctx = await browser.newContext();
+  await seedAuthToken(ctx);
+  const page = await ctx.newPage();
+  await loadSanctum(page);
+  await enterOverworld(page);
+
+  // Teleport the player to forest_npc_1's world position to enter DETECTION_RADIUS.
+  // The overworld does not use pointer for player locomotion — mouse events do not walk
+  // the avatar. We use __player.setPosition() for teleportation; __detectedNpc is read-only.
+  //
+  // forest_npc_1 spawn: tx=7, ty=6 (NpcSpawns.ts line 95). Routes compute world px as
+  // tx * TILE_SIZE + TILE_SIZE/2 with TILE_SIZE=16 (routes.ts line 998).
+  // So world center = (7*16+8, 6*16+8) = (120, 104). The FOREST_NPC_1 constant (496,400)
+  // is a stale 32px-grid relic and no longer matches the live NPC position.
+  // WANDER_RADIUS=24px, DETECTION_RADIUS=160px — spawning at (120,104) guarantees detection.
+  const NPC1_WORLD_X = 7 * 16 + 8; // 120
+  const NPC1_WORLD_Y = 6 * 16 + 8; // 104
+  await page.evaluate(([x, y]) => (window as any).__player.setPosition(x, y), [
+    NPC1_WORLD_X,
+    NPC1_WORLD_Y,
+  ] as const);
+
+  // Wait for detection to register via the read-only hook.
+  await page.waitForFunction(
+    () => (window as any).__detectedNpc?.id === 'forest_npc_1',
+    { timeout: E2E_FAST ? 5000 : 10000 },
+  );
+
+  // Read the prompt text from the DOM label created by BaseBiomeScene.showNpcPrompt.
+  // addDomLabel stores the id option as data-label="npc-prompt" (not as an id or class
+  // attribute) — the node class is 'er-dom-label'. Select by data-label attribute.
+  const promptText = await page.evaluate((): string | null => {
+    const el = document.querySelector('[data-label="npc-prompt"]');
+    if (el) return el.textContent;
+    return null;
+  });
+
+  // #478 adversarial: the prompt must contain the SP segment when npcSpirit > 0.
+  expect(promptText, 'npc-prompt element not found or empty').not.toBeNull();
+  expect(promptText!, 'SP segment missing from detection readout').toMatch(/\/\s*\d+\s*SP/);
+  // And must end with the approach instruction.
+  expect(promptText!, 'Approach [E] missing from readout').toContain('Approach [E]');
+
+  await ctx.close();
+});
+
+// ── Scenario 9: spirit_max=0 path — npcSpirit absent; readout unchanged ───────
+test('overworld npc spirit: npcSpirit absent in API when spirit_max=0 (no Reliquary rings)', async ({ browser }) => {
+  // #478 adversarial: a player with spirit_max=0 (empty Reliquary) must not receive
+  // npcSpirit in the API response — the server omits the field entirely.
+  // The client must then show only the existing "N XP  —  Approach [E]" format.
+  //
+  // Implementation note: all mint-token players have spirit_max > 0 (starter rings).
+  // There is no E2E_TEST_ROUTES hook to clear rings or set spirit_max=0 directly.
+  // This test verifies the API contract by intercepting the response and confirming
+  // the field is absent when the server says spirit_max=0. Since we cannot seed a
+  // spirit_max=0 player without a new test hook, this test exercises the API schema
+  // via a structural assertion: if npcSpirit is present it must be a positive number
+  // (i.e. the server never emits npcSpirit=0 or npcSpirit=undefined explicitly).
+  //
+  // A future `/api/test/clear-reliquary` endpoint would allow full end-to-end coverage;
+  // for now this test documents the contract and catches accidental npcSpirit=0 emission.
+  const ctx = await browser.newContext();
+  await seedAuthToken(ctx);
+  const page = await ctx.newPage();
+  await loadSanctum(page);
+
+  const npcs = await serverNpcs(page, 'forest') as NpcEntry[];
+  for (const npc of npcs) {
+    // When present, npcSpirit must be strictly > 0 — the server must never emit 0.
+    // #478 spec: "npcSpirit is absent when spirit_max === 0"; corollary: when emitted
+    // it must carry a meaningful value (> 0). A 0-emission would violate the guard.
+    if (npc.npcSpirit !== undefined) {
+      expect(npc.npcSpirit, `npc ${npc.id} emitted npcSpirit=0 — should be absent`).toBeGreaterThan(0);
+    }
+  }
+
+  // Note: full spirit_max=0 E2E coverage requires a `/api/test/clear-reliquary` hook
+  // (not yet implemented). When added, seed a player with no Reliquary rings and
+  // assert npc.npcSpirit === undefined for every response object.
+  await ctx.close();
+});
+

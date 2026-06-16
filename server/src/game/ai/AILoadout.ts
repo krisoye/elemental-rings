@@ -1,8 +1,9 @@
-import { AIPersonality, SlotKey } from '../../../../shared/types';
+import { AIPersonality, SlotKey, type BossTier } from '../../../../shared/types';
 import { ElementEnum } from '../../../../shared/types';
 import { Rng } from './AIProfiles';
 import { tierForXp, naturalMaxUses } from '../Tiers';
 import { isFusion } from '../Fusions';
+import { BOSS_MODIFIERS, BIOME_BOSS_SPIRIT_BONUS } from '../constants';
 
 const { FIRE, WATER, EARTH, WIND, WOOD } = ElementEnum;
 
@@ -63,6 +64,34 @@ export const PERSONALITY_SPIRIT_MULT: Record<AIPersonality, number> = {
   STATUS_HUNTER: 0.35,
   RESILIENT: 0.40,
 };
+
+/**
+ * #478 — Compute the NPC spirit pool from the player's spirit_max.
+ *
+ * Multiplier resolution (mirrors BattleRoom.onJoin:327):
+ *   - Boss NPCs (bossTier provided): use BOSS_MODIFIERS[bossTier].spiritMult,
+ *     which overrides the personality multiplier. Boss tiers have distinct fixed
+ *     mults (major=1.0, gate=0.75, sub=0.60) regardless of personality.
+ *   - Roamers (bossTier undefined): use PERSONALITY_SPIRIT_MULT[personality].
+ *
+ * Formula: floor(playerSpiritMax × mult) + biome boss bonus.
+ * The floor is applied to the base BEFORE the bonus is added (integer addition
+ * after flooring — matches the inline formula in BattleRoom.onJoin:640-644).
+ */
+export function computeNpcSpirit(
+  playerSpiritMax: number,
+  personality: AIPersonality,
+  biome?: string,
+  bossTier?: BossTier,
+): number {
+  // Bosses override personality mult; roamers use the per-personality fraction.
+  const mult = bossTier
+    ? BOSS_MODIFIERS[bossTier].spiritMult
+    : PERSONALITY_SPIRIT_MULT[personality];
+  const base = Math.floor(playerSpiritMax * mult);
+  const bonus = (biome && bossTier) ? (BIOME_BOSS_SPIRIT_BONUS[biome]?.[bossTier] ?? 0) : 0;
+  return base + bonus;
+}
 
 /**
  * The NPC's effective XP for a personality, scaled to the player's battle-hand

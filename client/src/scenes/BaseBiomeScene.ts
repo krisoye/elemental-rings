@@ -60,6 +60,8 @@ interface NpcInfo {
   battleKey?: string;
   /** Pre-computed thumb (stake) XP the player would win — shown in the approach prompt. */
   stakeXp?: number;
+  /** Pre-computed NPC spirit pool the player would face — shown in the approach prompt. */
+  npcSpirit?: number;
   /** Boss display name (e.g. "Bogwood Warden") — present only for boss NPCs. */
   displayName?: string;
   /** Boss tier — present only for boss NPCs. */
@@ -1912,7 +1914,8 @@ export abstract class BaseBiomeScene extends DualCameraScene {
         ? `${found.displayName}${tierLabel ? `  ·  ${tierLabel}` : ''}`
         : `${ELEMENT_NAMES[found.element] ?? '?'} ${found.type === 'monster' ? 'monster' : 'duelist'}`;
       const xpPart = found.stakeXp !== undefined ? `  ${found.stakeXp.toLocaleString()} XP` : '';
-      this.showNpcPrompt(`${label}${xpPart}  —  Approach [E]`, isBoss);
+      const spPart = found.npcSpirit !== undefined && found.npcSpirit > 0 ? ` / ${found.npcSpirit} SP` : '';
+      this.showNpcPrompt(`${label}${xpPart}${spPart}  —  Approach [E]`, isBoss);
       window.__detectedNpc = { id: found.id, personality: found.personality };
     } else {
       this.detectedNpc = null;

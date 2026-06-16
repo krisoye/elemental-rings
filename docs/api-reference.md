@@ -427,10 +427,10 @@ Equip a talisman to the necklace slot. Resets charges to the catalog maximum. `t
 **Auth required:** yes (requireAuth only)
 **Request body:** none
 **Query parameters:** `biome?: string`, `screen?: string`
-**Response (success):** `Array<{ id: string, personality: string, type: string, element: number, spriteFrame: string, x: number, y: number, aiSeed: number, stakeXp: number, displayName?: string, bossTier?: number }>` — HTTP 200
+**Response (success):** `Array<{ id: string, personality: string, type: string, element: number, spriteFrame: string, x: number, y: number, aiSeed: number, stakeXp: number, npcSpirit?: number, displayName?: string, bossTier?: number }>` — HTTP 200
 **Response (error):** 400 — `"screen required"` (when `biome` provided without `screen`) | 404 — `"Player not found"`
 
-Return NPC spawn entries visible to the player on the requested screen. Hidden when the NPC is permanent (`respawnDays === 0`) and already defeated, or when within its respawn window. `x`/`y` are world-pixel tile centers (tile coords × 16 + 8). `stakeXp` is pre-computed via `previewOpponent` scaled to the player's carried battle-hand average XP. Boss entries include `displayName` and `bossTier`.
+Return NPC spawn entries visible to the player on the requested screen. Hidden when the NPC is permanent (`respawnDays === 0`) and already defeated, or when within its respawn window. `x`/`y` are world-pixel tile centers (tile coords × 16 + 8). `stakeXp` is pre-computed via `previewOpponent` scaled to the player's carried battle-hand average XP. `npcSpirit` is the spirit pool the NPC will field in the duel — `computeNpcSpirit(getSpiritAndFood(playerId).spirit_max, personality, biome, bossTier)`, the same source `BattleRoom.onJoin` uses, so the previewed value matches the real fight (boss entries include the per-biome boss spirit bonus). Omitted when the player's `spirit_max` is 0. Boss entries include `displayName` and `bossTier`.
 
 ---
 
