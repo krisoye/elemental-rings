@@ -2,7 +2,7 @@ import { Router, type Request, type Response } from 'express';
 import bcrypt from 'bcrypt';
 import { signToken, requireAuth, verifyToken } from '../auth/auth';
 import { makeRng } from '../game/ai/AIProfiles';
-import { previewOpponent, AI_PERSONALITIES } from '../game/ai/AILoadout';
+import { previewOpponent, AI_PERSONALITIES, computeNpcSpirit } from '../game/ai/AILoadout';
 import type { AIPersonality } from '../../../shared/types';
 import { isDifficultyTier } from '../../../shared/types';
 import {
@@ -1029,6 +1029,9 @@ apiRouter.get('/api/overworld/npcs', requireAuth, (req: Request, res: Response):
   // can show the player what thumb XP they'd win without an extra round-trip.
   // #244 — scale to the player's carried battle hand, not the Reliquary aggregate.
   const playerBattleHandAvgXp = getBattleHandAvgXp(playerId);
+  // #478 — fetch spirit_max once per request (same source as BattleRoom.onJoin:639)
+  // so npcSpirit in the preview equals the real fight value.
+  const { spirit_max } = getSpiritAndFood(playerId);
   const npcs = visible.map((npc) => {
     const aiSeed = hashNpcId(npc.id);
     const rng = makeRng(aiSeed ^ 0x1a2b3c4d);
@@ -1037,6 +1040,11 @@ apiRouter.get('/api/overworld/npcs', requireAuth, (req: Request, res: Response):
       rng,
       playerBattleHandAvgXp,
     );
+    // #478 — omit npcSpirit when spirit_max is 0 (new player with no Reliquary rings)
+    // so the client hides the SP segment rather than showing "0 SP".
+    const npcSpirit = spirit_max > 0
+      ? computeNpcSpirit(spirit_max, npc.personality as AIPersonality, npc.biome, npc.boss?.tier)
+      : undefined;
     return {
       id: npc.id,
       personality: npc.personality,
@@ -1048,6 +1056,7 @@ apiRouter.get('/api/overworld/npcs', requireAuth, (req: Request, res: Response):
       aiSeed,
       stakeXp,
       ...(npc.boss ? { displayName: npc.boss.name, bossTier: npc.boss.tier } : {}),
+      ...(npcSpirit !== undefined ? { npcSpirit } : {}),
     };
   });
 
