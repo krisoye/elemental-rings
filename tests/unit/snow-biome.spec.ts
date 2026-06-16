@@ -187,8 +187,8 @@ describe('SpecConformance (#335)', () => {
   });
 
   it('SNOW_SCREENS provides the data behind the snow_entry RENDER_NODE (id and biome)', () => {
-    // OverworldMapModal hardcodes SNOW_NODE with id='snow_entry' and biome='snow'.
-    // snow_entry must exist in SNOW_SCREENS so the node is backed by real data.
+    // #438: OverworldMapModal now derives all Snow nodes from SNOW_SCREENS (manifest-driven,
+    // replacing the former static SNOW_NODE constant). snow_entry must exist in SNOW_SCREENS.
     const snowEntry = SNOW_SCREENS.find((s) => s.id === 'snow_entry');
     expect(snowEntry).toBeDefined();
     // The biome is not on ScreenDef — it is inferred from the module (snow.ts).

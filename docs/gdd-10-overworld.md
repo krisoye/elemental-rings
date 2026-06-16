@@ -337,16 +337,6 @@ Sell price = **base + floor(xp / 100)** GP, where base is element-type determine
 
 ---
 
-### 10.13 Sealed Exits (Unbuilt Regions)
-
-When a player enters a transition zone that leads to a region whose Phaser scene has not yet been registered (i.e., the destination key is unknown to `SceneManager`), the game shows a fading barrier message — **"The path forward is sealed."** — instead of attempting to start the missing scene (which would crash Phaser with an unknown-scene error).
-
-This is a development-phase stub behaviour, not a permanent mechanic. As new region scenes are added and registered, their gates automatically unlock without any guard-list update — the check is purely "is the scene registered?", so the path unseals the moment the scene exists. The player is never permanently locked out; they can move away from the gate and re-enter normally once the region is built.
-
-The sealed message reuses the same `showBarrierMessage` channel as other overworld barriers (e.g., level-gated gates) so the presentation is consistent. No navigation state is modified on a sealed exit: `isTransitioning` is not set, and the player retains full control after the toast fades.
-
----
-
 ### 10.12 Design-Change Log (Overworld)
 
 This log records how the overworld's design has evolved — what it *became* and why. It is not a build log; implementation status, issues, and PRs live in GitHub.
@@ -354,4 +344,14 @@ This log records how the overworld's design has evolved — what it *became* and
 - **The Forest deep wing is now exclusively post-boss.** The old `Root Tangle → Deepwood` backdoor was removed so the deep forest (Verdant Descent and beyond) can only be reached by defeating the warden north of Boss Clearing. `Briar Pass` was relocated to the **west** of Crossroads, and the `Briar Pass → Deepwood → Boss Clearing` chain became a clean vertical spine. This eliminated a non-planar 5-cycle in the screen graph, so cardinal navigation is now coherent (`N→E→S→W` returns to start).
 - **The World Map modal is fully derived from the Forest screen manifest.** The M-key overworld map (`OverworldMapModal`) no longer carries hardcoded node positions or edges; it reads every node's grid cell from `FOREST_SCREENS` coords (`col = x`, `row = −y`) and derives its edge set from the screens' reciprocal exits. Display-only metadata (short labels, boss-tier glyphs) lives in `client/src/objects/world/forestMeta.ts`. The reason: a hardcoded mirror of `forest.ts` could drift independently after any graph change — deriving the modal makes the manifest the single source of truth. Adding a Forest screen now requires one entry in `shared/world/forest.ts` (with a `coord`) and one label/metadata entry in `forestMeta.ts`; the only remaining hardcoded positions are the isolated Hidden Alcove (teleport-only, no coord) and the Swamp biome's entry node (not a Forest screen — a static biome node placed adjacent to its gate screen). The modal opens at `OPEN_ZOOM = max(FIT_SCALE, min(READABLE_SCALE, ZOOM_MAX))` centered on the player's current screen, supports focal-point zoom (mouse wheel and ±/keyboard keys use the cursor or map-centre as focal point), and allows free drag-pan at any zoom level (bounds clamped).
 - **All 9 Snow Mountain screens now appear on the World Map, fully manifest-derived.** The original static `snow_entry` hardcoded node was replaced with nodes derived from `SNOW_SCREENS` — the same pattern used for Forest. Each Snow screen carries a `coord` field; the modal applies a `SNOW_ROW_OFFSET = −3` so Snow nodes render north of the Forest grid (render row = `SNOW_ROW_OFFSET + (−coord.y)`, giving rows −3 through −8). `MIN_ROW` was extended from −5 (Forest only) to −8 to accommodate `snow_blizzard_peak` (coord y=5 → render row −8); intra-Snow edges are derived from each screen's reciprocal `exits` in the same loop that handles Forest. This makes `shared/world/snow.ts` the single source of truth for Snow map layout — adding a Snow screen requires one entry in the manifest with a `coord` field.
+
+---
+
+### 10.13 Sealed Exits (Unbuilt Regions)
+
+When a player enters a transition zone that leads to a region whose Phaser scene has not yet been registered (i.e., the destination key is unknown to `SceneManager`), the game shows a fading barrier message — **"The path forward is sealed."** — instead of attempting to start the missing scene (which would crash Phaser with an unknown-scene error).
+
+This is a development-phase stub behaviour, not a permanent mechanic. As new region scenes are added and registered, their gates automatically unlock without any guard-list update — the check is purely "is the scene registered?", so the path unseals the moment the scene exists. The player is never permanently locked out; they can move away from the gate and re-enter normally once the region is built.
+
+The sealed message reuses the same `showBarrierMessage` channel as other overworld barriers (e.g., level-gated gates) so the presentation is consistent. No navigation state is modified on a sealed exit: `isTransitioning` is not set, and the player retains full control after the toast fades.
 
