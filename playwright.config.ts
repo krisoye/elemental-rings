@@ -97,6 +97,7 @@ const SOLO_SPECS = [
   'world-map-modal.spec.ts',    // #334 — fit-to-viewport + zoom/pan E2E
   'dom-label-contract.spec.ts', // #361 / #366 — DomLabel CSS contract + overflow regression guard
   'reliquary-header-convergence-qa.spec.ts', // #426 QA adversarial header-convergence tests
+  'reset-game.spec.ts', // #477 — Restart Game affordance in CampScene Settings
 ];
 
 export default defineConfig({
