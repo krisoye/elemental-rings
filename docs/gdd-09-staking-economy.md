@@ -55,11 +55,10 @@ The three triangle elements (Fire/Water/Wood) share one **all-in setup** archety
 
 > **Future design (Phase 7+):** Fused Thumb rings providing blended passives, and additional jewelry body positions with their own passive archetypes, are flagged for a later design pass once the base elemental passives are tuned.
 
-### 9.4 Staked Ring XP
-- The staked ring earns passive XP through its use cost each time its passive triggers
-- A ring used as a permanent stake slowly levels up through its passive role
-- Higher XP stakes provide more passive durability — a maxed Tier 2 staked ring has more uses than a Tier 1, so its passive triggers more times before the Thumb extinguishes. The passive effect per trigger is the same; the advantage is longevity and the number of times it fires during a duel
-- This creates a reason to stake high-value rings even at personal risk
+### 9.4 Staked Ring
+- The staked ring does not earn XP; its passive provides only a combat effect
+- A high-tier staked ring provides greater durability and depth — a maxed Tier 2 ring has more uses than a Tier 1, so its passive triggers more times before the thumb extinguishes. The passive effect per trigger is the same; the advantage is longevity and frequency of activation during a duel
+- This creates a reason to stake high-value rings: deeper passives enable more strategic play, even at personal risk
 
 ### 9.5 Gold Rewards
 

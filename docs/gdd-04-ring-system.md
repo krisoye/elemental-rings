@@ -79,11 +79,10 @@ Tier thresholds follow a **triangular-number × 500** pattern. Each tier's XP ra
 - The ring management overlay (field and sanctum modes) exposes both a targeted **RECHARGE slot** (select a ring, then click RECHARGE to top off that one ring) and a **`[RECHARGE ALL]`** action that tops off all carried rings in priority order; the mechanism and spirit cost are unchanged in both cases
 
 ### 4.4 Ring XP
-- **Battle use is the only source of XP.** A ring earns XP only when the protagonist uses it in a duel — more uses in a duel = more XP for that ring
+- Rings earn XP only through exchange outcomes in battle: the protagonist's attack rings (a1/a2) earn XP when landing hits, blocking, or being countered; the defense rings (d1/d2) earn XP on successful counters, blocks, or failed defenses. The thumb (stake) ring and the heart (HP) ring earn no XP.
 - Rings in the Reliquary, spare carry slots, or any resting state earn no XP
 - XP is permanent and carries through fusion
 - Losing a ring via staking means losing all XP associated with it
-- *Exception:* a staked ring earns passive XP through the use-per-battle cost of its buff while staked (see §9) — this is the only passive XP path
 
 ### 4.5 Ring Abilities
 - Rings unlock passive and active abilities as they accumulate XP
