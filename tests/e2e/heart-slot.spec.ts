@@ -414,6 +414,151 @@ test(`heart swap: atomic two-ring swap works in both directions — ${label}`, a
 });
 }
 
+// ── Phase 2 (#474): implementation branch coverage ─────────────────────────────
+//
+// Two branches in CampScene.onRingClicked lines 1361–1391 that Phase 1 did not
+// exercise:
+//
+//   A. Same-ring re-click deselect guard (line 1361) fires BEFORE the heart branch
+//      at line 1371 — clicking the held heart ring on its own Heart card must
+//      deselect, NOT enter the heart-swap path.
+//
+//   B. The else branch (line 1378): a non-heart ring is held and the user clicks the
+//      Heart card (source='heart', sel.source !== 'heart'). Neither leg is
+//      "sel.source === 'heart' && source !== 'heart'", so it falls into the else
+//      branch → moveTo(source) = moveTo('heart'). This equips the held ring to the
+//      Heart slot.
+
+test('heart swap: clicking the held heart ring on its own Heart card deselects (does not self-swap)', async ({ browser }) => {
+  // #474 impl-branch: the same-ring re-click guard (line 1361) must fire BEFORE
+  // the heart-swap branch (line 1371). Previously an off-by-branch bug could allow
+  // a self-to-self swap to reach the server. Assert no PUT fires and selection clears.
+  const token = await registerAndToken();
+  const before = await getMe(token);
+  const heartId = before.player.heart_ring?.id ?? null;
+  expect(heartId, 'test requires an equipped heart ring').not.toBeNull();
+
+  const ctx = await browser.newContext();
+  await ctx.addInitScript(`localStorage.setItem('er_token', ${JSON.stringify(token)})`);
+  const page = await ctx.newPage();
+  await loadSanctum(page);
+  await openReliquary(page);
+
+  // Step 1: pick up the heart ring (source='heart').
+  await page.evaluate((id) => (window as any).__reliquarySelect(id, 'heart'), heartId);
+  await page.waitForFunction(
+    () => ((window as any).__scene as any)?.swapManager?.selection?.source === 'heart',
+    { timeout: 5000 },
+  );
+
+  // Intercept any swap/loadout mutations — none must fire on the re-click.
+  const mutationsFired: string[] = [];
+  page.on('request', (req) => {
+    if (
+      (req.url().includes('/api/rings/swap') ||
+        req.url().includes('/api/loadout') ||
+        req.url().includes('/api/heart-slot')) &&
+      ['PUT', 'POST'].includes(req.method())
+    ) {
+      mutationsFired.push(req.url());
+    }
+  });
+  const mutationsBefore = mutationsFired.length;
+
+  // Step 2: click the same heart ring again on the Heart card (source='heart').
+  // This triggers the same-ring re-click guard at line 1361 → clearReliquarySelection().
+  await page.evaluate((id) => (window as any).__reliquarySelect(id, 'heart'), heartId);
+
+  await page.waitForTimeout(300);
+
+  // Core assertion: selection is cleared, no network call fired.
+  const selAfter = await page.evaluate(
+    () => ((window as any).__scene as any)?.swapManager?.selection ?? null,
+  );
+  expect(
+    selAfter,
+    '#474 branch A: re-clicking the held heart ring must deselect (same-ring guard at line 1361)',
+  ).toBeNull();
+  expect(
+    mutationsFired.length,
+    '#474 branch A: no swap/loadout/heart-slot mutation must fire on same-ring re-click',
+  ).toBe(mutationsBefore);
+
+  // Server state must be unchanged — heart ring still in the Heart slot.
+  const after = await getMe(token);
+  expect(
+    after.player.heart_ring?.id,
+    '#474 branch A: heart ring must remain equipped after a self-deselect',
+  ).toBe(heartId);
+
+  await ctx.close();
+});
+
+test('heart swap: holding a bench ring and clicking the Heart card equips it to the Heart slot (else branch)', async ({ browser }) => {
+  // #474 impl-branch: the else branch at line 1378 — `sel.source !== 'heart'` and
+  // `source === 'heart'`. The held ring is from the SPIRIT pool (bench), and the
+  // user clicks the Heart card. This must call moveTo('heart'), equipping the bench
+  // ring and releasing the old heart ring to the bench's pool.
+  const token = await registerAndToken();
+  const before = await getMe(token);
+  const oldHeartId = before.player.heart_ring?.id ?? null;
+  expect(oldHeartId, 'test requires an equipped heart ring').not.toBeNull();
+
+  // Seed a spare bench ring in the SPIRIT pool so there is something to pick up.
+  const spiritId = await seedSpiritRing(token);
+
+  const ctx = await browser.newContext();
+  await ctx.addInitScript(`localStorage.setItem('er_token', ${JSON.stringify(token)})`);
+  const page = await ctx.newPage();
+  await loadSanctum(page);
+  await page.waitForFunction(
+    (id) => (window as any).__campState?.atSanctum?.some((r: any) => r.id === id),
+    spiritId,
+    { timeout: 8000 },
+  );
+  await openReliquary(page);
+
+  // Step 1: pick up the SPIRIT-pool ring (source='reliquary').
+  await page.evaluate((id) => (window as any).__reliquarySelect(id, 'reliquary'), spiritId);
+  await page.waitForFunction(
+    () => ((window as any).__scene as any)?.swapManager?.selection?.source === 'reliquary',
+    { timeout: 5000 },
+  );
+
+  // Step 2: move to the Heart slot — triggers the else branch → moveTo('heart').
+  await page.evaluate((id) => (window as any).__reliquaryMove(id, 'heart'), spiritId);
+
+  // Wait for the swap to commit.
+  await page.waitForFunction(
+    (id) => (window as any).__campState?.heart_ring?.id === id,
+    spiritId,
+    { timeout: 8000 },
+  );
+
+  const after = await getMe(token);
+  expect(
+    after.player.heart_ring?.id,
+    '#474 branch B (else): SPIRIT-pool ring must now occupy the Heart slot',
+  ).toBe(spiritId);
+  // Old heart ring released to the ring pool (no longer heart_slot=1).
+  const released = after.rings.find((r: any) => r.id === oldHeartId);
+  expect(
+    released,
+    '#474 branch B (else): old heart ring must appear in rings after equip-swap',
+  ).toBeDefined();
+  expect(
+    released?.heart_slot,
+    '#474 branch B (else): old heart ring heart_slot must be 0 after release',
+  ).toBe(0);
+  // Selection cleared after the move commits.
+  const selAfter = await page.evaluate(
+    () => ((window as any).__scene as any)?.swapManager?.selection ?? null,
+  );
+  expect(selAfter, '#474 branch B (else): selection must be null after equip completes').toBeNull();
+
+  await ctx.close();
+});
+
 // ── Scenario 8: the Thumb passive shows only on hover (tooltip, not a strip) ───
 test('heart: the Thumb passive is a hover tooltip, not a permanent strip', async ({ browser }) => {
   const token = await registerAndToken();

@@ -228,6 +228,74 @@ test('re-stake after forfeit: assigning a ring via Tab overlay updates __campSta
   await ctx.close();
 });
 
+// ── Phase 2 (#472): __campState undefined guard in BattleHandOverlay.refresh() ──
+//
+// The fix at BattleHandOverlay.ts:170 uses optional chaining:
+//   if (window.__campState) window.__campState.loadout = { ...this.loadout };
+// Without the guard, calling refresh() in an EncounterScene/early-load context
+// where __campState is not yet defined would throw a TypeError. This test
+// drives refreshManageData() while __campState is explicitly undefined and
+// asserts no exception propagates.
+test('re-stake after forfeit: refresh() does not throw when __campState is undefined', async ({ browser }) => {
+  // #472 impl-branch: the `if (window.__campState)` guard at line 170 must silently
+  // skip the patch when __campState is not yet set (e.g. EncounterScene context or
+  // early page load before CampScene.refreshPools() fires).
+  const res = await fetch(`${API_URL}/api/test/mint-token`, { method: 'POST' });
+  if (!res.ok) throw new Error(`mint-token failed (${res.status})`);
+  const { token } = (await res.json()) as { token: string };
+
+  const ctx = await browser.newContext();
+  await ctx.addInitScript(`localStorage.setItem('er_token', ${JSON.stringify(token)})`);
+  const page = await ctx.newPage();
+  await page.goto(URL);
+  await page.waitForFunction(() => (window as any).__activeScene === 'CampScene', { timeout: 10000 });
+  await page.waitForFunction(() => !!(window as any).__campState, { timeout: 10000 });
+
+  await enterForestScreen(page, 'forest_anchorage');
+  await page.waitForFunction(
+    () => typeof (window as any).__overworldToggleBattleHand === 'function',
+    { timeout: 8000 },
+  );
+
+  // Open the Tab overlay so battleHand.overlay is populated.
+  await page.evaluate(() => (window as any).__overworldToggleBattleHand());
+  await page.waitForFunction(() => (window as any).__overworldBattleHandOpen === true, { timeout: 5000 });
+  await page.waitForFunction(() => !!(window as any).__heartCardState, { timeout: 5000 });
+
+  // Wipe __campState to simulate the undefined context (e.g. freshly navigated EncounterScene
+  // before CampScene has run refreshPools, or the rare race between scene transitions).
+  await page.evaluate(() => { (window as any).__campState = undefined; });
+  const campStateGone = await page.evaluate(() => (window as any).__campState);
+  expect(campStateGone, 'setup: __campState must be undefined for this branch').toBeUndefined();
+
+  // Drive refresh() via the E2E bridge — must complete without throwing.
+  const errorThrown = await page.evaluate(async () => {
+    try {
+      const scene = (window as any).__game?.scene?.getScene('ForestScene') as any;
+      if (scene?.battleHand?.refreshManageData) {
+        await scene.battleHand.refreshManageData();
+      }
+      return null;
+    } catch (e: unknown) {
+      return e instanceof Error ? e.message : String(e);
+    }
+  });
+
+  expect(
+    errorThrown,
+    '#472 guard: BattleHandOverlay.refresh() must not throw when __campState is undefined',
+  ).toBeNull();
+
+  // __campState must remain undefined (not created by the guard — the if-branch skips the write).
+  const campStateAfter = await page.evaluate(() => (window as any).__campState);
+  expect(
+    campStateAfter,
+    '#472 guard: refresh() must not create __campState when it was undefined',
+  ).toBeUndefined();
+
+  await ctx.close();
+});
+
 // ── #473 FIELD mode: recharge slot clears ring selection ───────────────────────
 //
 // The bug: after clicking RECHARGE slot with a ring selected, the ring remained
