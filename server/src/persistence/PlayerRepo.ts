@@ -1401,7 +1401,8 @@ export function getBattleHandAvgXp(playerId: string): number {
   const thumbXp = xp(loadout.thumb);
   const atkAvg = (xp(loadout.a1) + xp(loadout.a2)) / 2;
   const defAvg = (xp(loadout.d1) + xp(loadout.d2)) / 2;
-  return thumbXp * 0.5 + atkAvg * 0.25 + defAvg * 0.25;
+  const heartXp = getHeartRing(playerId)?.xp ?? 0;
+  return thumbXp * 0.35 + atkAvg * 0.15 + defAvg * 0.15 + heartXp * 0.35;
 }
 
 // ---------------------------------------------------------------------------
