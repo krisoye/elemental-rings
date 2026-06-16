@@ -66,7 +66,11 @@ const SWAMP_ROW  = 3;
 
 // Derive grid extents from FOREST_SCREENS (mirrors the module-level derivation)
 const _coords = FOREST_SCREENS.filter((s) => s.coord).map((s) => s.coord!);
-const MIN_COL = Math.min(..._coords.map((c) => c.x));
+// #438 impl: Snow x-coords are included in MIN_COL/MAX_COL — forward-compat guard mirrors
+// OverworldMapModal.ts lines 33-39. Current Snow cols (−1, 0, 1) are within Forest [−2..6]
+// so computed values are unchanged today, but the formula is kept in sync with production.
+const _snowCols = SNOW_SCREENS.filter((s) => s.coord).map((s) => s.coord!.x);
+const MIN_COL = Math.min(..._coords.map((c) => c.x), ..._snowCols);
 
 // #438: Snow screens use a biome offset so they render NORTH of the Forest grid.
 // SNOW_ROW_OFFSET = −3 places snow_entry one step north of forest_snow_gate (Forest row −2).
@@ -81,7 +85,7 @@ const MIN_ROW = Math.min(
   Math.min(..._coords.map((c) => -c.y)),
   Math.min(..._snowRenderRows),
 );
-const MAX_COL = Math.max(..._coords.map((c) => c.x));
+const MAX_COL = Math.max(..._coords.map((c) => c.x), ..._snowCols);
 const MAX_ROW = Math.max(..._coords.map((c) => -c.y));
 
 const _maxCol = Math.max(ALCOVE_COL, MAX_COL);
@@ -107,6 +111,14 @@ const ZOOM_MAX = FIT_SCALE * 3;
 // OPEN_ZOOM is the zoom level the modal opens at (≥ FIT_SCALE, ≤ ZOOM_MAX).
 const READABLE_SCALE = 78 / NODE_W;                                   // ≈ 0.813
 const OPEN_ZOOM = Math.max(FIT_SCALE, Math.min(READABLE_SCALE, ZOOM_MAX));
+
+// #438 impl: keyboard ± and on-panel ± buttons use the screen-space center of the map area
+// as their focal point (OverworldMapModal.ts MAP_CENTER_X / MAP_CENTER_Y).
+const MAP_CENTER_X = MAP_AREA_SCREEN_X + MAP_AREA_W / 2;
+const MAP_CENTER_Y = MAP_AREA_SCREEN_Y + MAP_AREA_H / 2;
+
+// #438 impl: one arrow-key press pans by CELL_W / 2 = 55 content pixels.
+const ARROW_PAN_STEP = CELL_W / 2;
 
 // ---------------------------------------------------------------------------
 // Re-implementation of clampPan (spec language, not copy-paste)
@@ -942,6 +954,246 @@ describe('AdversarialNegatives: unknown currentScreenId — no NaN, no crash (#4
     } else {
       expect(y).toBeGreaterThanOrEqual(0); // centering offset
     }
+  });
+
+});
+
+// ===========================================================================
+// Phase 2 — Implementation-aware tests (#438)
+// These tests target implementation-specific branches and constants that were
+// only visible after reading the landed code — they cannot be derived from the
+// spec alone.
+// ===========================================================================
+
+describe('ImplAware: MIN_COL / MAX_COL includes Snow columns — forward-compat guard (#438)', () => {
+
+  it('_snowCols has 9 entries — every SNOW_SCREEN contributes to the column guard', () => {
+    // #438 impl adversarial: a future screen added without coord is silently dropped from
+    // the column guard. Right now all 9 must contribute — pin the count.
+    expect(_snowCols).toHaveLength(9);
+  });
+
+  it('all current Snow x-coords are within Forest [MIN_COL..MAX_COL] — guard is a no-op today', () => {
+    // #438 impl: production adds _snowCols to the min/max derivation. Current Snow x-coords
+    // (−1, 0, 1) are within Forest [−2..6], so including them does not expand the grid.
+    // This test documents the invariant and will FAIL if a future Snow screen goes west of −2.
+    const forestMinCol = Math.min(..._coords.map((c) => c.x));
+    const forestMaxCol = Math.max(..._coords.map((c) => c.x));
+    for (const x of _snowCols) {
+      expect(x, `Snow col ${x} must be ≥ Forest MIN_COL (${forestMinCol})`).toBeGreaterThanOrEqual(forestMinCol);
+      expect(x, `Snow col ${x} must be ≤ Forest MAX_COL (${forestMaxCol})`).toBeLessThanOrEqual(forestMaxCol);
+    }
+  });
+
+  it('MIN_COL with Snow equals Forest-only MIN_COL (Snow does not extend the west boundary)', () => {
+    // #438 impl: `MIN_COL = Math.min(..._coords.map(c => c.x), ..._snowCols)`.
+    // All Snow x >= −1; Forest MIN_COL = −2 → computed value unchanged.
+    const forestMinCol = Math.min(..._coords.map((c) => c.x));
+    expect(MIN_COL).toBe(forestMinCol);
+  });
+
+  it('MAX_COL with Snow equals Forest-only MAX_COL (Snow does not extend the east boundary)', () => {
+    // #438 impl: Snow max x = 1; Forest MAX_COL = 6 → computed value unchanged.
+    const forestMaxCol = Math.max(..._coords.map((c) => c.x));
+    expect(MAX_COL).toBe(forestMaxCol);
+  });
+
+  it('GRID_COLS is unchanged when Snow cols are included (CONTENT_W / FIT_SCALE chain unaffected)', () => {
+    // #438 impl: forward-compat guard must be a no-op for current Snow placement.
+    // If GRID_COLS grew, FIT_SCALE would shrink — all zoom/pan constants would drift.
+    const forestMinCol = Math.min(..._coords.map((c) => c.x));
+    const forestMaxCol = Math.max(..._coords.map((c) => c.x));
+    const gridColsForestOnly = Math.max(ALCOVE_COL, forestMaxCol) - forestMinCol + 1;
+    const _maxColLocal = Math.max(ALCOVE_COL, MAX_COL);   // MAX_COL now includes _snowCols
+    const gridColsWithSnow = _maxColLocal - MIN_COL + 1;  // MIN_COL now includes _snowCols
+    expect(gridColsWithSnow).toBe(gridColsForestOnly);
+    expect(gridColsWithSnow).toBe(GRID_COLS);
+  });
+
+});
+
+describe('ImplAware: Snow node labels and anchorage from manifest name field (#438)', () => {
+
+  it('all 9 Snow node labels match SNOW_SCREENS[i].name exactly', () => {
+    // #438 impl: production uses screen.name directly (not a separate meta look-up table).
+    // If any name drifts, the modal renders the wrong label on the map node.
+    const expected: Record<string, string> = {
+      snow_entry:         'Snow Fields',
+      snow_snowhaven:     'Snowhaven',
+      snow_frost_cavern:  'Frost Cavern',
+      snow_wind_pass:     'Wind Pass',
+      snow_frozen_lake:   'The Frozen Lake',
+      snow_glacier_upper: 'Upper Glacier',
+      snow_storm_shrine:  'Storm Shrine',
+      snow_dust_shrine:   'Dust Shrine',
+      snow_blizzard_peak: 'Blizzard Peak',
+    };
+    for (const screen of SNOW_SCREENS) {
+      expect(screen.name, `${screen.id} name mismatch`).toBe(expected[screen.id]);
+    }
+  });
+
+  it('snow_entry has anchorage "snow_anchor_1" — first Snow anchorage dot', () => {
+    // #438 impl: the anchorage field on ScreenDef drives the dot decoration rendered on the node.
+    const entry = SNOW_SCREENS.find((s) => s.id === 'snow_entry')!;
+    expect(entry.anchorage).toBe('snow_anchor_1');
+  });
+
+  it('snow_frozen_lake has anchorage "snow_anchor_2" — second Snow anchorage dot', () => {
+    const lake = SNOW_SCREENS.find((s) => s.id === 'snow_frozen_lake')!;
+    expect(lake.anchorage).toBe('snow_anchor_2');
+  });
+
+  it('exactly 2 Snow screens have anchorage fields — no spurious dots on other nodes', () => {
+    // #438 impl adversarial: if a future manifest edit incorrectly grants anchorage to a third
+    // Snow screen, a spurious waystone dot appears on the map. Pin the exact count.
+    const withAnchorage = SNOW_SCREENS.filter((s) => s.anchorage);
+    expect(withAnchorage).toHaveLength(2);
+  });
+
+  it('remaining 7 Snow screens have no anchorage — names the exact set for auditing', () => {
+    // #438 impl: locks in which screens are decoration-free. Fails if the wrong screen gains a dot.
+    const noAnchorageIds = [
+      'snow_snowhaven', 'snow_frost_cavern', 'snow_wind_pass',
+      'snow_glacier_upper', 'snow_storm_shrine', 'snow_dust_shrine', 'snow_blizzard_peak',
+    ];
+    for (const id of noAnchorageIds) {
+      const screen = SNOW_SCREENS.find((s) => s.id === id)!;
+      expect(screen.anchorage, `${id} must not have anchorage`).toBeUndefined();
+    }
+  });
+
+});
+
+describe('ImplAware: applyZoom reset branch — pan zeroed before clampPan, focal bypassed (#438)', () => {
+
+  it('reset branch: any prior pan is discarded — result equals clampPan(0, 0, ZOOM_MIN)', () => {
+    // #438 impl: production sets this.panX=0, this.panY=0 before clampPan when
+    // (currentScale===ZOOM_MIN && prevScale!==ZOOM_MIN). Documents the zero-first path.
+    const center = clampPan(0, 0, ZOOM_MIN);
+    const panValues = [0, -100, -300, MAP_AREA_W * 2];
+    for (const startPan of panValues) {
+      const { panX, panY } = applyZoom(FIT_SCALE * 2, startPan, startPan, FIT_SCALE);
+      expect(panX, `panX for start pan ${startPan}`).toBeCloseTo(center.x, 9);
+      expect(panY, `panY for start pan ${startPan}`).toBeCloseTo(center.y, 9);
+    }
+  });
+
+  it('reset branch: focal formula input differs from zero, but clampPan at ZOOM_MIN centers regardless', () => {
+    // #438 impl: documents WHY bypassing the focal at ZOOM_MIN is safe.
+    // At ZOOM_MIN the content fits in the map area → clampPan always returns the centering
+    // offset, regardless of the input. So pan(0) and pan(focalResult) produce the same output.
+    const focalX     = MAP_AREA_SCREEN_X + MAP_AREA_W * 0.9;  // far-right focal
+    const fromScale  = FIT_SCALE * 2;
+    const panAtZoomed = -MAP_AREA_W * 0.4;
+
+    // What the focal formula would produce if it were applied (it is NOT in the reset branch):
+    const focalPanX = focalZoomPanX(focalX, panAtZoomed, fromScale, ZOOM_MIN);
+    // The focal input is meaningfully different from zero:
+    expect(Math.abs(focalPanX)).toBeGreaterThan(1);
+
+    // Yet clampPan at ZOOM_MIN centers the content regardless of the input:
+    const { x: fromFocal } = clampPan(focalPanX, 0, ZOOM_MIN);
+    const { x: fromZero  } = clampPan(0,          0, ZOOM_MIN);
+    expect(fromFocal).toBeCloseTo(fromZero, 9);
+  });
+
+  it('prevScale===ZOOM_MIN, newScale below ZOOM_MIN: no reset fires — scale stays at ZOOM_MIN', () => {
+    // #438 impl: the reset condition is `currentScale===ZOOM_MIN && prevScale!==ZOOM_MIN`.
+    // When prevScale===ZOOM_MIN the condition is false → no pan zero.
+    // newScale clamps to ZOOM_MIN (unchanged), clampPan re-centers. Net effect: no-op.
+    const center = clampPan(0, 0, ZOOM_MIN);
+    const result = applyZoom(FIT_SCALE, center.x, center.y, FIT_SCALE * 0.1);
+    expect(result.scale).toBeCloseTo(ZOOM_MIN, 10);
+    expect(result.panX).toBeCloseTo(center.x, 9);
+    expect(result.panY).toBeCloseTo(center.y, 9);
+  });
+
+  it('reset fires from ZOOM_MAX to ZOOM_MIN — extreme case still zeroes pan', () => {
+    // #438 impl adversarial: user zooms to ZOOM_MAX then hits the reset button.
+    // The reset branch must still fire (prevScale=ZOOM_MAX > ZOOM_MIN → condition true).
+    const center = clampPan(0, 0, ZOOM_MIN);
+    const result = applyZoom(ZOOM_MAX, -CONTENT_W * ZOOM_MAX, -CONTENT_H * ZOOM_MAX, FIT_SCALE);
+    expect(result.scale).toBeCloseTo(ZOOM_MIN, 10);
+    expect(result.panX).toBeCloseTo(center.x, 9);
+    expect(result.panY).toBeCloseTo(center.y, 9);
+  });
+
+});
+
+describe('ImplAware: ARROW_PAN_STEP and MAP_CENTER constants (#438)', () => {
+
+  it('ARROW_PAN_STEP = CELL_W / 2 = 55 (half-cell content-space step per key press)', () => {
+    // #438 impl: `const ARROW_PAN_STEP = CELL_W / 2` in OverworldMapModal.ts.
+    // Pins the exact value — silently drifts if CELL_W changes without touching the step.
+    expect(ARROW_PAN_STEP).toBe(CELL_W / 2);
+    expect(ARROW_PAN_STEP).toBe(55);
+  });
+
+  it('MAP_CENTER_X = MAP_AREA_SCREEN_X + MAP_AREA_W / 2 (horizontal mid-point of map panel)', () => {
+    // #438 impl: keyboard ± and on-panel ± buttons use MAP_CENTER_X as focalX.
+    expect(MAP_CENTER_X).toBe(MAP_AREA_SCREEN_X + MAP_AREA_W / 2);
+    expect(Number.isFinite(MAP_CENTER_X)).toBe(true);
+  });
+
+  it('MAP_CENTER_Y = MAP_AREA_SCREEN_Y + MAP_AREA_H / 2 (vertical mid-point of map panel)', () => {
+    expect(MAP_CENTER_Y).toBe(MAP_AREA_SCREEN_Y + MAP_AREA_H / 2);
+    expect(Number.isFinite(MAP_CENTER_Y)).toBe(true);
+  });
+
+  it('focal zoom at MAP_CENTER_X keeps the center content fixed (keyboard ± invariant)', () => {
+    // #438 impl: keyboard ± uses MAP_CENTER_X as focal. The content point currently at the
+    // screen center must still be at the screen center after any keyboard zoom step.
+    const currentScale = FIT_SCALE * 2;
+    const currentPanX  = -MAP_AREA_W / 4;
+    const newScale = FIT_SCALE * 2.5;
+
+    const newPanX   = focalZoomPanX(MAP_CENTER_X, currentPanX, currentScale, newScale);
+    const contentX  = (MAP_CENTER_X - MAP_AREA_SCREEN_X - currentPanX) / currentScale;
+    const screenXAfter = MAP_AREA_SCREEN_X + newPanX + contentX * newScale;
+    expect(screenXAfter).toBeCloseTo(MAP_CENTER_X, 9);
+  });
+
+  it('focal zoom at MAP_CENTER_Y keeps the center content fixed (keyboard ± invariant)', () => {
+    const currentScale = FIT_SCALE * 2;
+    const currentPanY  = -MAP_AREA_H / 4;
+    const newScale = FIT_SCALE * 1.5;
+
+    const newPanY   = focalZoomPanY(MAP_CENTER_Y, currentPanY, currentScale, newScale);
+    const contentY  = (MAP_CENTER_Y - MAP_AREA_SCREEN_Y - currentPanY) / currentScale;
+    const screenYAfter = MAP_AREA_SCREEN_Y + newPanY + contentY * newScale;
+    expect(screenYAfter).toBeCloseTo(MAP_CENTER_Y, 9);
+  });
+
+  it('arrow-step clampPan: single left step at OPEN_ZOOM returns finite, valid pan', () => {
+    // #438 impl: arrow key handler: clampPan(this.panX + dx, this.panY + dy, this.currentScale)
+    // One left step from the centered fallback position must produce valid pan.
+    const start = clampPan(0, 0, OPEN_ZOOM);
+    const afterStep = clampPan(start.x - ARROW_PAN_STEP, start.y, OPEN_ZOOM);
+    expect(Number.isFinite(afterStep.x)).toBe(true);
+    expect(Number.isFinite(afterStep.y)).toBe(true);
+  });
+
+  it('50 repeated left-arrow steps at ZOOM_MAX: panX converges to left content edge (≤ 0)', () => {
+    // #438 impl adversarial: rapid repeated key presses must not accumulate past the content
+    // boundary. clampPan must clamp each step so panX never exceeds 0 (left edge).
+    // Note: at OPEN_ZOOM the content fits horizontally, so panX is always the centering offset.
+    // We use ZOOM_MAX where content overflows to test the actual edge-clamp behavior.
+    let panX = clampPan(0, 0, ZOOM_MAX).x;   // start at ZOOM_MAX right edge (panX=0)
+    for (let i = 0; i < 50; i++) {
+      ({ x: panX } = clampPan(panX - ARROW_PAN_STEP, 0, ZOOM_MAX));
+    }
+    expect(panX).toBeLessThanOrEqual(0.001);  // left edge clamp holds: panX ≤ 0
+  });
+
+  it('50 repeated right-arrow steps: panX stays ≥ centering offset (right edge holds)', () => {
+    // #438 impl adversarial: right key must not pan past the centering offset.
+    const minPanX = clampPan(0, 0, OPEN_ZOOM).x;
+    let panX = 0;
+    for (let i = 0; i < 50; i++) {
+      ({ x: panX } = clampPan(panX + ARROW_PAN_STEP, 0, OPEN_ZOOM));
+    }
+    expect(panX).toBeGreaterThanOrEqual(minPanX - 0.001);
   });
 
 });
