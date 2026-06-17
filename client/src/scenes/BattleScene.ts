@@ -897,11 +897,7 @@ export class BattleScene extends Phaser.Scene {
     this.cancelChargeOrb();
 
     this.chargeSlot = slot;
-    // Back-date by CHARGE_THRESHOLD_MS: `now` is when the deferred timer fired
-    // (key-down + 150ms), so subtracting the threshold recovers the actual key-down
-    // time. This keeps the client arc display in sync with the server's computation,
-    // both of which use total hold time (not hold-time-after-threshold).
-    this.chargeHoldStart = now - CHARGE_THRESHOLD_MS;
+    this.chargeHoldStart = now;
     window.__room!.send('chargeStart', { slot });
 
     // Spawn the oscillating orb in front of the player (toward the opponent, x − 60).
