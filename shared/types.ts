@@ -133,6 +133,27 @@ export interface SelectAttackPayload {
   slot: AttackSlot;
 }
 
+// #485 — charge attack. Sent by the client the moment a hold begins so the server
+// can record its own authoritative timestamp for hold-duration computation.
+export interface ChargeStartPayload {
+  slot: AttackSlot;
+}
+
+// #485 — replaces `selectAttack` for the charged-hold path. The client sends
+// holdDuration (ms since the hold started); the server independently recomputes Y
+// from its own chargeStart timestamp, using holdDuration only as a fallback for
+// backwards-compat / pre-threshold taps.
+//   holdDuration = 0  → treated as an instant tap (always hits, horizontal).
+//   holdDuration > 0  → server recomputes yOffset / isHit from timestamp delta.
+// Fusion: when the player holds `slot` and taps the other attack slot, both slots
+// fire simultaneously. `fusionSecondSlot` carries the tapped slot (always a tap,
+// always horizontal). When absent, a normal single-slot charge attack.
+export interface ReleaseAttackPayload {
+  slot: AttackSlot;
+  holdDuration: number;
+  fusionSecondSlot?: AttackSlot;
+}
+
 // EPIC #264 / #265 — fusion-thumb double attack. Sent once, on chord completion,
 // when the attacker holds a fusion thumb whose two component elements occupy A1
 // and A2 (server re-validates via canDoubleAttack and silently drops if
@@ -164,6 +185,14 @@ export interface DoubleAttackStartPayload {
 export interface DoubleAttackCancelledPayload {
   orb: 2;
 }
+// #485 — broadcast by the server when a charged attack misses (release Y outside the
+// hit zone). The defender does nothing; the attacker loses one ring use and the orb
+// flies off-screen. The client shows a "WHIFF" label on the attacker side.
+export interface ChargeMissPayload {
+  attackerId: string;
+  attackerSlot: AttackSlot;
+}
+
 // GDD §6.3 — recharge one of the attacker's four COMBAT rings (a1/a2/d1/d2;
 // the Thumb is never rechargeable in-duel), spending spirit (1 per use restored)
 // up to the ring's deficit. Attack rings recharge via double-tap 1/2 (Z/C);
