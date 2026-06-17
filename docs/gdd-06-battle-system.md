@@ -287,7 +287,25 @@ After losing a duel:
 
 ---
 
-### 6.10 Ambush Initiative
+### 6.10 AI Charge Behavior
+
+AI combatants can throw charged attacks. Each AI personality has a characteristic approach to charging:
+
+**Aggressive:** Always opts for a charged attack when on the offensive. Aims for the deepest sweep — the fastest arc pass through the sweet spot — and releases with high accuracy (very tight aim noise). This persona is dangerous even when predicted because the release timing is nearly perfect.
+
+**Defensive:** Never charges. This persona prioritizes ring conservation and avoids the risk of a missed charge; it always throws instant taps.
+
+**Status Hunter:** Charges occasionally, focusing on the first sweep. The release angle has moderate noise — the persona is skilled but not precise. It charges when the opportunity aligns with building gauge pressure, not as its primary attack mode.
+
+**Resilient:** Healthy, this persona does not charge (it conserves resources and grinds through attrition). At low heart count it switches into a survival mode: it charges frequently, targeting a mid-speed sweep, aiming to land a decisive hit before it runs out of hearts.
+
+**Skill expression as Gaussian noise:** All charging AI personas sample their release angle from a normal distribution centered on the sweet spot (0°). A tighter distribution means the orb releases closer to the optimal angle more consistently — the spread is the persona's "skill noise." A very wide spread (as on a hypothetical novice persona) would produce nearly random release angles; a very tight spread produces near-perfect sweet-spot releases.
+
+**Server authority:** AI charged attacks go through the same `releaseAttack` server path as human attacks. The server resolves hit/miss from its own timestamp, broadcasts `chargeOrbStart` and `chargeMiss`/hit to both players, and deducts ring uses identically.
+
+---
+
+### 6.11 Ambush Initiative
 
 Normally the monster or NPC attacks first. A protagonist who **double-clicks an enemy within blink range** (§10.3, §12.8) can seize initiative instead.
 
