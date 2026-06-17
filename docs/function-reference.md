@@ -139,7 +139,7 @@ Charge attack constants shared between client and server (#485, GDD §6.3 Option
 
 | Constant | Type | Value | Description |
 |----------|------|-------|-------------|
-| `CHARGE_THRESHOLD_MS` | `number` | 150 | Hold below this duration is classified as an instant tap (no oscillation, always horizontal). Client uses `CHARGE_THRESHOLD_CLIENT_MS = __E2E_FAST__ ? 60 : CHARGE_THRESHOLD_MS` as a local pre-filter. |
+| `CHARGE_THRESHOLD_MS` | `number` | 150 | Hold below this duration is classified as an instant tap (no oscillation, always horizontal). The client imports this constant directly and uses it as the deferred-threshold timer duration (same value in both prod and E2E — the `CHARGE_THRESHOLD_CLIENT_MS` / `__E2E_FAST__` conditional was removed in #487). |
 | `HIT_CONE_PX` | `number` | 20 | Half-width of the centre-line hit zone in pixels. `\|yOffset\| ≤ HIT_CONE_PX` → hit. |
 | `Y_AMPLITUDE_PX` | `number` | 80 | Maximum Y displacement of the oscillating orb (±80 px). |
 | `BASE_PERIOD_MS` | `number` | 1200 | Oscillation period at t = 0 (slowest oscillation, first moment of hold). |

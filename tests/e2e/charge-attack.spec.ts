@@ -2,6 +2,7 @@ import { test, expect, type Page } from '@playwright/test';
 import { setupBattle, attackerDefender, closeBattle, type SlotKey } from './helpers';
 
 // #485 — Charge attack mechanic: oscillating orb throw with fusion ring integration.
+// #487 — Attack-phase input overhaul: R-key recharge, deferred-threshold charge, orb-position fix.
 // PvP duel (two browser sessions); all assertions read authoritative broadcast state
 // (window.__room.state) or collected messages — never __* hooks to drive actions.
 //
@@ -15,6 +16,11 @@ import { setupBattle, attackerDefender, closeBattle, type SlotKey } from './help
 //   releaseAttack   { slot, holdDuration, fusionSecondSlot? } — emitted on release
 //     tap:    holdDuration=0 (client skips chargeStart for sub-threshold holds)
 //     charge: holdDuration = measured hold (server IGNORES this; uses its own timestamp)
+//
+// #487 tap-path contract change: the RECHARGE_DOUBLE_TAP_MS / pendingAttackTimer
+// deferral window has been removed. A tap now fires releaseAttack immediately on key-up
+// (no 120ms+ wait). CHARGE_THRESHOLD_CLIENT_MS is unified at 150ms (no __E2E_FAST__
+// conditional); keyboard.press() (~10–40ms) is reliably below threshold.
 //
 // Determinism strategy: drive chargeStart / releaseAttack via direct socket sends
 // (page.evaluate → window.__room.send) with a controlled waitForTimeout between them
@@ -157,35 +163,40 @@ async function getSentCount(page: Page, type: string): Promise<number> {
 
 test.describe('charge attack', () => {
 
-// ── Scenario 1: tap — single releaseAttack with holdDuration=0, defend phase opens ──
+// ── Scenario 1: tap — single selectAttack, defend phase opens ──────────────────
+// #487 contract: a tap on an attack key sends `selectAttack` (BattleScene.sendSingleAttack).
+// The old releaseAttack/holdDuration=0 contract was #485 pre-#487; the tap bypass path now
+// uses selectAttack exclusively. releaseAttack is only sent for holds ≥150ms.
 
-test('tap A1 (< threshold): client sends ONE releaseAttack with holdDuration=0; defend phase opens at baseline', async ({
+test('tap A1 (< threshold): client sends ONE selectAttack; no chargeStart, no releaseAttack; defend phase opens', async ({
   browser,
 }) => {
   const h = await setupBattle(browser);
   const { attacker } = await attackerDefender(h.p1, h.p2);
-  await spyOnReleaseAttack(attacker);
 
   // Gate: wait for BattleScene to be mounted and it to be our turn — keyboard
   // handlers are registered in BattleScene.create(); firing before mount drops the event.
   await waitForMyAttackTurn(attacker);
+  await spyOnAllSends(attacker);
 
-  // A tap is a quick press+release — client uses CHARGE_THRESHOLD_CLIENT_MS=60ms (E2E_FAST)
-  // and sends holdDuration=0 WITHOUT a chargeStart message. Path is deterministic.
-  await attacker.keyboard.press('1'); // press+release in one call ≈ 0ms hold
+  // #487: keyboard.press() (~10–40ms) is well below CHARGE_THRESHOLD_CLIENT_MS=150ms.
+  // sendSingleAttack fires on key-up → room.send('selectAttack', { slot: 'a1' }).
+  await attacker.keyboard.press('1'); // press+release in one call ≈ 10–40ms hold
 
-  await attacker.waitForFunction(() => ((window as any).__releaseAttacks?.length ?? 0) >= 1, {
+  // Gate on selectAttack arrival (tap is synchronous on key-up, no timer needed).
+  await attacker.waitForFunction(() => ((window as any).__allSends?.selectAttack ?? 0) >= 1, {
     timeout: 3000,
   });
 
-  const sent = await getReleaseAttacks(attacker);
-  // #485 adversarial: exactly ONE message — no double-fire on a tap.
-  expect(sent.length).toBe(1);
-  expect(sent[0].slot).toBe('a1');
-  // #485 P2-3: tap path always reports holdDuration=0 (not the raw elapsed time).
-  expect(sent[0].holdDuration).toBe(0);
-  // Tap has no fusionSecondSlot field.
-  expect(sent[0].fusionSecondSlot).toBeUndefined();
+  // Give a brief window for any spurious second message.
+  await attacker.waitForTimeout(150);
+
+  // #487 adversarial: exactly ONE selectAttack — no double-fire on a tap.
+  expect(await getSentCount(attacker, 'selectAttack')).toBe(1);
+  // Tap must NOT send releaseAttack — that is the hold path.
+  expect(await getSentCount(attacker, 'releaseAttack')).toBe(0);
+  // Tap must NOT send chargeStart — timer fires only if key still held at 150ms.
+  expect(await getSentCount(attacker, 'chargeStart')).toBe(0);
 
   // Tap always hits → defend phase must open (no miss path for taps).
   await waitForPhase(h.p2, 'DEFEND_WINDOW', 5000);
@@ -675,52 +686,41 @@ test('fusion charge with ineligible hand (non-fusion thumb): fusionSecondSlot ig
 //   P2-3: tap path sends holdDuration=0 (not raw elapsed)
 //   P2-2: hold above E2E_FAST threshold (60ms) emits chargeStart before release
 
-// ── Scenario 12: real tap — keyboard press emits ONE releaseAttack(holdDuration=0) ──
+// ── Scenario 12: real tap — keyboard press emits ONE selectAttack, no releaseAttack ──
+// #487 contract: tap → selectAttack (sendSingleAttack); no releaseAttack, no chargeStart.
 
-test('real keyboard tap A1: exactly ONE releaseAttack with holdDuration=0, no selectAttack emitted', async ({
+test('real keyboard tap A1: exactly ONE selectAttack emitted; no releaseAttack, no chargeStart', async ({
   browser,
 }) => {
   const h = await setupBattle(browser);
   const { attacker } = await attackerDefender(h.p1, h.p2);
 
-  // #485 P1-3 + P2-3: the real client tap path (hold < CHARGE_THRESHOLD_CLIENT_MS=60ms)
-  // must emit exactly ONE releaseAttack with holdDuration=0, and must NOT emit any
-  // legacy selectAttack message. A double-send bug would produce 2 releaseAttacks;
-  // a regression to the old path would produce a selectAttack instead.
-  await spyOnReleaseAttack(attacker);
+  // #487: the real client tap path (hold < CHARGE_THRESHOLD_CLIENT_MS=150ms) must emit
+  // exactly ONE selectAttack via sendSingleAttack. The old releaseAttack/holdDuration=0
+  // contract was pre-#487. A double-send bug would produce 2 selectAttacks; a regression
+  // to the old hold path would produce chargeStart + releaseAttack instead.
   await spyOnAllSends(attacker);
 
   // Gate: BattleScene must be mounted and it must be our turn before firing a key.
-  // Keyboard handlers are registered in BattleScene.create() — events before mount are dropped.
   await waitForMyAttackTurn(attacker);
 
-  // keyboard.press() is a near-instantaneous down+up — well below 60ms threshold.
+  // keyboard.press() is a near-instantaneous down+up — well below 150ms threshold.
   await attacker.keyboard.press('1');
 
-  // Wait for at least one releaseAttack to arrive (tap is synchronous on key-up).
-  await attacker.waitForFunction(() => ((window as any).__releaseAttacks?.length ?? 0) >= 1, {
+  // Gate on selectAttack arrival (fires on key-up, no deferral).
+  await attacker.waitForFunction(() => ((window as any).__allSends?.selectAttack ?? 0) >= 1, {
     timeout: 3000,
   });
 
   // Give a short window for any spurious second message to appear.
   await attacker.waitForTimeout(150);
 
-  const sent = await getReleaseAttacks(attacker);
-  // Exactly ONE releaseAttack — no double-send.
-  expect(sent.length).toBe(1);
-  // Tap path: holdDuration must be 0 (not raw wall-clock elapsed).
-  expect(sent[0].holdDuration).toBe(0);
-  expect(sent[0].slot).toBe('a1');
-  // No fusionSecondSlot on a simple tap.
-  expect(sent[0].fusionSecondSlot).toBeUndefined();
-
-  // No legacy selectAttack must have been emitted.
-  expect(await getSentCount(attacker, 'selectAttack')).toBe(0);
-  // NOTE: We do NOT assert chargeStart count here — keyboard.press() timing in
-  // Playwright's E2E_FAST mode may exceed CHARGE_THRESHOLD_CLIENT_MS (60ms), causing
-  // the client to legitimately emit chargeStart for a press that the browser perceives
-  // as above-threshold. The critical invariant is holdDuration=0 (asserted above),
-  // not whether chargeStart was suppressed. Sc13 covers the hold-path chargeStart emission.
+  // Exactly ONE selectAttack — no double-send.
+  expect(await getSentCount(attacker, 'selectAttack')).toBe(1);
+  // Tap must NOT send releaseAttack (that is the hold path).
+  expect(await getSentCount(attacker, 'releaseAttack')).toBe(0);
+  // #487: with 150ms threshold, keyboard.press() (~10–40ms) must not arm chargeStart.
+  expect(await getSentCount(attacker, 'chargeStart')).toBe(0);
 
   // Defend phase must open — tap always hits.
   await waitForPhase(h.p2, 'DEFEND_WINDOW', 5000);
@@ -736,11 +736,13 @@ test('real keyboard hold A1 (~400ms) then release: one chargeStart, one chargeOr
   const h = await setupBattle(browser);
   const { attacker, defender } = await attackerDefender(h.p1, h.p2);
 
-  // #485 P1-3 + P2-2: the real client hold-release path must emit exactly ONE chargeStart
-  // (on keydown, above CHARGE_THRESHOLD_CLIENT_MS=60ms) and exactly ONE releaseAttack
-  // (on keyup) with holdDuration > 0. A double-send bug would produce two releaseAttacks;
-  // a chargeStart leak would produce a second chargeStart. The chargeOrbEnd broadcast
-  // from the server confirms the full lifecycle completed without the server dropping the release.
+  // #485 P1-3 + P2-2 + #487: the real client hold-release path must emit exactly ONE chargeStart
+  // (on keydown, after CHARGE_THRESHOLD_CLIENT_MS=150ms elapses with key still held) and
+  // exactly ONE releaseAttack (on keyup) with holdDuration > 0. A double-send bug would
+  // produce two releaseAttacks; a chargeStart leak would produce a second chargeStart.
+  // The chargeOrbEnd broadcast from the server confirms the full lifecycle completed.
+  // #487: CHARGE_THRESHOLD_CLIENT_MS is now 150ms unified (no __E2E_FAST__ conditional);
+  // a 400ms hold is well above this threshold and guarantees chargeStart emission.
   await spyOnReleaseAttack(attacker);
   await spyOnAllSends(attacker);
   await collectMessages(attacker, 'chargeOrbStart');
@@ -750,7 +752,7 @@ test('real keyboard hold A1 (~400ms) then release: one chargeStart, one chargeOr
   // Keyboard handlers are registered in BattleScene.create() — events before mount are dropped.
   await waitForMyAttackTurn(attacker);
 
-  // Hold for ~400ms — well above the 60ms E2E_FAST client threshold.
+  // Hold for ~400ms — well above the 150ms client threshold.
   // We assert message-emission only, not hit/miss (Y at 400ms varies with timing jitter).
   await attacker.keyboard.down('1');
   await attacker.waitForTimeout(400);
@@ -789,6 +791,141 @@ test('real keyboard hold A1 (~400ms) then release: one chargeStart, one chargeOr
   expect((await getMessages(attacker, 'chargeOrbEnd')).length).toBe(1);
 
   // Game must have transitioned (hit or miss — either is fine; we don't assert which).
+  await attacker.waitForFunction(
+    () => {
+      const phase = (window as any).__room?.state?.phase;
+      return phase === 'DEFEND_WINDOW' || phase === 'ATTACK_SELECT';
+    },
+    { timeout: 5000 },
+  );
+
+  await closeBattle(h);
+});
+
+// ── Scenario 14 (#487): charge orb spawns at PLAYER_X - 60 on attacker view ──────
+
+test('#487 charge orb spawns at PLAYER_X - 60 (in front of player, toward opponent) on attacker view', async ({
+  browser,
+}) => {
+  const h = await setupBattle(browser);
+  const { attacker } = await attackerDefender(h.p1, h.p2);
+
+  // #487 orb-position fix (Section C): the oscillating orb must spawn in front of its
+  // owner, toward the target. PLAYER_X = 768; PLAYER_X - 60 = 708 (toward opponent at
+  // x=256). Previously the sign was flipped (PLAYER_X + 60 = 828), spawning behind the
+  // attacker away from the opponent — visually wrong.
+  // #487 impl: BattleScene exposes `get chargeOrbX(): number | null` — returns
+  // chargeOrbSpawnX while chargeOrbHandle is alive, null otherwise. Read it while held.
+  await waitForMyAttackTurn(attacker);
+
+  // Hold long enough to arm the deferred-threshold timer and trigger beginCharge.
+  await attacker.keyboard.down('1');
+  await attacker.waitForTimeout(300); // 300ms > 150ms threshold → chargeStart + beginCharge
+
+  // Gate: wait until chargeOrbX becomes non-null — confirms beginCharge ran and the
+  // orb handle is live. Polling the getter is more robust than waiting for chargeOrbStart
+  // broadcast (which could arrive before the listener is ready if timing is tight).
+  await attacker.waitForFunction(
+    () => (window as any).__scene?.chargeOrbX !== null && (window as any).__scene?.chargeOrbX !== undefined,
+    { timeout: 8000 },
+  );
+
+  // Read spawn X via the public getter while the orb is alive.
+  // PLAYER_X - 60 = 768 - 60 = 708.
+  const orbX = await attacker.evaluate(() => (window as any).__scene?.chargeOrbX ?? null);
+  expect(orbX).toBe(708);
+
+  // Release the key to clean up.
+  await attacker.keyboard.up('1');
+
+  await closeBattle(h);
+});
+
+// ── Scenario 15 (#487): defender-view orb spawns at OPPONENT_X + 60 ─────────────
+
+test('#487 defender-view charge orb spawns at OPPONENT_X + 60 (in front of opponent, toward player)', async ({
+  browser,
+}) => {
+  const h = await setupBattle(browser);
+  const { attacker, defender } = await attackerDefender(h.p1, h.p2);
+
+  // #487 orb-position fix (Section C): the defender sees the attacker's orb spawning
+  // at OPPONENT_X + 60 = 256 + 60 = 316 (in front of the opponent, toward the player
+  // at x=768). Previously the sign was flipped (OPPONENT_X - 60 = 196), placing the
+  // defender-view orb behind the opponent.
+  // #487 impl: BattleScene exposes `get opponentChargeOrbX(): number | null` — returns
+  // opponentChargeOrbSpawnX while opponentChargeOrbHandle is alive, null otherwise.
+  // Drive chargeStart via direct socket send (deterministic; avoids keyboard jitter).
+  await collectMessages(defender, 'chargeOrbStart');
+
+  await attacker.evaluate(() => (window as any).__room.send('chargeStart', { slot: 'a1' }));
+
+  // Gate: wait for chargeOrbStart broadcast so handleOpponentChargeOrbStart has run and
+  // the defender's orb handle is live before reading opponentChargeOrbX.
+  await defender.waitForFunction(() => ((window as any).__msgs?.chargeOrbStart?.length ?? 0) >= 1, {
+    timeout: 8000,
+  });
+
+  // Read spawn X via the public getter while the orb handle is alive.
+  // OPPONENT_X + 60 = 256 + 60 = 316.
+  const defenderOrbX = await defender.evaluate(() => (window as any).__scene?.opponentChargeOrbX ?? null);
+  expect(defenderOrbX).toBe(316);
+
+  // Clean up: release the charge.
+  await attacker.evaluate(() =>
+    (window as any).__room.send('releaseAttack', { slot: 'a1', holdDuration: 0 }),
+  );
+
+  await closeBattle(h);
+});
+
+// ── Scenario 16 (#487): R-key does not break the charge/fusion path ───────────
+
+test('#487 R key during ATTACK_SELECT (when recharge cancelled before hold) does not break charge flow', async ({
+  browser,
+}) => {
+  const h = await setupBattle(browser);
+  const { attacker } = await attackerDefender(h.p1, h.p2);
+
+  await waitForMyAttackTurn(attacker);
+  // Use spyOnAllSends only — it captures all types including chargeStart and releaseAttack.
+  // spyOnReleaseAttack + spyOnAllSends would double-wrap room.send, making __releaseAttacks
+  // unreliable; getSentCount via __allSends is the single source of truth.
+  await spyOnAllSends(attacker);
+
+  // #487 adversarial: pressing R then immediately cancelling (via R again) must leave
+  // the charge input path completely intact — a subsequent hold-and-release must still
+  // emit chargeStart + releaseAttack normally. If the R-key state machine gets stuck
+  // (e.g., doesn't fully reset on cancel), the hold event might be swallowed or the
+  // charge threshold timer might not re-arm on the next keydown.
+  await attacker.keyboard.press('r'); // arm recharge
+  await attacker.keyboard.press('r'); // cancel via second R — no recharge state
+
+  await attacker.waitForTimeout(50); // allow cancel to settle
+
+  // Now hold A1 for a full charge — must work normally post-R-cancel.
+  await attacker.keyboard.down('1');
+  await attacker.waitForTimeout(400); // 400ms > 150ms threshold → chargeStart fires
+  await attacker.keyboard.up('1');
+
+  // Gate: releaseAttack must arrive after key-up.
+  await attacker.waitForFunction(() => ((window as any).__allSends?.releaseAttack ?? 0) >= 1, {
+    timeout: 8000,
+  });
+
+  // Give a brief window for any spurious duplicate.
+  await attacker.waitForTimeout(150);
+
+  // chargeStart was emitted (hold path fired correctly).
+  expect(await getSentCount(attacker, 'chargeStart')).toBe(1);
+  // Exactly one releaseAttack — hold path is intact post-R-cancel.
+  expect(await getSentCount(attacker, 'releaseAttack')).toBe(1);
+  // No recharge was sent (R was cancelled before a ring key was pressed).
+  expect(await getSentCount(attacker, 'recharge')).toBe(0);
+  // No legacy selectAttack.
+  expect(await getSentCount(attacker, 'selectAttack')).toBe(0);
+
+  // Game transitioned (hit or miss — either is fine; R-cancel did not break the flow).
   await attacker.waitForFunction(
     () => {
       const phase = (window as any).__room?.state?.phase;

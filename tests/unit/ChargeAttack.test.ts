@@ -359,8 +359,9 @@ describe('computeTelegraphDuration — Math.round() contract (impl detail)', () 
   test('computeTelegraphDuration(750) = round(900 + (MIN-900) * 0.5) — midpoint rounds correctly', () => {
     // #485 impl: at sharpness=0.5 (holdMs = MAX_CHARGE_MS/2 = 750ms), the lerp
     // produces an exact midpoint. Verify the rounded value matches the expected formula.
-    // Production: round(900 + (500-900)*0.5) = round(900-200) = 700ms.
-    // E2E_FAST:   round(150 + (80-150)*0.5)  = round(150-35)  = 115ms.
+    // #487: CHARGE_THRESHOLD_CLIENT_MS is now unified at 150ms in both prod and E2E;
+    // the __E2E_FAST__ conditional branch is removed. Constants are always production values.
+    // Example: round(900 + (500-900)*0.5) = round(900-200) = 700ms.
     // We import the actual constants to stay environment-agnostic.
     const expectedRaw = TELEGRAPH_MS + (CHARGE_TELEGRAPH_MIN_MS - TELEGRAPH_MS) * 0.5;
     const expected = Math.round(expectedRaw);
