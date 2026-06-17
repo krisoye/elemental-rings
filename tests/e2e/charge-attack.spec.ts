@@ -32,6 +32,38 @@ const MUD = 11; // WATER + EARTH fusion
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 
+/**
+ * Wait until the active Phaser scene is the named scene.
+ * Keyboard handlers are registered in BattleScene.create() — this gate ensures
+ * the scene is mounted before firing any real keyboard input.
+ */
+async function waitForScene(page: Page, name: string, timeout = 5000): Promise<void> {
+  await page.waitForFunction(
+    (n) => (window as any).__scene?.constructor.name === n,
+    name,
+    { timeout },
+  );
+}
+
+/**
+ * Wait until it is the given page's turn as attacker in ATTACK_SELECT phase.
+ * Use this gate before any real keyboard input — ensures the key handler is
+ * both wired (BattleScene mounted) and logically active (it is this player's turn).
+ */
+async function waitForMyAttackTurn(page: Page, timeout = 15000): Promise<void> {
+  await waitForScene(page, 'BattleScene', 5000);
+  await page.waitForFunction(
+    () => {
+      const room = (window as any).__room;
+      return (
+        room?.state?.phase === 'ATTACK_SELECT' &&
+        room?.state?.currentAttackerId === room?.sessionId
+      );
+    },
+    { timeout },
+  );
+}
+
 /** Seed exact state on a player via the test-only server hook. */
 async function setState(
   page: Page,
@@ -133,6 +165,10 @@ test('tap A1 (< threshold): client sends ONE releaseAttack with holdDuration=0; 
   const h = await setupBattle(browser);
   const { attacker } = await attackerDefender(h.p1, h.p2);
   await spyOnReleaseAttack(attacker);
+
+  // Gate: wait for BattleScene to be mounted and it to be our turn — keyboard
+  // handlers are registered in BattleScene.create(); firing before mount drops the event.
+  await waitForMyAttackTurn(attacker);
 
   // A tap is a quick press+release — client uses CHARGE_THRESHOLD_CLIENT_MS=60ms (E2E_FAST)
   // and sends holdDuration=0 WITHOUT a chargeStart message. Path is deterministic.
@@ -335,9 +371,26 @@ test('hold A1 at HIT duration (600ms): no chargeMiss, defend phase opens, defend
   const { attacker, defender } = await attackerDefender(h.p1, h.p2);
 
   // #485 deterministic: 600ms server-measured hold → y≈0px (zero-crossing), solidly
-  // in the hit zone (585–619ms = 35ms window). Server jitter ~5ms — robust.
+  // in the hit zone. We also seed defender hearts explicitly so the heart-decrement
+  // waitForFunction below is deterministic regardless of prior exchange history.
+  //
+  // NOTE: The hit window around t=600ms is ~35ms (585–619ms). With server event-loop
+  // jitter up to ~20ms, the 600ms target is sufficiently centered. We assert the
+  // heart decrement via state (not just the exchangeResult message field) to guard
+  // against the race where the message and state diff arrive in different ticks.
+  await setState(defender, { hearts: 3 });
   await collectMessages(attacker, 'chargeMiss');
   await collectMessages(defender, 'exchangeResult');
+
+  // Wait for the setState patch to land before sending chargeStart.
+  await defender.waitForFunction(
+    () => {
+      const room = (window as any).__room;
+      const me = room.state.players.get(room.sessionId);
+      return me.hearts === 3;
+    },
+    { timeout: 3000 },
+  );
 
   await attacker.evaluate(() => (window as any).__room.send('chargeStart', { slot: 'a1' }));
   await attacker.waitForTimeout(600);
@@ -352,13 +405,25 @@ test('hold A1 at HIT duration (600ms): no chargeMiss, defend phase opens, defend
   const misses = await getMessages(attacker, 'chargeMiss');
   expect(misses.length).toBe(0);
 
-  // Defender no-blocks → exchangeResult fires after window lapses.
+  // exchangeResult fires after the defend window lapses (no-block).
   await defender.waitForFunction(() => ((window as any).__msgs?.exchangeResult?.length ?? 0) >= 1, {
     timeout: 8000,
   });
   const results = await getMessages(defender, 'exchangeResult');
   expect(results.length).toBe(1);
   expect(results[0].defenderHeartLost).toBe(true);
+
+  // Wait for the Colyseus state patch carrying the heart decrement — state diffs
+  // and the exchangeResult message can arrive in separate ticks.
+  await defender.waitForFunction(
+    () => {
+      const room = (window as any).__room;
+      const me = room.state.players.get(room.sessionId);
+      return me.hearts < 3;
+    },
+    { timeout: 5000 },
+  );
+  expect(await defenderHearts(defender)).toBe(2);
 
   await closeBattle(h);
 });
@@ -625,6 +690,10 @@ test('real keyboard tap A1: exactly ONE releaseAttack with holdDuration=0, no se
   await spyOnReleaseAttack(attacker);
   await spyOnAllSends(attacker);
 
+  // Gate: BattleScene must be mounted and it must be our turn before firing a key.
+  // Keyboard handlers are registered in BattleScene.create() — events before mount are dropped.
+  await waitForMyAttackTurn(attacker);
+
   // keyboard.press() is a near-instantaneous down+up — well below 60ms threshold.
   await attacker.keyboard.press('1');
 
@@ -676,6 +745,10 @@ test('real keyboard hold A1 (~400ms) then release: one chargeStart, one chargeOr
   await spyOnAllSends(attacker);
   await collectMessages(attacker, 'chargeOrbStart');
   await collectMessages(attacker, 'chargeOrbEnd');
+
+  // Gate: BattleScene must be mounted and it must be our turn before firing a key.
+  // Keyboard handlers are registered in BattleScene.create() — events before mount are dropped.
+  await waitForMyAttackTurn(attacker);
 
   // Hold for ~400ms — well above the 60ms E2E_FAST client threshold.
   // We assert message-emission only, not hit/miss (Y at 400ms varies with timing jitter).
