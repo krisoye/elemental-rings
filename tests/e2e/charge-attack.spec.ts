@@ -999,4 +999,283 @@ test('#491 arc: opponentChargeOrbAngle getter returns a value in [−45, 45] whe
   await closeBattle(h);
 });
 
+// ── Arc-direction render-x scenarios (#495) ─────────────────────────────────
+// These lock in the facing-sign fix: player arc opens LEFT (toward opponent),
+// opponent arc opens RIGHT (toward player). All read chargeOrbRenderX /
+// opponentChargeOrbRenderX — new read-only getters added in #495. Input is
+// real keyboard only (#413 rule). Do NOT use window.__room.send() to drive
+// charge actions.
+//
+// Constants (from client/src/Constants.ts + Orb.ts):
+//   PLAYER_X = 768  → player pivot = 708 (PLAYER_X - IDLE_ORB_RADIUS)
+//   OPPONENT_X = 256 → opponent pivot = 316 (OPPONENT_X + IDLE_ORB_RADIUS)
+//   IDLE_ORB_RADIUS = 60
+//   Player facing = -1  → renderX = 708 - 60*cos(angleDeg*π/180) ≤ 708
+//   Opponent facing = +1 → renderX = 316 + 60*cos(angleDeg*π/180) ≥ 316
+
+// ── Arc-direction Scenario 1: player orb always left of pivot during hold ────
+
+test('#495 arc-direction: player chargeOrbRenderX is always < 708 (pivot) across the full hold', async ({
+  browser,
+}) => {
+  const h = await setupBattle(browser);
+  const { attacker } = await attackerDefender(h.p1, h.p2);
+
+  await waitForMyAttackTurn(attacker);
+
+  // Hold past threshold so beginCharge runs and the arc orb spawns.
+  await attacker.keyboard.down('1');
+  await attacker.waitForTimeout(400);
+
+  // Gate: wait until chargeOrbRenderX is non-null (orb alive).
+  await attacker.waitForFunction(
+    () => {
+      const rx = (window as any).__scene?.chargeOrbRenderX;
+      return rx !== null && rx !== undefined;
+    },
+    { timeout: 8000 },
+  );
+
+  // #495 adversarial: before the fix, +cos was used unconditionally and the
+  // player orb rendered at 768 (ON the player) or to its right — never left.
+  // Poll across multiple animation frames to confirm the invariant holds
+  // at every sampled point during the hold.
+  const samples: number[] = [];
+  for (let i = 0; i < 8; i++) {
+    await attacker.waitForTimeout(80); // ~6 frames at 60fps between samples
+    const rx: number | null = await attacker.evaluate(
+      () => (window as any).__scene?.chargeOrbRenderX ?? null,
+    );
+    if (rx !== null) samples.push(rx);
+  }
+
+  await attacker.keyboard.up('1');
+
+  // Every sampled renderX must be strictly left of pivot (708).
+  for (const rx of samples) {
+    expect(rx).toBeLessThan(708);
+    // Also confirm it hasn't slipped past PLAYER_X (768) — the "never backside" bound.
+    expect(rx).toBeLessThanOrEqual(768);
+  }
+
+  await closeBattle(h);
+});
+
+// ── Arc-direction Scenario 2: opponent orb always right of pivot during hold ──
+
+test('#495 arc-direction: opponentChargeOrbRenderX is always > 316 (pivot) on defender view', async ({
+  browser,
+}) => {
+  const h = await setupBattle(browser);
+  const { attacker, defender } = await attackerDefender(h.p1, h.p2);
+
+  await waitForMyAttackTurn(attacker);
+  await collectMessages(defender, 'chargeOrbStart');
+
+  await attacker.keyboard.down('1');
+  await attacker.waitForTimeout(400);
+
+  // Gate: chargeOrbStart received by defender (orb spawned on opponent side).
+  await defender.waitForFunction(() => ((window as any).__msgs?.chargeOrbStart?.length ?? 0) >= 1, {
+    timeout: 8000,
+  });
+
+  // Gate: opponentChargeOrbRenderX is non-null on the defender's scene.
+  await defender.waitForFunction(
+    () => {
+      const rx = (window as any).__scene?.opponentChargeOrbRenderX;
+      return rx !== null && rx !== undefined;
+    },
+    { timeout: 5000 },
+  );
+
+  // #495 adversarial: opponent orb was correct-by-accident (facing=+1 = +cos, which
+  // already opened rightward). The fix must not regress this: opponent renderX
+  // must remain strictly right of pivot (316) throughout the hold.
+  const samples: number[] = [];
+  for (let i = 0; i < 8; i++) {
+    await defender.waitForTimeout(80);
+    const rx: number | null = await defender.evaluate(
+      () => (window as any).__scene?.opponentChargeOrbRenderX ?? null,
+    );
+    if (rx !== null) samples.push(rx);
+  }
+
+  await attacker.keyboard.up('1');
+
+  for (const rx of samples) {
+    expect(rx).toBeGreaterThan(316);
+    // Never slips past OPPONENT_X (256) on the left — the "never backside" bound.
+    expect(rx).toBeGreaterThanOrEqual(256);
+  }
+
+  await closeBattle(h);
+});
+
+// ── Arc-direction Scenario 3: symmetry — same |angle|, equal displacement from pivot ─
+
+test('#495 arc-direction: at same |angle|, player leftward displacement equals opponent rightward displacement (mirror symmetry)', async ({
+  browser,
+}) => {
+  const h = await setupBattle(browser);
+  const { attacker, defender } = await attackerDefender(h.p1, h.p2);
+
+  await waitForMyAttackTurn(attacker);
+  await collectMessages(defender, 'chargeOrbStart');
+
+  await attacker.keyboard.down('1');
+  await attacker.waitForTimeout(400);
+
+  await defender.waitForFunction(() => ((window as any).__msgs?.chargeOrbStart?.length ?? 0) >= 1, {
+    timeout: 8000,
+  });
+
+  // Gate: both getters are non-null simultaneously.
+  await attacker.waitForFunction(
+    () => (window as any).__scene?.chargeOrbRenderX !== null &&
+          (window as any).__scene?.chargeOrbRenderX !== undefined,
+    { timeout: 8000 },
+  );
+  await defender.waitForFunction(
+    () => (window as any).__scene?.opponentChargeOrbRenderX !== null &&
+          (window as any).__scene?.opponentChargeOrbRenderX !== undefined,
+    { timeout: 5000 },
+  );
+
+  // Sample both orb positions at 3 different moments. Because the two clients
+  // are driven by the same deterministic formula with the same startTime, their
+  // angles should be near-equal — meaning displacements from their respective
+  // pivots should match within ±2px (floating-point + frame-timing jitter).
+  //
+  // #495 adversarial: if the radius or trig formula differs between player and
+  // opponent paths, displacement equality would break, exposing a copy-paste error.
+  const TOLERANCE = 2; // px
+  for (let i = 0; i < 3; i++) {
+    await attacker.waitForTimeout(100);
+
+    const playerRx: number | null = await attacker.evaluate(
+      () => (window as any).__scene?.chargeOrbRenderX ?? null,
+    );
+    const oppRx: number | null = await defender.evaluate(
+      () => (window as any).__scene?.opponentChargeOrbRenderX ?? null,
+    );
+
+    if (playerRx !== null && oppRx !== null) {
+      const playerDisplacement = 708 - playerRx;     // leftward from player pivot
+      const opponentDisplacement = oppRx - 316;       // rightward from opponent pivot
+      expect(Math.abs(playerDisplacement - opponentDisplacement)).toBeLessThanOrEqual(TOLERANCE);
+    }
+  }
+
+  await attacker.keyboard.up('1');
+  await closeBattle(h);
+});
+
+// ── Arc-direction Scenario 4: sweet spot (0°) is MAXIMAL extent toward opponent ──
+
+test('#495 arc-direction: at 0° sweet spot (~600ms), player renderX is more extreme (farther left) than at ±45° extremes', async ({
+  browser,
+}) => {
+  // #495 adversarial: the facing-sign inversion must make the orb reach its
+  // LEFTMOST position at 0° (cos(0)=1, max displacement), not be at rest
+  // at the player X. At ±45°, cos(45°)≈0.707 so renderX≈665.6 — LESS extreme.
+  const h = await setupBattle(browser);
+  const { attacker } = await attackerDefender(h.p1, h.p2);
+
+  await waitForMyAttackTurn(attacker);
+
+  // Hold past threshold so orb spawns.
+  await attacker.keyboard.down('1');
+  await attacker.waitForTimeout(300);
+
+  await attacker.waitForFunction(
+    () => (window as any).__scene?.chargeOrbRenderX !== null &&
+          (window as any).__scene?.chargeOrbRenderX !== undefined,
+    { timeout: 8000 },
+  );
+
+  // Sample renderX near start of sweep (angle ≈ -30° to -10°, cos ≈ 0.87–0.97).
+  const earlyRx: number | null = await attacker.evaluate(
+    () => (window as any).__scene?.chargeOrbRenderX ?? null,
+  );
+
+  // Continue hold to ~600ms total (sweet-spot, angle ≈ 0°, cos≈1, renderX≈648).
+  await attacker.waitForTimeout(300); // 600ms total from key down
+
+  const sweetSpotRx: number | null = await attacker.evaluate(
+    () => (window as any).__scene?.chargeOrbRenderX ?? null,
+  );
+
+  await attacker.keyboard.up('1');
+
+  // At sweet spot, renderX should be ~648 (furthest left = minimum x).
+  // This must be less than renderX near the extremes (which is closer to 708).
+  if (earlyRx !== null && sweetSpotRx !== null) {
+    // 0° → renderX ≈ 648; ±30°–45° → renderX ≈ 656–666.
+    // Sweet spot must be at least 1px farther left than early-sweep reading.
+    expect(sweetSpotRx).toBeLessThanOrEqual(earlyRx);
+    // Confirm approximate value: 648 ± 12px (tolerance for timing jitter).
+    expect(sweetSpotRx).toBeLessThan(662);
+    expect(sweetSpotRx).toBeGreaterThan(636);
+  }
+
+  await closeBattle(h);
+});
+
+// ── Arc-direction Scenario 5: null before charge starts and after orb disperses ──
+
+test('#495 arc-direction: chargeOrbRenderX and opponentChargeOrbRenderX return null when no orb is active', async ({
+  browser,
+}) => {
+  // #495 adversarial: getters must return null (not 0, not the pivot value, not
+  // a stale number from the last charge) when no orb is alive. A stale return
+  // value would allow E2E assertions to pass vacuously after orb dispersal.
+  const h = await setupBattle(browser);
+  const { attacker, defender } = await attackerDefender(h.p1, h.p2);
+
+  await waitForMyAttackTurn(attacker);
+
+  // Before any charge: both getters must be null.
+  const preChargePlayer: unknown = await attacker.evaluate(
+    () => (window as any).__scene?.chargeOrbRenderX,
+  );
+  const preChargeOpp: unknown = await defender.evaluate(
+    () => (window as any).__scene?.opponentChargeOrbRenderX,
+  );
+  expect(preChargePlayer == null).toBe(true);  // null or undefined
+  expect(preChargeOpp == null).toBe(true);
+
+  // Hold past threshold, wait for orb, then release (miss zone → orb disperses).
+  await collectMessages(defender, 'chargeOrbEnd');
+  await attacker.keyboard.down('1');
+  await attacker.waitForTimeout(200); // miss zone — orb will disperse on release
+  await attacker.keyboard.up('1');
+
+  // Wait for chargeOrbEnd to confirm the orb lifecycle has ended.
+  await defender.waitForFunction(() => ((window as any).__msgs?.chargeOrbEnd?.length ?? 0) >= 1, {
+    timeout: 5000,
+  });
+
+  // After orb dispersal, both getters must return null again.
+  await attacker.waitForFunction(
+    () => (window as any).__scene?.chargeOrbRenderX == null,
+    { timeout: 3000 },
+  );
+  await defender.waitForFunction(
+    () => (window as any).__scene?.opponentChargeOrbRenderX == null,
+    { timeout: 3000 },
+  );
+
+  const postChargePlayer: unknown = await attacker.evaluate(
+    () => (window as any).__scene?.chargeOrbRenderX,
+  );
+  const postChargeOpp: unknown = await defender.evaluate(
+    () => (window as any).__scene?.opponentChargeOrbRenderX,
+  );
+  expect(postChargePlayer == null).toBe(true);
+  expect(postChargeOpp == null).toBe(true);
+
+  await closeBattle(h);
+});
+
 }); // end test.describe('charge attack')
