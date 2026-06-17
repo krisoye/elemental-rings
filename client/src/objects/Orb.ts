@@ -17,12 +17,83 @@ export interface OrbHandle {
 }
 
 /**
+ * A handle to an idle (non-flying) charge orb. The caller repositions it each frame
+ * via `setY`. On `disperse()` the orb scatters and fades. There is no impact phase —
+ * the orb is discarded once the charge resolves.
+ */
+export interface IdleOrbHandle {
+  /** Move the orb circles to a new Y position (X stays fixed). */
+  setY(y: number): void;
+  /** Set tint: gold when in hit zone, default element color when outside. */
+  setInHitZone(inZone: boolean): void;
+  /** Scatter + fade (same as OrbHandle.disperse). */
+  disperse(): void;
+}
+
+/**
  * Visual-only orb telegraph. Launches one or more colored orbs from `from` to
  * `to` over TELEGRAPH_MS, then flashes an impact pulse over BLOCK_WINDOW_MS. The
  * timing mirrors the server's authoritative window purely so the animation lines
  * up — the server, not this animation, decides the block outcome.
  */
 export class Orb {
+  /**
+   * #485 — spawn a stationary (idle) charge orb at `pos`. The orb does not fly;
+   * the caller repositions it each frame via `IdleOrbHandle.setY`. Used to display
+   * the oscillating orb while the attacker is holding the attack button.
+   */
+  static spawnIdle(
+    scene: Phaser.Scene,
+    elements: number[],
+    pos: { x: number; y: number },
+  ): IdleOrbHandle & OrbHandle {
+    const circles: Phaser.GameObjects.Arc[] = [];
+    let dispersed = false;
+
+    elements.forEach((el, idx) => {
+      const offset = (idx - (elements.length - 1) / 2) * 18;
+      const orb = scene.add.circle(pos.x, pos.y + offset, 10, ELEMENT_COLORS[el]);
+      circles.push(orb);
+    });
+
+    return {
+      setY(y: number): void {
+        if (dispersed) return;
+        circles.forEach((orb, idx) => {
+          const offset = (idx - (circles.length - 1) / 2) * 18;
+          orb.y = y + offset;
+        });
+      },
+      setInHitZone(inZone: boolean): void {
+        if (dispersed) return;
+        // Gold tint when in hit zone; original element color outside.
+        circles.forEach((orb, idx) => {
+          const el = elements[idx] ?? 0;
+          orb.setFillStyle(inZone ? 0xffd700 : ELEMENT_COLORS[el]);
+        });
+      },
+      disperse(): void {
+        if (dispersed) return;
+        dispersed = true;
+        circles.forEach((orb) => {
+          const dx = Phaser.Math.Between(-50, 50);
+          const dy = Phaser.Math.Between(-50, 50);
+          scene.tweens.add({
+            targets: orb,
+            x: orb.x + dx,
+            y: orb.y + dy,
+            scaleX: 0,
+            scaleY: 0,
+            alpha: 0,
+            duration: 260,
+            ease: 'Quad.easeOut',
+            onComplete: () => orb.destroy(),
+          });
+        });
+        circles.length = 0;
+      },
+    };
+  }
   static launch(
     scene: Phaser.Scene,
     elements: number[],

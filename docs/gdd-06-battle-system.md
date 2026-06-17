@@ -49,13 +49,50 @@ Combat is an **active, reaction-timed** exchange — not a hidden simultaneous s
 
 The **initiative holder** chooses one of three actions:
 
-**Option A — Attack:** Press A1 or A2 to fire the ring in that slot.
-1. The attack costs **1 use** up front, regardless of the outcome.
-2. The attack is **telegraphed**: the ring's element color(s) travel across the screen toward the reactor over a **900 ms** window. Fused rings show all of their component colors (e.g. a Mud ring shows blue + brown).
-3. The **reactor** presses **D1 or D2** to fire the ring in that slot — it must land within the timing window as the incoming attack arrives.
-4. The block is resolved on two independent axes — **timing** (parry / block / mistime / no-block) and **element relationship** (strong / neutral / weak). See §6.4.
-5. If the reactor achieves **Parry + Strong**, a counter fires and the chain continues (see §6.4 Rally). Any other result ends the chain.
-6. When the chain ends, **initiative passes to the other player** — regardless of who scored hits or how many volleys the chain contained.
+**Option A — Attack (Tap or Charge):** Press A1 or A2 to throw the ring in that slot. There are two forms:
+
+**Tap (hold < `CHARGE_THRESHOLD_MS`, default 150 ms):** Release quickly. The orb spawns on release and fires horizontally at the standard **900 ms** telegraph. Defender phase opens at full baseline window. This is always a hit — no Y-positioning required.
+
+**Charged Attack (hold ≥ `CHARGE_THRESHOLD_MS`):** Hold the button. As soon as the hold begins:
+- The attack orb **spawns immediately** in front of the attacker and begins oscillating up and down (a sine wave that tightens — oscillates faster — as hold duration increases).
+- Y amplitude is capped at **±80 px** so the orb stays visible at all charge levels.
+- The orb **glows gold** when within the hit cone (±`HIT_CONE_PX`, default 20 px); it dims when outside.
+- **Both players see the oscillating orb** — the defender gets information about the attacker's charge level before the throw.
+
+**Release = throw.** The orb's Y position at the exact moment of release determines the outcome:
+
+| Release Y position | Result | Defender Phase |
+|---|---|---|
+| Within ±`HIT_CONE_PX` of the centre line | **Hit** — orb flies toward defender at a compressed telegraph | Yes — window scales with charge sharpness |
+| Outside hit cone | **Miss** — orb flies off-screen at that angle | **No** — defender does nothing; attacker −1 use |
+
+On a **miss**: the attacker loses 1 ring use, a brief "WHIFF" label appears on the attacker's side, and initiative passes immediately. The defender is never punished for an attacker's miss.
+
+On a **hit**: telegraph duration scales with **sharpness** (charge level):
+
+| Charge Level | Sharpness | Telegraph Window | Parry Window |
+|---|---|---|---|
+| Tap (no charge) | 0 | 900 ms (baseline) | Standard |
+| Low charge | ~0.17 | ~750 ms | Slightly compressed |
+| High charge | ~0.67 | ~600 ms | Significantly compressed |
+| Maximum charge (`MAX_CHARGE_MS` = 3 s) | 1.0 | `CHARGE_TELEGRAPH_MIN_MS` (500 ms) | Most compressed |
+
+The oscillation formulas are deterministic and computed server-side to prevent Y-spoofing:
+```
+oscillationPeriod(t) = BASE_PERIOD_MS / (1 + t / PERIOD_DECAY_MS)
+yOffset(t)           = Y_AMPLITUDE_PX × sin(2π × t / oscillationPeriod(t))   [clamped ±80]
+isHit                = |yOffset(holdDuration)| ≤ HIT_CONE_PX
+sharpness            = clamp(holdDuration / MAX_CHARGE_MS, 0, 1)
+telegraphDuration    = lerp(TELEGRAPH_MS, CHARGE_TELEGRAPH_MIN_MS, sharpness)
+```
+
+**Common rules for both tap and charge:**
+1. The attack costs **1 use** up front, regardless of hit or miss.
+2. Fused rings show all of their component colors.
+3. On a successful hit, the **reactor** presses **D1 or D2** within the (variable) telegraph window.
+4. The block is resolved on two independent axes — **timing** and **element relationship**. See §6.4.
+5. If the reactor achieves **Parry + Strong**, a counter fires (see §6.4 Rally).
+6. When the chain ends, **initiative passes to the other player**.
 
 **Option B — Recharge:** Double-press A1, A2, D1, or D2 to fully restore that ring's uses. Attack rings recharge via double-tap `1`/`2` or `Z`/`C`; defense rings recharge via double-tap `3`/`4` or a double-tap on the D1/D2 card. All four combat rings are rechargeable in-duel (the Thumb is not).
 - Cost: **1 spirit per use restored** (same rate as overworld recharging, §4.3). A Tier 1 ring at 0 uses costs 3 spirit; one at 1 use costs 2 spirit.
@@ -69,6 +106,17 @@ The **initiative holder** chooses one of three actions:
 - Forfeiting is only available during your own initiative phase — the reactor cannot flee mid-telegraph.
 - This is the escape valve when the duel cannot be won, but it costs more than just the stake.
 - Forfeiting preserves the heart ring — it is only destroyed if hearts reach 0 (§6.7).
+
+### 6.3a Fusion Ring Charge Interaction
+
+When the attacker holds one attack button (A1 or A2) while the orb oscillates, tapping the **other** attack button triggers a **fusion double-attack release** — the same hold-cross-tap gesture as the standard double attack (§3.4), but with the charge mechanic applied:
+
+- **Held orb (A1):** flies from whatever Y position it occupies **at the moment A2 is tapped**. Applies the normal hit/miss check against `HIT_CONE_PX`. If outside the hit cone → **miss** (−1 use for A1, no A1 defender window); A2 still fires regardless.
+- **Tapped orb (A2):** treated as a **tap** — always spawns and fires horizontal. Always hits.
+- Both orbs fire simultaneously (as with all fusion double-attacks). The telegraph window for the combined phase is determined by A1's sharpness at the moment A2 is tapped, provided A1 hits.
+- If A1 misses but A2 hits: a single defender phase opens for A2 only, at full baseline telegraph (A1 contributed no sharpness to the hit path).
+
+**Strategic implication:** The attacker must nail the A1 orb's center position **at the tap moment**, not just execute the hold-cross-tap gesture. Tapping A2 prematurely (when A1 is far from center) sacrifices the first orb while the second still lands — creating genuine attacker skill pressure on fusion double-attacks.
 
 **Phase-locked input:** Attack buttons (A1/A2) only register during the **attack phase**. Defense buttons (D1/D2) only register during the **defense phase**. Wrong-phase presses are silently ignored — protective, not punishing. The phase transition is the most visually prominent UI moment in a battle.
 
@@ -92,6 +140,8 @@ Because the defender sees the incoming element before committing, there is no si
 
 ### 6.4 Damage Rules
 The attacker always pays **1 use to throw**. The defender's response — its **timing** and its **element relationship** to the attack — determines everything else.
+
+**Variable telegraph duration (charge mechanic, §6.3 Option A):** For a charged attack that hits, the telegraph window shrinks based on `sharpness` (charge level). The formula: `telegraphDuration = lerp(TELEGRAPH_MS, CHARGE_TELEGRAPH_MIN_MS, sharpness)`. A tap uses the full baseline `TELEGRAPH_MS` (900 ms); a maximum charge uses `CHARGE_TELEGRAPH_MIN_MS` (500 ms). The parry window compresses proportionally — both window edges close toward impact, keeping classification semantics unchanged. A missed charge never opens a defender window at all (§6.3 Option A).
 
 **Timing axis** — the defender's keypress relative to the moment the telegraph arrives:
 
