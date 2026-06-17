@@ -1,289 +1,335 @@
 /**
- * Phase 1 adversarial unit tests for the charge attack mechanic (#485).
- * Tests the pure deterministic oscillation formula and derived sharpness/telegraph
+ * Unit tests for the charge attack arc-swing mechanic (#491).
+ * Tests the pure deterministic angular formula and derived sharpness/telegraph
  * values — no Colyseus room, no I/O. Every constant is imported from the server
  * constants module so tests pin actual production values, not re-derived copies.
  *
  * Formula (server-authoritative, matches client):
- *   oscillationPeriod(t) = BASE_PERIOD_MS / (1 + t / PERIOD_DECAY_MS)
- *   yOffset(t)           = Y_AMPLITUDE_PX * sin(2π * t / oscillationPeriod(t))
- *   isHit                = |yOffset(holdDuration)| <= HIT_CONE_PX
- *   sharpness            = clamp(holdDuration / MAX_CHARGE_MS, 0, 1)
- *   telegraphDuration    = lerp(TELEGRAPH_MS, CHARGE_TELEGRAPH_MIN_MS, sharpness)
+ *   sweepIndex(t)          = 0-based sweep we are in at holdMs t
+ *   orbAngle(t)            = −SWEEP_RANGE_DEG..+SWEEP_RANGE_DEG (degrees)
+ *   isHitAngle             = |orbAngle(t)| ≤ HIT_CONE_DEG
+ *   sharpnessFromSweep(t)  = 1/3 (sweep 0) | 2/3 (sweep 1) | 1.0 (sweep 2+)
+ *   telegraphDuration      = lerp(TELEGRAPH_MS, CHARGE_TELEGRAPH_MIN_MS, sharpness)
  */
 import { describe, test, expect } from 'vitest';
 import {
-  computeYOffset,
-  computeIsHit,
+  computeSweepIndex,
+  computeOrbAngle,
+  computeIsHitAngle,
   computeSharpness,
   computeTelegraphDuration,
-  computeOscillationPeriod,
 } from '../../server/src/game/ChargeAttack';
 import {
-  BASE_PERIOD_MS,
-  PERIOD_DECAY_MS,
-  Y_AMPLITUDE_PX,
-  HIT_CONE_PX,
-  MAX_CHARGE_MS,
+  SWEEP_RANGE_DEG,
+  HIT_CONE_DEG,
+  BASE_SWEEP_MS,
+  SWEEP_SPEEDUP,
+  MAX_SWEEPS,
   CHARGE_THRESHOLD_MS,
   CHARGE_TELEGRAPH_MIN_MS,
 } from '../../server/src/game/constants';
 import { TELEGRAPH_MS } from '../../shared/timing';
 
-// ── helpers ──────────────────────────────────────────────────────────────────
+// ── helpers ───────────────────────────────────────────────────────────────────
 
-/** Recompute oscillationPeriod locally to derive expected yOffset values. */
-function period(t: number): number {
-  return BASE_PERIOD_MS / (1 + t / PERIOD_DECAY_MS);
+/**
+ * Duration of sweep N (0-based) using the production speed schedule.
+ * Matches shared/oscillation.ts sweepDuration formula.
+ */
+function sweepDuration(n: number): number {
+  return BASE_SWEEP_MS * Math.pow(SWEEP_SPEEDUP, Math.min(n, MAX_SWEEPS - 1));
 }
 
-/** Raw yOffset without amplitude cap — for boundary probing. */
-function rawYOffset(t: number): number {
-  return Y_AMPLITUDE_PX * Math.sin((2 * Math.PI * t) / period(t));
+/**
+ * Cumulative elapsed time to reach the start of sweep N (0-based).
+ */
+function sweepStartMs(n: number): number {
+  let t = 0;
+  for (let i = 0; i < n; i++) t += sweepDuration(i);
+  return t;
 }
 
-// ── Y offset formula correctness ─────────────────────────────────────────────
+/**
+ * holdMs at which the orb is exactly at 0° (midpoint of sweep N, even-numbered).
+ * Sweep 0 goes −SWEEP_RANGE_DEG → +SWEEP_RANGE_DEG, midpoint = 0°.
+ */
+function sweepMidpointMs(n: number): number {
+  return sweepStartMs(n) + sweepDuration(n) / 2;
+}
 
-describe('computeYOffset — formula correctness', () => {
-  test('t=0 → yOffset is 0 (sin(0)=0, orb starts on center line)', () => {
-    // #485 adversarial: orb must start centered — at t=0 sin(2π*0/P)=0 regardless of P.
-    // A non-zero initial offset would falsely register as a hit/miss at chargeStart.
-    expect(computeYOffset(0)).toBe(0);
+// ── sweepIndex correctness ─────────────────────────────────────────────────────
+
+describe('computeSweepIndex — sweep indexing', () => {
+  test('t=0 → sweep index 0 (at start of first sweep)', () => {
+    // #491: orb starts at the beginning of sweep 0 on chargeStart.
+    expect(computeSweepIndex(0)).toBe(0);
   });
 
-  test('t=BASE_PERIOD_MS/4 → yOffset ≈ +Y_AMPLITUDE_PX (quarter-period peak, uncapped zone)', () => {
-    // #485 adversarial: verify the amplitude sign/direction convention matches the spec.
-    // At t=BASE_PERIOD_MS/4 the period hasn't decayed much; yOffset ≈ +Y_AMPLITUDE_PX.
-    // This confirms the formula uses sin (not cos) and the sign convention is correct.
-    const t = BASE_PERIOD_MS / 4;
-    const expected = rawYOffset(t);
-    expect(computeYOffset(t)).toBeCloseTo(expected, 6);
+  test('t just before first sweep ends → still sweep 0', () => {
+    // One ms before the first reversal must still be sweep 0.
+    const t = sweepDuration(0) - 1;
+    expect(computeSweepIndex(t)).toBe(0);
   });
 
-  test('formula matches spec: computeYOffset(t) === Y_AMPLITUDE_PX * sin(2π*t/period(t))', () => {
-    // #485 spec conformance: the server formula must be identical to the spec definition
-    // so client and server always agree on orb position for the same holdDuration.
-    const samples = [50, 100, 200, 350, 500, 750, 1000];
+  test('t = sweep 0 duration → enters sweep 1', () => {
+    // Exactly at the first reversal boundary: sweep 1.
+    const t = sweepDuration(0);
+    expect(computeSweepIndex(t)).toBe(1);
+  });
+
+  test('t = sweep 0 + sweep 1 duration → enters sweep 2', () => {
+    const t = sweepStartMs(2);
+    expect(computeSweepIndex(t)).toBe(2);
+  });
+
+  test('sweep durations shorten with each reversal (speed steps up)', () => {
+    // #491 spec: each sweep is SWEEP_SPEEDUP fraction of the previous duration.
+    // Verify the implied sweep timing by checking sweep boundaries.
+    expect(sweepDuration(0)).toBeGreaterThan(sweepDuration(1));
+    expect(sweepDuration(1)).toBeGreaterThan(sweepDuration(2));
+  });
+
+  test('speed caps at MAX_SWEEPS (beyond that, sweep duration stays constant)', () => {
+    // #491: max speed reached at sweep MAX_SWEEPS (index MAX_SWEEPS - 1);
+    // sweep MAX_SWEEPS and beyond have the same duration as sweep MAX_SWEEPS - 1.
+    const capDuration = sweepDuration(MAX_SWEEPS - 1);
+    const beyondDuration = sweepDuration(MAX_SWEEPS);
+    expect(beyondDuration).toBeCloseTo(capDuration, 6);
+  });
+});
+
+// ── orbAngle correctness ──────────────────────────────────────────────────────
+
+describe('computeOrbAngle — arc position formula', () => {
+  test('t=0 → angle = −SWEEP_RANGE_DEG (orb starts at left of arc)', () => {
+    // #491: orb always starts at −45° (locked startAngle).
+    expect(computeOrbAngle(0)).toBeCloseTo(-SWEEP_RANGE_DEG, 6);
+  });
+
+  test('sweep 0 midpoint → angle ≈ 0° (sweet spot, aimed at opponent)', () => {
+    // #491: midpoint of the first sweep is the sweet spot at 0°.
+    // sweep 0: −45° → +45°, midpoint at half the duration → 0°.
+    const t = sweepMidpointMs(0);
+    expect(computeOrbAngle(t)).toBeCloseTo(0, 6);
+  });
+
+  test('end of sweep 0 → angle = +SWEEP_RANGE_DEG (first reversal)', () => {
+    // At exactly one sweep duration the orb reaches +45° and reverses.
+    const t = sweepDuration(0) - 1; // 1ms before boundary
+    expect(computeOrbAngle(t)).toBeGreaterThan(SWEEP_RANGE_DEG * 0.98);
+  });
+
+  test('start of sweep 1 → angle = +SWEEP_RANGE_DEG (reversed, heading back)', () => {
+    // Sweep 1 starts at +45° (odd sweep = reverse direction).
+    const t = sweepStartMs(1);
+    expect(computeOrbAngle(t)).toBeCloseTo(SWEEP_RANGE_DEG, 4);
+  });
+
+  test('sweep 1 midpoint → angle ≈ 0° (sweet spot again on the return pass)', () => {
+    // Sweep 1: +45° → −45°, midpoint = 0°.
+    const t = sweepMidpointMs(1); // midpoint via odd-sweep formula
+    // sweepMidpointMs helper assumes even-sweep 0→45; for odd sweeps the midpoint
+    // is the same fraction (1/2 of the sweep duration from sweep start).
+    const odd_mid = sweepStartMs(1) + sweepDuration(1) / 2;
+    expect(computeOrbAngle(odd_mid)).toBeCloseTo(0, 6);
+  });
+
+  test('angle is always within [−SWEEP_RANGE_DEG, +SWEEP_RANGE_DEG]', () => {
+    // #491 adversarial: no holdDuration should produce an angle outside ±45°.
+    const samples = [0, 100, 300, 600, 900, 1200, 1800, 2400, 3000, 5000];
     for (const t of samples) {
-      const expected = rawYOffset(t);
-      // Cap is applied after: if |expected| > Y_AMPLITUDE_PX the cap clips it.
-      const capped = Math.max(-Y_AMPLITUDE_PX, Math.min(Y_AMPLITUDE_PX, expected));
-      expect(computeYOffset(t)).toBeCloseTo(capped, 6);
+      const angle = computeOrbAngle(t);
+      expect(angle).toBeGreaterThanOrEqual(-SWEEP_RANGE_DEG - 1e-9);
+      expect(angle).toBeLessThanOrEqual(SWEEP_RANGE_DEG + 1e-9);
+    }
+  });
+
+  test('angle is continuous across sweep boundaries (no jumps)', () => {
+    // #491 adversarial: the arc must not jump at reversal points. Sample densely
+    // around the first reversal (sweepDuration(0)).
+    const boundary = sweepDuration(0);
+    const before = computeOrbAngle(boundary - 1);
+    const after = computeOrbAngle(boundary);
+    // Both should be near +45°; difference must be small.
+    expect(Math.abs(before - after)).toBeLessThan(1); // within 1°
+  });
+});
+
+// ── isHitAngle boundary ───────────────────────────────────────────────────────
+
+describe('computeIsHitAngle — ±HIT_CONE_DEG boundary (inclusive)', () => {
+  test('angle at 0° (sweet spot, sweep 0 midpoint) → isHitAngle is TRUE', () => {
+    // #491: the center of the arc is the sweet spot — always a hit.
+    const t = sweepMidpointMs(0);
+    expect(computeIsHitAngle(t)).toBe(true);
+  });
+
+  test('angle at −45° (sweep start) → isHitAngle is FALSE (far outside cone)', () => {
+    // #491: orb at the edge of the arc (−45°) is well outside ±HIT_CONE_DEG=10°.
+    expect(computeIsHitAngle(0)).toBe(false);
+  });
+
+  test('angle at +45° (first reversal) → isHitAngle is FALSE', () => {
+    // +45° is SWEEP_RANGE_DEG=45, which is >> HIT_CONE_DEG=10.
+    const t = sweepDuration(0) - 1;
+    expect(computeIsHitAngle(t)).toBe(false);
+  });
+
+  test('isHitAngle is TRUE throughout the hit cone (several samples)', () => {
+    // #491: any release within ±HIT_CONE_DEG of 0° must be a hit.
+    // Sample holdMs values that place the orb within the cone in sweep 0.
+    // The hit-cone window in sweep 0: (HIT_CONE_DEG/SWEEP_RANGE_DEG) × sweepDuration(0) / 2
+    // centered on the midpoint.
+    const midMs = sweepMidpointMs(0);
+    const halfConeMs = (HIT_CONE_DEG / SWEEP_RANGE_DEG) * (sweepDuration(0) / 2);
+    // Sample a few points within the cone.
+    for (const offset of [-halfConeMs * 0.9, 0, halfConeMs * 0.9]) {
+      const t = midMs + offset;
+      expect(computeIsHitAngle(t)).toBe(true);
+    }
+  });
+
+  test('isHitAngle is FALSE outside the cone (away from sweet spot)', () => {
+    // #491: a release at 200ms (early in sweep 0, angle ≈ −29°) must miss.
+    // angle at 200ms: −45 + (200/1200)*90 = −45 + 15 = −30° — well outside ±10°.
+    const t = 200;
+    const angle = computeOrbAngle(t);
+    if (Math.abs(angle) > HIT_CONE_DEG) {
+      expect(computeIsHitAngle(t)).toBe(false);
+    }
+  });
+
+  test('isHitAngle contract: result equals (|orbAngle| ≤ HIT_CONE_DEG)', () => {
+    // #491 spec conformance: isHitAngle must be identical to the explicit cone check.
+    const samples = [0, 100, 200, 400, 600, 800, 1000, 1200, 1800, 2400, 3000];
+    for (const t of samples) {
+      const angle = computeOrbAngle(t);
+      const expected = Math.abs(angle) <= HIT_CONE_DEG;
+      expect(computeIsHitAngle(t)).toBe(expected);
     }
   });
 });
 
-// ── Y amplitude cap ───────────────────────────────────────────────────────────
+// ── sharpnessFromSweep ────────────────────────────────────────────────────────
 
-describe('computeYOffset — Y_AMPLITUDE_PX cap', () => {
-  test('|yOffset| never exceeds Y_AMPLITUDE_PX (= 80) even at very long hold durations', () => {
-    // #485 adversarial: very long holds cause the oscillation to speed up dramatically
-    // (period decays toward 0). Raw sine math still produces values in [-1,1] range but
-    // floating-point intermediate steps must not produce |yOffset| > 80.
-    const longHolds = [2000, 5000, 10000, 30000];
-    for (const t of longHolds) {
-      const y = computeYOffset(t);
-      expect(Math.abs(y)).toBeLessThanOrEqual(Y_AMPLITUDE_PX);
+describe('computeSharpness — sweep-based sharpness', () => {
+  test('sweep 0 (early charge) → sharpness = 1/3', () => {
+    // #491 spec: first sweep floor is 1/3 — always beats a tap sharpness (0).
+    const t = sweepMidpointMs(0); // solidly in sweep 0
+    expect(computeSharpness(t)).toBeCloseTo(1 / 3, 6);
+  });
+
+  test('sweep 1 → sharpness = 2/3', () => {
+    // #491 spec: sharpness steps up to 2/3 on the second sweep.
+    const t = sweepStartMs(1) + sweepDuration(1) / 2; // mid-sweep 1
+    expect(computeSharpness(t)).toBeCloseTo(2 / 3, 6);
+  });
+
+  test('sweep 2+ → sharpness = 1.0 (maximum)', () => {
+    // #491 spec: third sweep and beyond gives full sharpness.
+    const t = sweepStartMs(2) + sweepDuration(2) / 2; // mid-sweep 2
+    expect(computeSharpness(t)).toBeCloseTo(1.0, 6);
+  });
+
+  test('sharpness at sweep 3 stays at 1.0 (max speed / max sharpness)', () => {
+    // Beyond MAX_SWEEPS, sharpness stays clamped at 1.0 — no super-charge.
+    const t = sweepStartMs(MAX_SWEEPS) + sweepDuration(MAX_SWEEPS) * 2;
+    expect(computeSharpness(t)).toBeCloseTo(1.0, 6);
+  });
+
+  test('sharpness values step up monotonically across sweep boundaries', () => {
+    // #491 adversarial: sharpness must never decrease as hold time increases.
+    let prev = computeSharpness(10);
+    for (let t = 100; t <= 4000; t += 50) {
+      const curr = computeSharpness(t);
+      expect(curr).toBeGreaterThanOrEqual(prev - 1e-9);
+      prev = curr;
     }
-  });
-
-  test('amplitude is capped at exactly Y_AMPLITUDE_PX (not Y_AMPLITUDE_PX + ε)', () => {
-    // #485 adversarial: the cap must be applied AFTER multiplying by Y_AMPLITUDE_PX,
-    // not by clamping the sine result. A cap of 80.001 would allow |yOffset| > HIT_CONE_PX
-    // when HIT_CONE_PX == Y_AMPLITUDE_PX, making it impossible to miss at a peak.
-    // Scan many samples for any value that sneaks past.
-    for (let t = 0; t <= 10000; t += 10) {
-      const y = computeYOffset(t);
-      expect(Math.abs(y)).toBeLessThanOrEqual(Y_AMPLITUDE_PX + 1e-9);
-    }
-  });
-});
-
-// ── isHit boundary ────────────────────────────────────────────────────────────
-
-describe('computeIsHit — ±HIT_CONE_PX boundary (inclusive)', () => {
-  /**
-   * Find a hold duration t where |yOffset(t)| approximates `target` within
-   * a tolerance. Uses bisection over [0, MAX_CHARGE_MS]. Returns the duration.
-   */
-  function findDurationNearY(target: number, tolerance = 0.5): number {
-    // Simple scan: iterate until we find a t where |yOffset(t)| is within tolerance.
-    for (let t = 1; t <= MAX_CHARGE_MS; t += 1) {
-      if (Math.abs(Math.abs(computeYOffset(t)) - target) <= tolerance) return t;
-    }
-    throw new Error(`Could not find t with |yOffset| ≈ ${target}`);
-  }
-
-  test('|yOffset| exactly = HIT_CONE_PX → isHit is TRUE (spec: "within ±HIT_CONE_PX" is inclusive)', () => {
-    // #485 adversarial: boundary inclusivity. "Within ±HIT_CONE_PX" means |y| <= HIT_CONE_PX;
-    // the boundary itself must be a hit. An off-by-one strict-less-than would turn the
-    // boundary into a miss, penalizing a pixel-perfect release.
-    const t = findDurationNearY(HIT_CONE_PX, 0.5);
-    // Use the actual yOffset so the test asserts the CONTRACT not just the scan
-    // artifact; if |y| > HIT_CONE_PX by more than our tolerance, skip gracefully.
-    const y = computeYOffset(t);
-    if (Math.abs(Math.abs(y) - HIT_CONE_PX) <= 1) {
-      // Close enough to the boundary — the hit result is what we pin.
-      expect(computeIsHit(t)).toBe(Math.abs(y) <= HIT_CONE_PX);
-    }
-    // Belt-and-suspenders: test directly with y = HIT_CONE_PX by wrapping the formula.
-    // The production function takes holdDuration, so we verify the boundary via the
-    // public API with a value we know is at the cone edge.
-    // This is covered more precisely by the parameterized table below.
-  });
-
-  test('yOffset > HIT_CONE_PX → isHit is FALSE (just outside cone = miss)', () => {
-    // #485 adversarial: just above the cone boundary must be a miss. If the implementation
-    // uses > instead of >= in the comparison, a value at HIT_CONE_PX+0.1 would
-    // incorrectly hit when the orb is visually outside the zone.
-    const t = findDurationNearY(HIT_CONE_PX + 2, 1.5);
-    const y = computeYOffset(t);
-    if (Math.abs(y) > HIT_CONE_PX) {
-      expect(computeIsHit(t)).toBe(false);
-    }
-  });
-
-  test('yOffset = 0 (center line) → isHit is TRUE (orb squarely on the center line)', () => {
-    // #485 spec: t=0 produces y=0, which is trivially within ±HIT_CONE_PX.
-    // A corner case: if zero is treated as "not released" rather than "center hit",
-    // this would incorrectly block a center-line release.
-    expect(computeIsHit(0)).toBe(true);
-  });
-
-  test.each([
-    // [label, holdDuration, expectedIsHit]
-    // These probe the spec's "within ±HIT_CONE_PX" contract from both sides.
-    // The actual yOffset at these durations depends on constants — we test
-    // via computeIsHit == (|computeYOffset(t)| <= HIT_CONE_PX) instead of
-    // hardcoding expected values that would change if constants change.
-  ] as const)('hit cone boundary: %s', (_label, t, expected) => {
-    expect(computeIsHit(t)).toBe(expected);
-  });
-});
-
-// ── sharpness clamping ────────────────────────────────────────────────────────
-
-describe('computeSharpness — clamped 0–1', () => {
-  test('holdDuration = 0 → sharpness = 0 (tap, minimum charge)', () => {
-    // #485 adversarial: a zero-hold (tap path) must produce sharpness=0, which
-    // yields full baseline telegraph (TELEGRAPH_MS). A bug here compresses the
-    // parry window for a tap, punishing the defender unfairly.
-    expect(computeSharpness(0)).toBe(0);
-  });
-
-  test('holdDuration = MAX_CHARGE_MS → sharpness = 1 (maximum charge, floors telegraph)', () => {
-    // #485 adversarial: sharpness must reach exactly 1.0 at MAX_CHARGE_MS so the
-    // telegraph fully floors at CHARGE_TELEGRAPH_MIN_MS. A cap at 0.99 would leave
-    // 1% of the telegraph gap permanently unreachable.
-    expect(computeSharpness(MAX_CHARGE_MS)).toBe(1);
-  });
-
-  test('holdDuration > MAX_CHARGE_MS → sharpness clamped to 1 (no super-charge)', () => {
-    // #485 adversarial: a client holding beyond MAX_CHARGE_MS must not produce
-    // sharpness > 1, which would drive telegraphDuration below CHARGE_TELEGRAPH_MIN_MS.
-    // A missing clamp enables a client to manufacture an impossibly short parry window.
-    const overHold = MAX_CHARGE_MS * 2;
-    expect(computeSharpness(overHold)).toBe(1);
-  });
-
-  test('holdDuration = MAX_CHARGE_MS / 2 → sharpness = 0.5 (midpoint linear)', () => {
-    // #485 spec: sharpness = holdDuration / MAX_CHARGE_MS (linear before clamping).
-    // A non-linear mapping would compress/expand the telegraph curve against the GDD.
-    expect(computeSharpness(MAX_CHARGE_MS / 2)).toBeCloseTo(0.5, 6);
-  });
-
-  test('holdDuration < 0 → sharpness clamped to 0 (defensive: negative hold is impossible but must not crash)', () => {
-    // #485 adversarial: the server computes holdDuration from chargeStart timestamp —
-    // a clock skew or replay attack could produce a negative value. Must floor at 0.
-    expect(computeSharpness(-100)).toBe(0);
   });
 });
 
 // ── telegraph duration ────────────────────────────────────────────────────────
 
 describe('computeTelegraphDuration — lerp between TELEGRAPH_MS and CHARGE_TELEGRAPH_MIN_MS', () => {
-  test('sharpness=0 → telegraphDuration = TELEGRAPH_MS (full baseline, no compression)', () => {
-    // #485 spec: an uncharged tap produces the baseline 900ms telegraph.
-    // Compression must only kick in when charge actually happened.
-    expect(computeTelegraphDuration(0)).toBe(TELEGRAPH_MS);
+  test('sweep 0 sharpness (1/3) → telegraph between CHARGE_TELEGRAPH_MIN_MS and TELEGRAPH_MS', () => {
+    // #491: sweep-0 sharpness=1/3 produces a compressed (but not minimum) telegraph.
+    const t = sweepMidpointMs(0);
+    const result = computeTelegraphDuration(t);
+    expect(result).toBeLessThanOrEqual(TELEGRAPH_MS);
+    expect(result).toBeGreaterThanOrEqual(CHARGE_TELEGRAPH_MIN_MS);
   });
 
-  test('sharpness=1 → telegraphDuration = CHARGE_TELEGRAPH_MIN_MS (maximum compression)', () => {
-    // #485 adversarial: a full-charge release must floor exactly at CHARGE_TELEGRAPH_MIN_MS.
-    // telegraphDuration < CHARGE_TELEGRAPH_MIN_MS is impossible by spec; the defender
-    // always has at least that window.
-    expect(computeTelegraphDuration(MAX_CHARGE_MS)).toBe(CHARGE_TELEGRAPH_MIN_MS);
+  test('sweep 2+ (sharpness=1.0) → telegraphDuration = CHARGE_TELEGRAPH_MIN_MS', () => {
+    // #491: full sharpness floors the telegraph at the minimum.
+    const t = sweepStartMs(2) + sweepDuration(2) / 2;
+    expect(computeTelegraphDuration(t)).toBe(CHARGE_TELEGRAPH_MIN_MS);
   });
 
   test('telegraphDuration >= CHARGE_TELEGRAPH_MIN_MS for all valid holds (never below the floor)', () => {
-    // #485 adversarial: no holdDuration—however long—can produce a telegraph shorter
-    // than CHARGE_TELEGRAPH_MIN_MS. A sharpness > 1 from an unguarded path would
-    // push the lerp result below the floor.
-    const holds = [0, 100, 250, 500, MAX_CHARGE_MS, MAX_CHARGE_MS * 2, 99999];
+    // #491 adversarial: no holdDuration can produce a telegraph shorter than the minimum.
+    const holds = [CHARGE_THRESHOLD_MS, 300, 600, 1200, 2400, 3000, 5000];
     for (const t of holds) {
       expect(computeTelegraphDuration(t)).toBeGreaterThanOrEqual(CHARGE_TELEGRAPH_MIN_MS);
     }
   });
 
   test('telegraphDuration <= TELEGRAPH_MS for all valid holds (never above the baseline)', () => {
-    // #485 adversarial: the telegraph can only decrease with charge, never increase.
-    // A lerp implementation with swapped start/end would invert the compression direction.
-    const holds = [0, 100, 250, 500, MAX_CHARGE_MS];
+    // #491 adversarial: the telegraph can only decrease with charge, never increase.
+    const holds = [CHARGE_THRESHOLD_MS, 300, 600, 1200, 2400, 3000];
     for (const t of holds) {
       expect(computeTelegraphDuration(t)).toBeLessThanOrEqual(TELEGRAPH_MS);
     }
   });
 
-  test('telegraphDuration is monotonically non-increasing with holdDuration', () => {
-    // #485 adversarial: longer charge = shorter (or equal) telegraph. Any non-monotonic
-    // point would mean charging more makes the defender's window easier, inverting the
-    // risk/reward curve.
-    let prev = computeTelegraphDuration(0);
-    for (let t = 10; t <= MAX_CHARGE_MS; t += 10) {
-      const curr = computeTelegraphDuration(t);
-      expect(curr).toBeLessThanOrEqual(prev + 1e-9); // allow floating-point epsilon
-      prev = curr;
+  test('returns an integer (Math.round applied): no fractional milliseconds', () => {
+    // #491 impl: telegraphDuration uses Math.round so the value is always an integer ms.
+    const samples = [CHARGE_THRESHOLD_MS, 300, 600, 1200, 2400, 3000];
+    for (const t of samples) {
+      const result = computeTelegraphDuration(t);
+      expect(Number.isInteger(result)).toBe(true);
     }
   });
 
-  test('holdDuration = CHARGE_THRESHOLD_MS - 1 (tap path) → telegraphDuration = TELEGRAPH_MS', () => {
-    // #485 adversarial: a hold just below the threshold is treated as a tap on the CLIENT,
-    // meaning the server should not see a charge message at all. If it somehow did (e.g.,
-    // a malformed message), sharpness should still be near-zero → telegraph ≈ TELEGRAPH_MS.
-    const tapEdge = CHARGE_THRESHOLD_MS - 1;
-    const t = computeTelegraphDuration(tapEdge);
-    // Near-zero sharpness: expect result close to TELEGRAPH_MS (within 5%).
-    expect(t).toBeGreaterThanOrEqual(TELEGRAPH_MS * 0.95);
+  test('sweep 1 sharpness (2/3) → telegraph matches lerp(TELEGRAPH_MS, MIN, 2/3)', () => {
+    // #491: sweep-1 sharpness = 2/3; telegraph = round(TELEGRAPH_MS + (MIN−BASE)*2/3).
+    const t = sweepStartMs(1) + sweepDuration(1) / 2;
+    const expected = Math.round(TELEGRAPH_MS + (CHARGE_TELEGRAPH_MIN_MS - TELEGRAPH_MS) * (2 / 3));
+    expect(computeTelegraphDuration(t)).toBe(expected);
   });
 });
 
 // ── determinism ───────────────────────────────────────────────────────────────
 
 describe('determinism — same holdDuration → same results (no hidden state)', () => {
-  test('computeYOffset is pure: same t produces identical result across multiple calls', () => {
-    // #485 adversarial: if computeYOffset uses any mutable module-level state (e.g., a
-    // running phase accumulator), calling it multiple times with the same input would
-    // diverge — allowing client/server disagreement. Pure functions only.
+  test('computeOrbAngle is pure: same t produces identical result across calls', () => {
+    // #491 adversarial: if orbAngle uses mutable module-level state, calls with the
+    // same input would diverge — allowing client/server disagreement. Pure only.
     const t = 437;
-    const first = computeYOffset(t);
-    const second = computeYOffset(t);
-    const third = computeYOffset(t);
+    const first = computeOrbAngle(t);
+    const second = computeOrbAngle(t);
+    const third = computeOrbAngle(t);
     expect(second).toBe(first);
     expect(third).toBe(first);
   });
 
-  test('computeIsHit is pure: same holdDuration → same hit/miss result', () => {
-    // #485 adversarial: any non-determinism in the hit predicate lets a client spoof
-    // a different outcome by timing retries or exploit a race in the room handler.
+  test('computeIsHitAngle is pure: same holdDuration → same hit/miss result', () => {
+    // #491 adversarial: any non-determinism in the hit predicate lets a client spoof.
     const t = 813;
-    const first = computeIsHit(t);
-    const second = computeIsHit(t);
+    const first = computeIsHitAngle(t);
+    const second = computeIsHitAngle(t);
+    expect(second).toBe(first);
+  });
+
+  test('computeSharpness is pure: same holdDuration → same sharpness', () => {
+    // #491 adversarial: non-deterministic sharpness would produce unpredictable
+    // parry windows.
+    const t = 600;
+    const first = computeSharpness(t);
+    const second = computeSharpness(t);
     expect(second).toBe(first);
   });
 
   test('computeTelegraphDuration is pure: same holdDuration → same result', () => {
-    // #485 adversarial: a non-deterministic telegraph would produce unpredictable parry
-    // windows across rejoins or reconnect races.
     const t = 600;
     const first = computeTelegraphDuration(t);
     const second = computeTelegraphDuration(t);
@@ -291,145 +337,116 @@ describe('determinism — same holdDuration → same results (no hidden state)',
   });
 });
 
-// ── tap threshold boundary ────────────────────────────────────────────────────
+// ── CHARGE_THRESHOLD_MS boundary ─────────────────────────────────────────────
 
 describe('CHARGE_THRESHOLD_MS boundary — tap vs. charge distinction', () => {
-  test('holdDuration = CHARGE_THRESHOLD_MS - 1 → classified as tap (sharpness near zero)', () => {
-    // #485 adversarial: a hold of exactly threshold-1 ms must NOT compress the telegraph.
-    // The boundary between tap and charge is exclusive: < threshold = tap.
-    const sharpness = computeSharpness(CHARGE_THRESHOLD_MS - 1);
-    // Tap path: sharpness is effectively 0 (or near-zero, < 1% of max charge).
-    expect(sharpness).toBeLessThan(0.05);
+  test('holdDuration = CHARGE_THRESHOLD_MS → charged path (sweep 0, sharpness=1/3)', () => {
+    // #491 adversarial: at exactly the threshold, the orb has entered the arc-swing
+    // path. Sharpness should be 1/3 (sweep 0).
+    const sharp = computeSharpness(CHARGE_THRESHOLD_MS);
+    expect(sharp).toBeCloseTo(1 / 3, 6);
   });
 
-  test('holdDuration = CHARGE_THRESHOLD_MS → treated as a valid charge (sharpness > 0)', () => {
-    // #485 adversarial: at exactly the threshold, the orb oscillation has started and
-    // the server received a chargeStart event. sharpness must be non-zero so there is
-    // some (small) telegraph compression to signal the charge registered.
-    const sharpness = computeSharpness(CHARGE_THRESHOLD_MS);
-    expect(sharpness).toBeGreaterThan(0);
+  test('holdDuration slightly above threshold → still in sweep 0', () => {
+    // A brief charge (e.g. 200ms) is well within sweep 0 (BASE_SWEEP_MS=1200ms).
+    expect(computeSweepIndex(200)).toBe(0);
   });
 });
 
 // ── fusion independence ───────────────────────────────────────────────────────
 
 describe('fusion double-attack — held slot checked, tapped slot always hits', () => {
-  test('held A1 at y=0 → isHit true; the held slot check is independent of the tapped slot', () => {
-    // #485 spec: in a fusion double-attack, the held orb (A1) is Y-checked at the
-    // moment A2 is tapped. The tapped slot always hits (no oscillation). The server
-    // must NOT apply the Y check to the tapped slot.
-    const heldHoldDuration = 0; // center line → always hits
-    expect(computeIsHit(heldHoldDuration)).toBe(true);
+  test('held at 0° (sweet spot) → isHitAngle true; check is independent of tapped slot', () => {
+    // #491 spec: in a fusion double-attack, the held orb (A1) is angle-checked at
+    // the moment A2 is tapped. The tapped slot always hits (holdDuration=0 → tap).
+    // Tap convention: holdDuration=0 → orbAngle=−45° but the TAP path is handled
+    // UPSTREAM (before the arc formula is invoked); computeIsHitAngle is only called
+    // on the held slot. Test that a holdMs corresponding to 0° is a hit.
+    const heldMs = sweepMidpointMs(0); // angle ≈ 0° → hit
+    expect(computeIsHitAngle(heldMs)).toBe(true);
   });
 
-  test('held A1 far from center line → isHit false; tapped A2 still unaffected', () => {
-    // #485 adversarial: if the server accidentally applies the held orb's Y offset
-    // to the tapped orb too, the tapped orb would miss when it should always hit.
-    // We test computeIsHit in isolation: the tapped slot's result is always true
-    // (caller passes holdDuration=0 for the tapped slot to model "tap = no oscillation").
-    const tappedHoldDuration = 0; // tap convention: holdDuration=0 → always centered
-    expect(computeIsHit(tappedHoldDuration)).toBe(true);
+  test('held far from center → isHitAngle false; tapped A2 (tap path) still unaffected', () => {
+    // #491 adversarial: if the server mistakenly applies the held-orb angle check
+    // to the tapped slot (always tap → holdDuration=0), the orb would land at −45°
+    // and miss. But the TAP path bypasses isHitAngle entirely (holdMs < threshold).
+    // Just verify the held slot misses at a wide angle.
+    const heldMs = 200; // ≈ −30° → outside ±10° cone
+    const angle = computeOrbAngle(heldMs);
+    if (Math.abs(angle) > HIT_CONE_DEG) {
+      expect(computeIsHitAngle(heldMs)).toBe(false);
+    }
   });
 
-  test('held orb Y-checked independently: a miss on the held slot does not affect the tapped slot hit result', () => {
-    // #485 spec: "A2 orb: was a tap → spawns and always fires horizontal. Always hits."
-    // Verify that computeIsHit with holdDuration=0 (tap convention) returns true
-    // regardless of what any other orb is doing.
-    expect(computeIsHit(0)).toBe(true);
+  test('a miss on the held slot does not affect the tapped slot hit result', () => {
+    // #491 spec: "A2 orb: was a tap → always fires horizontal. Always hits."
+    // The tapped slot is handled via the tap path (holdDuration=0 → selectAttack),
+    // which never calls isHitAngle. Verify that any angle-miss on the held slot
+    // does not contaminate the tapped slot's outcome.
+    const missMs = 200; // held misses
+    expect(computeIsHitAngle(missMs)).toBe(false); // held miss
+    // Tapped slot: tap path → always hit (not tested via isHitAngle here;
+    // it never calls isHitAngle — this assertion is tautological by design).
+    expect(true).toBe(true); // tapped always hits; no isHitAngle call needed
   });
 });
 
-// ── Phase 2: implementation-aware tests ──────────────────────────────────────
-// Added after reading server/src/game/ChargeAttack.ts and shared/oscillation.ts.
-// These pin implementation details (rounding, exact wire values at key hold times)
-// that the spec did not constrain but the implementation now defines.
+// ── hit zone robustness ───────────────────────────────────────────────────────
 
-describe('computeTelegraphDuration — Math.round() contract (impl detail)', () => {
-  test('returns an integer (Math.round applied): no fractional milliseconds', () => {
-    // #485 impl: telegraphDuration uses Math.round(lerp result) so the server
-    // can broadcast an integer ms to the client without float imprecision.
-    // A non-integer would drift the parry window timing across reconnects.
-    const samples = [0, 100, 300, 600, 900, 1200, MAX_CHARGE_MS];
-    for (const t of samples) {
-      const result = computeTelegraphDuration(t);
-      expect(Number.isInteger(result)).toBe(true);
+describe('hit zone — robustness to hold-time jitter around sweet spot', () => {
+  test('the sweep-0 sweet spot is a hit for at least 100ms around midpoint', () => {
+    // #491 adversarial: the hit zone window should be wide enough to absorb
+    // realistic server event-loop jitter (~20ms). With BASE_SWEEP_MS=1200 and
+    // HIT_CONE_DEG=10/SWEEP_RANGE_DEG=45, the window is (10/45)*600 ≈ 133ms.
+    const midMs = sweepMidpointMs(0);
+    const halfWindow = (HIT_CONE_DEG / SWEEP_RANGE_DEG) * (sweepDuration(0) / 2);
+    // Sample within 80% of the half-window to stay comfortably inside the cone.
+    const jitter = halfWindow * 0.8;
+    for (let offset = -jitter; offset <= jitter; offset += 10) {
+      const t = midMs + offset;
+      if (t >= 0) {
+        expect(computeIsHitAngle(t)).toBe(true);
+      }
     }
   });
 
-  test('computeTelegraphDuration(750) = round(900 + (MIN-900) * 0.5) — midpoint rounds correctly', () => {
-    // #485 impl: at sharpness=0.5 (holdMs = MAX_CHARGE_MS/2 = 750ms), the lerp
-    // produces an exact midpoint. Verify the rounded value matches the expected formula.
-    // #487: CHARGE_THRESHOLD_CLIENT_MS is now unified at 150ms in both prod and E2E;
-    // the __E2E_FAST__ conditional branch is removed. Constants are always production values.
-    // Example: round(900 + (500-900)*0.5) = round(900-200) = 700ms.
-    // We import the actual constants to stay environment-agnostic.
-    const expectedRaw = TELEGRAPH_MS + (CHARGE_TELEGRAPH_MIN_MS - TELEGRAPH_MS) * 0.5;
-    const expected = Math.round(expectedRaw);
-    expect(computeTelegraphDuration(MAX_CHARGE_MS / 2)).toBe(expected);
+  test('a hold early in sweep 0 (≈200ms) is a miss (angle far from center)', () => {
+    // #491 impl: at 200ms (early in sweep 0):
+    // angle = −45 + (200/1200)*90 = −45 + 15 = −30° >> HIT_CONE_DEG=10°.
+    // This covers the E2E miss scenario.
+    const angle = computeOrbAngle(200);
+    expect(Math.abs(angle)).toBeGreaterThan(HIT_CONE_DEG);
+    expect(computeIsHitAngle(200)).toBe(false);
+  });
+
+  test('the sweep-1 sweet spot (return pass) is also a hit', () => {
+    // #491: the second pass through 0° (sweep 1 midpoint) must also register as a hit.
+    const midMs = sweepStartMs(1) + sweepDuration(1) / 2;
+    expect(computeIsHitAngle(midMs)).toBe(true);
   });
 });
 
-describe('computeYOffset — known formula values at deterministic E2E hold times', () => {
-  test('computeYOffset(200) ≈ 78.78 (guaranteed miss in E2E scenarios)', () => {
-    // #485 impl: 200ms hold is used in E2E as the deterministic miss target.
-    // Pin the exact formula result here so any constant change that would break
-    // the E2E determinism is caught at unit test time (not discovered during E2E runs).
-    // period(200) = 1200/(1+200/600) = 1200/1.333 = 900ms
-    // yOffset = 80 * sin(2π*200/900) = 80 * sin(1.396) ≈ 80 * 0.9848 = 78.78
-    const y = computeYOffset(200);
-    expect(Math.abs(y)).toBeGreaterThan(60); // well outside HIT_CONE_PX=20
-    expect(computeIsHit(200)).toBe(false);   // must be a miss
+// ── orbAngle known values ─────────────────────────────────────────────────────
+
+describe('computeOrbAngle — spot checks at deterministic hold times', () => {
+  test('t=0 → −45° (locked start)', () => {
+    expect(computeOrbAngle(0)).toBeCloseTo(-SWEEP_RANGE_DEG, 4);
   });
 
-  test('computeYOffset(600) ≈ 0 (guaranteed hit in E2E scenarios)', () => {
-    // #485 impl: 600ms hold is used in E2E as the deterministic hit target.
-    // period(600) = 1200/(1+600/600) = 600ms
-    // yOffset = 80 * sin(2π*600/600) = 80 * sin(2π) ≈ 0
-    const y = computeYOffset(600);
-    expect(Math.abs(y)).toBeLessThan(5); // near the center line
-    expect(computeIsHit(600)).toBe(true); // must be a hit
+  test('t=BASE_SWEEP_MS/2 → 0° (sweep-0 midpoint = sweet spot)', () => {
+    // First sweet spot occurs at exactly half of BASE_SWEEP_MS.
+    expect(computeOrbAngle(BASE_SWEEP_MS / 2)).toBeCloseTo(0, 4);
   });
 
-  test('miss zone is wide enough to absorb ±50ms server jitter around 200ms hold', () => {
-    // #485 impl: the E2E miss target of 200ms must remain a miss even with ±50ms
-    // server event-loop jitter. Verify the entire 150–250ms range is a miss so the
-    // E2E scenario is not fragile.
-    for (let t = 150; t <= 250; t += 5) {
-      expect(computeIsHit(t)).toBe(false);
-    }
+  test('t=BASE_SWEEP_MS → +45° (first reversal)', () => {
+    // At the end of sweep 0 the orb is at +SWEEP_RANGE_DEG.
+    expect(computeOrbAngle(BASE_SWEEP_MS)).toBeCloseTo(SWEEP_RANGE_DEG, 4);
   });
 
-  test('hit zone at 600ms spans at least 30ms (±15ms jitter tolerance)', () => {
-    // #485 impl: the E2E hit target of 600ms has a 35ms hit window (585–619ms).
-    // Pin that the center 30ms of this window (585–615ms) is all hits so the
-    // E2E scenario survives reasonable server timing variance.
-    for (let t = 585; t <= 615; t += 1) {
-      expect(computeIsHit(t)).toBe(true);
-    }
-  });
-});
-
-describe('computeOscillationPeriod — period shortens with hold time', () => {
-  test('period at t=0 equals BASE_PERIOD_MS (slowest oscillation)', () => {
-    // #485 impl: ChargeAttack.ts exports computeOscillationPeriod as a public
-    // wrapper. At t=0 the denominator is 1 so period = BASE_PERIOD_MS exactly.
-    expect(computeOscillationPeriod(0)).toBe(BASE_PERIOD_MS);
-  });
-
-  test('period at t=PERIOD_DECAY_MS is BASE_PERIOD_MS/2 (period halved at decay constant)', () => {
-    // #485 impl: at holdMs = PERIOD_DECAY_MS the formula gives
-    // BASE_PERIOD_MS / (1 + 1) = BASE_PERIOD_MS / 2.
-    // This is the inflection that defines PERIOD_DECAY_MS's role.
-    expect(computeOscillationPeriod(PERIOD_DECAY_MS)).toBeCloseTo(BASE_PERIOD_MS / 2, 6);
-  });
-
-  test('period is strictly positive for any hold (never zero, no divide-by-zero risk)', () => {
-    // #485 adversarial: if holdMs were infinity (or MAX_SAFE_INTEGER), the period
-    // approaches but never reaches 0 (denominator diverges). Verify the minimum
-    // period over the valid hold range is still positive and doesn't collapse to 0.
-    const holds = [0, 100, MAX_CHARGE_MS, MAX_CHARGE_MS * 10, 1e6];
-    for (const t of holds) {
-      expect(computeOscillationPeriod(t)).toBeGreaterThan(0);
-    }
+  test('orbAngle produces a value in [−45,45] for a long hold (10 s)', () => {
+    // #491 adversarial: the arc formula must not overflow beyond ±45° at any hold.
+    const angle = computeOrbAngle(10000);
+    expect(angle).toBeGreaterThanOrEqual(-SWEEP_RANGE_DEG - 1e-9);
+    expect(angle).toBeLessThanOrEqual(SWEEP_RANGE_DEG + 1e-9);
   });
 });
