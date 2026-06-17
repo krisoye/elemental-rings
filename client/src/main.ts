@@ -143,6 +143,9 @@ declare global {
     // #485 — charge attack miss hook. Published by BattleScene.handleChargeMiss so
     // E2E can assert a miss without reading pixels (WHIFF label / orb off-angle).
     __lastChargeMiss?: { attackerId: string; attackerSlot: string } | null;
+    // #487 — true while BattleScene is in the recharge-armed state (R pressed). E2E
+    // can assert the state is armed/cleared without reading pixels.
+    __rechargeArmed?: boolean;
     // #212 — won-ring payload captured at the connection level (Connection.ts),
     // carrying the element so the end-of-battle modal can name the ring
     // ("Won: FIRE Ring"). null when the just-finished duel granted no ring.

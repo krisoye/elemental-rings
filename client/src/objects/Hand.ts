@@ -27,15 +27,20 @@ export class Hand extends Phaser.GameObjects.Container {
   // the two ATTACK slots (A1/A2) — keyboard (1/2 or Z/C) AND touch (A1/A2 cards) —
   // so BattleScene can detect "hold one, tap the other" without re-wiring input.
   private readonly onAttackHold?: (slot: 'a1' | 'a2', down: boolean) => void;
+  // #487 — optional callback to arm the R-key recharge state. Fired by the touch
+  // "↻ Recharge" button, mirrors the R key handler in BattleScene.
+  private readonly onArmRecharge?: () => void;
 
   constructor(
     scene: Phaser.Scene,
     onPress: (slot: SlotKey, isAlias?: boolean) => void,
     onAttackHold?: (slot: 'a1' | 'a2', down: boolean) => void,
+    onArmRecharge?: () => void,
   ) {
     super(scene, 0, 0);
     this.onPress = onPress;
     this.onAttackHold = onAttackHold;
+    this.onArmRecharge = onArmRecharge;
 
     SLOT_KEYS.forEach((key, i) => {
       const slot = new RingSlot(scene, HAND_SLOT_X[i], HAND_Y, SLOT_LABELS[key]);
@@ -98,12 +103,36 @@ export class Hand extends Phaser.GameObjects.Container {
     scene.input.keyboard!.addKey(KC.C).on('down', () => this.onAttackHold?.('a2', true));
     scene.input.keyboard!.addKey(KC.C).on('up', () => this.onAttackHold?.('a2', false));
 
+    // #487 — "↻ Recharge" touch button. Arms the same recharge-select state as R.
+    // Positioned above the ring-card row (HAND_Y - 48) and to the right.
+    // Only visible/active when onArmRecharge is supplied (PvP / vsAI battle).
+    if (this.onArmRecharge) {
+      const btnBg = scene.add.rectangle(CANVAS_W - 80, HAND_Y - 48, 120, 36, 0x113355, 0.85)
+        .setStrokeStyle(1, 0x4488cc)
+        .setInteractive()
+        .setScrollFactor(0)
+        .setDepth(500);
+      const btnLabel = scene.add.text(CANVAS_W - 80, HAND_Y - 48, '↻ Recharge', {
+        fontSize: '15px',
+        color: '#aaddff',
+      })
+        .setOrigin(0.5)
+        .setScrollFactor(0)
+        .setDepth(501);
+      btnBg.on('pointerdown', () => this.onArmRecharge!());
+      // Suppress unused-variable lint without reassigning; both are Phaser objects
+      // managed by the scene display list and cleaned up with it.
+      void btnLabel;
+    }
+
     this.publishSlotPositions();
     scene.add.existing(this);
   }
 
   private triggerSlot(key: SlotKey, isAlias = false): void {
     if (key === 'thumb') return;
+    // #487 — if recharge is armed, route the slot press to the BattleScene recharge
+    // path via onPress (BattleScene.handleAttackPhasePress checks rechargeArmed first).
     this.onPress(key, isAlias);
   }
 

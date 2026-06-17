@@ -91,22 +91,11 @@ const MONSTER_BATTLERS: readonly (readonly string[])[] = [
   ],
 ];
 
-// Compile-time flag injected by Vite (see client/vite.config.ts). True only in
-// the E2E fast build; production bundles inline `false`.
-declare const __E2E_FAST__: boolean;
-
-// #125 attack-phase gesture windows (GDD §6.3). A single attack-key press is held
-// for DOUBLE_TAP_MS before firing the attack, so a second same-key press inside
-// the window can convert it into a recharge. Two DIFFERENT attack keys within
-// CHORD_MS are the forfeit chord (Z+C → a1+a2, or 3+4 → d1+d2). Fast mode shrinks
-// the arming window so the E2E suite's single-press attacks resolve quickly.
-const RECHARGE_DOUBLE_TAP_MS = __E2E_FAST__ ? 120 : 300;
+// #487 — forfeit chord detection window (two DEFENSE siblings within this interval).
 const FORFEIT_CHORD_MS = 50;
-// #485 — charge threshold must be LESS THAN the recharge window so that a hold
-// that qualifies as a charge does not also trigger the recharge double-tap. Under
-// E2E_FAST the recharge window drops to 120 ms; set the E2E threshold at 60 ms
-// (half the window) to preserve the prod ordering (charge < recharge).
-const CHARGE_THRESHOLD_CLIENT_MS = __E2E_FAST__ ? 60 : CHARGE_THRESHOLD_MS;
+// #487 — R-key recharge auto-cancel timer. If the player arms recharge but does not
+// pick a ring within this window, the armed state cancels automatically.
+const RECHARGE_TIMEOUT_MS = 2500;
 // Maps each defense slot to its sibling, for the 3+4 forfeit chord in attack phase
 // (EPIC #266 relocated the forfeit chord from A1+A2 to D1+D2).
 const DEFENSE_SIBLING: Record<string, SlotKey> = { d1: 'd2', d2: 'd1' };
@@ -144,16 +133,15 @@ export class BattleScene extends Phaser.Scene {
   // #212 — the persistent end-of-battle modal (null until shown).
   private endModal: BattleEndModal | null = null;
 
-  // #125 attack-phase gesture state. pendingAttackSlot/Timer hold a single
-  // attack-key press until the double-tap window lapses (then it fires); a second
-  // same-key press cancels it into a recharge. lastPressAt tracks the most recent
-  // press time per slot for chord detection. forfeitPrompt is the active confirm
-  // overlay (null when none).
-  private pendingAttackSlot: SlotKey | null = null;
-  private pendingAttackTimer: Phaser.Time.TimerEvent | null = null;
+  // #487 attack-phase gesture state. lastPressAt tracks the most recent press time
+  // per slot for chord detection. forfeitPrompt is the active confirm overlay (null
+  // when none). rechargeArmed/rechargeArmedTimer implement the R-key recharge gesture:
+  // R arms the state, then any ring-card or slot-key press completes the recharge.
   private lastPressAt: Record<string, number> = {};
   private forfeitPrompt: Phaser.GameObjects.Container | null = null;
   private forfeitKeyHandlers: (() => void) | null = null;
+  private rechargeArmed = false;
+  private rechargeArmedTimer: Phaser.Time.TimerEvent | null = null;
 
   // EPIC #264 / #266 — hold-cross-tap double-attack gesture state. heldAt records
   // the keydown time of each ATTACK slot while it is held (undefined once
@@ -162,11 +150,10 @@ export class BattleScene extends Phaser.Scene {
   // for the same hold pair (until both keys lift). gapMs = inter-keydown time.
   private heldAt: { a1?: number; a2?: number } = {};
   private comboFired = false;
-  // When an armed single attack's window lapses while its key is STILL physically
-  // held (a potential combo-in-progress), the attack is not fired immediately — it
-  // is deferred here and fired on key release if no combo committed. This lets a
-  // player hold one attack key for longer than RECHARGE_DOUBLE_TAP_MS before tapping
-  // the other without the held key prematurely resolving as a single attack.
+  // EPIC #264 / #266 — when a single attack fires while its key is STILL physically
+  // held (a potential combo-in-progress), the attack is deferred here and fired on
+  // key release if no combo committed. This lets a player hold one attack key longer
+  // than the charge threshold before tapping the other without premature resolution.
   private deferredHeldAttack: SlotKey | null = null;
 
   // EPIC #264 / #267 — dual-orb telegraph render state. Orb 1 is auto-launched by
@@ -180,15 +167,19 @@ export class BattleScene extends Phaser.Scene {
   private orb2Handle: OrbHandle | null = null;
   private orb2LaunchTimer: Phaser.Time.TimerEvent | null = null;
 
-  // #485 — charge attack render state. chargeHoldStart is the timestamp when the
-  // attacker began holding a button (for client-side Y oscillation display). The
+  // #485/#487 — charge attack render state. chargeHoldStart is the timestamp when
+  // the attacker began holding a button (for client-side Y oscillation display). The
   // oscillating orb is stored so its Y can be updated in update(). chargeSlot is the
   // slot currently being charged (null when not charging). chargeFusionSecondSlot
   // is set when the hold+tap fusion gesture commits so the server knows both slots.
+  // chargeStartTimer is the deferred-threshold timer: keydown arms it; beginCharge
+  // fires if the key is still held when it fires; key-up before it fires → tap path.
   private chargeHoldStart: number | null = null;
   private chargeSlot: SlotKey | null = null;
   private chargeOrbHandle: (IdleOrbHandle & OrbHandle) | null = null;
   private chargeFusionSecondSlot: 'a1' | 'a2' | null = null;
+  private chargeStartTimer: Phaser.Time.TimerEvent | null = null;
+  private chargeStartSlot: 'a1' | 'a2' | null = null;
 
   // #485 — DEFENDER-side oscillating orb state. When the server broadcasts
   // 'chargeOrbStart', the defender spawns an idle orb at the OPPONENT position and
@@ -236,11 +227,11 @@ export class BattleScene extends Phaser.Scene {
     this.ended = false;
     this.endDestination = null;
     this.endModal = null;
-    this.pendingAttackSlot = null;
-    this.pendingAttackTimer = null;
     this.lastPressAt = {};
     this.forfeitPrompt = null;
     this.forfeitKeyHandlers = null;
+    this.rechargeArmed = false;
+    this.rechargeArmedTimer = null;
     this.heldAt = {};
     this.comboFired = false;
     this.deferredHeldAttack = null;
@@ -252,6 +243,8 @@ export class BattleScene extends Phaser.Scene {
     this.chargeSlot = null;
     this.chargeOrbHandle = null;
     this.chargeFusionSecondSlot = null;
+    this.chargeStartTimer = null;
+    this.chargeStartSlot = null;
     this.opponentChargeOrbHandle = null;
     this.opponentChargeStartTime = null;
     this.opponentChargeSlot = null;
@@ -278,7 +271,32 @@ export class BattleScene extends Phaser.Scene {
       this,
       (slot, isAlias) => this.onSlotPressed(slot, isAlias),
       (slot, down) => this.onAttackHold(slot, down),
+      () => this.armRecharge(),
     );
+
+    // #487 — R-key: arm the recharge-select state (same handler as the Hand touch
+    // "↻ Recharge" button). Follows the Y/N key registration pattern.
+    const rKey = this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.R);
+    rKey.on('down', () => {
+      const state = window.__room?.state;
+      const myId = window.__room?.sessionId;
+      if (state?.phase === 'ATTACK_SELECT' && state.currentAttackerId === myId) {
+        if (this.rechargeArmed) {
+          this.cancelRecharge();
+        } else {
+          this.armRecharge();
+        }
+      } else {
+        // Off-turn or wrong phase: brief visual cue, no state change.
+        this.showNotYourTurnCue();
+      }
+    });
+
+    // #487 — Esc cancels the recharge-armed state (no-op if not armed).
+    const escKey = this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.ESC);
+    escKey.on('down', () => {
+      if (this.rechargeArmed) this.cancelRecharge();
+    });
 
     // The room outlives this scene, so clear any state-change listeners left by
     // a previous scene (LobbyScene / a prior BattleScene) before adding ours.
@@ -395,7 +413,7 @@ export class BattleScene extends Phaser.Scene {
       this.cancelOpponentChargeOrb();
       this.orb2LaunchTimer?.remove(false);
       this.orb2LaunchTimer = null;
-      this.cancelPendingAttack();
+      this.cancelRecharge();
       this.cancelChargeOrb();
       this.dismissForfeitPrompt();
       this.endModal?.destroy();
@@ -596,10 +614,10 @@ export class BattleScene extends Phaser.Scene {
    *
    * DEFEND_WINDOW: d1/d2 send `submitDefense` immediately (single-key, unchanged).
    *
-   * ATTACK_SELECT (#125, GDD §6.3): three gestures.
-   *   - single attack key → `selectAttack` (armed for RECHARGE_DOUBLE_TAP_MS so a
-   *     double-tap can reinterpret it)
-   *   - double-tap the same attack key → `recharge` that slot (+ a slot pulse)
+   * ATTACK_SELECT (#487, GDD §6.3): three gestures.
+   *   - single attack key (a1/a2) → tap-vs-hold managed by onAttackHold's charge timer;
+   *     `selectAttack` fires on key-up if below CHARGE_THRESHOLD_MS
+   *   - R key → arms recharge state; next slot key or card tap completes recharge
    *   - the two DEFENSE siblings within FORFEIT_CHORD_MS (3+4 → d1+d2) → a forfeit
    *     confirm prompt (EPIC #266 relocated this off A1+A2; that chord space now
    *     belongs to the hold-cross-tap double attack — see onAttackHold)
@@ -648,8 +666,14 @@ export class BattleScene extends Phaser.Scene {
     // While the forfeit prompt is open, ignore further slot input (Y/N decide it).
     if (this.forfeitPrompt) return;
 
+    // #487 — recharge-armed: any ring input (attack or defense) completes the recharge.
+    // The R key and Esc cancel it; this path fires only when a slot is pressed.
+    if (this.rechargeArmed) {
+      this.completeRecharge(slot);
+      return;
+    }
+
     const now = Date.now();
-    const prev = this.lastPressAt[slot];
     this.lastPressAt[slot] = now;
 
     // Forfeit chord (EPIC #264 / #266): the two DEFENSE siblings (d1+d2, from 3+4)
@@ -661,58 +685,19 @@ export class BattleScene extends Phaser.Scene {
     if (sibling) {
       const siblingAt = this.lastPressAt[sibling];
       if (siblingAt !== undefined && now - siblingAt <= FORFEIT_CHORD_MS) {
-        this.cancelPendingAttack(); // discard any half-armed A-key press before prompting
         this.showForfeitPrompt();
         return;
       }
     }
 
-    // d1/d2 have no single-press attack to arm, but a same-key double-tap recharges
-    // that defense ring — symmetric to the attack double-tap below. `3 3` / `4 4` or
-    // a double-tap on the D1/D2 card. The forfeit chord (3+4) was already handled above.
-    if (!ATTACK_KEYS.has(slot)) {
-      if (
-        DEFENSE_KEYS.has(slot) &&
-        prev !== undefined &&
-        now - prev <= RECHARGE_DOUBLE_TAP_MS
-      ) {
-        window.__room!.send('recharge', { slot });
-        this.hand.pulseSlot(slot);
-      }
-      return; // first/lone defense press: no action (no first-press cue)
-    }
+    // d1/d2: no attack action for defense keys — defense rings are only rechargeable
+    // via R-key + slot press now. Forfeit chord (3+4) was already handled above.
+    if (!ATTACK_KEYS.has(slot)) return;
 
-    // Double-tap the SAME attack key inside the window → recharge that slot.
-    if (
-      this.pendingAttackSlot === slot &&
-      prev !== undefined &&
-      now - prev <= RECHARGE_DOUBLE_TAP_MS
-    ) {
-      this.cancelPendingAttack();
-      window.__room!.send('recharge', { slot });
-      this.hand.pulseSlot(slot);
-      return;
-    }
-
-    // Otherwise arm a single attack; it fires when the double-tap window lapses
-    // (unless a second same-key press converts it to a recharge first).
-    this.cancelPendingAttack();
-    this.pendingAttackSlot = slot;
-    this.pendingAttackTimer = this.time.delayedCall(RECHARGE_DOUBLE_TAP_MS, () => {
-      this.pendingAttackTimer = null;
-      const pending = this.pendingAttackSlot;
-      this.pendingAttackSlot = null;
-      if (!pending) return;
-      // EPIC #266 — if the key is STILL physically held, this could be the first
-      // half of a hold-cross-tap combo. Defer the single attack until release rather
-      // than throwing it now (which would end the attacker's turn and forfeit the
-      // combo). On release, fireDeferredHeldAttack resolves it if no combo committed.
-      if (this.heldAt[pending as 'a1' | 'a2'] !== undefined) {
-        this.deferredHeldAttack = pending;
-        return;
-      }
-      this.sendSingleAttack(pending);
-    });
+    // a1/a2: the charge threshold timer in onAttackHold manages tap-vs-hold. Do NOT
+    // send selectAttack here on keydown. onAttackHold's key-up handler will call
+    // sendSingleAttack if the key is released before the charge threshold fires.
+    // This path is intentionally a no-op for attack keys (the send is key-up-driven).
   }
 
   /**
@@ -759,10 +744,10 @@ export class BattleScene extends Phaser.Scene {
    * send. An ineligible hand sends nothing here; its keys still arm single attacks
    * through handleAttackPhasePress as normal.
    *
-   * #485 — also drives the charge attack. On hold start, emit `chargeStart` and
-   * spawn the oscillating orb (if only this slot is held). On hold end (key up,
-   * no combo fired), emit `releaseAttack` with the server-computed holdDuration so
-   * the server can independently resolve hit/miss.
+   * #485/#487 — also drives the charge attack. On hold start, arm `chargeStartTimer`
+   * for CHARGE_THRESHOLD_MS; `beginCharge` only fires if the key is still held when
+   * the timer fires. A tap (key up before threshold) cancels the timer and sends
+   * `selectAttack` immediately on release — no double-tap deferral window needed.
    */
   private onAttackHold(slot: 'a1' | 'a2', down: boolean): void {
     const state = window.__room?.state;
@@ -772,12 +757,21 @@ export class BattleScene extends Phaser.Scene {
       const wasHeld = this.heldAt[slot] !== undefined;
       this.heldAt[slot] = undefined;
 
-      // #485 — key released: if this was a pure charge hold (no combo fired),
-      // endChargeOrb sends a single releaseAttack with the measured holdDuration;
-      // the server classifies tap vs charge from its own chargeStart timestamp.
-      if (wasHeld && this.chargeSlot === slot && !this.comboFired) {
-        // Cancel the oscillating orb; the server will tell us the outcome and the
-        // orb tween will fly on chargeMiss or DEFEND_WINDOW state change.
+      // #487 — key released: if the charge-start timer is still armed for THIS slot,
+      // the key was released before the charge threshold → tap. Cancel the timer and
+      // send selectAttack immediately.
+      if (this.chargeStartSlot === slot && this.chargeStartTimer !== null) {
+        this.chargeStartTimer.remove(false);
+        this.chargeStartTimer = null;
+        this.chargeStartSlot = null;
+        // Send the single attack now (on key-up), unless a combo is in progress or
+        // the turn has already advanced.
+        if (!this.comboFired) {
+          this.sendSingleAttack(slot);
+        }
+      } else if (wasHeld && this.chargeSlot === slot && !this.comboFired) {
+        // #485 — key released after charge threshold: send releaseAttack.
+        // The orb tween will fly on chargeMiss or DEFEND_WINDOW state change.
         this.endChargeOrb();
       }
 
@@ -799,12 +793,25 @@ export class BattleScene extends Phaser.Scene {
 
     // Only the SECOND key of a held pair fires the combo, once per hold.
     if (this.comboFired || otherAt === undefined) {
-      // #485 — single hold start: begin charge tracking. Emit chargeStart so the
-      // server records its authoritative timestamp. Spawn the oscillating orb if
-      // the turn is live and we're in the attack phase.
+      // #487 — single hold start: arm the deferred-threshold timer. beginCharge fires
+      // only if the key is still held when the timer expires (CHARGE_THRESHOLD_MS).
+      // Key-up before the timer fires → tap path (handled in the !down branch above).
       if (!this.comboFired && otherAt === undefined) {
         if (state && myId && state.phase === 'ATTACK_SELECT' && state.currentAttackerId === myId) {
-          this.beginCharge(slot, now);
+          // Cancel any previous timer first (shouldn't exist, but be safe).
+          this.chargeStartTimer?.remove(false);
+          this.chargeStartSlot = slot;
+          this.chargeStartTimer = this.time.delayedCall(CHARGE_THRESHOLD_MS, () => {
+            this.chargeStartTimer = null;
+            this.chargeStartSlot = null;
+            // Verify the turn is still live and the key is still held.
+            const s = window.__room?.state;
+            const id = window.__room?.sessionId;
+            if (s?.phase === 'ATTACK_SELECT' && s.currentAttackerId === id &&
+                this.heldAt[slot] !== undefined && !this.comboFired) {
+              this.beginCharge(slot, now);
+            }
+          });
         }
       }
       return;
@@ -827,7 +834,7 @@ export class BattleScene extends Phaser.Scene {
       this.chargeFusionSecondSlot = second; // record for any needed cleanup
       this.cancelChargeOrb();
       this.comboFired = true;
-      this.cancelPendingAttack();
+      this.deferredHeldAttack = null; // supersede any deferred single attack
       // Always send releaseAttack (single-message path). Sub-threshold holds
       // resolve as tap-tap on the server (holdDuration below CHARGE_THRESHOLD_MS).
       window.__room!.send('releaseAttack', { slot: first, holdDuration: holdMs, fusionSecondSlot: second });
@@ -847,7 +854,7 @@ export class BattleScene extends Phaser.Scene {
     const gapMs = now - otherAt;
 
     this.comboFired = true;
-    this.cancelPendingAttack(); // supersede any single attack armed for these slots
+    this.deferredHeldAttack = null; // supersede any deferred single attack
     window.__room!.send('selectDoubleAttack', { first, second, gapMs });
   }
 
@@ -865,11 +872,10 @@ export class BattleScene extends Phaser.Scene {
     this.chargeHoldStart = now;
     window.__room!.send('chargeStart', { slot });
 
-    // Spawn the oscillating orb in front of the player. It stays stationary (won't
-    // fly toward the opponent) until released. We place it at the standard start
-    // position; update() will reposition it each frame.
+    // Spawn the oscillating orb in front of the player (toward the opponent, x − 60).
+    // update() will reposition its Y each frame while the hold is active.
     const elements = this._getAttackElements(slot);
-    this.chargeOrbHandle = Orb.spawnIdle(this, elements, { x: PLAYER_X + 60, y: PLAYER_Y });
+    this.chargeOrbHandle = Orb.spawnIdle(this, elements, { x: PLAYER_X - 60, y: PLAYER_Y });
   }
 
   /**
@@ -878,9 +884,8 @@ export class BattleScene extends Phaser.Scene {
    * duration (via the chargeStart timestamp it recorded). This is the single-message
    * release path: no `selectAttack` is ever sent from this path.
    *
-   * cancelPendingAttack() is called unconditionally to clear any pending timer and
-   * deferredHeldAttack so the subsequent fireDeferredHeldAttack() in onAttackHold
-   * key-up finds nothing to send (preventing the double-send race).
+   * Clears deferredHeldAttack so the subsequent fireDeferredHeldAttack() call in
+   * the onAttackHold key-up branch finds nothing to send (preventing a double-send race).
    */
   private endChargeOrb(): void {
     if (this.chargeSlot === null || this.chargeHoldStart === null) return;
@@ -890,11 +895,10 @@ export class BattleScene extends Phaser.Scene {
     this.chargeSlot = null;
     this.chargeHoldStart = null;
 
-    // Cancel any pending single-attack timer / deferral for this slot so the
-    // key-up handler's fireDeferredHeldAttack() finds nothing to fire.
-    this.cancelPendingAttack();
+    // Clear deferral so fireDeferredHeldAttack finds nothing to fire.
+    this.deferredHeldAttack = null;
 
-    if (holdMs < CHARGE_THRESHOLD_CLIENT_MS) {
+    if (holdMs < CHARGE_THRESHOLD_MS) {
       // Sub-threshold: discard the idle orb and send releaseAttack as a tap
       // (holdDuration=0 → server treats as tap path, no oscillation, always hits).
       this.cancelChargeOrb();
@@ -908,10 +912,14 @@ export class BattleScene extends Phaser.Scene {
   }
 
   /**
-   * #485 — destroy the idle charge orb (if any) and reset all charge fields.
+   * #485/#487 — destroy the idle charge orb (if any) and reset all charge fields.
+   * Also cancels the deferred-threshold timer if it has not fired yet.
    * Called on: combo commit, forceful cancel, shutdown.
    */
   private cancelChargeOrb(): void {
+    this.chargeStartTimer?.remove(false);
+    this.chargeStartTimer = null;
+    this.chargeStartSlot = null;
     this.chargeOrbHandle?.disperse();
     this.chargeOrbHandle = null;
     this.chargeSlot = null;
@@ -932,10 +940,11 @@ export class BattleScene extends Phaser.Scene {
     const ring = oppState?.[p.slot as SlotKey];
     const elements = ring ? ringComponents(ring) : [0];
 
+    // Spawn at OPPONENT_X + 60 (in front of opponent, toward the player).
     this.opponentChargeOrbHandle = Orb.spawnIdle(
       this,
       elements,
-      { x: OPPONENT_X - 60, y: OPPONENT_Y },
+      { x: OPPONENT_X + 60, y: OPPONENT_Y },
     );
     this.opponentChargeStartTime = p.startTime;
     this.opponentChargeSlot = p.slot as SlotKey;
@@ -1085,14 +1094,89 @@ export class BattleScene extends Phaser.Scene {
     this.comboOrbIndex = 0;
   }
 
-  /** Cancel any armed single-attack press (the double-tap timer + any deferral). */
-  private cancelPendingAttack(): void {
-    if (this.pendingAttackTimer) {
-      this.pendingAttackTimer.remove(false);
-      this.pendingAttackTimer = null;
-    }
-    this.pendingAttackSlot = null;
-    this.deferredHeldAttack = null;
+  /**
+   * #487 — enter the recharge-armed state. Highlights rechargeable rings, shows a
+   * prompt, and starts the auto-cancel timeout. Idempotent (re-arming resets the timer).
+   * Callable from R-key handler or the Hand's "↻ Recharge" touch button.
+   */
+  private armRecharge(): void {
+    this.rechargeArmed = true;
+    // Reset the timeout each time armRecharge is called (idempotent re-arm).
+    this.rechargeArmedTimer?.remove(false);
+    this.rechargeArmedTimer = this.time.delayedCall(RECHARGE_TIMEOUT_MS, () => {
+      this.cancelRecharge();
+    });
+    // Highlight all ring cards and show the prompt. The Hand reflects this via the
+    // window hook so the touch recharge button can also read it.
+    window.__rechargeArmed = true;
+    this.showRechargePrompt();
+  }
+
+  /**
+   * #487 — cancel the recharge-armed state without sending anything to the server.
+   * Called on: R again, Esc, timeout, scene shutdown, or any phase change away from
+   * ATTACK_SELECT. Safe to call when not armed (no-op).
+   */
+  private cancelRecharge(): void {
+    if (!this.rechargeArmed) return;
+    this.rechargeArmed = false;
+    this.rechargeArmedTimer?.remove(false);
+    this.rechargeArmedTimer = null;
+    window.__rechargeArmed = false;
+    this.dismissRechargePrompt();
+  }
+
+  /**
+   * #487 — complete a recharge for `slot`. Sends `recharge` to the server, pulses
+   * the ring card, and tears down the armed state. Only called when rechargeArmed is true.
+   */
+  private completeRecharge(slot: SlotKey): void {
+    window.__room!.send('recharge', { slot });
+    this.hand.pulseSlot(slot);
+    this.cancelRecharge(); // tear down the armed state — turn advances server-side
+  }
+
+  // Recharge prompt overlay (shown while recharge-armed; torn down on cancel/complete).
+  private rechargePrompt: Phaser.GameObjects.Container | null = null;
+
+  /** Show "RECHARGE — pick a ring" overlay. */
+  private showRechargePrompt(): void {
+    if (this.rechargePrompt) return;
+    const bg = this.add.rectangle(512, 60, 480, 50, 0x000000, 0.80).setStrokeStyle(2, 0x44aaff);
+    const text = crispCanvasText(
+      this.add.text(512, 60, 'RECHARGE — pick a ring', {
+        fontSize: '20px',
+        color: '#aaddff',
+        fontStyle: 'bold',
+      }),
+    ).setOrigin(0.5);
+    this.rechargePrompt = this.add.container(0, 0, [bg, text]).setDepth(1400);
+  }
+
+  /** Tear down the recharge-armed overlay. */
+  private dismissRechargePrompt(): void {
+    this.rechargePrompt?.destroy();
+    this.rechargePrompt = null;
+  }
+
+  /** Brief "not your turn" flash (off-turn R press). */
+  private showNotYourTurnCue(): void {
+    const t = crispCanvasText(
+      this.add.text(512, 120, 'Not your turn', {
+        fontSize: '18px',
+        color: '#888888',
+        fontStyle: 'italic',
+      }),
+    )
+      .setOrigin(0.5)
+      .setDepth(1400);
+    this.tweens.add({
+      targets: t,
+      alpha: 0,
+      duration: 700,
+      ease: 'Power2',
+      onComplete: () => t.destroy(),
+    });
   }
 
   /**
