@@ -1140,20 +1140,26 @@ export class BattleRoom extends Room<{ state: BattleState }> {
     // their oscillating orb render regardless of hit/miss outcome).
     this.broadcast('chargeOrbEnd', { attackerId: id } satisfies ChargeOrbEndPayload);
 
-    // Below threshold → tap: delegate to the existing selectAttack path (no oscillation).
+    // Below threshold → tap-tap: both slots below CHARGE_THRESHOLD_MS means
+    // neither is a charged attack. If fusionSecondSlot is present AND the hand is
+    // eligible (canDoubleAttack), fire as a standard selectDoubleAttack with a
+    // minimal gap (both tapped near-simultaneously). If not eligible, fire only
+    // the primary slot as a standard tap and let the second be a separate message.
     if (holdMs < CHARGE_THRESHOLD_MS) {
-      this.handleSelectAttack(id, { slot: payload.slot });
-      // Fusion tap on the second slot when present.
-      if (payload.fusionSecondSlot && ATTACK_SLOTS.has(payload.fusionSecondSlot)) {
-        // A fusion tap-tap falls through to selectDoubleAttack only when eligible;
-        // here we treat the second slot as an independent tap via selectAttack to
-        // avoid duplicating the combo eligibility logic.
-        // Per GDD §6.3: for a fusion hold+tap the second always fires horizontal; the
-        // tap-tap case (both below threshold) is just two independent attacks. This
-        // only matters when two taps happen in sub-threshold time, which is effectively
-        // instantaneous user input. The server treats them sequentially: first slot
-        // opens the first defend window; the second slot fires after that resolves.
-        // Leave the second for its own releaseAttack message.
+      if (
+        payload.fusionSecondSlot &&
+        ATTACK_SLOTS.has(payload.fusionSecondSlot) &&
+        canDoubleAttack(attacker)
+      ) {
+        // Sub-threshold fusion tap-tap → standard double attack (minimum gap).
+        this.handleSelectDoubleAttack(id, {
+          first: payload.slot,
+          second: payload.fusionSecondSlot,
+          gapMs: MIN_COMBO_GAP_MS,
+        });
+      } else {
+        // Single tap — delegate to existing selectAttack path (no oscillation).
+        this.handleSelectAttack(id, { slot: payload.slot });
       }
       return;
     }

@@ -102,6 +102,11 @@ declare const __E2E_FAST__: boolean;
 // the arming window so the E2E suite's single-press attacks resolve quickly.
 const RECHARGE_DOUBLE_TAP_MS = __E2E_FAST__ ? 120 : 300;
 const FORFEIT_CHORD_MS = 50;
+// #485 — charge threshold must be LESS THAN the recharge window so that a hold
+// that qualifies as a charge does not also trigger the recharge double-tap. Under
+// E2E_FAST the recharge window drops to 120 ms; set the E2E threshold at 60 ms
+// (half the window) to preserve the prod ordering (charge < recharge).
+const CHARGE_THRESHOLD_CLIENT_MS = __E2E_FAST__ ? 60 : CHARGE_THRESHOLD_MS;
 // Maps each defense slot to its sibling, for the 3+4 forfeit chord in attack phase
 // (EPIC #266 relocated the forfeit chord from A1+A2 to D1+D2).
 const DEFENSE_SIBLING: Record<string, SlotKey> = { d1: 'd2', d2: 'd1' };
@@ -768,8 +773,8 @@ export class BattleScene extends Phaser.Scene {
       this.heldAt[slot] = undefined;
 
       // #485 — key released: if this was a pure charge hold (no combo fired),
-      // fire releaseAttack with the hold duration. The single-attack deferral path
-      // (fireDeferredHeldAttack) then handles the actual send via sendReleaseAttack.
+      // endChargeOrb sends a single releaseAttack with the measured holdDuration;
+      // the server classifies tap vs charge from its own chargeStart timestamp.
       if (wasHeld && this.chargeSlot === slot && !this.comboFired) {
         // Cancel the oscillating orb; the server will tell us the outcome and the
         // orb tween will fly on chargeMiss or DEFEND_WINDOW state change.
@@ -811,7 +816,6 @@ export class BattleScene extends Phaser.Scene {
     // resolution via releaseAttack with fusionSecondSlot set.
     if (this.chargeSlot === other && this.chargeHoldStart !== null) {
       const holdMs = now - this.chargeHoldStart;
-      this.cancelChargeOrb();
       // Gate the send on local eligibility + the live attack phase.
       if (!state || !myId) return;
       if (state.phase !== 'ATTACK_SELECT' || state.currentAttackerId !== myId) return;
@@ -820,8 +824,12 @@ export class BattleScene extends Phaser.Scene {
       // Use releaseAttack with fusionSecondSlot for the charge-fusion path.
       const first = other; // the held (charged) slot
       const second = slot; // the tapped slot (always horizontal)
+      this.chargeFusionSecondSlot = second; // record for any needed cleanup
+      this.cancelChargeOrb();
       this.comboFired = true;
       this.cancelPendingAttack();
+      // Always send releaseAttack (single-message path). Sub-threshold holds
+      // resolve as tap-tap on the server (holdDuration below CHARGE_THRESHOLD_MS).
       window.__room!.send('releaseAttack', { slot: first, holdDuration: holdMs, fusionSecondSlot: second });
       return;
     }
@@ -865,11 +873,14 @@ export class BattleScene extends Phaser.Scene {
   }
 
   /**
-   * #485 — end the charge hold (key released, no combo). Sends `releaseAttack`
-   * with the accurate hold duration, then launches the orb animation (the orb
-   * either flies toward the defender on hit, or off-screen on miss — the server
-   * decides; the client waits for chargeMiss or DEFEND_WINDOW to know the outcome).
-   * The orb handle is cleared so update() stops repositioning it.
+   * #485 — end the charge hold (key released, no combo). Always sends exactly ONE
+   * `releaseAttack` message — the server classifies tap vs charge from the hold
+   * duration (via the chargeStart timestamp it recorded). This is the single-message
+   * release path: no `selectAttack` is ever sent from this path.
+   *
+   * cancelPendingAttack() is called unconditionally to clear any pending timer and
+   * deferredHeldAttack so the subsequent fireDeferredHeldAttack() in onAttackHold
+   * key-up finds nothing to send (preventing the double-send race).
    */
   private endChargeOrb(): void {
     if (this.chargeSlot === null || this.chargeHoldStart === null) return;
@@ -879,19 +890,19 @@ export class BattleScene extends Phaser.Scene {
     this.chargeSlot = null;
     this.chargeHoldStart = null;
 
-    // The orb handle stays alive until chargeMiss or DEFEND_WINDOW — we need it
-    // to either fly off-screen (miss) or to be replaced by the standard Orb.launch
-    // animation (hit, via checkPhaseTransition). Store it for the miss handler.
-    // (chargeOrbHandle already holds it; we just clear the charge book-keeping.)
+    // Cancel any pending single-attack timer / deferral for this slot so the
+    // key-up handler's fireDeferredHeldAttack() finds nothing to fire.
+    this.cancelPendingAttack();
 
-    if (holdMs < CHARGE_THRESHOLD_MS) {
-      // Sub-threshold: treat as a tap. Discard the idle orb and use the normal path.
+    if (holdMs < CHARGE_THRESHOLD_CLIENT_MS) {
+      // Sub-threshold: discard the idle orb and send releaseAttack as a tap
+      // (holdDuration=0 → server treats as tap path, no oscillation, always hits).
       this.cancelChargeOrb();
-      this.sendSingleAttack(slot);
+      window.__room!.send('releaseAttack', { slot, holdDuration: 0 });
     } else {
-      // Above threshold: send releaseAttack. The orb handle stays for the miss
-      // animation; on hit, DEFEND_WINDOW auto-launches a fresh orb via
-      // checkPhaseTransition (the idle orb is replaced/dispersed then).
+      // Above threshold: send releaseAttack with the measured hold duration.
+      // The idle orb stays alive for the miss animation or for cancelChargeOrb()
+      // on DEFEND_WINDOW entry (checkPhaseTransition calls cancelChargeOrb on hit).
       window.__room!.send('releaseAttack', { slot, holdDuration: holdMs });
     }
   }
