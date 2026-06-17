@@ -18,6 +18,26 @@ async function setState(page: Page, patch: Record<string, unknown>): Promise<voi
   await page.evaluate((p) => (window as any).__room.send('__testSetState', p), patch);
 }
 
+/**
+ * Convert logical Phaser canvas coordinates (1024×576 space) to page coordinates,
+ * accounting for any CSS or browser scaling applied to the <canvas> element.
+ * Mirrors the helper in anchorage-campfire.spec.ts.
+ */
+async function canvasCoords(
+  page: Page,
+  logicalX: number,
+  logicalY: number,
+): Promise<{ x: number; y: number }> {
+  const box = await page.locator('canvas').first().boundingBox();
+  if (!box) throw new Error('canvas element not found');
+  const scaleX = box.width / 1024;
+  const scaleY = box.height / 576;
+  return {
+    x: Math.round(box.x + logicalX * scaleX),
+    y: Math.round(box.y + logicalY * scaleY),
+  };
+}
+
 async function readSlot(page: Page, slot: SlotKey): Promise<{ currentUses: number; maxUses: number }> {
   return page.evaluate((s) => {
     const room = (window as any).__room;
@@ -813,7 +833,9 @@ test('#490 pointer tap on RECHARGE slot card at (512,510) arms recharge state an
   await spyOnAllSends(attacker);
 
   // Act via real pointer on the gold RECHARGE slot card — no __* hook for input.
-  await attacker.mouse.click(512, 510);
+  // canvasCoords converts logical 1024×576 coords to page coords (accounts for scaling).
+  const slotPos17 = await canvasCoords(attacker, 512, 510);
+  await attacker.mouse.click(slotPos17.x, slotPos17.y);
 
   // The slot tap must arm recharge — window.__rechargeArmed is the read-only hook
   // set by BattleScene.armRecharge() at line 1143 of BattleScene.ts.
@@ -854,7 +876,8 @@ test('#490 clicking old blue button position (944,462) does not arm recharge and
   await spyOnAllSends(attacker);
 
   // Click the old blue button location — the button must be fully gone, not just restyled.
-  await attacker.mouse.click(944, 462);
+  const oldBtnPos = await canvasCoords(attacker, 944, 462);
+  await attacker.mouse.click(oldBtnPos.x, oldBtnPos.y);
 
   // Allow any async side-effects to settle (pointer events are synchronous in Phaser
   // but give an event loop tick for any delayed handlers).
@@ -882,8 +905,9 @@ test('#490 double-tap on RECHARGE slot card does not double-arm or desync: armed
   await spyOnAllSends(attacker);
 
   // Two rapid clicks — first arms, second must be idempotent (not complete a recharge).
-  await attacker.mouse.click(512, 510);
-  await attacker.mouse.click(512, 510);
+  const slotPos19 = await canvasCoords(attacker, 512, 510);
+  await attacker.mouse.click(slotPos19.x, slotPos19.y);
+  await attacker.mouse.click(slotPos19.x, slotPos19.y);
 
   // After two taps the state is armed (not cancelled, not double-completed).
   await attacker.waitForFunction(
@@ -916,7 +940,8 @@ test('#490 pointer tap on RECHARGE slot during opponent turn is a no-op: __recha
   await waitForMyAttackTurn(attacker);
 
   // Tap the RECHARGE slot on the DEFENDER's page — it is not their turn.
-  await defender.mouse.click(512, 510);
+  const slotPos20 = await canvasCoords(defender, 512, 510);
+  await defender.mouse.click(slotPos20.x, slotPos20.y);
 
   await attacker.waitForTimeout(300);
 
@@ -945,7 +970,8 @@ test('#490 rechargeBg at default depth is pointer-hittable: click at (512,510) a
 
   // A single pointer click at the exact rechargeBg center — if occlusion were present
   // __rechargeArmed would stay false (the click lands on a non-interactive layer instead).
-  await attacker.mouse.click(512, 510);
+  const slotPos21 = await canvasCoords(attacker, 512, 510);
+  await attacker.mouse.click(slotPos21.x, slotPos21.y);
 
   // Gate: armRecharge() must fire within 3s; a timeout here is the occlusion signal.
   await attacker.waitForFunction(
