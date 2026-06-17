@@ -926,3 +926,68 @@ test('#490 pointer tap on RECHARGE slot during opponent turn is a no-op: __recha
 
   await closeBattle(h);
 });
+
+// ── Scenario 21 (#490/impl): rechargeBg has no setDepth — pointer must still hit ─
+// #490 impl: rechargeBg is added via scene.add.rectangle() at default depth 0 (the
+// old blue button was at depth 500). Without a setDepth call the card renders behind
+// the ring slot cards (also at default depth 0 in the Hand container). A ring slot
+// card or HUD layer occluding (512,510) would silently eat the click and never fire
+// pointerdown on rechargeBg — __rechargeArmed stays false even though the card exists.
+// This test proves the card is actually hittable at that canvas position.
+test('#490 rechargeBg at default depth is pointer-hittable: click at (512,510) arms recharge without any ring slot occlusion', async ({
+  browser,
+}) => {
+  const h = await setupBattle(browser);
+  const { attacker } = await attackerDefender(h.p1, h.p2);
+
+  await waitForMyAttackTurn(attacker);
+  await spyOnAllSends(attacker);
+
+  // A single pointer click at the exact rechargeBg center — if occlusion were present
+  // __rechargeArmed would stay false (the click lands on a non-interactive layer instead).
+  await attacker.mouse.click(512, 510);
+
+  // Gate: armRecharge() must fire within 3s; a timeout here is the occlusion signal.
+  await attacker.waitForFunction(
+    () => (window as any).__rechargeArmed === true,
+    { timeout: 3000 },
+  );
+  expect(await attacker.evaluate(() => (window as any).__rechargeArmed)).toBe(true);
+
+  // No recharge message sent yet (click only arms, does not complete).
+  expect(await getSentCount(attacker, 'recharge')).toBe(0);
+
+  await closeBattle(h);
+});
+
+// ── Scenario 22 (#490/impl): RECHARGE slot is NOT in __slotPositions ─────────
+// #490 impl: publishSlotPositions() in Hand.ts maps only HAND_SLOT_X (5 ring slots,
+// indexed thumb/a1/a2/d1/d2). RECHARGE_SLOT_X=512 is NOT published there. E2E tests
+// that rely on __slotPositions[0] for "Thumb slot" must not accidentally index the
+// RECHARGE card. This test asserts __slotPositions has exactly 5 entries and that
+// none of them have x≈512, distinguishing the recharge slot from Thumb (x=580).
+test('#490 __slotPositions contains exactly 5 ring slots and none has x≈512 (RECHARGE_SLOT_X excluded)', async ({
+  browser,
+}) => {
+  const h = await setupBattle(browser);
+  const { attacker } = await attackerDefender(h.p1, h.p2);
+
+  // __slotPositions is published by Hand.publishSlotPositions() during construction.
+  const positions = await attacker.evaluate(() => (window as any).__slotPositions as { x: number; y: number }[]);
+
+  // Exactly 5 ring slots — thumb, a1, a2, d1, d2.
+  expect(positions).toHaveLength(5);
+
+  // No entry should be near x=512 (RECHARGE_SLOT_X). Thumb is at 580, not 512.
+  // A canvas-scale-adjusted tolerance of ±5px covers sub-pixel rounding.
+  const rechargeSlotXInScreen = await attacker.evaluate(() => {
+    const canvas = document.querySelector('canvas')!;
+    const rect = canvas.getBoundingClientRect();
+    const scaleX = rect.width / 1024; // CANVAS_W=1024
+    return rect.left + 512 * scaleX;
+  });
+  const hasRechargeEntry = positions.some((p) => Math.abs(p.x - rechargeSlotXInScreen) < 5);
+  expect(hasRechargeEntry).toBe(false);
+
+  await closeBattle(h);
+});
