@@ -133,6 +133,85 @@ Applied in `BattleRoom.onJoin` after the base spirit computation, before `aiPs.s
 
 ---
 
+### `shared/chargeConstants.ts`
+
+Charge attack constants shared between client and server (#485, GDD §6.3 Option A). The server re-exports these from `server/src/game/constants.ts` (aliasing `*_SHARED` suffixes back to the canonical names); the client imports directly from this file so it never reaches into the server source tree. `CHARGE_TELEGRAPH_MIN_MS_PROD` is the only export here — the server derives the E2E_FAST variant (`CHARGE_TELEGRAPH_MIN_MS`) locally in `constants.ts`.
+
+| Constant | Type | Value | Description |
+|----------|------|-------|-------------|
+| `CHARGE_THRESHOLD_MS` | `number` | 150 | Hold below this duration is classified as an instant tap (no oscillation, always horizontal). Client uses `CHARGE_THRESHOLD_CLIENT_MS = __E2E_FAST__ ? 60 : CHARGE_THRESHOLD_MS` as a local pre-filter. |
+| `HIT_CONE_PX` | `number` | 20 | Half-width of the centre-line hit zone in pixels. `\|yOffset\| ≤ HIT_CONE_PX` → hit. |
+| `Y_AMPLITUDE_PX` | `number` | 80 | Maximum Y displacement of the oscillating orb (±80 px). |
+| `BASE_PERIOD_MS` | `number` | 1200 | Oscillation period at t = 0 (slowest oscillation, first moment of hold). |
+| `PERIOD_DECAY_MS` | `number` | 600 | Controls how quickly the period shortens with hold time. Period at time t = `BASE_PERIOD_MS / (1 + t / PERIOD_DECAY_MS)`. |
+| `MAX_CHARGE_MS` | `number` | 3000 | Hold duration at which sharpness clamps to 1.0 (full charge). |
+| `CHARGE_TELEGRAPH_MIN_MS_PROD` | `number` | 500 | Production telegraph duration at maximum charge. Server re-exports as `CHARGE_TELEGRAPH_MIN_MS`; E2E_FAST shortens this to 80 ms server-side only. |
+
+**Server-only charge constants** (in `server/src/game/constants.ts`, not in the shared module):
+
+| Constant | Type | Value | Description |
+|----------|------|-------|-------------|
+| `CHARGE_TELEGRAPH_MIN_MS` | `number` | 500 (prod) / 80 (E2E_FAST) | Telegraph window at maximum charge. Derived from `CHARGE_TELEGRAPH_MIN_MS_PROD`; shortened under `E2E_FAST=1`. |
+| `CHARGE_PARRY_COMPRESSION` | `number` | 0.35 | Fractional parry window compression at full sharpness. Formula: `round(PARRY_WINDOW_MS × (1 − sharpness × 0.35))`. Applied by `handleReleaseAttack` on a charge hit; consumed once by `resolveOrb` via the `chargeParryWindowMs` instance field. |
+
+---
+
+### `ChargeAttack.ts`
+
+Server-side charge attack formula wrappers (#485, GDD §6.3 Option A). Thin wrappers that bind the shared oscillation functions (`shared/oscillation.ts`) to the server's authoritative constants so callers only import this module. All functions are pure and stateless.
+
+```ts
+import {
+  computeYOffset,
+  computeIsHit,
+  computeSharpness,
+  computeTelegraphDuration,
+  computeOscillationPeriod,
+} from 'server/src/game/ChargeAttack';
+```
+
+#### `computeOscillationPeriod`
+
+```ts
+export function computeOscillationPeriod(holdMs: number): number
+```
+
+The current oscillation period in ms at `holdMs` of charge. Period shrinks with hold time (`BASE_PERIOD_MS / (1 + holdMs / PERIOD_DECAY_MS)`); shorter period = faster oscillation = harder to time the release.
+
+#### `computeYOffset`
+
+```ts
+export function computeYOffset(holdMs: number): number
+```
+
+The orb's Y offset in pixels at `holdMs` of charge. Range: `[-Y_AMPLITUDE_PX, +Y_AMPLITUDE_PX]`. Both the server (for hit resolution) and the client (for display) call this function with the same constants to guarantee identical results.
+
+#### `computeIsHit`
+
+```ts
+export function computeIsHit(holdMs: number): boolean
+```
+
+True when the orb is within the hit cone at `holdMs` (`|computeYOffset(holdMs)| ≤ HIT_CONE_PX`). The server calls this on the hold duration it measured authoritatively from `chargeStartTimes`; the client value is never used for hit classification.
+
+#### `computeSharpness`
+
+```ts
+export function computeSharpness(holdMs: number): number
+```
+
+Sharpness in `[0, 1]`. 0 = tap or zero hold; 1 = maximum charge (`holdMs ≥ MAX_CHARGE_MS`). Drives telegraph duration and parry window compression. Formula: `Math.min(1, holdMs / MAX_CHARGE_MS)`.
+
+#### `computeTelegraphDuration`
+
+```ts
+export function computeTelegraphDuration(holdMs: number): number
+```
+
+Variable telegraph duration in ms. Lerps from `TELEGRAPH_MS` (standard, at sharpness 0) down to `CHARGE_TELEGRAPH_MIN_MS` (fastest, at sharpness 1). Rounded to the nearest millisecond. A tap uses `TELEGRAPH_MS` (900 ms prod); a full charge uses `CHARGE_TELEGRAPH_MIN_MS` (500 ms prod / 80 ms E2E_FAST).
+
+---
+
 ### `ElementSystem.ts`
 
 Pentagon matchup and element relationship logic. Imports `ElementEnum` from `shared/types.ts`. Re-exports fusion helpers from `Fusions.ts` (which re-exports from `shared/fusions.ts`).
