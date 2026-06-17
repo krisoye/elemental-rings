@@ -13,6 +13,8 @@ import type {
   DoubleAttackStartPayload,
   DoubleAttackCancelledPayload,
   ChargeMissPayload,
+  ChargeOrbStartPayload,
+  ChargeOrbEndPayload,
 } from '../../../shared/types';
 import {
   yOffset as chargeYOffset,
@@ -177,11 +179,19 @@ export class BattleScene extends Phaser.Scene {
   // attacker began holding a button (for client-side Y oscillation display). The
   // oscillating orb is stored so its Y can be updated in update(). chargeSlot is the
   // slot currently being charged (null when not charging). chargeFusionSecondSlot
-  // is set when a fusion tap completes the hold+tap gesture while charging.
+  // is set when the hold+tap fusion gesture commits so the server knows both slots.
   private chargeHoldStart: number | null = null;
   private chargeSlot: SlotKey | null = null;
   private chargeOrbHandle: (IdleOrbHandle & OrbHandle) | null = null;
   private chargeFusionSecondSlot: 'a1' | 'a2' | null = null;
+
+  // #485 — DEFENDER-side oscillating orb state. When the server broadcasts
+  // 'chargeOrbStart', the defender spawns an idle orb at the OPPONENT position and
+  // oscillates it using the same deterministic formula, keyed off the server's
+  // startTime. Cleared on 'chargeOrbEnd' (release) or 'chargeMiss'.
+  private opponentChargeOrbHandle: (IdleOrbHandle & OrbHandle) | null = null;
+  private opponentChargeStartTime: number | null = null;
+  private opponentChargeSlot: SlotKey | null = null;
 
   constructor() {
     super({ key: 'BattleScene' });
@@ -237,6 +247,9 @@ export class BattleScene extends Phaser.Scene {
     this.chargeSlot = null;
     this.chargeOrbHandle = null;
     this.chargeFusionSecondSlot = null;
+    this.opponentChargeOrbHandle = null;
+    this.opponentChargeStartTime = null;
+    this.opponentChargeSlot = null;
   }
 
   create(): void {
@@ -342,6 +355,28 @@ export class BattleScene extends Phaser.Scene {
       this.handleChargeMiss(p, myId);
     });
 
+    // #485 — defender visibility: opponent began holding an attack button. Spawn
+    // an idle oscillating orb at the OPPONENT position so the defender sees the
+    // charge level in real time (GDD §6.3: "Both players see the oscillating orb").
+    const offChargeOrbStart = room.onMessage(
+      'chargeOrbStart',
+      (p: ChargeOrbStartPayload) => {
+        // Skip when WE are the attacker — we already have our own charge orb.
+        if (p.attackerId === myId) return;
+        this.handleOpponentChargeOrbStart(p);
+      },
+    );
+
+    // #485 — opponent released the charge (hit or miss). Clear the defender orb;
+    // the subsequent chargeMiss or DEFEND_WINDOW patch provides the final outcome.
+    const offChargeOrbEnd = room.onMessage(
+      'chargeOrbEnd',
+      (p: ChargeOrbEndPayload) => {
+        if (p.attackerId === myId) return;
+        this.cancelOpponentChargeOrb();
+      },
+    );
+
     this.events.once('shutdown', () => {
       room.onStateChange.remove(onState);
       offExchange();
@@ -350,6 +385,9 @@ export class BattleScene extends Phaser.Scene {
       offDoubleStart();
       offDoubleCancel();
       offChargeMiss();
+      offChargeOrbStart();
+      offChargeOrbEnd();
+      this.cancelOpponentChargeOrb();
       this.orb2LaunchTimer?.remove(false);
       this.orb2LaunchTimer = null;
       this.cancelPendingAttack();
@@ -871,6 +909,39 @@ export class BattleScene extends Phaser.Scene {
   }
 
   /**
+   * #485 — DEFENDER-side: opponent began charging. Spawn an idle orb at the
+   * opponent's position using the server's startTime for deterministic Y replay.
+   * The orb oscillates in update() keyed off opponentChargeStartTime.
+   */
+  private handleOpponentChargeOrbStart(p: ChargeOrbStartPayload): void {
+    // Discard any previous opponent orb (shouldn't exist, but be safe).
+    this.cancelOpponentChargeOrb();
+
+    const oppState = window.__room?.state.players.get(p.attackerId);
+    const ring = oppState?.[p.slot as SlotKey];
+    const elements = ring ? ringComponents(ring) : [0];
+
+    this.opponentChargeOrbHandle = Orb.spawnIdle(
+      this,
+      elements,
+      { x: OPPONENT_X - 60, y: OPPONENT_Y },
+    );
+    this.opponentChargeStartTime = p.startTime;
+    this.opponentChargeSlot = p.slot as SlotKey;
+  }
+
+  /**
+   * #485 — DEFENDER-side: clear the opponent oscillating orb (on release or scene
+   * shutdown).
+   */
+  private cancelOpponentChargeOrb(): void {
+    this.opponentChargeOrbHandle?.disperse();
+    this.opponentChargeOrbHandle = null;
+    this.opponentChargeStartTime = null;
+    this.opponentChargeSlot = null;
+  }
+
+  /**
    * #485 — get the element array for a given attack slot (for orb color display).
    */
   private _getAttackElements(slot: SlotKey): number[] {
@@ -1173,13 +1244,21 @@ export class BattleScene extends Phaser.Scene {
    * per Code Reuse Directive — the orb itself is the indicator).
    */
   update(_time: number, _delta: number): void {
+    // Attacker-side: oscillate the attacker's own idle charge orb.
     if (this.chargeOrbHandle && this.chargeHoldStart !== null) {
       const holdMs = Date.now() - this.chargeHoldStart;
       const y = chargeYOffset(holdMs, Y_AMPLITUDE_PX, BASE_PERIOD_MS, PERIOD_DECAY_MS);
-      const orbY = PLAYER_Y + y;
-      this.chargeOrbHandle.setY(orbY);
-      const inZone = chargeIsHit(holdMs, HIT_CONE_PX, Y_AMPLITUDE_PX, BASE_PERIOD_MS, PERIOD_DECAY_MS);
-      this.chargeOrbHandle.setInHitZone(inZone);
+      this.chargeOrbHandle.setY(PLAYER_Y + y);
+      this.chargeOrbHandle.setInHitZone(Math.abs(y) <= HIT_CONE_PX);
+    }
+
+    // Defender-side: oscillate the opponent's idle charge orb using the
+    // server's authoritative startTime (same deterministic formula — no skew).
+    if (this.opponentChargeOrbHandle && this.opponentChargeStartTime !== null) {
+      const holdMs = Date.now() - this.opponentChargeStartTime;
+      const y = chargeYOffset(holdMs, Y_AMPLITUDE_PX, BASE_PERIOD_MS, PERIOD_DECAY_MS);
+      this.opponentChargeOrbHandle.setY(OPPONENT_Y + y);
+      this.opponentChargeOrbHandle.setInHitZone(Math.abs(y) <= HIT_CONE_PX);
     }
   }
 
@@ -1203,6 +1282,15 @@ export class BattleScene extends Phaser.Scene {
       const imAttacker = state.currentAttackerId === myId;
       const from = imAttacker ? { x: PLAYER_X, y: PLAYER_Y } : { x: OPPONENT_X, y: OPPONENT_Y };
       const to   = imAttacker ? { x: OPPONENT_X, y: OPPONENT_Y } : { x: PLAYER_X, y: PLAYER_Y };
+
+      // #485 — a charge hit transitions directly to DEFEND_WINDOW; discard any
+      // idle charge orb so it doesn't ghost alongside the freshly launched flying orb.
+      if (imAttacker) {
+        this.cancelChargeOrb();
+      } else {
+        // Defender sees the opponent's idle orb: clear it now that the orb is flying.
+        this.cancelOpponentChargeOrb();
+      }
 
       const attackerState = window.__room!.state.players.get(state.currentAttackerId);
       const attackerRing = state.attackerSlot ? attackerState?.[state.attackerSlot as SlotKey] : null;
