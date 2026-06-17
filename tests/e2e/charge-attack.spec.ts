@@ -1278,4 +1278,220 @@ test('#495 arc-direction: chargeOrbRenderX and opponentChargeOrbRenderX return n
   await closeBattle(h);
 });
 
+// ── Phase 2: implementation-aware tests (#495) ──────────────────────────────
+// These tests target branches that only became visible after reading the impl:
+//   - Math.sign(...) returns −1/+1 for actual constants (not 0)
+//   - Getter formula coherence: renderX at 0° = spawnX + facing*60 = 648/376
+//   - Strict null guard: both chargeOrbHandle AND chargeOrbSpawnX must be null
+//   - No regression on chargeOrbX (pivot getter) alongside the new renderX getter
+
+// ── Impl Scenario 1: Math.sign produces correct facing with real constants ────
+
+test('#495 impl: chargeOrbRenderX at 0° equals exactly spawnX − 60 = 648 (confirms Math.sign = −1, not 0)', async ({
+  browser,
+}) => {
+  // #495 adversarial: Math.sign(OPPONENT_X − PLAYER_X) is cast "as 1 | -1" at
+  // the spawn site, which silently accepts 0. The getter recomputes Math.sign
+  // independently without the cast. If PLAYER_X === OPPONENT_X (impossible now,
+  // but a misconfig risk), Math.sign would return 0 and renderX would equal the
+  // pivot (708) — indistinguishable from the "wrong direction" pre-fix bug. Assert
+  // the exact 648 value to prove the sign is −1 and the formula executes correctly.
+  const h = await setupBattle(browser);
+  const { attacker } = await attackerDefender(h.p1, h.p2);
+
+  await waitForMyAttackTurn(attacker);
+
+  // Hold to ~600ms — the sweep-0 midpoint where angle ≈ 0°.
+  await attacker.keyboard.down('1');
+  await attacker.waitForTimeout(300); // past threshold, orb spawns
+
+  await attacker.waitForFunction(
+    () => (window as any).__scene?.chargeOrbRenderX !== null &&
+          (window as any).__scene?.chargeOrbRenderX !== undefined,
+    { timeout: 8000 },
+  );
+
+  // Wait until the angle rounds to near 0° (sweep midpoint, ~600ms total).
+  await attacker.waitForTimeout(300); // now ~600ms into hold
+
+  // Gate: chargeOrbAngle should be close to 0°.
+  await attacker.waitForFunction(
+    () => {
+      const angle = (window as any).__scene?.chargeOrbAngle;
+      return angle !== null && angle !== undefined && Math.abs(angle) <= 10;
+    },
+    { timeout: 3000 },
+  );
+
+  const renderX: number | null = await attacker.evaluate(
+    () => (window as any).__scene?.chargeOrbRenderX ?? null,
+  );
+  const angle: number | null = await attacker.evaluate(
+    () => (window as any).__scene?.chargeOrbAngle ?? null,
+  );
+
+  await attacker.keyboard.up('1');
+
+  // At 0°: renderX = 708 + (−1)*60*cos(0) = 708 − 60 = 648.
+  // Allow ±3px for cos(small angle near 0°) jitter.
+  expect(renderX).not.toBeNull();
+  if (renderX !== null && angle !== null) {
+    const expectedRx = 708 + Math.sign(256 - 768) * 60 * Math.cos(angle * Math.PI / 180);
+    expect(Math.abs(renderX - expectedRx)).toBeLessThanOrEqual(1); // formula must match exactly
+    // And the result must be left of pivot — not at pivot (which would mean Math.sign=0).
+    expect(renderX).toBeLessThan(708);
+    expect(renderX).toBeGreaterThan(645); // ≥ 648 − a small float tolerance
+  }
+
+  await closeBattle(h);
+});
+
+// ── Impl Scenario 2: opponent renderX at 0° = spawnX + 60 = 376 ──────────────
+
+test('#495 impl: opponentChargeOrbRenderX at 0° equals exactly spawnX + 60 = 376 (confirms Math.sign = +1)', async ({
+  browser,
+}) => {
+  // #495 adversarial: same Math.sign correctness check for the opponent path.
+  // Formula: 316 + Math.sign(PLAYER_X − OPPONENT_X) * 60 * cos(0) = 316 + 60 = 376.
+  // If Math.sign returned 0, renderX would be 316 (the pivot) — the getter would
+  // return a value identical to opponentChargeOrbX, masking the bug.
+  const h = await setupBattle(browser);
+  const { attacker, defender } = await attackerDefender(h.p1, h.p2);
+
+  await waitForMyAttackTurn(attacker);
+  await collectMessages(defender, 'chargeOrbStart');
+
+  await attacker.keyboard.down('1');
+  await attacker.waitForTimeout(300);
+
+  await defender.waitForFunction(() => ((window as any).__msgs?.chargeOrbStart?.length ?? 0) >= 1, {
+    timeout: 8000,
+  });
+
+  await defender.waitForFunction(
+    () => (window as any).__scene?.opponentChargeOrbRenderX !== null &&
+          (window as any).__scene?.opponentChargeOrbRenderX !== undefined,
+    { timeout: 5000 },
+  );
+
+  // Wait for near-0° on defender's side (~600ms total hold).
+  await attacker.waitForTimeout(300);
+
+  await defender.waitForFunction(
+    () => {
+      const angle = (window as any).__scene?.opponentChargeOrbAngle;
+      return angle !== null && angle !== undefined && Math.abs(angle) <= 10;
+    },
+    { timeout: 3000 },
+  );
+
+  const renderX: number | null = await defender.evaluate(
+    () => (window as any).__scene?.opponentChargeOrbRenderX ?? null,
+  );
+  const angle: number | null = await defender.evaluate(
+    () => (window as any).__scene?.opponentChargeOrbAngle ?? null,
+  );
+
+  await attacker.keyboard.up('1');
+
+  expect(renderX).not.toBeNull();
+  if (renderX !== null && angle !== null) {
+    const expectedRx = 316 + Math.sign(768 - 256) * 60 * Math.cos(angle * Math.PI / 180);
+    expect(Math.abs(renderX - expectedRx)).toBeLessThanOrEqual(1);
+    expect(renderX).toBeGreaterThan(316);
+    expect(renderX).toBeLessThan(379); // ≤ 376 + small float tolerance
+  }
+
+  await closeBattle(h);
+});
+
+// ── Impl Scenario 3: pivot getter (chargeOrbX) unchanged alongside renderX getter ──
+
+test('#495 impl: chargeOrbX (pivot) still returns 708 while chargeOrbRenderX is < 708 (both live simultaneously)', async ({
+  browser,
+}) => {
+  // #495 adversarial: chargeOrbRenderX is a NEW getter; the implementation reuses
+  // chargeOrbSpawnX as the pivot for both. Verify the two getters return DIFFERENT
+  // values during a live charge — pivot stays 708, renderX is strictly < 708.
+  // A bug where the impl accidentally shared state could make both return the same value.
+  const h = await setupBattle(browser);
+  const { attacker } = await attackerDefender(h.p1, h.p2);
+
+  await waitForMyAttackTurn(attacker);
+
+  await attacker.keyboard.down('1');
+  await attacker.waitForTimeout(300);
+
+  await attacker.waitForFunction(
+    () => (window as any).__scene?.chargeOrbRenderX !== null &&
+          (window as any).__scene?.chargeOrbRenderX !== undefined &&
+          (window as any).__scene?.chargeOrbX !== null &&
+          (window as any).__scene?.chargeOrbX !== undefined,
+    { timeout: 8000 },
+  );
+
+  const pivotX: number | null = await attacker.evaluate(
+    () => (window as any).__scene?.chargeOrbX ?? null,
+  );
+  const renderX: number | null = await attacker.evaluate(
+    () => (window as any).__scene?.chargeOrbRenderX ?? null,
+  );
+
+  await attacker.keyboard.up('1');
+
+  // Pivot must remain 708 (unchanged by #495).
+  expect(pivotX).toBe(708);
+  // renderX must be strictly less (arc opened toward opponent).
+  expect(renderX).not.toBeNull();
+  if (renderX !== null) {
+    expect(renderX).toBeLessThan(pivotX!);
+    // And neither value equals the other — they must differ by at least IDLE_ORB_RADIUS * cos(45°) ≈ 42px.
+    expect(pivotX! - renderX).toBeGreaterThanOrEqual(40);
+  }
+
+  await closeBattle(h);
+});
+
+// ── Impl Scenario 4: chargeOrbSpawnX null path — both conditions of the null guard ──
+
+test('#495 impl: chargeOrbRenderX null guard — returns null when handle is null (not just when spawnX is null)', async ({
+  browser,
+}) => {
+  // #495 adversarial: the getter guards on BOTH `!chargeOrbHandle` AND
+  // `chargeOrbSpawnX === null`. The chargeOrbX getter only checks `chargeOrbHandle`.
+  // If the teardown path clears chargeOrbHandle but leaves chargeOrbSpawnX non-null
+  // (or vice versa), chargeOrbRenderX would compute a stale value while chargeOrbX
+  // correctly returns null. Verify both getters return null immediately after release.
+  const h = await setupBattle(browser);
+  const { attacker } = await attackerDefender(h.p1, h.p2);
+
+  await waitForMyAttackTurn(attacker);
+
+  // Hold and release (miss zone).
+  await attacker.keyboard.down('1');
+  await attacker.waitForTimeout(200);
+  await attacker.keyboard.up('1');
+
+  // After release, chargeOrbHandle and chargeOrbSpawnX are both cleared.
+  // Both pivot getter and renderX getter must return null at the same time.
+  await attacker.waitForFunction(
+    () =>
+      (window as any).__scene?.chargeOrbX == null &&
+      (window as any).__scene?.chargeOrbRenderX == null,
+    { timeout: 4000 },
+  );
+
+  const pivotAfter: unknown = await attacker.evaluate(
+    () => (window as any).__scene?.chargeOrbX,
+  );
+  const renderXAfter: unknown = await attacker.evaluate(
+    () => (window as any).__scene?.chargeOrbRenderX,
+  );
+
+  expect(pivotAfter == null).toBe(true);
+  expect(renderXAfter == null).toBe(true);
+
+  await closeBattle(h);
+});
+
 }); // end test.describe('charge attack')
