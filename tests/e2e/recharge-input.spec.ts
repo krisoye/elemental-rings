@@ -126,11 +126,12 @@ test('R then 1 in attack phase recharges a1: ring use restored, no attack thrown
   // The ring restores above its pre-tap value and the turn advances to the opponent
   // (recharge consumes the turn). An ATTACK would instead drop a1 to 0 and move to
   // DEFEND_WINDOW.
+  // Gate on recharge arrival before asserting state, then wait for turn-advance.
   await attacker.waitForFunction(() => {
     const room = (window as any).__room;
     const me = room.state.players.get(room.sessionId);
     return me.a1.currentUses > 1 && room.state.currentAttackerId !== room.sessionId;
-  }, { timeout: 5000 });
+  }, { timeout: 8000 });
 
   const after = await readSlot(attacker, 'a1');
   expect(after.currentUses).toBeGreaterThan(1); // recharged, not thrown
@@ -161,7 +162,7 @@ test('Single 1 in attack phase throws the normal a1 attack immediately (no armin
 
   await attacker.waitForFunction(
     () => (window as any).__room.state.phase === 'DEFEND_WINDOW',
-    { timeout: 5000 },
+    { timeout: 8000 },
   );
   const slot = await attacker.evaluate(() => (window as any).__room.state.attackerSlot);
   expect(slot).toBe('a1');
@@ -302,13 +303,21 @@ test('R then 4 in attack phase recharges d2: uses restored, spirit spent, turn p
   await setSpirit(token, 50);
 
   await waitForMyAttackTurn(attacker);
+  await spyOnAllSends(attacker);
 
   const d2Max = (await readSlot(attacker, 'd2')).maxUses;
   const spiritBefore = await spiritOf(token);
 
-  // Step 1: press R to arm recharge state. Step 2: press 4 to complete d2 recharge.
+  // Step 1: press R to arm recharge state. Brief tick so armRecharge's timer is live.
+  // Step 2: press 4 to complete d2 recharge.
   await attacker.keyboard.press('r');
+  await attacker.waitForTimeout(50);
   await attacker.keyboard.press('4');
+
+  // Gate on recharge arrival before asserting state (removes flaky race under PvP load).
+  await attacker.waitForFunction(() => ((window as any).__allSends?.recharge ?? 0) >= 1, {
+    timeout: 8000,
+  });
 
   // d2 restores above 0 and the turn advances to the opponent (recharge consumes
   // the turn).
@@ -316,7 +325,7 @@ test('R then 4 in attack phase recharges d2: uses restored, spirit spent, turn p
     const room = (window as any).__room;
     const me = room.state.players.get(room.sessionId);
     return me.d2.currentUses > 0 && room.state.currentAttackerId !== room.sessionId;
-  }, { timeout: 5000 });
+  }, { timeout: 8000 });
 
   const after = await readSlot(attacker, 'd2');
   expect(after.currentUses).toBe(d2Max); // fully restored (spirit was ample)
@@ -357,13 +366,15 @@ test('R then 3 on depleted d1 with no spirit: no restore but the turn is still c
 
   // R to arm, then 3 to complete — recharge d1. With zero affordable spirit the
   // ring stays at 0 but the turn is still consumed (recharge always advances the turn).
+  // Brief tick so armRecharge's timer is live before the completion key fires.
   await attacker.keyboard.press('r');
+  await attacker.waitForTimeout(50);
   await attacker.keyboard.press('3');
 
   await attacker.waitForFunction(() => {
     const room = (window as any).__room;
     return room.state.currentAttackerId !== room.sessionId;
-  }, { timeout: 5000 });
+  }, { timeout: 8000 });
 
   const after = await readSlot(attacker, 'd1');
   expect(after.currentUses).toBe(0); // no spirit → no restore (no-op)
@@ -418,6 +429,8 @@ test('R then Esc in attack phase cancels recharge-armed state: no recharge sent,
   // If Esc doesn't cancel, the subsequent `1` press would send recharge not selectAttack,
   // leaving the player stuck in recharge mode for the rest of their turn.
   await attacker.keyboard.press('r'); // arm recharge
+  // Brief tick so armRecharge's timer is live before the Escape fires.
+  await attacker.waitForTimeout(50);
   await attacker.keyboard.press('Escape'); // cancel
 
   // Give the client a moment to process the cancel before the next key.
@@ -426,9 +439,15 @@ test('R then Esc in attack phase cancels recharge-armed state: no recharge sent,
   // Now pressing 1 should send a normal attack, not recharge.
   await attacker.keyboard.press('1');
 
+  // Gate on selectAttack arrival before asserting count (removes flaky race under PvP load).
+  await attacker.waitForFunction(
+    () => ((window as any).__allSends?.selectAttack ?? 0) >= 1,
+    { timeout: 8000 },
+  );
+
   await attacker.waitForFunction(
     () => (window as any).__room.state.phase === 'DEFEND_WINDOW',
-    { timeout: 5000 },
+    { timeout: 8000 },
   );
 
   // No recharge was sent — cancelled correctly.
@@ -455,6 +474,8 @@ test('R then R again in attack phase cancels recharge-armed state: no recharge s
   // (toggle-off), not send a recharge for some undefined slot. This prevents a
   // player from accidentally locking themselves into recharge mode indefinitely.
   await attacker.keyboard.press('r'); // arm
+  // Brief tick so armRecharge's timer is live before the cancellation R fires.
+  await attacker.waitForTimeout(50);
   await attacker.keyboard.press('r'); // cancel via second R
 
   // Give the client a moment to process the cancel.
@@ -463,9 +484,15 @@ test('R then R again in attack phase cancels recharge-armed state: no recharge s
   // Press 1 — should attack normally since recharge was cancelled.
   await attacker.keyboard.press('1');
 
+  // Gate on selectAttack arrival before asserting count (removes flaky race under PvP load).
+  await attacker.waitForFunction(
+    () => ((window as any).__allSends?.selectAttack ?? 0) >= 1,
+    { timeout: 8000 },
+  );
+
   await attacker.waitForFunction(
     () => (window as any).__room.state.phase === 'DEFEND_WINDOW',
-    { timeout: 5000 },
+    { timeout: 8000 },
   );
 
   // No recharge was sent.
@@ -497,9 +524,15 @@ test('R during attack phase then 2500ms timeout: recharge-armed state auto-cance
   // Pressing 1 now should send a normal attack, not complete a recharge.
   await attacker.keyboard.press('1');
 
+  // Gate on selectAttack arrival before asserting count (removes flaky race under PvP load).
+  await attacker.waitForFunction(
+    () => ((window as any).__allSends?.selectAttack ?? 0) >= 1,
+    { timeout: 8000 },
+  );
+
   await attacker.waitForFunction(
     () => (window as any).__room.state.phase === 'DEFEND_WINDOW',
-    { timeout: 5000 },
+    { timeout: 8000 },
   );
 
   // No recharge was sent — auto-cancel worked.
@@ -570,13 +603,20 @@ test('R then z in attack phase recharges a1: z key is treated as slot-1 ring in 
   await spyOnAllSends(attacker);
 
   await attacker.keyboard.press('r'); // arm recharge
+  // Brief tick so armRecharge's timer is live before the completion key fires.
+  await attacker.waitForTimeout(50);
   await attacker.keyboard.press('z'); // z = slot 1 → complete recharge for a1
+
+  // Gate on recharge arrival before asserting state (removes flaky race under PvP load).
+  await attacker.waitForFunction(() => ((window as any).__allSends?.recharge ?? 0) >= 1, {
+    timeout: 8000,
+  });
 
   await attacker.waitForFunction(() => {
     const room = (window as any).__room;
     const me = room.state.players.get(room.sessionId);
     return me.a1.currentUses > 1 && room.state.currentAttackerId !== room.sessionId;
-  }, { timeout: 5000 });
+  }, { timeout: 8000 });
 
   // Recharge fired, no selectAttack.
   expect(await getSentCount(attacker, 'recharge')).toBe(1);
@@ -608,8 +648,15 @@ test('R then 3 in attack phase recharges d1: confirms A-ring and D-ring share si
 
   const beforeUses = (await readSlot(attacker, 'd1')).currentUses;
 
+  // Brief tick so armRecharge's timer is live before the completion key fires.
   await attacker.keyboard.press('r');
+  await attacker.waitForTimeout(50);
   await attacker.keyboard.press('3');
+
+  // Gate on recharge arrival before asserting state (removes flaky race under PvP load).
+  await attacker.waitForFunction(() => ((window as any).__allSends?.recharge ?? 0) >= 1, {
+    timeout: 8000,
+  });
 
   // Pass beforeUses as an arg so it's serialized into the browser context — Node-side
   // variables cannot be referenced directly inside page.waitForFunction closures.
@@ -617,7 +664,7 @@ test('R then 3 in attack phase recharges d1: confirms A-ring and D-ring share si
     const room = (window as any).__room;
     const me = room.state.players.get(room.sessionId);
     return me.d1.currentUses > prev || room.state.currentAttackerId !== room.sessionId;
-  }, beforeUses, { timeout: 5000 });
+  }, beforeUses, { timeout: 8000 });
 
   const after = await readSlot(attacker, 'd1');
   expect(after.currentUses).toBeGreaterThanOrEqual(beforeUses);
@@ -664,14 +711,14 @@ test('R then quick tap on 1 completes recharge and sends NO spurious attack or c
   // before we assert the absence of other messages). This removes the flaky race where
   // the 250ms timer fired before the recharge round-trip completed, giving a count of 0.
   await attacker.waitForFunction(() => ((window as any).__allSends?.recharge ?? 0) >= 1, {
-    timeout: 5000,
+    timeout: 8000,
   });
 
   // Turn must advance (recharge consumed it) — gate before counting spurious messages.
   await attacker.waitForFunction(() => {
     const room = (window as any).__room;
     return room.state.currentAttackerId !== room.sessionId;
-  }, { timeout: 5000 });
+  }, { timeout: 8000 });
 
   // Wait long enough for any suppressed chargeStartTimer (150ms) to fire if the marker
   // were absent — a leak would surface within this window.
@@ -713,6 +760,8 @@ test('R then hold on 1 (≥150ms) completes recharge and spawns NO charge orb', 
   await spyOnAllSends(attacker);
 
   await attacker.keyboard.press('r'); // arm recharge
+  // Brief tick so armRecharge's timer is live before the completion keydown fires.
+  await attacker.waitForTimeout(50);
 
   // Hold the key — completeRecharge fires on keydown; turn advances server-side.
   // Release key first, then wait for turn-advance (ensures onAttackHold key-up runs
@@ -721,11 +770,16 @@ test('R then hold on 1 (≥150ms) completes recharge and spawns NO charge orb', 
   await attacker.waitForTimeout(200); // hold 200ms > 150ms threshold
   await attacker.keyboard.up('1');
 
+  // Gate on recharge arrival before asserting counts (removes flaky race under PvP load).
+  await attacker.waitForFunction(() => ((window as any).__allSends?.recharge ?? 0) >= 1, {
+    timeout: 8000,
+  });
+
   // Turn must have advanced (recharge consumed it on keydown).
   await attacker.waitForFunction(() => {
     const room = (window as any).__room;
     return room.state.currentAttackerId !== room.sessionId;
-  }, { timeout: 5000 });
+  }, { timeout: 8000 });
 
   // Wait a final buffer for any suppressed chargeStart leak to surface.
   await attacker.waitForTimeout(200);

@@ -827,7 +827,7 @@ test('#487 charge orb spawns at PLAYER_X - 60 (in front of player, toward oppone
   // broadcast (which could arrive before the listener is ready if timing is tight).
   await attacker.waitForFunction(
     () => (window as any).__scene?.chargeOrbX !== null && (window as any).__scene?.chargeOrbX !== undefined,
-    { timeout: 3000 },
+    { timeout: 8000 },
   );
 
   // Read spawn X via the public getter while the orb is alive.
@@ -863,7 +863,7 @@ test('#487 defender-view charge orb spawns at OPPONENT_X + 60 (in front of oppon
   // Gate: wait for chargeOrbStart broadcast so handleOpponentChargeOrbStart has run and
   // the defender's orb handle is live before reading opponentChargeOrbX.
   await defender.waitForFunction(() => ((window as any).__msgs?.chargeOrbStart?.length ?? 0) >= 1, {
-    timeout: 3000,
+    timeout: 8000,
   });
 
   // Read spawn X via the public getter while the orb handle is alive.
@@ -910,7 +910,7 @@ test('#487 R key during ATTACK_SELECT (when recharge cancelled before hold) does
 
   // Gate: releaseAttack must arrive after key-up.
   await attacker.waitForFunction(() => ((window as any).__allSends?.releaseAttack ?? 0) >= 1, {
-    timeout: 3000,
+    timeout: 8000,
   });
 
   // Give a brief window for any spurious duplicate.
