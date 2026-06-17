@@ -317,6 +317,70 @@ describe('determinism', () => {
   });
 });
 
+// ── #493: charge attack policy ────────────────────────────────────────────────
+describe('decideAttack charge decisions (#493)', () => {
+  test('AGGRESSIVE (chargeAttemptProb=1.0): always returns a charge decision', () => {
+    for (let s = 0; s < 20; s++) {
+      const d = decideAttack(view(), AI_PROFILES.AGGRESSIVE, makeRng(s));
+      expect(d.charge).toBeDefined();
+      expect(d.charge!.targetSweep).toBe(3);
+    }
+  });
+
+  test('DEFENSIVE (chargeAttemptProb=0.0): never returns a charge decision', () => {
+    for (let s = 0; s < 20; s++) {
+      const d = decideAttack(view(), AI_PROFILES.DEFENSIVE, makeRng(s));
+      expect(d.charge).toBeUndefined();
+    }
+  });
+
+  test('STATUS_HUNTER (chargeAttemptProb=0.2): charges some of the time', () => {
+    let chargeCount = 0;
+    for (let s = 0; s < 200; s++) {
+      const d = decideAttack(view(), AI_PROFILES.STATUS_HUNTER, makeRng(s));
+      if (d.charge) chargeCount++;
+    }
+    expect(chargeCount).toBeGreaterThan(0);
+    expect(chargeCount).toBeLessThan(200);
+  });
+
+  test('RESILIENT healthy (chargeAttemptProb=0.0): never charges', () => {
+    for (let s = 0; s < 20; s++) {
+      const d = decideAttack(view({ hearts: 3 }), AI_PROFILES.RESILIENT, makeRng(s));
+      expect(d.charge).toBeUndefined();
+    }
+  });
+
+  test('RESILIENT low-heart (lowHeartChargeAttemptProb=0.8): charges most of the time', () => {
+    let chargeCount = 0;
+    for (let s = 0; s < 100; s++) {
+      const d = decideAttack(view({ hearts: 1 }), AI_PROFILES.RESILIENT, makeRng(s));
+      if (d.charge) chargeCount++;
+    }
+    expect(chargeCount).toBeGreaterThan(50); // >50% for prob=0.8
+  });
+
+  test('charge is the outermost gate: AGGRESSIVE charge never has a double field', () => {
+    // A charged attack replaces the double-attack path entirely.
+    const v = view({
+      attackSlots: [{ key: 'a1', ring: ring(WATER) }, { key: 'a2', ring: ring(EARTH) }],
+      canDoubleAttack: true,
+      opponentDefenseSlots: [
+        { key: 'd1', ring: ring(EARTH) },
+        { key: 'd2', ring: ring(EARTH) },
+      ],
+    });
+    const d = decideAttack(v, AI_PROFILES.AGGRESSIVE, makeRng(7));
+    expect(d.charge).toBeDefined();
+    expect(d.double).toBeUndefined();
+  });
+
+  test('charge decision is deterministic for a fixed seed', () => {
+    const p = AI_PROFILES.STATUS_HUNTER;
+    expect(decideAttack(view(), p, makeRng(55))).toEqual(decideAttack(view(), p, makeRng(55)));
+  });
+});
+
 // ── EPIC #268 — AI double-attack OFFENSE policy ─────────────────────────────
 // decideAttack upgrades a single throw to a fusion-thumb double attack only when
 // (a) the board is double-attack-eligible (view.canDoubleAttack — set by the

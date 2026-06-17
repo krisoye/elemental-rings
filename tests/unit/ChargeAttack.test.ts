@@ -19,6 +19,7 @@ import {
   computeSharpness,
   computeTelegraphDuration,
 } from '../../server/src/game/ChargeAttack';
+import { sweepHoldMs } from '../../shared/oscillation';
 import {
   SWEEP_RANGE_DEG,
   HIT_CONE_DEG,
@@ -593,6 +594,63 @@ describe('adversarial — sweep speed cap (MAX_SWEEPS lock)', () => {
     const angle = computeOrbAngle(deepHold);
     expect(angle).toBeGreaterThanOrEqual(-SWEEP_RANGE_DEG - 1e-9);
     expect(angle).toBeLessThanOrEqual(SWEEP_RANGE_DEG + 1e-9);
+  });
+});
+
+// ── sweepHoldMs (arc inverse) ─────────────────────────────────────────────────
+
+describe('sweepHoldMs — arc-angle inverse (#493)', () => {
+  test('sweepHoldMs(1, 0, 1200, 0.75) returns 600ms (midpoint of sweep 0)', () => {
+    // targetSweep=1 (0-based sweep 0), releaseDeg=0° (sweet spot).
+    // sweep 0 duration = BASE_SWEEP_MS = 1200ms; midpoint = 600ms.
+    expect(sweepHoldMs(1, 0, BASE_SWEEP_MS, SWEEP_SPEEDUP)).toBeCloseTo(600, 4);
+  });
+
+  test('sweepHoldMs(1, -45, ...) returns 0ms (start of sweep 0)', () => {
+    // −45° is the very start of sweep 0 (t=0 by the even-sweep formula).
+    expect(sweepHoldMs(1, -SWEEP_RANGE_DEG, BASE_SWEEP_MS, SWEEP_SPEEDUP)).toBeCloseTo(0, 4);
+  });
+
+  test('sweepHoldMs(1, +45, ...) returns BASE_SWEEP_MS (end of sweep 0)', () => {
+    // +45° is the end of sweep 0 (frac=1 → holdMs = sweep0 duration = 1200ms).
+    expect(sweepHoldMs(1, SWEEP_RANGE_DEG, BASE_SWEEP_MS, SWEEP_SPEEDUP)).toBeCloseTo(BASE_SWEEP_MS, 4);
+  });
+
+  test('orbAngle(sweepHoldMs(1, deg, ...)) ≈ deg for several angles in sweep 0', () => {
+    // The inverse must round-trip: orbAngle applied to the computed holdMs yields
+    // back approximately the requested angle.
+    for (const deg of [-30, -10, 0, 10, 30]) {
+      const holdMs = sweepHoldMs(1, deg, BASE_SWEEP_MS, SWEEP_SPEEDUP);
+      expect(computeOrbAngle(holdMs)).toBeCloseTo(deg, 4);
+    }
+  });
+
+  test('sweepHoldMs(2, 0, ...) targets sweep 1 midpoint (return pass at 0°)', () => {
+    // targetSweep=2 → 0-based sweep 1. Sweep 1 duration = 1200*0.75=900ms.
+    // Sweep 1 starts at t=1200ms; 0° is midpoint → t=1200 + 900/2 = 1650ms.
+    expect(sweepHoldMs(2, 0, BASE_SWEEP_MS, SWEEP_SPEEDUP)).toBeCloseTo(1200 + 450, 4);
+  });
+
+  test('orbAngle(sweepHoldMs(2, deg, ...)) ≈ deg for sweep 1', () => {
+    for (const deg of [-20, 0, 20]) {
+      const holdMs = sweepHoldMs(2, deg, BASE_SWEEP_MS, SWEEP_SPEEDUP);
+      expect(computeOrbAngle(holdMs)).toBeCloseTo(deg, 4);
+    }
+  });
+
+  test('sweepHoldMs(3, 0, ...) targets sweep 2 midpoint', () => {
+    // sweep 0: 1200ms, sweep 1: 900ms, sweep 2: 675ms.
+    // sweep 2 starts at 1200+900=2100ms; 0° midpoint at 2100+675/2 = 2437.5ms.
+    const sweep2Duration = BASE_SWEEP_MS * Math.pow(SWEEP_SPEEDUP, 2);
+    const expected = BASE_SWEEP_MS + BASE_SWEEP_MS * SWEEP_SPEEDUP + sweep2Duration / 2;
+    expect(sweepHoldMs(3, 0, BASE_SWEEP_MS, SWEEP_SPEEDUP)).toBeCloseTo(expected, 4);
+  });
+
+  test('sweepHoldMs clamps releaseDeg beyond ±SWEEP_RANGE_DEG', () => {
+    // Clamping: 999° clamps to +45°, which should give end-of-sweep-0 holdMs.
+    const clamped = sweepHoldMs(1, 999, BASE_SWEEP_MS, SWEEP_SPEEDUP);
+    const unclamped = sweepHoldMs(1, SWEEP_RANGE_DEG, BASE_SWEEP_MS, SWEEP_SPEEDUP);
+    expect(clamped).toBeCloseTo(unclamped, 4);
   });
 });
 
