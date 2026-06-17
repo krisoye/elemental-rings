@@ -3,6 +3,7 @@ import {
   generateAILoadout,
   npcEffectiveXp,
   previewOpponent,
+  skillRoll,
 } from '../../server/src/game/ai/AILoadout';
 import { makeRng } from '../../server/src/game/ai/AIProfiles';
 import { tierForXp, naturalMaxUses } from '../../server/src/game/Tiers';
@@ -492,5 +493,45 @@ describe('computeNpcSpirit — spec conformance (#478)', () => {
     const bossBonus = BOSS_BONUS['forest']['sub']; // 25
     const inlineBoss = Math.floor(spiritMax * bossSpiritMult) + bossBonus; // floor(180×0.60)+25=108+25=133
     expect(computeNpcSpirit(spiritMax, personality, 'forest', 'sub')).toBe(inlineBoss);
+  });
+});
+
+// ============================================================================
+// skillRoll — generic spawnId fallback (#492 impl-aware)
+// ============================================================================
+//
+// BattleRoom.ts line 400: spawnIdForSkill = options.npcId ?? `generic_${personality}`
+// When no npcId is provided (generic vsAI from the AI-battle integration test),
+// the spawn id is `generic_AGGRESSIVE`, `generic_DEFENSIVE`, etc.
+// Two different personalities must yield different skill rolls so their scaled
+// profiles differ — otherwise the distinction between personalities is lost at the
+// skill dimension.
+
+describe('skillRoll — generic spawnId personality fallback (#492 impl-aware)', () => {
+  test('generic_AGGRESSIVE and generic_DEFENSIVE yield different skill rolls (roamer)', () => {
+    // #492 impl-aware: BattleRoom falls back to `generic_${personality}` when no npcId
+    // is provided. Different personalities must hash to different skill values so the
+    // difficulty ladder still applies for generic duels.
+    const aggressiveSkill = skillRoll('generic_AGGRESSIVE', 'roamer');
+    const defensiveSkill  = skillRoll('generic_DEFENSIVE',  'roamer');
+    expect(aggressiveSkill).not.toBe(defensiveSkill);
+  });
+
+  test('generic spawnIds still produce rolls within class band (#492 impl-aware)', () => {
+    // #492 impl-aware: the generic fallback spawnIds must still land within the
+    // roamer SKILL_BAND [0.20, 0.70]. A hash collision or out-of-bounds would
+    // silently bypass the difficulty floor.
+    const personalities = ['AGGRESSIVE', 'DEFENSIVE', 'STATUS_HUNTER', 'RESILIENT'];
+    for (const p of personalities) {
+      const skill = skillRoll(`generic_${p}`, 'roamer');
+      expect(skill).toBeGreaterThanOrEqual(0.20);
+      expect(skill).toBeLessThanOrEqual(0.70);
+    }
+  });
+
+  test('generic spawnId is deterministic (same personality always same skill) (#492 impl-aware)', () => {
+    // #492 impl-aware: generic duels must be repeatable — same personality seed
+    // produces the same skill on every call (mulberry32 is seeded from hash, no state).
+    expect(skillRoll('generic_RESILIENT', 'roamer')).toBe(skillRoll('generic_RESILIENT', 'roamer'));
   });
 });

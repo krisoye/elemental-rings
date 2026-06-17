@@ -286,6 +286,84 @@ describe('scaleProfileByTier — tier and skill transfer functions (#492)', () =
     const bossProfile   = scaleProfileByTier(base, 3, 0.5);
     expect(bossProfile.timingSigmaMs).toBeLessThan(roamerProfile.timingSigmaMs);
   });
+
+  test('lowHeartTimingSigmaMs is scaled by the same tier/skill factor as timingSigmaMs (#492 adversarial)', () => {
+    // #492 adversarial: scaleProfileByTier scales BOTH timingSigmaMs AND
+    // lowHeartTimingSigmaMs. A bug that only updated one field would silently leave
+    // the low-heart sharpening unaffected by tier/skill.
+    const scaled = scaleProfileByTier(base, 3, 0.5);
+    const tierFactor = 1 - 0.08 * (3 - 1);   // 0.84
+    const skillFactor = 1 - 0.3 * 0.5;        // 0.85
+    const timingScale = Math.max(tierFactor * skillFactor, 0);
+    // AGGRESSIVE.lowHeartTimingSigmaMs === 80 (same as timingSigmaMs).
+    const expected = Math.max(base.lowHeartTimingSigmaMs * timingScale, 10);
+    expect(scaled.lowHeartTimingSigmaMs).toBeCloseTo(expected, 5);
+    // lowHeartTimingSigmaMs must be strictly less than the base at tier=3, skill=0.5.
+    expect(scaled.lowHeartTimingSigmaMs).toBeLessThan(base.lowHeartTimingSigmaMs);
+  });
+
+  test('tier=5, skill=1.0: exact clamped computation (#492 adversarial)', () => {
+    // #492 adversarial: verify exact clamped values at extreme tier/skill combo.
+    // tierFactor = 1 - 0.08*(5-1) = 0.68; skillFactor = 1 - 0.3*1 = 0.7
+    // timingScale = 0.68 * 0.7 = 0.476 → timingSigmaMs = max(80*0.476, 10) = max(38.08, 10) = 38.08
+    // mistakeTierFactor = 1 - 0.15*(5-1) = 0.40; mistakeSkillFactor = 1 - 0.5*1 = 0.50
+    // mistakeScale = 0.40 * 0.50 = 0.20 → elementMistakeProb = max(0.05*0.20, 0) = 0.01
+    const scaled = scaleProfileByTier(base, 5, 1.0);
+    expect(scaled.timingSigmaMs).toBeCloseTo(80 * 0.476, 1);
+    expect(scaled.elementMistakeProb).toBeCloseTo(0.05 * 0.20, 5);
+    // Both must stay above their clamp floors.
+    expect(scaled.timingSigmaMs).toBeGreaterThanOrEqual(10);
+    expect(scaled.elementMistakeProb).toBeGreaterThanOrEqual(0);
+  });
+});
+
+// ============================================================================
+// spiritFloor — unknown npcClass (#492 adversarial)
+// ============================================================================
+
+describe('spiritFloor — NpcClass exhaustiveness (#492 adversarial)', () => {
+  test('all valid NpcClass values return a finite number (no NaN) (#492 adversarial)', () => {
+    // #492 adversarial: spiritFloor's npcClass param is a closed TypeScript union
+    // ('roamer'|'gate'|'sub'|'major'). CLASS_OFFSET covers all four values, so in
+    // production the result is always a finite number. Test all four valid values
+    // explicitly — if CLASS_OFFSET is missing a key, the arithmetic produces NaN.
+    const validClasses: NpcClass[] = ['roamer', 'gate', 'sub', 'major'];
+    for (const biome of BIOME_ORDER) {
+      for (const npcClass of validClasses) {
+        const result = spiritFloor(biome, npcClass);
+        expect(typeof result).toBe('number');
+        expect(isNaN(result)).toBe(false);
+        expect(isFinite(result)).toBe(true);
+      }
+    }
+  });
+});
+
+// ============================================================================
+// effectiveTier — biome fallback (#492 adversarial)
+// ============================================================================
+
+describe('effectiveTier — biome=undefined fallback (#492 adversarial)', () => {
+  test('effectiveTier with a biome not in BIOME_ORDER uses floorTier fallback of 1', () => {
+    // #492 adversarial: computeEffectiveTier passes its biome arg straight to
+    // floorTier, which returns 1 for an unknown biome. With xp=0, tierForXp=0
+    // (below T1), so max(1, 0) = 1. Ensures no crash and no floor below 1.
+    const tier = effectiveTier('unknown_biome', 'AGGRESSIVE', 0);
+    expect(tier).toBe(1);
+  });
+
+  test('effectiveTier is always ≥ 1 for any input (#492 adversarial)', () => {
+    // #492 adversarial: tier must never be 0 or negative — the transfer function
+    // tierFactor = 1 - 0.08*(tier-1) becomes 1.0 at tier=1 and > 1 if tier<1,
+    // which would INCREASE timing sigma (counter-intuitive). The biome floor
+    // guards against this by ensuring floorTier(biome) >= 1.
+    for (const biome of [...BIOME_ORDER, 'unknown', '']) {
+      for (const xp of [0, 1, 10, 100]) {
+        const tier = effectiveTier(biome, 'AGGRESSIVE', xp);
+        expect(tier).toBeGreaterThanOrEqual(1);
+      }
+    }
+  });
 });
 
 // ============================================================================

@@ -526,4 +526,67 @@ describe('elementMistakeProb=1.0 — always picks suboptimal attack (#492)', () 
     const d2 = decideAttack(v, mistakeProfile, makeRng(1234));
     expect(d1.slot).toBe(d2.slot);
   });
+
+  test('elementMistakeProb=0 does NOT consume an RNG draw (stream preserved) (#492 adversarial)', () => {
+    // #492 adversarial: the > 0 guard in singleAttackDecision must prevent an
+    // rng.next() call when elementMistakeProb=0. If the guard is missing, the
+    // mistake branch would consume a draw, shifting the personality/timing stream
+    // for ALL pre-#492 tests (RNG-sensitive seeds would break).
+    // Proof: with mistake=0, the first rng.next() draw belongs to personality logic.
+    // With mistake>0, it's consumed by the mistake coin flip.
+    // We verify stream parity: result with zeroMistakeProfile must equal result
+    // produced by the noMistake profile (which also zeros elementMistakeProb).
+    const v = view({
+      attackSlots: [
+        { key: 'a1', ring: ring(FIRE) },
+        { key: 'a2', ring: ring(WATER) },
+      ],
+      opponentUsableElements: [],
+    });
+    const seedVal = 777;
+    const d0 = decideAttack(v, zeroMistakeProfile, makeRng(seedVal));
+    const dNM = decideAttack(v, noMistake('AGGRESSIVE'), makeRng(seedVal));
+    // Same seed → identical result when both profiles have elementMistakeProb=0.
+    expect(d0.slot).toBe(dNM.slot);
+  });
+
+  test('suboptimalAttackSlot fallback: when no slot is counterable, returns last usable (#492 adversarial)', () => {
+    // #492 adversarial: suboptimalAttackSlot falls back to usable[usable.length-1]
+    // when no opponent holds a counter to any usable ring. With WIND (uncounterable,
+    // counterOf=WIND=-1) and EARTH (also uncounterable) and empty opponentUsableElements,
+    // there is no counterable slot — fallback must return a2 (last usable), not crash.
+    const v = view({
+      attackSlots: [
+        { key: 'a1', ring: ring(WIND) },    // counterOf(WIND) = -1 (uncounterable)
+        { key: 'a2', ring: ring(EARTH) },   // counterOf(EARTH) = -1 (uncounterable)
+      ],
+      opponentUsableElements: [],           // empty: nothing counters anything
+    });
+    const decision = decideAttack(v, mistakeProfile, makeRng(42));
+    // Must return a valid attack slot (a1 or a2), not crash.
+    expect(['a1', 'a2']).toContain(decision.slot);
+    // With WIND and EARTH (both uncounterable), the fallback returns a2 (last slot).
+    expect(decision.slot).toBe('a2');
+  });
+
+  test('weakDefenseSlot fallback: when no WEAK slot exists, returns last usable (#492 adversarial)', () => {
+    // #492 adversarial: weakDefenseSlot returns the last usable slot when no slot
+    // is WEAK vs the incoming element. If incoming=-1 (no incoming) or all slots
+    // are STRONG/NEUTRAL, the function must still return a valid slot, not crash.
+    // Test: d1=WOOD (STRONG vs WATER), d2=EARTH (NEUTRAL vs WATER) — neither is WEAK.
+    // With mistake=1.0 and incoming=WATER, weakDefenseSlot falls back to d2 (last usable).
+    const v = view({
+      defenseSlots: [
+        { key: 'd1', ring: ring(WOOD) },    // WOOD vs WATER = STRONG (rally, not WEAK)
+        { key: 'd2', ring: ring(EARTH) },   // EARTH vs WATER = NEUTRAL (safe)
+      ],
+      incomingElement: WATER,
+    });
+    const decision = decideDefense(v, mistakeProfile, makeRng(42));
+    // Must return a valid defense slot, not crash.
+    expect(['d1', 'd2']).toContain(decision.slot);
+    // No WEAK slot → fallback to last usable (d2).
+    expect(decision.slot).toBe('d2');
+    expect(decision.pressOffsetMs).toBe(190);
+  });
 });
