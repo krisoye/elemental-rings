@@ -142,6 +142,8 @@ export class BattleScene extends Phaser.Scene {
   private forfeitKeyHandlers: (() => void) | null = null;
   private rechargeArmed = false;
   private rechargeArmedTimer: Phaser.Time.TimerEvent | null = null;
+  // Overlay shown while recharge-armed; torn down on cancel/complete.
+  private rechargePrompt: Phaser.GameObjects.Container | null = null;
 
   // EPIC #264 / #266 — hold-cross-tap double-attack gesture state. heldAt records
   // the keydown time of each ATTACK slot while it is held (undefined once
@@ -232,6 +234,7 @@ export class BattleScene extends Phaser.Scene {
     this.forfeitKeyHandlers = null;
     this.rechargeArmed = false;
     this.rechargeArmedTimer = null;
+    this.rechargePrompt = null;
     this.heldAt = {};
     this.comboFired = false;
     this.deferredHeldAttack = null;
@@ -666,28 +669,28 @@ export class BattleScene extends Phaser.Scene {
     // While the forfeit prompt is open, ignore further slot input (Y/N decide it).
     if (this.forfeitPrompt) return;
 
-    // #487 — recharge-armed: any ring input (attack or defense) completes the recharge.
-    // The R key and Esc cancel it; this path fires only when a slot is pressed.
-    if (this.rechargeArmed) {
-      this.completeRecharge(slot);
-      return;
-    }
-
     const now = Date.now();
     this.lastPressAt[slot] = now;
 
     // Forfeit chord (EPIC #264 / #266): the two DEFENSE siblings (d1+d2, from 3+4)
-    // pressed within FORFEIT_CHORD_MS during the attack phase. The former A1+A2
-    // (Z+C) attack-sibling chord NO LONGER forfeits — that gesture space is freed
-    // for the hold-cross-tap double attack (handled in onAttackHold). Defense-slot
-    // presses otherwise do nothing in this phase.
+    // pressed within FORFEIT_CHORD_MS during the attack phase. Evaluated FIRST — the
+    // chord must be detectable even while recharge is armed so the player can always
+    // exit a duel (cancelRecharge is called automatically before showing the prompt).
     const sibling = DEFENSE_SIBLING[slot];
     if (sibling) {
       const siblingAt = this.lastPressAt[sibling];
       if (siblingAt !== undefined && now - siblingAt <= FORFEIT_CHORD_MS) {
+        this.cancelRecharge(); // dismiss armed state before prompting
         this.showForfeitPrompt();
         return;
       }
+    }
+
+    // #487 — recharge-armed: any ring input (attack or defense, non-chord) completes
+    // the recharge. The R key and Esc cancel it; this path fires only on slot press.
+    if (this.rechargeArmed) {
+      this.completeRecharge(slot);
+      return;
     }
 
     // d1/d2: no attack action for defense keys — defense rings are only rechargeable
@@ -898,17 +901,11 @@ export class BattleScene extends Phaser.Scene {
     // Clear deferral so fireDeferredHeldAttack finds nothing to fire.
     this.deferredHeldAttack = null;
 
-    if (holdMs < CHARGE_THRESHOLD_MS) {
-      // Sub-threshold: discard the idle orb and send releaseAttack as a tap
-      // (holdDuration=0 → server treats as tap path, no oscillation, always hits).
-      this.cancelChargeOrb();
-      window.__room!.send('releaseAttack', { slot, holdDuration: 0 });
-    } else {
-      // Above threshold: send releaseAttack with the measured hold duration.
-      // The idle orb stays alive for the miss animation or for cancelChargeOrb()
-      // on DEFEND_WINDOW entry (checkPhaseTransition calls cancelChargeOrb on hit).
-      window.__room!.send('releaseAttack', { slot, holdDuration: holdMs });
-    }
+    // This path is only reached after beginCharge fires (which requires the
+    // chargeStartTimer — CHARGE_THRESHOLD_MS — to have elapsed), so holdMs is
+    // always ≥ CHARGE_THRESHOLD_MS here. Send the measured duration; the idle orb
+    // stays alive for the miss animation or for cancelChargeOrb() on DEFEND_WINDOW.
+    window.__room!.send('releaseAttack', { slot, holdDuration: holdMs });
   }
 
   /**
@@ -1097,9 +1094,13 @@ export class BattleScene extends Phaser.Scene {
   /**
    * #487 — enter the recharge-armed state. Highlights rechargeable rings, shows a
    * prompt, and starts the auto-cancel timeout. Idempotent (re-arming resets the timer).
-   * Callable from R-key handler or the Hand's "↻ Recharge" touch button.
+   * Callable from R-key handler or the Hand's "↻ Recharge" touch button. Guards on
+   * ATTACK_SELECT + my turn so the touch button is inert during the defense phase.
    */
   private armRecharge(): void {
+    const state = window.__room?.state;
+    const myId = window.__room?.sessionId;
+    if (!state || !myId || state.phase !== 'ATTACK_SELECT' || state.currentAttackerId !== myId) return;
     this.rechargeArmed = true;
     // Reset the timeout each time armRecharge is called (idempotent re-arm).
     this.rechargeArmedTimer?.remove(false);
@@ -1135,9 +1136,6 @@ export class BattleScene extends Phaser.Scene {
     this.hand.pulseSlot(slot);
     this.cancelRecharge(); // tear down the armed state — turn advances server-side
   }
-
-  // Recharge prompt overlay (shown while recharge-armed; torn down on cancel/complete).
-  private rechargePrompt: Phaser.GameObjects.Container | null = null;
 
   /** Show "RECHARGE — pick a ring" overlay. */
   private showRechargePrompt(): void {
@@ -1374,6 +1372,10 @@ export class BattleScene extends Phaser.Scene {
     this.prevCurrentAttackerId = state.currentAttackerId ?? '';
 
     if (state.phase === 'DEFEND_WINDOW' && (phaseChanged || rallyStarted || rallyVolley)) {
+      // #487 — if the player armed recharge but the server advanced the phase (e.g. a
+      // networked state push), dismiss the armed state so it does not intercept defense input.
+      this.cancelRecharge();
+
       const imAttacker = state.currentAttackerId === myId;
       const from = imAttacker ? { x: PLAYER_X, y: PLAYER_Y } : { x: OPPONENT_X, y: OPPONENT_Y };
       const to   = imAttacker ? { x: OPPONENT_X, y: OPPONENT_Y } : { x: PLAYER_X, y: PLAYER_Y };
