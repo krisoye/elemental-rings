@@ -70,6 +70,14 @@ export interface AIProfile {
   lowHeartThreshold: number;
   comboGapMinMs: number;
   comboGapMaxMs: number;
+  /**
+   * #492 — probability [0,1] that this AI picks a suboptimal (WEAK or NEUTRAL)
+   * element instead of the optimal one on a given attack or defense decision.
+   * Scaled down by scaleProfileByTier for higher-tier / higher-skill opponents.
+   * Per-persona defaults: AGGRESSIVE ≈ 0.05, DEFENSIVE ≈ 0.15,
+   *   STATUS_HUNTER ≈ 0.10, RESILIENT ≈ 0.10.
+   */
+  elementMistakeProb: number;
 }
 
 export const AI_PROFILES: Record<AIPersonality, AIProfile> = {
@@ -86,6 +94,8 @@ export const AI_PROFILES: Record<AIPersonality, AIProfile> = {
     lowHeartThreshold: 1,
     comboGapMinMs: MIN_COMBO_GAP_MS,
     comboGapMaxMs: MIN_COMBO_GAP_MS + 100,
+    // #492 — AGGRESSIVE chases optimal picks; low baseline mistake probability.
+    elementMistakeProb: 0.05,
   },
   DEFENSIVE: {
     personality: 'DEFENSIVE',
@@ -100,6 +110,9 @@ export const AI_PROFILES: Record<AIPersonality, AIProfile> = {
     lowHeartThreshold: 1,
     comboGapMinMs: MIN_COMBO_GAP_MS,
     comboGapMaxMs: MIN_COMBO_GAP_MS + 100,
+    // #492 — DEFENSIVE plays conservatively; higher element-mistake to model
+    // deliberate safe picks that are suboptimal offensively.
+    elementMistakeProb: 0.15,
   },
   STATUS_HUNTER: {
     personality: 'STATUS_HUNTER',
@@ -114,6 +127,9 @@ export const AI_PROFILES: Record<AIPersonality, AIProfile> = {
     lowHeartThreshold: 1,
     comboGapMinMs: MIN_COMBO_GAP_MS,
     comboGapMaxMs: MIN_COMBO_GAP_MS + 100,
+    // #492 — STATUS_HUNTER focuses on gauge-building; moderate element mistakes
+    // from committing to a triangle element over the optimal pick.
+    elementMistakeProb: 0.10,
   },
   RESILIENT: {
     personality: 'RESILIENT',
@@ -128,6 +144,8 @@ export const AI_PROFILES: Record<AIPersonality, AIProfile> = {
     lowHeartThreshold: 1,
     comboGapMinMs: MIN_COMBO_GAP_MS,
     comboGapMaxMs: MIN_COMBO_GAP_MS + 100,
+    // #492 — RESILIENT plays mixed-element endurance; moderate mistake probability.
+    elementMistakeProb: 0.10,
   },
 };
 

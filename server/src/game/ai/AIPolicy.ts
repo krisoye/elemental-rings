@@ -126,6 +126,41 @@ function fewestUsesAttack(slots: AttackSlotView[]): AttackSlotView {
 }
 
 /**
+ * #492 — Pick a usable attack slot that is SUBOPTIMAL against the opponent
+ * (WEAK or NEUTRAL). Used when elementMistakeProb fires to simulate an AI
+ * picking the wrong element. If every usable slot is optimal (no weak/neutral
+ * alternative found) fall back to the first usable slot so we always return.
+ */
+function suboptimalAttackSlot(
+  usable: AttackSlotView[],
+  opponentUsableElements: number[],
+): AttackSlot {
+  // Prefer a slot the opponent can STRONG-counter (WEAK for the AI = poor choice).
+  for (const s of usable) {
+    const counter = counterOf(s.ring.element);
+    if (counter >= 0 && opponentUsableElements.includes(counter)) return s.key;
+  }
+  // Fall back to the last usable slot (at minimum different order from optimal).
+  return usable[usable.length - 1].key;
+}
+
+/**
+ * #492 — Pick a usable defense slot that is WEAK against the incoming element
+ * (a poor/incorrect choice). Used when elementMistakeProb fires. Falls back to
+ * the first usable slot when no genuinely WEAK slot is available.
+ */
+function weakDefenseSlot(
+  usable: DefenseSlotView[],
+  incoming: number,
+): DefenseSlotView {
+  for (const s of usable) {
+    if (incoming >= 0 && resolve(incoming, s.ring.element, 'defense') === 'WEAK') return s;
+  }
+  // If no slot is outright WEAK, return the last one (suboptimal ordering).
+  return usable[usable.length - 1];
+}
+
+/**
  * Pure attack decision. Computes the per-personality single-attack pick, then —
  * when this AI's hand is double-attack-eligible (a boss fused thumb; `view.
  * canDoubleAttack`) AND a combo is favorable — upgrades it to a fusion-thumb
@@ -137,7 +172,7 @@ function fewestUsesAttack(slots: AttackSlotView[]): AttackSlotView {
  * the defensive fallback returns 'a1'.
  */
 export function decideAttack(view: BoardView, profile: AIProfile, rng: Rng): AttackDecision {
-  const single = singleAttackDecision(view, profile);
+  const single = singleAttackDecision(view, profile, rng);
 
   // EPIC #268 — fusion-thumb double attack. Only eligible bosses reach this; a
   // base-thumb AI has view.canDoubleAttack === false and falls straight through to
@@ -153,10 +188,23 @@ export function decideAttack(view: BoardView, profile: AIProfile, rng: Rng): Att
  * Per-personality single-attack pick over a1/a2 (the pre-EPIC-#268 behaviour).
  * Never returns an extinguished slot as long as one usable attack slot exists;
  * the defensive fallback returns 'a1'.
+ *
+ * #492 — when elementMistakeProb fires, skips the personality pick and instead
+ * chooses a suboptimal (WEAK or NEUTRAL) slot so higher-tier / higher-skill
+ * opponents make fewer mistakes.
  */
-function singleAttackDecision(view: BoardView, profile: AIProfile): AttackDecision {
+function singleAttackDecision(view: BoardView, profile: AIProfile, rng: Rng): AttackDecision {
   const usable = usableAttackSlots(view);
   if (usable.length === 0) return { slot: 'a1', committedElement: view.committedElement };
+
+  // #492 — element-mistake branch: before personality logic, check if the AI
+  // should pick a suboptimal ring this turn (mistake probability).
+  if (rng.next() < profile.elementMistakeProb) {
+    return {
+      slot: suboptimalAttackSlot(usable, view.opponentUsableElements),
+      committedElement: view.committedElement,
+    };
+  }
 
   const low = isLowHearts(profile, view.hearts);
 
@@ -363,6 +411,15 @@ export function decideDefense(view: BoardView, profile: AIProfile, rng: Rng): De
   if (usable.length === 0) return { slot: null, pressOffsetMs: null };
 
   const incoming = view.incomingElement;
+
+  // #492 — element-mistake branch: before personality logic, check if the AI
+  // should pick a suboptimal defense ring this turn. +190ms = BLOCK timing so
+  // the defender still commits (not a no-block) but with the wrong element.
+  if (rng.next() < profile.elementMistakeProb) {
+    const weak = weakDefenseSlot(usable, incoming);
+    return { slot: weak.key, pressOffsetMs: 190 };
+  }
+
   const strong = strongSlot(usable, incoming);
 
   switch (profile.personality) {
