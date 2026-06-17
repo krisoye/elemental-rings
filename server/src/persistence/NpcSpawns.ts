@@ -135,7 +135,7 @@ export const NPC_SPAWNS: NpcSpawnDef[] = [
   //   Thornwood— Thornado (Wood+Wind), major tier, RESILIENT. element=WOOD
   //              (Thornado's triangle component) drives the sprite; thumb = THORNADO.
   { id: 'forest_bogwood_warden',   biome: 'forest', screen: 'forest_swamp_gate',   personality: 'DEFENSIVE', type: 'monster', element: WATER, spriteFrame: 1, tx: 14, ty: 13, respawnDays: 0, foodDrop: MINI_BOSS_FOOD_DROP, boss: { tier: 'gate', name: 'Bogwood Warden', fusedThumb: ElementEnum.MUD } },
-  { id: 'forest_thornwood_warden', biome: 'forest', screen: 'forest_boss_clearing', personality: 'RESILIENT', type: 'monster', element: WOOD,  spriteFrame: 4, tx: 14, ty: 19, respawnDays: 0, foodDrop: BOSS_FOOD_DROP, boss: { tier: 'major', name: 'Thornwood Warden', fusedThumb: ElementEnum.THORNADO } },
+  { id: 'forest_thornwood_warden', biome: 'forest', screen: 'forest_boss_clearing', personality: 'RESILIENT', type: 'monster', element: WOOD,  spriteFrame: 4, tx: 14, ty: 2, respawnDays: 0, foodDrop: BOSS_FOOD_DROP, boss: { tier: 'major', name: 'Thornwood Warden', fusedThumb: ElementEnum.THORNADO } },
 
   // ── Forest: Thornado Fusion Shrine sub-boss (#231, GDD §4.6; EPIC #256) ──────
   // The Shrine Guardian is a permanent (respawnDays: 0) roaming sub-boss in the
