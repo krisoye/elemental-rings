@@ -833,42 +833,27 @@ test('#487 charge orb spawns at PLAYER_X - 60 (in front of player, toward oppone
   // owner, toward the target. PLAYER_X = 768; PLAYER_X - 60 = 708 (toward opponent at
   // x=256). Previously the sign was flipped (PLAYER_X + 60 = 828), spawning behind the
   // attacker away from the opponent — visually wrong.
-  // We read the orb's initial x via __scene after chargeStart arrives.
+  // #487 impl: BattleScene exposes `get chargeOrbX(): number | null` — returns
+  // chargeOrbSpawnX while chargeOrbHandle is alive, null otherwise. Read it while held.
   await waitForMyAttackTurn(attacker);
+  await collectMessages(attacker, 'chargeOrbStart');
 
-  // Send chargeStart via real keyboard hold — hold long enough to arm the timer.
-  // We don't need to complete the attack; just need the orb spawned.
+  // Hold long enough to arm the deferred-threshold timer and trigger beginCharge.
   await attacker.keyboard.down('1');
-  await attacker.waitForTimeout(300); // 300ms > 150ms threshold → chargeStart fires
+  await attacker.waitForTimeout(300); // 300ms > 150ms threshold → chargeStart + beginCharge
 
-  // Wait for chargeOrbStart broadcast (confirms the server acknowledged chargeStart).
-  await attacker.evaluate(() => {
-    const w = window as any;
-    w.__msgs = w.__msgs || {};
-    w.__msgs['chargeOrbStart'] = [];
-    w.__room.onMessage('chargeOrbStart', (m: any) => w.__msgs['chargeOrbStart'].push(m));
+  // Gate: wait for chargeOrbStart broadcast — confirms server acknowledged chargeStart
+  // and beginCharge ran, so the orb handle is live and chargeOrbX is non-null.
+  await attacker.waitForFunction(() => ((window as any).__msgs?.chargeOrbStart?.length ?? 0) >= 1, {
+    timeout: 3000,
   });
 
-  // Give the scene a frame to render the orb at its spawn position.
-  await attacker.waitForTimeout(50);
+  // Read spawn X via the public getter while the orb is alive.
+  // PLAYER_X - 60 = 768 - 60 = 708.
+  const orbX = await attacker.evaluate(() => (window as any).__scene?.chargeOrbX ?? null);
+  expect(orbX).toBe(708);
 
-  // Read orb spawn x from the scene. The scene stores the active orb as a member.
-  // #487: expected spawn x = PLAYER_X - 60 = 708
-  const orbX = await attacker.evaluate(() => {
-    const scene = (window as any).__scene;
-    // Access the charge orb object by the scene's tracked reference.
-    // The implementation exposes chargeOrb (or similar) on the BattleScene instance.
-    return scene?.chargeOrb?.x ?? scene?.playerChargeOrb?.x ?? null;
-  });
-
-  // Only assert if the scene exposed the orb — gracefully skip if the field name
-  // differs (impl-agent will surface the correct field name in Phase 2).
-  if (orbX !== null) {
-    // PLAYER_X - 60 = 768 - 60 = 708
-    expect(orbX).toBeCloseTo(708, 0);
-  }
-
-  // Release the key to avoid leaving the hold dangling.
+  // Release the key to clean up.
   await attacker.keyboard.up('1');
 
   await closeBattle(h);
@@ -886,30 +871,23 @@ test('#487 defender-view charge orb spawns at OPPONENT_X + 60 (in front of oppon
   // at OPPONENT_X + 60 = 256 + 60 = 316 (in front of the opponent, toward the player
   // at x=768). Previously the sign was flipped (OPPONENT_X - 60 = 196), placing the
   // defender-view orb behind the opponent.
-  // We drive chargeStart via direct socket send (deterministic; no keyboard jitter).
+  // #487 impl: BattleScene exposes `get opponentChargeOrbX(): number | null` — returns
+  // opponentChargeOrbSpawnX while opponentChargeOrbHandle is alive, null otherwise.
+  // Drive chargeStart via direct socket send (deterministic; avoids keyboard jitter).
   await collectMessages(defender, 'chargeOrbStart');
 
   await attacker.evaluate(() => (window as any).__room.send('chargeStart', { slot: 'a1' }));
 
+  // Gate: wait for chargeOrbStart broadcast so handleOpponentChargeOrbStart has run and
+  // the defender's orb handle is live before reading opponentChargeOrbX.
   await defender.waitForFunction(() => ((window as any).__msgs?.chargeOrbStart?.length ?? 0) >= 1, {
     timeout: 3000,
   });
 
-  // Give the scene a frame to spawn the defender-view orb at its initial x position.
-  await defender.waitForTimeout(50);
-
-  // Read orb x on the defender's canvas. The defender's BattleScene renders the
-  // opponent orb via handleOpponentChargeOrbStart; the orb x should be OPPONENT_X + 60.
-  const defenderOrbX = await defender.evaluate(() => {
-    const scene = (window as any).__scene;
-    // The defender scene tracks the incoming orb as opponentChargeOrb (or similar).
-    return scene?.opponentChargeOrb?.x ?? scene?.defenderChargeOrb?.x ?? null;
-  });
-
-  if (defenderOrbX !== null) {
-    // OPPONENT_X + 60 = 256 + 60 = 316
-    expect(defenderOrbX).toBeCloseTo(316, 0);
-  }
+  // Read spawn X via the public getter while the orb handle is alive.
+  // OPPONENT_X + 60 = 256 + 60 = 316.
+  const defenderOrbX = await defender.evaluate(() => (window as any).__scene?.opponentChargeOrbX ?? null);
+  expect(defenderOrbX).toBe(316);
 
   // Clean up: release the charge.
   await attacker.evaluate(() =>

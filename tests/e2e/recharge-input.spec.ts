@@ -533,11 +533,10 @@ test('Off-turn R (during opponent ATTACK_SELECT) is a no-op: rechargeArmed stays
   expect(await getSentCount(defender, 'recharge')).toBe(0);
   expect(await getSentCount(defender, 'selectAttack')).toBe(0);
 
-  // The rechargeArmed state on the defender client must remain false.
-  const rechargeArmed = await defender.evaluate(() => {
-    const scene = (window as any).__scene;
-    return scene?.rechargeArmed ?? false;
-  });
+  // #487 impl: BattleScene.armRecharge() sets window.__rechargeArmed = true;
+  // cancelRecharge() sets it back to false. Off-turn R must never call armRecharge,
+  // so the hook must remain false (its default — never set to true).
+  const rechargeArmed = await defender.evaluate(() => (window as any).__rechargeArmed ?? false);
   expect(rechargeArmed).toBe(false);
 
   await closeBattle(h);
@@ -619,6 +618,107 @@ test('R then 3 in attack phase recharges d1: confirms A-ring and D-ring share si
   expect(await getSentCount(attacker, 'recharge')).toBe(1);
   expect(await getSentCount(attacker, 'selectAttack')).toBe(0);
   expect(await getSentCount(attacker, 'releaseAttack')).toBe(0);
+
+  await closeBattle(h);
+});
+
+// ── Scenario 15 (NEW/P2): recharge + tap race — no spurious attack on tap ────
+// #487 P1 bug: completeRecharge fires synchronously; the coincident onAttackHold
+// keydown (same DOM event) must be suppressed via rechargeCompletedSlot marker.
+test('R then quick tap on 1 completes recharge and sends NO spurious attack or chargeStart', async ({
+  browser,
+}) => {
+  const h = await setupBattle(browser);
+  const { attacker } = await attackerDefender(h.p1, h.p2);
+
+  // #487 adversarial: keyboard.press() fires keydown + keyup in one call. On keydown
+  // completeRecharge runs (triggered by triggerSlot); on the same event, onAttackHold
+  // would also fire and arm chargeStartTimer — unless the rechargeCompletedSlot marker
+  // suppresses it. Without the marker: chargeStart fires ~150ms after press, leaking an
+  // unwanted charge cycle into the already-recharged turn (which has moved on).
+  // This test proves the marker works: recharge==1, selectAttack==0, chargeStart==0.
+  await setState(attacker, { uses: { a1: 1 } });
+  await attacker.waitForFunction(() => {
+    const room = (window as any).__room;
+    return room.state.players.get(room.sessionId).a1.currentUses === 1;
+  }, { timeout: 4000 });
+
+  await waitForMyAttackTurn(attacker);
+  await spyOnAllSends(attacker);
+
+  await attacker.keyboard.press('r'); // arm recharge
+  await attacker.keyboard.press('1'); // quick tap — completeRecharge fires on keydown
+
+  // Turn must advance (recharge consumed it).
+  await attacker.waitForFunction(() => {
+    const room = (window as any).__room;
+    return room.state.currentAttackerId !== room.sessionId;
+  }, { timeout: 5000 });
+
+  // Wait long enough for any suppressed chargeStartTimer (150ms) to fire if the marker
+  // were absent — a leak would surface within this window.
+  await attacker.waitForTimeout(250);
+
+  expect(await getSentCount(attacker, 'recharge')).toBe(1);      // recharge fired
+  expect(await getSentCount(attacker, 'selectAttack')).toBe(0);  // no legacy attack
+  expect(await getSentCount(attacker, 'chargeStart')).toBe(0);   // no leaked charge start
+  expect(await getSentCount(attacker, 'releaseAttack')).toBe(0); // no phantom release
+
+  // rechargeArmed must be false after completion.
+  expect(await attacker.evaluate(() => (window as any).__rechargeArmed ?? false)).toBe(false);
+
+  await closeBattle(h);
+});
+
+// ── Scenario 16 (NEW/P2): recharge + hold race — no spurious orb on hold ─────
+// Same P1 race but with a HOLD (≥150ms) instead of a tap on the completion key.
+test('R then hold on 1 (≥150ms) completes recharge and spawns NO charge orb', async ({
+  browser,
+}) => {
+  const h = await setupBattle(browser);
+  const { attacker } = await attackerDefender(h.p1, h.p2);
+
+  // #487 adversarial: keyboard.down() fires keydown; completeRecharge runs immediately.
+  // The rechargeCompletedSlot marker must prevent onAttackHold from arming chargeStartTimer.
+  // Without the marker: holding for 200ms after keydown arms a timer that fires at 150ms —
+  // beginCharge runs, sends chargeStart, and spawns an orb into a turn that has already ended.
+  // This test proves neither chargeStart nor an orb appear during the hold.
+  await setState(attacker, { uses: { a1: 1 } });
+  await attacker.waitForFunction(() => {
+    const room = (window as any).__room;
+    return room.state.players.get(room.sessionId).a1.currentUses === 1;
+  }, { timeout: 4000 });
+
+  await waitForMyAttackTurn(attacker);
+  await spyOnAllSends(attacker);
+
+  await attacker.keyboard.press('r'); // arm recharge
+
+  // Hold the key — completeRecharge fires on keydown; turn advances server-side.
+  await attacker.keyboard.down('1');
+  await attacker.waitForTimeout(200); // hold 200ms > 150ms threshold
+  await attacker.keyboard.up('1');
+
+  // Turn must have advanced during the hold (recharge consumed it on keydown).
+  await attacker.waitForFunction(() => {
+    const room = (window as any).__room;
+    return room.state.currentAttackerId !== room.sessionId;
+  }, { timeout: 5000 });
+
+  // Wait a final buffer for any suppressed chargeStart leak to surface.
+  await attacker.waitForTimeout(200);
+
+  expect(await getSentCount(attacker, 'recharge')).toBe(1);      // recharge fired
+  expect(await getSentCount(attacker, 'chargeStart')).toBe(0);   // no spurious charge start
+  expect(await getSentCount(attacker, 'releaseAttack')).toBe(0); // no phantom release
+  expect(await getSentCount(attacker, 'selectAttack')).toBe(0);  // no legacy attack
+
+  // Orb must NOT have spawned — chargeOrbX is null (no orb created).
+  const orbX = await attacker.evaluate(() => {
+    const scene = (window as any).__scene;
+    return (scene as any)?.chargeOrbX ?? null;
+  });
+  expect(orbX).toBeNull();
 
   await closeBattle(h);
 });
