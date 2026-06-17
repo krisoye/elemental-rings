@@ -8,11 +8,11 @@ import {
   type SlotKey,
 } from './helpers';
 
-// #125 — BattleScene attack-phase input gestures (GDD §6.3): double-tap recharge,
-// Z+C (a1+a2) forfeit confirm, and the recharge pulse. These drive the REAL
-// Phaser client (window.__room / window.__scene) so every assertion reads
-// authoritative broadcast state or the scene's own prompt flag; the gestures send
-// the same `recharge`/`forfeit` messages a player would.
+// #487 — R-key recharge input overhaul (replaces double-tap recharge from #125).
+// BattleScene attack-phase input gestures (GDD §6.3): R-key arms recharge state,
+// ring-key completes it, Esc/timeout/R-again cancels. These drive the REAL Phaser
+// client (window.__room / window.__scene) via real keyboard input only — __* hooks
+// are used ONLY for READING state, never for driving input.
 
 async function setState(page: Page, patch: Record<string, unknown>): Promise<void> {
   await page.evaluate((p) => (window as any).__room.send('__testSetState', p), patch);
@@ -31,6 +31,44 @@ async function isMyTurn(page: Page): Promise<boolean> {
     const room = (window as any).__room;
     return room.state.phase === 'ATTACK_SELECT' && room.state.currentAttackerId === room.sessionId;
   });
+}
+
+/**
+ * Wait until it is the given page's turn as attacker in ATTACK_SELECT phase.
+ * Gate before any real keyboard input — ensures the key handler is both wired
+ * (BattleScene mounted) and logically active (it is this player's turn).
+ */
+async function waitForMyAttackTurn(page: Page, timeout = 15000): Promise<void> {
+  await page.waitForFunction(
+    () => {
+      const room = (window as any).__room;
+      return (
+        room?.state?.phase === 'ATTACK_SELECT' &&
+        room?.state?.currentAttackerId === room?.sessionId
+      );
+    },
+    { timeout },
+  );
+}
+
+/**
+ * Install a spy on room.send that counts outgoing messages by type.
+ * Use getSentCount() to assert no unwanted messages were emitted.
+ */
+async function spyOnAllSends(page: Page): Promise<void> {
+  await page.evaluate(() => {
+    const w = window as any;
+    w.__allSends = {};
+    const orig = w.__room.send.bind(w.__room);
+    w.__room.send = (type: string, payload: any) => {
+      w.__allSends[type] = (w.__allSends[type] ?? 0) + 1;
+      return orig(type, payload);
+    };
+  });
+}
+
+async function getSentCount(page: Page, type: string): Promise<number> {
+  return page.evaluate((t) => (window as any).__allSends?.[t] ?? 0, type);
 }
 
 // The PvP battle pages are token-backed (seedAuthToken injects er_token), so a
@@ -58,18 +96,18 @@ async function setSpirit(token: string, spirit: number): Promise<void> {
   if (!res.ok) throw new Error(`/api/test/set-spirit failed (${res.status})`);
 }
 
-// ── Scenario 1: double-tap Z rechrges a1 ─────────────────────────────────────
-test('Double-tap Z in attack phase rechrges a1: ring use updates, no attack thrown', async ({
+// ── Scenario 1: R then `1` recharges a1 ──────────────────────────────────────
+// #487 Tests to Update: was "Double-tap Z recharges a1" — rewritten to R-key path.
+test('R then 1 in attack phase recharges a1: ring use restored, no attack thrown, turn advances', async ({
   browser,
 }) => {
   const h = await setupBattle(browser);
   const { attacker } = await attackerDefender(h.p1, h.p2);
 
-  // Drop a1 to 1 use so the recharge restores it (no-token-or-token, the server
-  // restores; with the test PvP token it spends spirit but still restores).
+  // #487 adversarial: R-key arms the recharge state; the next ring key sends
+  // `recharge` NOT `selectAttack`. No double-tap window timing dependency — the R
+  // gesture is a clean two-step modal.
   await setState(attacker, { uses: { a1: 1 } });
-  // Wait for the seed diff to apply before reading (the __testSetState mutation
-  // arrives as a separate broadcast patch).
   await attacker.waitForFunction(() => {
     const room = (window as any).__room;
     return room.state.players.get(room.sessionId).a1.currentUses === 1;
@@ -77,13 +115,16 @@ test('Double-tap Z in attack phase rechrges a1: ring use updates, no attack thro
   const before = await readSlot(attacker, 'a1');
   expect(before.currentUses).toBe(1);
 
-  // Two Z presses inside the 300ms window → recharge a1 (NOT an attack).
-  await attacker.keyboard.press('z');
-  await attacker.keyboard.press('z');
+  await waitForMyAttackTurn(attacker);
 
-  // The ring restores above its pre-tap value and the turn advances to the
-  // opponent (recharge consumes the turn). An ATTACK would instead drop a1 to 0
-  // and move to DEFEND_WINDOW.
+  // Step 1: press R to arm recharge state. Step 2: press 1 to complete recharge.
+  // Real keyboard input — not __* hooks.
+  await attacker.keyboard.press('r');
+  await attacker.keyboard.press('1');
+
+  // The ring restores above its pre-tap value and the turn advances to the opponent
+  // (recharge consumes the turn). An ATTACK would instead drop a1 to 0 and move to
+  // DEFEND_WINDOW.
   await attacker.waitForFunction(() => {
     const room = (window as any).__room;
     const me = room.state.players.get(room.sessionId);
@@ -97,14 +138,25 @@ test('Double-tap Z in attack phase rechrges a1: ring use updates, no attack thro
   await closeBattle(h);
 });
 
-// ── Scenario 2: single Z attacks ─────────────────────────────────────────────
-test('Single Z in attack phase throws the normal a1 attack (no recharge)', async ({ browser }) => {
+// ── Scenario 2: single key attacks immediately (no arming-window delay) ───────
+// #487 Tests to Update: updated to assert immediate selectAttack without the removed
+// RECHARGE_DOUBLE_TAP_MS deferral. `pendingAttackTimer` is gone — key-up fires immediately.
+test('Single 1 in attack phase throws the normal a1 attack immediately (no arming-window delay)', async ({
+  browser,
+}) => {
   const h = await setupBattle(browser);
   const { attacker } = await attackerDefender(h.p1, h.p2);
 
+  await waitForMyAttackTurn(attacker);
+  await spyOnAllSends(attacker);
+
   const before = await readSlot(attacker, 'a1');
 
-  await attacker.keyboard.press('z'); // one press → attack after the arming window
+  // #487 adversarial: without the RECHARGE_DOUBLE_TAP_MS pendingAttackTimer, a
+  // single key press must land selectAttack on the server immediately on key-up —
+  // no 120ms+ wait that was previously needed to confirm "not a double-tap". The
+  // tap threshold is now handled entirely by the hold timer in onAttackHold.
+  await attacker.keyboard.press('1'); // one press → attack fires on release
 
   await attacker.waitForFunction(
     () => (window as any).__room.state.phase === 'DEFEND_WINDOW',
@@ -116,6 +168,9 @@ test('Single Z in attack phase throws the normal a1 attack (no recharge)', async
   // An attack SPENDS a use (or Tailwind pays); it never RESTORES one.
   const after = await readSlot(attacker, 'a1');
   expect(after.currentUses).toBeLessThanOrEqual(before.currentUses);
+
+  // No recharge message was sent (single press, not R-key armed).
+  expect(await getSentCount(attacker, 'recharge')).toBe(0);
 
   await closeBattle(h);
 });
@@ -221,16 +276,20 @@ test('Defense phase: Z fires D1 normally, no forfeit prompt, no recharge', async
   await closeBattle(h);
 });
 
-// ── #188 Scenario 6: double-tap `4` recharges d2, restores uses, spends spirit ─
-test('Double-tap 4 in attack phase recharges d2: uses restored, spirit spent, turn passes', async ({
+// ── Scenario 6: R then `4` recharges d2 ──────────────────────────────────────
+// #487 Tests to Update: was "Double-tap `4` recharges d2" — rewritten to R-key path.
+// Confirms attack-ring and defense-ring recharge share the same R-key entry point.
+test('R then 4 in attack phase recharges d2: uses restored, spirit spent, turn passes', async ({
   browser,
 }) => {
   const h = await setupBattle(browser);
   const { attacker } = await attackerDefender(h.p1, h.p2);
   const token = await tokenOf(attacker);
 
-  // Deplete d2 in the live battle state so the recharge has a deficit to cover,
-  // and seat plenty of spirit so the full deficit is affordable.
+  // #487 adversarial: R-key recharge unifies attack-ring (a1/a2) and defense-ring
+  // (d1/d2) recharge under one gesture. Previously these were separate double-tap
+  // branches that were timing-sensitive and prone to accidental trigger. Pressing R
+  // then a defense-ring key (3 or 4) must complete a defense recharge, not a no-op.
   await setState(attacker, { uses: { d2: 0 } });
   await attacker.waitForFunction(() => {
     const room = (window as any).__room;
@@ -238,15 +297,17 @@ test('Double-tap 4 in attack phase recharges d2: uses restored, spirit spent, tu
   }, { timeout: 4000 });
   await setSpirit(token, 50);
 
+  await waitForMyAttackTurn(attacker);
+
   const d2Max = (await readSlot(attacker, 'd2')).maxUses;
   const spiritBefore = await spiritOf(token);
 
-  // Two `4` presses inside the (fast=120ms) double-tap window → recharge d2.
-  await attacker.keyboard.press('4');
+  // Step 1: press R to arm recharge state. Step 2: press 4 to complete d2 recharge.
+  await attacker.keyboard.press('r');
   await attacker.keyboard.press('4');
 
   // d2 restores above 0 and the turn advances to the opponent (recharge consumes
-  // the turn). A lone/first defense press would do nothing.
+  // the turn).
   await attacker.waitForFunction(() => {
     const room = (window as any).__room;
     const me = room.state.players.get(room.sessionId);
@@ -265,15 +326,19 @@ test('Double-tap 4 in attack phase recharges d2: uses restored, spirit spent, tu
   await closeBattle(h);
 });
 
-// ── #188 Scenario 7: insufficient spirit → partial/no-op but turn still consumed
-test('Double-tap 3 on depleted d1 with no spirit: no restore but the turn is still consumed', async ({
+// ── Scenario 7: R then `3` on depleted d1 with no spirit ─────────────────────
+// #487 Tests to Update: was "Double-tap `3` on depleted d1 with no spirit" — rewritten.
+// The recharge turn is still consumed; spirit was 0 so no actual restore occurs.
+test('R then 3 on depleted d1 with no spirit: no restore but the turn is still consumed', async ({
   browser,
 }) => {
   const h = await setupBattle(browser);
   const { attacker } = await attackerDefender(h.p1, h.p2);
   const token = await tokenOf(attacker);
 
-  // Deplete d1 and drain spirit to 0 → nothing is affordable.
+  // #487 adversarial: spirit=0 means the server cannot afford any ring use — the
+  // recharge is sent and consumed as a turn action, but the ring stays at 0 uses.
+  // Previously this was a double-tap on `3`; now R-key arms, `3` sends the recharge.
   await setState(attacker, { uses: { d1: 0 } });
   await attacker.waitForFunction(() => {
     const room = (window as any).__room;
@@ -282,9 +347,11 @@ test('Double-tap 3 on depleted d1 with no spirit: no restore but the turn is sti
   await setSpirit(token, 0);
   expect(await spiritOf(token)).toBe(0);
 
-  // Double-tap `3` → recharge d1. With zero affordable spirit the ring stays at 0
-  // but the turn is still consumed (the recharge always advances the turn).
-  await attacker.keyboard.press('3');
+  await waitForMyAttackTurn(attacker);
+
+  // R to arm, then 3 to complete — recharge d1. With zero affordable spirit the
+  // ring stays at 0 but the turn is still consumed (recharge always advances the turn).
+  await attacker.keyboard.press('r');
   await attacker.keyboard.press('3');
 
   await attacker.waitForFunction(() => {
@@ -300,16 +367,19 @@ test('Double-tap 3 on depleted d1 with no spirit: no restore but the turn is sti
   await closeBattle(h);
 });
 
-// ── #188 Scenario 8: forfeit chord 3+4 still raises the forfeit prompt ─────────
-test('3+4 simultaneous in attack phase still shows the forfeit confirm (no regression)', async ({
+// ── Scenario 8: forfeit chord 3+4 not broken by R-key restructure ────────────
+// #487 Tests to Update: was "3+4 chord — no regression" (Scenario 8 from #188).
+// Re-confirms that after pendingAttackTimer removal, the forfeit chord still fires.
+test('3+4 simultaneous in attack phase still shows the forfeit confirm (no regression after #487)', async ({
   browser,
 }) => {
   const h = await setupBattle(browser);
   const { attacker } = await attackerDefender(h.p1, h.p2);
 
-  // Press `3` then `4` back-to-back (well within FORFEIT_CHORD_MS over a local
-  // socket) → the d1+d2 chord raises the forfeit prompt. The new defense-recharge
-  // branch runs AFTER the chord check, so it must not shadow the forfeit.
+  // #487 adversarial: the R-key handler and the removal of pendingAttackTimer must
+  // not shadow the forfeit chord. The chord check in handleAttackPhasePress must still
+  // fire BEFORE any R-armed recharge logic, so a clean 3+4 gesture triggers the prompt
+  // even with the new input model in place.
   await attacker.keyboard.down('3');
   await attacker.keyboard.down('4');
   await attacker.keyboard.up('3');
@@ -321,6 +391,234 @@ test('3+4 simultaneous in attack phase still shows the forfeit confirm (no regre
 
   // Still the attacker's live turn — the prompt is open, the duel has not ended.
   expect(await isMyTurn(attacker)).toBe(true);
+
+  await closeBattle(h);
+});
+
+// ── Scenario 9 (NEW): R then Esc cancels recharge-armed state ────────────────
+test('R then Esc in attack phase cancels recharge-armed state: no recharge sent, subsequent 1 attacks normally', async ({
+  browser,
+}) => {
+  const h = await setupBattle(browser);
+  const { attacker } = await attackerDefender(h.p1, h.p2);
+
+  await waitForMyAttackTurn(attacker);
+  await spyOnAllSends(attacker);
+
+  // #487 adversarial: Esc is one of three cancellation paths for recharge-armed state
+  // (Esc, R-again, 2500ms timeout). After cancellation, the mode must be fully reset —
+  // pressing a ring key must send selectAttack (normal attack), not recharge.
+  // If Esc doesn't cancel, the subsequent `1` press would send recharge not selectAttack,
+  // leaving the player stuck in recharge mode for the rest of their turn.
+  await attacker.keyboard.press('r'); // arm recharge
+  await attacker.keyboard.press('Escape'); // cancel
+
+  // Give the client a moment to process the cancel before the next key.
+  await attacker.waitForTimeout(100);
+
+  // Now pressing 1 should send a normal attack, not recharge.
+  await attacker.keyboard.press('1');
+
+  await attacker.waitForFunction(
+    () => (window as any).__room.state.phase === 'DEFEND_WINDOW',
+    { timeout: 5000 },
+  );
+
+  // No recharge was sent — cancelled correctly.
+  expect(await getSentCount(attacker, 'recharge')).toBe(0);
+
+  // The attack slot is a1 — the press went through as a normal attack.
+  const attackerSlot = await attacker.evaluate(() => (window as any).__room.state.attackerSlot);
+  expect(attackerSlot).toBe('a1');
+
+  await closeBattle(h);
+});
+
+// ── Scenario 10 (NEW): R again cancels recharge-armed state ──────────────────
+test('R then R again in attack phase cancels recharge-armed state: no recharge sent', async ({
+  browser,
+}) => {
+  const h = await setupBattle(browser);
+  const { attacker } = await attackerDefender(h.p1, h.p2);
+
+  await waitForMyAttackTurn(attacker);
+  await spyOnAllSends(attacker);
+
+  // #487 adversarial: pressing R while already armed must cancel the armed state
+  // (toggle-off), not send a recharge for some undefined slot. This prevents a
+  // player from accidentally locking themselves into recharge mode indefinitely.
+  await attacker.keyboard.press('r'); // arm
+  await attacker.keyboard.press('r'); // cancel via second R
+
+  // Give the client a moment to process the cancel.
+  await attacker.waitForTimeout(100);
+
+  // Press 1 — should attack normally since recharge was cancelled.
+  await attacker.keyboard.press('1');
+
+  await attacker.waitForFunction(
+    () => (window as any).__room.state.phase === 'DEFEND_WINDOW',
+    { timeout: 5000 },
+  );
+
+  // No recharge was sent.
+  expect(await getSentCount(attacker, 'recharge')).toBe(0);
+
+  await closeBattle(h);
+});
+
+// ── Scenario 11 (NEW): 2500ms timeout auto-cancels recharge-armed state ──────
+test('R during attack phase then 2500ms timeout: recharge-armed state auto-cancels, next 1 attacks', async ({
+  browser,
+}) => {
+  const h = await setupBattle(browser);
+  const { attacker } = await attackerDefender(h.p1, h.p2);
+
+  await waitForMyAttackTurn(attacker);
+  await spyOnAllSends(attacker);
+
+  // #487 adversarial: the ~2500ms auto-cancel prevents a player from accidentally
+  // arming recharge and walking away, leaving their turn frozen. After the timeout,
+  // the next ring key must behave as a normal attack, not a recharge completion.
+  // If the timeout does not cancel, the subsequent key press would incorrectly send
+  // a recharge and consume the turn's attack slot as a recharge.
+  await attacker.keyboard.press('r'); // arm recharge
+
+  // Wait for the auto-cancel timeout (2500ms + some buffer for async processing).
+  await attacker.waitForTimeout(3000);
+
+  // Pressing 1 now should send a normal attack, not complete a recharge.
+  await attacker.keyboard.press('1');
+
+  await attacker.waitForFunction(
+    () => (window as any).__room.state.phase === 'DEFEND_WINDOW',
+    { timeout: 5000 },
+  );
+
+  // No recharge was sent — auto-cancel worked.
+  expect(await getSentCount(attacker, 'recharge')).toBe(0);
+
+  const attackerSlot = await attacker.evaluate(() => (window as any).__room.state.attackerSlot);
+  expect(attackerSlot).toBe('a1');
+
+  await closeBattle(h);
+});
+
+// ── Scenario 12 (NEW): off-turn R is a no-op ─────────────────────────────────
+test('Off-turn R (during opponent ATTACK_SELECT) is a no-op: rechargeArmed stays false, no server message', async ({
+  browser,
+}) => {
+  const h = await setupBattle(browser);
+  // We need the OTHER player to be the attacker so we can test the non-attacker R press.
+  // attackerDefender returns the player whose ATTACK_SELECT fires first.
+  // We use the DEFENDER's page to press R while it's the attacker's turn.
+  const { attacker, defender } = await attackerDefender(h.p1, h.p2);
+
+  await spyOnAllSends(defender);
+
+  // #487 adversarial: R pressed when it is NOT the player's turn must be ignored
+  // entirely — no recharge message, no UI state change (rechargeArmed stays false).
+  // Without this guard, a player could arm recharge out-of-turn and then have it
+  // fire unexpectedly when the turn eventually reaches them.
+  // Ensure it's the ATTACKER's turn, so it is NOT the defender's turn.
+  await waitForMyAttackTurn(attacker);
+
+  // The defender is not the attacker right now — R press should be off-turn no-op.
+  await defender.keyboard.press('r');
+
+  // Wait a moment to allow any async server message to propagate.
+  await attacker.waitForTimeout(300);
+
+  // No recharge or any other unexpected message sent from the defender.
+  expect(await getSentCount(defender, 'recharge')).toBe(0);
+  expect(await getSentCount(defender, 'selectAttack')).toBe(0);
+
+  // The rechargeArmed state on the defender client must remain false.
+  const rechargeArmed = await defender.evaluate(() => {
+    const scene = (window as any).__scene;
+    return scene?.rechargeArmed ?? false;
+  });
+  expect(rechargeArmed).toBe(false);
+
+  await closeBattle(h);
+});
+
+// ── Scenario 13 (NEW): R → z completes recharge for a1 (z is alias for 1) ────
+test('R then z in attack phase recharges a1: z key is treated as slot-1 ring in recharge-armed mode', async ({
+  browser,
+}) => {
+  const h = await setupBattle(browser);
+  const { attacker } = await attackerDefender(h.p1, h.p2);
+
+  // #487 adversarial: `z` has always mapped to a1/d1 in GDD §6.3. In recharge-armed
+  // mode, `z` must be treated as a slot-key for ring a1 (same as pressing `1`).
+  // If `z` is not wired to the recharge completion handler, the player cannot use
+  // their familiar `z` binding to recharge and is stuck until timeout.
+  await setState(attacker, { uses: { a1: 1 } });
+  await attacker.waitForFunction(() => {
+    const room = (window as any).__room;
+    return room.state.players.get(room.sessionId).a1.currentUses === 1;
+  }, { timeout: 4000 });
+
+  await waitForMyAttackTurn(attacker);
+  await spyOnAllSends(attacker);
+
+  await attacker.keyboard.press('r'); // arm recharge
+  await attacker.keyboard.press('z'); // z = slot 1 → complete recharge for a1
+
+  await attacker.waitForFunction(() => {
+    const room = (window as any).__room;
+    const me = room.state.players.get(room.sessionId);
+    return me.a1.currentUses > 1 && room.state.currentAttackerId !== room.sessionId;
+  }, { timeout: 5000 });
+
+  // Recharge fired, no selectAttack.
+  expect(await getSentCount(attacker, 'recharge')).toBe(1);
+  expect(await getSentCount(attacker, 'selectAttack')).toBe(0);
+
+  await closeBattle(h);
+});
+
+// ── Scenario 14 (NEW): R → 3 recharges d1 (confirms unified A+D recharge path) ─
+test('R then 3 in attack phase recharges d1: confirms A-ring and D-ring share single R-key path', async ({
+  browser,
+}) => {
+  const h = await setupBattle(browser);
+  const { attacker } = await attackerDefender(h.p1, h.p2);
+  const token = await tokenOf(attacker);
+
+  // #487 E2E Scenario 2: "R then 3 → recharge D1 (defense ring)" — this confirms
+  // that attack-ring and defense-ring recharge share the same R-key path, replacing
+  // two separate double-tap branches (one for attack rings, one for defense rings).
+  await setState(attacker, { uses: { d1: 1 } });
+  await attacker.waitForFunction(() => {
+    const room = (window as any).__room;
+    return room.state.players.get(room.sessionId).d1.currentUses === 1;
+  }, { timeout: 4000 });
+  await setSpirit(token, 50);
+
+  await waitForMyAttackTurn(attacker);
+  await spyOnAllSends(attacker);
+
+  const before = await readSlot(attacker, 'd1');
+
+  await attacker.keyboard.press('r');
+  await attacker.keyboard.press('3');
+
+  await attacker.waitForFunction(() => {
+    const room = (window as any).__room;
+    const me = room.state.players.get(room.sessionId);
+    return me.d1.currentUses > before.currentUses || room.state.currentAttackerId !== room.sessionId;
+  }, { timeout: 5000 });
+
+  const after = await readSlot(attacker, 'd1');
+  expect(after.currentUses).toBeGreaterThanOrEqual(before.currentUses);
+  expect(await isMyTurn(attacker)).toBe(false); // turn advanced
+
+  // Recharge fired (not selectAttack or releaseAttack).
+  expect(await getSentCount(attacker, 'recharge')).toBe(1);
+  expect(await getSentCount(attacker, 'selectAttack')).toBe(0);
+  expect(await getSentCount(attacker, 'releaseAttack')).toBe(0);
 
   await closeBattle(h);
 });
