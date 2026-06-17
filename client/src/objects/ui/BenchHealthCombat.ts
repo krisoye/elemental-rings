@@ -1,5 +1,11 @@
 import Phaser from 'phaser';
-import { SLOT_KEYS } from '../../Constants';
+import {
+  SLOT_KEYS,
+  RECHARGE_FILL,
+  RECHARGE_ALPHA,
+  RECHARGE_STROKE,
+  RECHARGE_STROKE_WIDTH,
+} from '../../Constants';
 import type { SlotKey } from '../../Constants';
 import { InventoryGrid, type RingData, GRID_CARD_W, GRID_COL_GAP, GRID_ROW_GAP } from '../InventoryGrid';
 import { RingCard } from './RingCard';
@@ -233,9 +239,9 @@ export class BenchHealthCombat extends Phaser.GameObjects.Container {
     if (this.onRechargeClick !== undefined) {
       this.addDomLbl(COL_HEALTH_X, ROW_COMBAT1_Y - LABEL_ABOVE_Y_OFFSET, 'RECHARGE', 11, '#ffcc44', true);
       const rechargeSlot = this.scene.add
-        .rectangle(COL_HEALTH_X, ROW_COMBAT1_Y, CARD_W, CARD_H, 0x443300, 0.6)
+        .rectangle(COL_HEALTH_X, ROW_COMBAT1_Y, CARD_W, CARD_H, RECHARGE_FILL, RECHARGE_ALPHA)
         .setScrollFactor(0)
-        .setStrokeStyle(2, 0xffcc44)
+        .setStrokeStyle(RECHARGE_STROKE_WIDTH, RECHARGE_STROKE)
         .setName('recharge-slot')
         .setInteractive({ useHandCursor: true })
         .on('pointerdown', () => this.onRechargeClick!());

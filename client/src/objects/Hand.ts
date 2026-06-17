@@ -1,5 +1,6 @@
 import Phaser from 'phaser';
 import { RingSlot } from './RingSlot';
+import { addDomLabel } from './ui/DomLabel';
 import {
   HAND_SLOT_X,
   HAND_Y,
@@ -9,6 +10,12 @@ import {
   SLOT_LABELS,
   SlotKey,
   ringComponents,
+  RECHARGE_SLOT_X,
+  RECHARGE_DIVIDER_X,
+  RECHARGE_FILL,
+  RECHARGE_ALPHA,
+  RECHARGE_STROKE,
+  RECHARGE_STROKE_WIDTH,
 } from '../Constants';
 
 /**
@@ -103,26 +110,29 @@ export class Hand extends Phaser.GameObjects.Container {
     scene.input.keyboard!.addKey(KC.C).on('down', () => this.onAttackHold?.('a2', true));
     scene.input.keyboard!.addKey(KC.C).on('up', () => this.onAttackHold?.('a2', false));
 
-    // #487 — "↻ Recharge" touch button. Arms the same recharge-select state as R.
-    // Positioned above the ring-card row (HAND_Y - 48) and to the right.
-    // Only visible/active when onArmRecharge is supplied (PvP / vsAI battle).
+    // #490 — RECHARGE slot card in the Hand row (left of Thumb at HAND_SLOT_X[0]=580).
+    // Gold styling matches BenchHealthCombat's RECHARGE slot (constants shared via
+    // Constants.ts). Only rendered when onArmRecharge is supplied (PvP / vsAI battle).
     if (this.onArmRecharge) {
-      const btnBg = scene.add.rectangle(CANVAS_W - 80, HAND_Y - 48, 120, 36, 0x113355, 0.85)
-        .setStrokeStyle(1, 0x4488cc)
-        .setInteractive()
+      // Gold 'RECHARGE' label above the slot card (DOM — crisp, dark-backed).
+      addDomLabel(scene, RECHARGE_SLOT_X, HAND_Y - 34, 'RECHARGE', {
+        fontPx: 11,
+        color: '#ffcc44',
+        align: 'center',
+        background: 'rgba(0,0,0,0.55)',
+        padding: '1px 3px',
+      });
+      // Gold rectangle at slot position — same footprint as a RingSlot card (58×90).
+      const rechargeBg = scene.add
+        .rectangle(RECHARGE_SLOT_X, HAND_Y, 58, 90, RECHARGE_FILL, RECHARGE_ALPHA)
         .setScrollFactor(0)
-        .setDepth(500);
-      const btnLabel = scene.add.text(CANVAS_W - 80, HAND_Y - 48, '↻ Recharge', {
-        fontSize: '15px',
-        color: '#aaddff',
-      })
-        .setOrigin(0.5)
-        .setScrollFactor(0)
-        .setDepth(501);
-      btnBg.on('pointerdown', () => this.onArmRecharge!());
-      // Suppress unused-variable lint without reassigning; both are Phaser objects
-      // managed by the scene display list and cleaned up with it.
-      void btnLabel;
+        .setStrokeStyle(RECHARGE_STROKE_WIDTH, RECHARGE_STROKE)
+        .setInteractive();
+      rechargeBg.on('pointerdown', () => this.onArmRecharge!());
+      // Vertical divider line separating the RECHARGE slot from the five ring slots.
+      scene.add
+        .line(0, 0, RECHARGE_DIVIDER_X, HAND_Y - 45, RECHARGE_DIVIDER_X, HAND_Y + 45, RECHARGE_STROKE, 0.5)
+        .setScrollFactor(0);
     }
 
     this.publishSlotPositions();
