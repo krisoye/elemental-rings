@@ -18,12 +18,13 @@ import {
 } from '../../../shared/timing';
 import {
   CHARGE_THRESHOLD_MS as CHARGE_THRESHOLD_MS_SHARED,
-  HIT_CONE_PX as HIT_CONE_PX_SHARED,
-  Y_AMPLITUDE_PX as Y_AMPLITUDE_PX_SHARED,
-  BASE_PERIOD_MS as BASE_PERIOD_MS_SHARED,
-  PERIOD_DECAY_MS as PERIOD_DECAY_MS_SHARED,
   MAX_CHARGE_MS as MAX_CHARGE_MS_SHARED,
   CHARGE_TELEGRAPH_MIN_MS_PROD,
+  SWEEP_RANGE_DEG as SWEEP_RANGE_DEG_SHARED,
+  HIT_CONE_DEG as HIT_CONE_DEG_SHARED,
+  BASE_SWEEP_MS as BASE_SWEEP_MS_SHARED,
+  SWEEP_SPEEDUP as SWEEP_SPEEDUP_SHARED,
+  MAX_SWEEPS as MAX_SWEEPS_SHARED,
 } from '../../../shared/chargeConstants';
 
 // Re-export the shared timing constants so existing server imports of
@@ -35,11 +36,12 @@ export { BLOCK_WINDOW_MS, MIN_COMBO_GAP_MS, MAX_COMBO_GAP_MS, STATUS_THRESHOLD }
 // Re-export shared charge constants for server-side imports.
 export {
   CHARGE_THRESHOLD_MS_SHARED as CHARGE_THRESHOLD_MS,
-  HIT_CONE_PX_SHARED as HIT_CONE_PX,
-  Y_AMPLITUDE_PX_SHARED as Y_AMPLITUDE_PX,
-  BASE_PERIOD_MS_SHARED as BASE_PERIOD_MS,
-  PERIOD_DECAY_MS_SHARED as PERIOD_DECAY_MS,
   MAX_CHARGE_MS_SHARED as MAX_CHARGE_MS,
+  SWEEP_RANGE_DEG_SHARED as SWEEP_RANGE_DEG,
+  HIT_CONE_DEG_SHARED as HIT_CONE_DEG,
+  BASE_SWEEP_MS_SHARED as BASE_SWEEP_MS,
+  SWEEP_SPEEDUP_SHARED as SWEEP_SPEEDUP,
+  MAX_SWEEPS_SHARED as MAX_SWEEPS,
 };
 
 const E2E_FAST = process.env.E2E_FAST === '1';
@@ -53,10 +55,11 @@ export const STARTING_HEARTS = 3;
 export const STARTING_USES = 3;
 export const DEFEND_WINDOW_MS = TELEGRAPH_MS + BLOCK_WINDOW_MS; // 1100 (350 under E2E_FAST)
 
-// ── Charge attack constants (#485, GDD §6.3 Option A) ───────────────────────
-// CHARGE_THRESHOLD_MS, HIT_CONE_PX, Y_AMPLITUDE_PX, BASE_PERIOD_MS,
-// PERIOD_DECAY_MS, and MAX_CHARGE_MS are sourced from shared/chargeConstants.ts
-// and re-exported above. Only the E2E_FAST-dependent value lives here.
+// ── Charge attack constants (#491, GDD §6.3) ────────────────────────────────
+// CHARGE_THRESHOLD_MS, MAX_CHARGE_MS, SWEEP_RANGE_DEG, HIT_CONE_DEG,
+// BASE_SWEEP_MS, SWEEP_SPEEDUP, and MAX_SWEEPS are sourced from
+// shared/chargeConstants.ts and re-exported above. Only the E2E_FAST-dependent
+// value lives here.
 
 /** Telegraph window at maximum charge (fastest projectile, tightest parry).
  *  Shortened under E2E_FAST to keep the E2E suite fast. */

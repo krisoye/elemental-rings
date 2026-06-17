@@ -193,15 +193,17 @@ export interface ChargeMissPayload {
   attackerSlot: AttackSlot;
 }
 
-// #485 — broadcast by the server when a charge hold BEGINS (handleChargeStart).
-// Both clients render the oscillating idle orb from the shared deterministic formula
+// #485/#491 — broadcast by the server when a charge hold BEGINS (handleChargeStart).
+// Both clients render the arc-swing idle orb from the shared deterministic formula
 // keyed off `startTime` (server wall-clock ms). The DEFENDER uses this to see the
-// oscillation in real time without a separate per-frame broadcast. The client
-// computes yOffset(Date.now() - startTime, ...) each frame, matching the attacker.
+// arc in real time without a separate per-frame broadcast. The client computes
+// orbAngle(Date.now() - startTime, ...) each frame, matching the attacker.
+// `startAngle` is always −45 (the orb always starts at the left of the arc).
 export interface ChargeOrbStartPayload {
   attackerId: string;
   slot: AttackSlot;
   startTime: number; // server wall-clock ms at chargeStart (for deterministic replay)
+  startAngle: number; // always −45 (locked: orb starts at −SWEEP_RANGE_DEG)
 }
 
 // #485 — broadcast by the server when the charge orb is released (handleReleaseAttack

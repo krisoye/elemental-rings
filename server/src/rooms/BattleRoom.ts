@@ -68,7 +68,7 @@ import {
   ChargeOrbStartPayload,
   ChargeOrbEndPayload,
 } from '../../../shared/types';
-import { computeIsHit as chargeIsHit, computeSharpness as chargeSharpness, computeTelegraphDuration as chargeTelegraphDuration } from '../game/ChargeAttack';
+import { computeIsHitAngle as chargeIsHit, computeSharpness as chargeSharpness, computeTelegraphDuration as chargeTelegraphDuration } from '../game/ChargeAttack';
 
 /** Fixed sessionId used for the virtual AI player (it has no Colyseus client). */
 const AI_ID = 'AI';
@@ -1099,21 +1099,22 @@ export class BattleRoom extends Room<{ state: BattleState }> {
       attackerId: id,
       slot: payload.slot,
       startTime: this.chargeStartTimes.get(id)!,
+      startAngle: -45, // orb always starts at −SWEEP_RANGE_DEG (locked choice)
     } satisfies ChargeOrbStartPayload);
   }
 
   /**
-   * #485 — release a charged attack. Computes holdDuration server-authoritatively
+   * #485/#491 — release a charged attack. Computes holdDuration server-authoritatively
    * from the chargeStart timestamp. A hold below CHARGE_THRESHOLD_MS is treated as
    * a tap (always hits, standard telegraph). A hold above the threshold checks the
-   * oscillation Y against HIT_CONE_PX:
+   * arc-swing angle against HIT_CONE_DEG (±10° around 0°):
    *   - Hit  → launch telegraph with variable duration based on sharpness; defender
    *             phase proceeds at compressed parry window.
    *   - Miss → deduct one ring use, broadcast `chargeMiss`, return to initiative.
    *             The defender phase is skipped entirely.
    *
    * Fusion variant: when `fusionSecondSlot` is present the caller held the first
-   * slot and tapped the second. A1 is the charged slot (hit/miss determined by Y);
+   * slot and tapped the second. A1 is the charged slot (hit/miss determined by angle);
    * A2 always hits (tap). If A1 misses, only A2's exchange opens a defend window.
    * Both slots' uses are deducted regardless of hit/miss on A1.
    */
@@ -1164,7 +1165,7 @@ export class BattleRoom extends Room<{ state: BattleState }> {
       return;
     }
 
-    // Compute oscillation outcome from the server's holdDuration.
+    // Compute arc-swing outcome from the server's holdDuration.
     const hit = chargeIsHit(holdMs);
     const sharp = chargeSharpness(holdMs);
 
