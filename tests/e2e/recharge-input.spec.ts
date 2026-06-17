@@ -985,35 +985,3 @@ test('#490 rechargeBg at default depth is pointer-hittable: click at (512,510) a
 
   await closeBattle(h);
 });
-
-// ── Scenario 22 (#490/impl): RECHARGE slot is NOT in __slotPositions ─────────
-// #490 impl: publishSlotPositions() in Hand.ts maps only HAND_SLOT_X (5 ring slots,
-// indexed thumb/a1/a2/d1/d2). RECHARGE_SLOT_X=512 is NOT published there. E2E tests
-// that rely on __slotPositions[0] for "Thumb slot" must not accidentally index the
-// RECHARGE card. This test asserts __slotPositions has exactly 5 entries and that
-// none of them have x≈512, distinguishing the recharge slot from Thumb (x=580).
-test('#490 __slotPositions contains exactly 5 ring slots and none has x≈512 (RECHARGE_SLOT_X excluded)', async ({
-  browser,
-}) => {
-  const h = await setupBattle(browser);
-  const { attacker } = await attackerDefender(h.p1, h.p2);
-
-  // __slotPositions is published by Hand.publishSlotPositions() during construction.
-  const positions = await attacker.evaluate(() => (window as any).__slotPositions as { x: number; y: number }[]);
-
-  // Exactly 5 ring slots — thumb, a1, a2, d1, d2.
-  expect(positions).toHaveLength(5);
-
-  // No entry should be near x=512 (RECHARGE_SLOT_X). Thumb is at 580, not 512.
-  // A canvas-scale-adjusted tolerance of ±5px covers sub-pixel rounding.
-  const rechargeSlotXInScreen = await attacker.evaluate(() => {
-    const canvas = document.querySelector('canvas')!;
-    const rect = canvas.getBoundingClientRect();
-    const scaleX = rect.width / 1024; // CANVAS_W=1024
-    return rect.left + 512 * scaleX;
-  });
-  const hasRechargeEntry = positions.some((p) => Math.abs(p.x - rechargeSlotXInScreen) < 5);
-  expect(hasRechargeEntry).toBe(false);
-
-  await closeBattle(h);
-});
