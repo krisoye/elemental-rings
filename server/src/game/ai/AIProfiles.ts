@@ -70,6 +70,16 @@ export interface AIProfile {
   lowHeartThreshold: number;
   comboGapMinMs: number;
   comboGapMaxMs: number;
+  /** Probability the AI chooses a charged attack over a tap on its attack turn. */
+  chargeAttemptProb: number;
+  /** Which sweep (1-based) the AI aims to release on. */
+  targetSweep: 1 | 2 | 3;
+  /** Standard deviation (degrees) of Gaussian noise applied to the release angle. */
+  chargeReleaseSigmaDeg: number;
+  /** chargeAttemptProb override when hearts ≤ lowHeartThreshold (RESILIENT). */
+  lowHeartChargeAttemptProb?: number;
+  /** targetSweep override when hearts ≤ lowHeartThreshold (RESILIENT). */
+  lowHeartTargetSweep?: 1 | 2 | 3;
 }
 
 export const AI_PROFILES: Record<AIPersonality, AIProfile> = {
@@ -86,6 +96,9 @@ export const AI_PROFILES: Record<AIPersonality, AIProfile> = {
     lowHeartThreshold: 1,
     comboGapMinMs: MIN_COMBO_GAP_MS,
     comboGapMaxMs: MIN_COMBO_GAP_MS + 100,
+    chargeAttemptProb: 1.0,
+    targetSweep: 3,
+    chargeReleaseSigmaDeg: 5,
   },
   DEFENSIVE: {
     personality: 'DEFENSIVE',
@@ -100,6 +113,9 @@ export const AI_PROFILES: Record<AIPersonality, AIProfile> = {
     lowHeartThreshold: 1,
     comboGapMinMs: MIN_COMBO_GAP_MS,
     comboGapMaxMs: MIN_COMBO_GAP_MS + 100,
+    chargeAttemptProb: 0.0,
+    targetSweep: 1,
+    chargeReleaseSigmaDeg: 999,
   },
   STATUS_HUNTER: {
     personality: 'STATUS_HUNTER',
@@ -114,6 +130,9 @@ export const AI_PROFILES: Record<AIPersonality, AIProfile> = {
     lowHeartThreshold: 1,
     comboGapMinMs: MIN_COMBO_GAP_MS,
     comboGapMaxMs: MIN_COMBO_GAP_MS + 100,
+    chargeAttemptProb: 0.2,
+    targetSweep: 1,
+    chargeReleaseSigmaDeg: 15,
   },
   RESILIENT: {
     personality: 'RESILIENT',
@@ -128,6 +147,11 @@ export const AI_PROFILES: Record<AIPersonality, AIProfile> = {
     lowHeartThreshold: 1,
     comboGapMinMs: MIN_COMBO_GAP_MS,
     comboGapMaxMs: MIN_COMBO_GAP_MS + 100,
+    chargeAttemptProb: 0.0,
+    targetSweep: 2,
+    chargeReleaseSigmaDeg: 10,
+    lowHeartChargeAttemptProb: 0.8,
+    lowHeartTargetSweep: 2,
   },
 };
 

@@ -87,6 +87,8 @@ export interface AttackDecision {
    * The controller dispatches `handleSelectDoubleAttack` when this is present.
    */
   double?: DoubleAttackDecision;
+  /** #493 — when set, the AI throws a charged attack on this slot. */
+  charge?: { targetSweep: 1 | 2 | 3 };
 }
 
 export interface DefenseDecision {
@@ -137,6 +139,20 @@ function fewestUsesAttack(slots: AttackSlotView[]): AttackSlotView {
  * the defensive fallback returns 'a1'.
  */
 export function decideAttack(view: BoardView, profile: AIProfile, rng: Rng): AttackDecision {
+  // #493 — charge branch: outermost gate, skips double-attack path entirely.
+  // Guard on > 0 avoids consuming an RNG draw for non-charging personas.
+  const low = isLowHearts(profile, view.hearts);
+  const chargeProb = low && profile.lowHeartChargeAttemptProb !== undefined
+    ? profile.lowHeartChargeAttemptProb
+    : profile.chargeAttemptProb;
+  if (chargeProb > 0 && rng.next() < chargeProb) {
+    const single = singleAttackDecision(view, profile);
+    const targetSweep = low && profile.lowHeartTargetSweep !== undefined
+      ? profile.lowHeartTargetSweep
+      : profile.targetSweep;
+    return { ...single, charge: { targetSweep } };
+  }
+
   const single = singleAttackDecision(view, profile);
 
   // EPIC #268 — fusion-thumb double attack. Only eligible bosses reach this; a
