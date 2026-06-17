@@ -70,6 +70,8 @@ The world consists of four biomes implemented across five region scenes. The For
 
 **Progression summary:** Start in Forest with Wind/Earth rings. Swamp introduces Water/Wood triangle. Desert is the first Fire encounter. Defeating the Molten Sovereign is the current content endpoint.
 
+**Biome difficulty floor and NPC skill distribution (#492):** Each biome applies a minimum spirit floor that rises with progression depth (`REGION_STEP` = 25 per biome, 5 biomes: Forest → Snow → Swamp → Desert → Volcano). Boss classes have a class offset stacked on top (`gate` +15, `sub` +25, `major` +40); roamers have class offset 0 (forest roamers remain floor-free). Every NPC also has a seeded skill score drawn from a class-specific band — major bosses always draw from a high-skill band, roamers from a wide low band — producing individual variation within each class. See §10.5 (NPC Personality Types) for full details.
+
 ---
 
 ### 10.12 Overworld Architecture

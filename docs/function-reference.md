@@ -117,19 +117,32 @@ export const BOSS_MODIFIERS: Record<BossTier, BossModifier>
 // Keys: 'major' | 'gate' | 'sub'
 ```
 
-**Biome boss spirit bonus table (#464)**
+**Region difficulty floor (#492 — replaces #464 BIOME_BOSS_SPIRIT_BONUS)**
 
-Flat spirit bonus stacked on top of `floor(playerSpiritMax × spiritMult)` for boss-tier NPCs only. Roamers (no `boss` descriptor) receive no bonus. The table is future-ready for all four biomes even though Snow/Swamp/Desert bosses are not yet authored.
+Parameterised spirit floor for all NPC classes (roamers and bosses) across the full biome progression. `BIOME_BOSS_SPIRIT_BONUS` is removed; `spiritFloor`/`floorTier` are the new canonical interface.
 
 ```ts
-export const BIOME_BOSS_SPIRIT_BONUS: Record<string, Partial<Record<BossTier, number>>>
-// forest: { gate: 15, sub: 25, major: 40 }
-// snow:   { gate: 40, sub: 50, major: 65 }
-// swamp:  { gate: 65, sub: 75, major: 90 }
-// desert: { gate: 90, sub: 100, major: 115 }
+export type NpcClass = 'roamer' | BossTier;  // 'roamer' | 'gate' | 'sub' | 'major'
+
+export const CLASS_OFFSET: Record<NpcClass, number>
+// roamer: 0 (LOCKED — forest roamers remain floor-free)
+// gate:  15, sub: 25, major: 40
+
+export const BIOME_ORDER: string[] = ['forest', 'snow', 'swamp', 'desert', 'volcano'];
+export const REGION_STEP = 25;
+
+export function spiritFloor(biome: string, npcClass: NpcClass): number
+// Returns CLASS_OFFSET[npcClass] + REGION_STEP × BIOME_ORDER.indexOf(biome).
+// Returns 0 for an unknown biome (safe default).
+
+export function floorTier(biome: string): number
+// Returns BIOME_ORDER.indexOf(biome) + 1 (1-indexed tier). Returns 1 for unknown biome.
+
+export const SKILL_BAND: Record<NpcClass, { lo: number; hi: number }>
+// roamer: [0.20, 0.70], gate: [0.55, 0.80], sub: [0.70, 0.90], major: [0.90, 1.00]
 ```
 
-Applied in `BattleRoom.onJoin` after the base spirit computation, before `aiPs.spiritMax`/`spiritCurrent` broadcast. Lookup: `BIOME_BOSS_SPIRIT_BONUS[npcBiome]?.[boss.tier] ?? 0`.
+`spiritFloor` is used in `computeNpcSpirit` (see `ai/AILoadout.ts`). Roamers use `max(spiritFloor, personalityBase)`; bosses use additive `personalityBase + spiritFloor`. Reproduced values from the old table: forest/gate=15, forest/sub=25, forest/major=40, snow/gate=40, snow/sub=50, snow/major=65, swamp/gate=65, swamp/sub=75, swamp/major=90, desert/gate=90, desert/sub=100, desert/major=115; plus volcano tier: gate=115, sub=125, major=140.
 
 ---
 
@@ -558,7 +571,37 @@ export function computeNpcSpirit(
 ): number
 ```
 
-The NPC's spirit pool for a duel. Returns `floor(playerSpiritMax × mult) + bonus`, where `mult` is `BOSS_MODIFIERS[bossTier].spiritMult` when `bossTier` is supplied (boss) else `PERSONALITY_SPIRIT_MULT[personality]` (roamer), and `bonus` is `BIOME_BOSS_SPIRIT_BONUS[biome][bossTier]` only when both `biome` and `bossTier` are present (0 otherwise). The floor is applied to the base before the un-floored bonus is added. Single source of truth for NPC spirit: `BattleRoom.onJoin` and `GET /api/overworld/npcs` both call it with `getSpiritAndFood(playerId).spirit_max`, so the overworld preview SP equals the value the AI fields in battle.
+The NPC's spirit pool for a duel (#492 — updated formula).
+
+- **Boss path** (`bossTier` supplied): `floor(playerSpiritMax × spiritMult) + spiritFloor(biome, bossTier)`. The additive formula preserves the boss's player-scaled base and stacks the region floor on top.
+- **Roamer path** (`bossTier` absent): `max(spiritFloor(biome, 'roamer'), floor(playerSpiritMax × mult))`. The floor acts as a minimum, not an addend, so forest roamers (floor=0) remain fully player-scaled while late-game biome roamers gain a minimum challenge floor.
+- Returns 0 for unknown or missing biome (safe default).
+
+Signature is unchanged from #464 — existing callers (`BattleRoom.onJoin`, `GET /api/overworld/npcs`) require no update. Both call with `getSpiritAndFood(playerId).spirit_max`, so the overworld SP preview equals the in-battle value.
+
+#### `effectiveTier`
+
+```ts
+export function effectiveTier(biome: string, personality: AIPersonality, playerBattleHandAvgXp: number): number
+```
+
+Effective encounter tier used by `scaleProfileByTier`. Returns `max(floorTier(biome), tierForXp(playerXp))` so the biome always sets a minimum tier floor.
+
+#### `skillRoll`
+
+```ts
+export function skillRoll(spawnId: string, npcClass: NpcClass): number
+```
+
+Seeded uniform skill draw in `SKILL_BAND[npcClass]`. Uses djb2 (`hashId`) to convert `spawnId` to a uint32 seed for `makeRng`, guaranteeing the same NPC always rolls the same skill. Do not use `Math.random()` for skill rolls.
+
+#### `scaleProfileByTier`
+
+```ts
+export function scaleProfileByTier(base: AIProfile, effectiveTier: number, skill: number): AIProfile
+```
+
+Returns a new `AIProfile` with `timingSigmaMs`, `lowHeartTimingSigmaMs`, and `elementMistakeProb` scaled by tier and skill. Higher tier and higher skill both reduce timing sigma (sharper AI) and reduce mistake probability. Floors: `timingSigmaMs ≥ 10`, `elementMistakeProb ≥ 0`. Applied to ALL NPC profiles in `BattleRoom` (both bosses and roamers).
 
 ---
 
