@@ -10,6 +10,7 @@ import {
   SKILL_BAND,
   type NpcClass,
 } from '../constants';
+import { hashNpcId } from '../../persistence/NpcSpawns';
 
 const { FIRE, WATER, EARTH, WIND, WOOD } = ElementEnum;
 
@@ -72,26 +73,16 @@ export const PERSONALITY_SPIRIT_MULT: Record<AIPersonality, number> = {
 };
 
 /**
- * #492 — Hash a string spawn id to a uint32 seed for makeRng.
- * Uses djb2: fast, small, adequate for seeding a skill roll.
- */
-function hashId(id: string): number {
-  let h = 5381;
-  for (let i = 0; i < id.length; i++) {
-    h = ((h << 5) + h + id.charCodeAt(i)) >>> 0;
-  }
-  return h >>> 0;
-}
-
-/**
  * #492 — Draw a normalized skill scalar s ∈ [lo, hi] for a given NPC class,
  * seeded deterministically from the spawn id. Re-rolls on respawn (same id
  * always yields the same s for a given encounter).
  *
- * Reuses makeRng (mulberry32) — do NOT use Math.random() here.
+ * Uses hashNpcId (shared djb2 with Math.imul from NpcSpawns.ts) for consistency
+ * with the overworld preview — same id always seeds the same skill regardless of
+ * which code path computes it. Uses makeRng (mulberry32) — do NOT use Math.random().
  */
 export function skillRoll(spawnId: string, npcClass: NpcClass): number {
-  const rng = makeRng(hashId(spawnId));
+  const rng = makeRng(hashNpcId(spawnId));
   const { lo, hi } = SKILL_BAND[npcClass];
   return lo + rng.next() * (hi - lo);
 }

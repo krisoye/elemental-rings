@@ -321,7 +321,11 @@ export class BattleRoom extends Room<{ state: BattleState }> {
         ? NPC_SPAWNS.find((n) => n.id === options.npcId)
         : undefined;
       this.boss = bossSpawn?.boss;
-      if (this.boss) this.npcBiome = bossSpawn?.biome;
+      // #492 — capture biome for all NPC classes (bosses AND roamers) so that
+      // spiritFloor and floorTier apply the correct biome difficulty floor.
+      // Previously gated on this.boss, which caused roamers outside forest to
+      // receive undefined biome and silently fall back to forest semantics.
+      this.npcBiome = bossSpawn?.biome;
       const personality = options.personality ?? 'AGGRESSIVE';
       const seed = options.aiSeed ?? (Date.now() & 0xffffffff);
       // Use a separate RNG stream for loadout generation so the combat RNG

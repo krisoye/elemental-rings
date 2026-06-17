@@ -198,8 +198,10 @@ function singleAttackDecision(view: BoardView, profile: AIProfile, rng: Rng): At
   if (usable.length === 0) return { slot: 'a1', committedElement: view.committedElement };
 
   // #492 — element-mistake branch: before personality logic, check if the AI
-  // should pick a suboptimal ring this turn (mistake probability).
-  if (rng.next() < profile.elementMistakeProb) {
+  // should pick a suboptimal ring this turn. Guard on > 0 so NPCs scaled to
+  // elementMistakeProb=0 by scaleProfileByTier never consume an extra RNG draw,
+  // preserving the pre-#492 RNG stream for personality and timing draws.
+  if (profile.elementMistakeProb > 0 && rng.next() < profile.elementMistakeProb) {
     return {
       slot: suboptimalAttackSlot(usable, view.opponentUsableElements),
       committedElement: view.committedElement,
@@ -415,7 +417,9 @@ export function decideDefense(view: BoardView, profile: AIProfile, rng: Rng): De
   // #492 — element-mistake branch: before personality logic, check if the AI
   // should pick a suboptimal defense ring this turn. +190ms = BLOCK timing so
   // the defender still commits (not a no-block) but with the wrong element.
-  if (rng.next() < profile.elementMistakeProb) {
+  // Guard on > 0 so NPCs with elementMistakeProb=0 never consume an extra RNG
+  // draw, preserving the RNG stream for personality logic and no-block draws.
+  if (profile.elementMistakeProb > 0 && rng.next() < profile.elementMistakeProb) {
     const weak = weakDefenseSlot(usable, incoming);
     return { slot: weak.key, pressOffsetMs: 190 };
   }
