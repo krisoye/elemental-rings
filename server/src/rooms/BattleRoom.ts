@@ -45,6 +45,7 @@ import {
   // #485 — charge attack constants
   CHARGE_THRESHOLD_MS,
   CHARGE_PARRY_COMPRESSION,
+  MAX_CHARGE_MS,
 } from '../game/constants';
 import {
   ElementEnum,
@@ -64,6 +65,8 @@ import {
   ChargeStartPayload,
   ReleaseAttackPayload,
   ChargeMissPayload,
+  ChargeOrbStartPayload,
+  ChargeOrbEndPayload,
 } from '../../../shared/types';
 import { computeIsHit as chargeIsHit, computeSharpness as chargeSharpness, computeTelegraphDuration as chargeTelegraphDuration } from '../game/ChargeAttack';
 
@@ -1061,6 +1064,10 @@ export class BattleRoom extends Room<{ state: BattleState }> {
     this.defenseSlotKey = '';
     this.defensePressTime = 0;
 
+    // #485 — a direct selectAttack (tap bypass) discards any pending chargeStart
+    // timestamp so it cannot leak into a future releaseAttack on the next turn.
+    this.chargeStartTimes.delete(id);
+
     this.windowTimer = setTimeout(() => this._resolveExchange(), DEFEND_WINDOW_MS);
     this.notifyAI();
   }
@@ -1069,6 +1076,9 @@ export class BattleRoom extends Room<{ state: BattleState }> {
    * #485 — charge attack start. Records the server-authoritative hold timestamp for
    * this session so holdDuration can be computed precisely on releaseAttack.
    * Phase-/turn-locked: only the current attacker in ATTACK_SELECT may arm a charge.
+   *
+   * Overwrites any prior chargeStart for this session (e.g. player re-presses the
+   * key after a sub-threshold tap) so the timestamp is always from the latest hold.
    */
   handleChargeStart(id: string, payload: ChargeStartPayload): void {
     const state = this.state;
@@ -1078,6 +1088,14 @@ export class BattleRoom extends Room<{ state: BattleState }> {
     const attacker = state.players.get(id)!;
     if (attacker.getSlot(payload.slot).isExtinguished) return;
     this.chargeStartTimes.set(id, Date.now());
+    // Broadcast chargeOrbStart so the DEFENDER also sees the oscillating orb
+    // (GDD §6.3: "Both players see the oscillating orb"). The defender renders
+    // the oscillation from the shared deterministic formula keyed off startTime.
+    this.broadcast('chargeOrbStart', {
+      attackerId: id,
+      slot: payload.slot,
+      startTime: this.chargeStartTimes.get(id)!,
+    } satisfies ChargeOrbStartPayload);
   }
 
   /**
@@ -1105,12 +1123,18 @@ export class BattleRoom extends Room<{ state: BattleState }> {
     const ring = attacker.getSlot(payload.slot);
     if (ring.isExtinguished) return;
 
-    // Compute server-authoritative hold duration. Fall back to client-supplied
-    // value only when no chargeStart was recorded (should not happen in normal play,
-    // but defends against connection issues or clients that skip chargeStart for taps).
+    // Server-authoritative hold duration. If no chargeStart timestamp was recorded
+    // (missed message, sub-threshold tap that skipped chargeStart, etc.) treat as
+    // a tap (holdMs = 0) rather than trusting the client-supplied holdDuration —
+    // the client value is unbounded and would allow holdDuration spoofing.
+    // Clamped to [0, MAX_CHARGE_MS] as a second-line defence.
     const startTime = this.chargeStartTimes.get(id);
-    const holdMs = startTime !== undefined ? Date.now() - startTime : payload.holdDuration;
+    const rawHoldMs = startTime !== undefined ? Date.now() - startTime : 0;
+    const holdMs = Math.min(Math.max(0, rawHoldMs), MAX_CHARGE_MS);
     this.chargeStartTimes.delete(id);
+    // Notify both clients that the charge orb has been released (defender clears
+    // their oscillating orb render regardless of hit/miss outcome).
+    this.broadcast('chargeOrbEnd', { attackerId: id } satisfies ChargeOrbEndPayload);
 
     // Below threshold → tap: delegate to the existing selectAttack path (no oscillation).
     if (holdMs < CHARGE_THRESHOLD_MS) {
@@ -1391,7 +1415,8 @@ export class BattleRoom extends Room<{ state: BattleState }> {
    */
   private advanceTurn(): void {
     const state = this.state;
-    const opponentId = this.opponentOf(state.currentAttackerId).playerId;
+    const prevAttackerId = state.currentAttackerId;
+    const opponentId = this.opponentOf(prevAttackerId).playerId;
     state.currentAttackerId = opponentId;
     this.initiativeHolderId = opponentId;
     state.attackerSlot = '';
@@ -1399,6 +1424,9 @@ export class BattleRoom extends Room<{ state: BattleState }> {
     state.rallyActive = false;
     state.volleyedElement = 0;
     state.phase = 'ATTACK_SELECT';
+    // #485 — clear any stale chargeStart timestamp for the OUTGOING attacker so
+    // it cannot inflate holdMs on a future releaseAttack after the turn has passed.
+    this.chargeStartTimes.delete(prevAttackerId);
     if (this.applyAttackerTurnStart()) {
       this.notifyAI();
       return;

@@ -193,6 +193,24 @@ export interface ChargeMissPayload {
   attackerSlot: AttackSlot;
 }
 
+// #485 — broadcast by the server when a charge hold BEGINS (handleChargeStart).
+// Both clients render the oscillating idle orb from the shared deterministic formula
+// keyed off `startTime` (server wall-clock ms). The DEFENDER uses this to see the
+// oscillation in real time without a separate per-frame broadcast. The client
+// computes yOffset(Date.now() - startTime, ...) each frame, matching the attacker.
+export interface ChargeOrbStartPayload {
+  attackerId: string;
+  slot: AttackSlot;
+  startTime: number; // server wall-clock ms at chargeStart (for deterministic replay)
+}
+
+// #485 — broadcast by the server when the charge orb is released (handleReleaseAttack
+// entry, before hit/miss resolution). Both clients clear the idle orb render.
+// The chargeMiss or DEFEND_WINDOW patch that follows provides the final outcome.
+export interface ChargeOrbEndPayload {
+  attackerId: string;
+}
+
 // GDD §6.3 — recharge one of the attacker's four COMBAT rings (a1/a2/d1/d2;
 // the Thumb is never rechargeable in-duel), spending spirit (1 per use restored)
 // up to the ring's deficit. Attack rings recharge via double-tap 1/2 (Z/C);
