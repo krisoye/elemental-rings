@@ -1,4 +1,4 @@
-// Charge attack constants shared by client and server (#485, GDD §6.3 Option A).
+// Charge attack constants shared by client and server (#491, GDD §6.3).
 // The server re-exports these from server/src/game/constants.ts (so the single
 // authoritative source remains there for the server); the CLIENT imports from here
 // so it never has to reach into the server source tree. Values must be kept in
@@ -12,17 +12,21 @@
 // The server broadcasts impact timing via its own window, so the client animation
 // only needs the production value for a realistic display.
 
-/** Hold below this threshold → instant tap (no oscillation, always horizontal). */
+/** Hold below this threshold → instant tap (no arc swing, always horizontal). */
 export const CHARGE_THRESHOLD_MS = 150;
-/** Half-width of the centre-line hit zone in pixels. */
-export const HIT_CONE_PX = 20;
-/** Maximum Y amplitude of the oscillating orb (±80 px). */
-export const Y_AMPLITUDE_PX = 80;
-/** Oscillation period at t=0 (slowest oscillation). */
-export const BASE_PERIOD_MS = 1200;
-/** Controls how quickly the period tightens with hold time. */
-export const PERIOD_DECAY_MS = 600;
 /** Hold duration at which sharpness clamps to 1.0 (3 s full charge). */
 export const MAX_CHARGE_MS = 3000;
 /** Production telegraph minimum (500 ms at max charge). */
 export const CHARGE_TELEGRAPH_MIN_MS_PROD = 500;
+
+// ── Arc-swing constants (#491) ───────────────────────────────────────────────
+/** Half-sweep angle: orb swings from −SWEEP_RANGE_DEG to +SWEEP_RANGE_DEG (degrees). */
+export const SWEEP_RANGE_DEG = 45;
+/** Half-width of the sweet-spot hit cone in degrees (orb must be within ±HIT_CONE_DEG of 0°). */
+export const HIT_CONE_DEG = 10;
+/** Duration of the first full sweep (−45° → +45°) in ms. */
+export const BASE_SWEEP_MS = 1200;
+/** Speed multiplier per reversal: each sweep is this fraction of the previous duration. */
+export const SWEEP_SPEEDUP = 0.75;
+/** Number of sweeps until max speed (speed stays at max beyond this). */
+export const MAX_SWEEPS = 3;

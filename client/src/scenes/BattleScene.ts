@@ -17,8 +17,8 @@ import type {
   ChargeOrbEndPayload,
 } from '../../../shared/types';
 import {
-  yOffset as chargeYOffset,
-  isHit as chargeIsHit,
+  orbAngle as chargeOrbAngleFn,
+  isHitAngle as chargeIsHitAngle,
 } from '../../../shared/oscillation';
 import type { OrbHandle, IdleOrbHandle } from '../objects/Orb';
 import {
@@ -31,10 +31,11 @@ import {
 } from '../Constants';
 import {
   CHARGE_THRESHOLD_MS,
-  HIT_CONE_PX,
-  Y_AMPLITUDE_PX,
-  BASE_PERIOD_MS,
-  PERIOD_DECAY_MS,
+  SWEEP_RANGE_DEG,
+  HIT_CONE_DEG,
+  BASE_SWEEP_MS,
+  SWEEP_SPEEDUP,
+  MAX_SWEEPS,
 } from '../../../shared/chargeConstants';
 
 const ATTACK_KEYS: ReadonlySet<SlotKey> = new Set<SlotKey>(['a1', 'a2']);
@@ -999,8 +1000,8 @@ export class BattleScene extends Phaser.Scene {
   }
 
   /**
-   * #485 — charge miss handler. The orb flies off-screen (up or down based on Y
-   * sign), and a brief "WHIFF" label appears on the attacker side.
+   * #485/#491 — charge miss handler. The orb flies off-screen at an angle,
+   * and a brief "WHIFF" label appears on the attacker side.
    */
   private handleChargeMiss(p: ChargeMissPayload, myId: string): void {
     const imAttacker = p.attackerId === myId;
@@ -1388,27 +1389,40 @@ export class BattleScene extends Phaser.Scene {
   }
 
   /**
-   * #485 — per-frame update. Repositions the idle charge orb according to the
-   * oscillation formula so the attacker sees the orb oscillate in real time. Also
-   * tints the orb gold when within HIT_CONE_PX (feedback without a separate indicator
-   * per Code Reuse Directive — the orb itself is the indicator).
+   * #491 — E2E test-support accessors for the current arc angle of each charge
+   * orb. Returns the angle in degrees (−45..+45) while the orb is alive, or null
+   * when no orb is active. Delegates to IdleOrbHandle.getAngle().
+   */
+  get chargeOrbAngle(): number | null {
+    return this.chargeOrbHandle ? this.chargeOrbHandle.getAngle() : null;
+  }
+
+  get opponentChargeOrbAngle(): number | null {
+    return this.opponentChargeOrbHandle ? this.opponentChargeOrbHandle.getAngle() : null;
+  }
+
+  /**
+   * #491 — per-frame update. Repositions the idle charge orb according to the
+   * arc-swing formula so the attacker sees the orb sweep in real time. Also
+   * tints the orb gold when within HIT_CONE_DEG (feedback without a separate
+   * indicator per Code Reuse Directive — the orb itself is the indicator).
    */
   update(_time: number, _delta: number): void {
-    // Attacker-side: oscillate the attacker's own idle charge orb.
+    // Attacker-side: drive the attacker's own idle charge orb along the arc.
     if (this.chargeOrbHandle && this.chargeHoldStart !== null) {
       const holdMs = Date.now() - this.chargeHoldStart;
-      const y = chargeYOffset(holdMs, Y_AMPLITUDE_PX, BASE_PERIOD_MS, PERIOD_DECAY_MS);
-      this.chargeOrbHandle.setY(PLAYER_Y + y);
-      this.chargeOrbHandle.setInHitZone(Math.abs(y) <= HIT_CONE_PX);
+      const angle = chargeOrbAngleFn(holdMs, SWEEP_RANGE_DEG, BASE_SWEEP_MS, SWEEP_SPEEDUP, MAX_SWEEPS);
+      this.chargeOrbHandle.setAngle(angle);
+      this.chargeOrbHandle.setInHitZone(chargeIsHitAngle(holdMs, SWEEP_RANGE_DEG, BASE_SWEEP_MS, HIT_CONE_DEG, SWEEP_SPEEDUP, MAX_SWEEPS));
     }
 
-    // Defender-side: oscillate the opponent's idle charge orb using the
-    // server's authoritative startTime (same deterministic formula — no skew).
+    // Defender-side: drive the opponent's idle charge orb using the server's
+    // authoritative startTime (same deterministic formula — no skew).
     if (this.opponentChargeOrbHandle && this.opponentChargeStartTime !== null) {
       const holdMs = Date.now() - this.opponentChargeStartTime;
-      const y = chargeYOffset(holdMs, Y_AMPLITUDE_PX, BASE_PERIOD_MS, PERIOD_DECAY_MS);
-      this.opponentChargeOrbHandle.setY(OPPONENT_Y + y);
-      this.opponentChargeOrbHandle.setInHitZone(Math.abs(y) <= HIT_CONE_PX);
+      const angle = chargeOrbAngleFn(holdMs, SWEEP_RANGE_DEG, BASE_SWEEP_MS, SWEEP_SPEEDUP, MAX_SWEEPS);
+      this.opponentChargeOrbHandle.setAngle(angle);
+      this.opponentChargeOrbHandle.setInHitZone(chargeIsHitAngle(holdMs, SWEEP_RANGE_DEG, BASE_SWEEP_MS, HIT_CONE_DEG, SWEEP_SPEEDUP, MAX_SWEEPS));
     }
   }
 

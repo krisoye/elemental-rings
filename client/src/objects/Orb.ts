@@ -16,14 +16,23 @@ export interface OrbHandle {
   disperse(): void;
 }
 
+// Radius (px) from the pivot point at which the orb circles orbit.
+const IDLE_ORB_RADIUS = 60;
+
 /**
  * A handle to an idle (non-flying) charge orb. The caller repositions it each frame
- * via `setY`. On `disperse()` the orb scatters and fades. There is no impact phase —
- * the orb is discarded once the charge resolves.
+ * via `setAngle`. On `disperse()` the orb scatters and fades. There is no impact
+ * phase — the orb is discarded once the charge resolves.
  */
 export interface IdleOrbHandle {
-  /** Move the orb circles to a new Y position (X stays fixed). */
-  setY(y: number): void;
+  /**
+   * Move the orb circles to a new arc position. `angleDeg` is the arc angle in
+   * degrees (−45..+45); 0° = horizontal (aimed at opponent). The pivot X/Y stays
+   * fixed at spawn; the orb moves at IDLE_ORB_RADIUS from it.
+   */
+  setAngle(angleDeg: number): void;
+  /** Read back the current arc angle in degrees (for E2E test assertions). */
+  getAngle(): number;
   /** Set tint: gold when in hit zone, default element color when outside. */
   setInHitZone(inZone: boolean): void;
   /** Scatter + fade (same as OrbHandle.disperse). */
@@ -49,20 +58,31 @@ export class Orb {
   ): IdleOrbHandle & OrbHandle {
     const circles: Phaser.GameObjects.Arc[] = [];
     let dispersed = false;
+    let currentAngleDeg = -45; // orb starts at −SWEEP_RANGE_DEG
 
+    // Position all circles at the initial arc angle (−45° = left of arc).
+    const angleRad = (currentAngleDeg * Math.PI) / 180;
     elements.forEach((el, idx) => {
       const offset = (idx - (elements.length - 1) / 2) * 18;
-      const orb = scene.add.circle(pos.x, pos.y + offset, 10, ELEMENT_COLORS[el]);
+      const x = pos.x + IDLE_ORB_RADIUS * Math.cos(angleRad);
+      const y = pos.y + IDLE_ORB_RADIUS * Math.sin(angleRad) + offset;
+      const orb = scene.add.circle(x, y, 10, ELEMENT_COLORS[el]);
       circles.push(orb);
     });
 
     return {
-      setY(y: number): void {
+      setAngle(angleDeg: number): void {
         if (dispersed) return;
+        currentAngleDeg = angleDeg;
+        const rad = (angleDeg * Math.PI) / 180;
         circles.forEach((orb, idx) => {
           const offset = (idx - (circles.length - 1) / 2) * 18;
-          orb.y = y + offset;
+          orb.x = pos.x + IDLE_ORB_RADIUS * Math.cos(rad);
+          orb.y = pos.y + IDLE_ORB_RADIUS * Math.sin(rad) + offset;
         });
+      },
+      getAngle(): number {
+        return currentAngleDeg;
       },
       setInHitZone(inZone: boolean): void {
         if (dispersed) return;

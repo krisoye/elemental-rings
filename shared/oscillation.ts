@@ -1,57 +1,133 @@
-// Oscillation formula for the charge attack mechanic (GDD §6.3 Option A / #485).
+// Arc-swing formula for the charge attack mechanic (GDD §6.3, #491).
+//
+// The orb swings on a constant-angular-velocity arc from −SWEEP_RANGE_DEG to
+// +SWEEP_RANGE_DEG (e.g. −45° to +45°), pivoting at the spawn point. The sweet
+// spot is 0° (aimed directly at the opponent). Speed steps up on each ±45°
+// reversal; the player must time the release at 0° to land a hit.
 //
 // The SAME formulas are used client-side (for display) and server-side (for
 // authoritative hit/miss resolution) to ensure the client can never spoof the
-// release Y position. Both sides import these pure functions and the constants
-// they need — no duplication.
+// release angle. Both sides import these pure functions and the constants they
+// need — no duplication.
 //
 // Constants imported from constants.ts on each side; this module is parameter-
 // based so it is fully portable (no Node/browser-specific imports).
 
-// --- Oscillation period formula ---
-// Period speeds up (shortens) as the hold duration grows. BASE_PERIOD_MS sets the
-// slowest oscillation (at t=0); PERIOD_DECAY_MS controls how quickly it tightens.
-export function oscillationPeriod(
+// ── Sweep index ───────────────────────────────────────────────────────────────
+
+/**
+ * Returns the 0-based sweep index the orb is in at `holdMs` ms of charge.
+ *
+ * Sweep 0: −SWEEP_RANGE_DEG → +SWEEP_RANGE_DEG (base speed, duration = sweepDurationMs).
+ * Sweep 1: +SWEEP_RANGE_DEG → −SWEEP_RANGE_DEG (faster; duration × SWEEP_SPEEDUP).
+ * Sweep N: duration × SWEEP_SPEEDUP^min(N, MAX_SWEEPS-1).
+ *
+ * `sweepDurationMs` is the duration of sweep 0 (BASE_SWEEP_MS).
+ * `speedup` is the per-reversal duration multiplier (SWEEP_SPEEDUP, < 1 = faster).
+ * `maxSweeps` caps the speedup (beyond maxSweeps the duration stays constant).
+ */
+export function sweepIndex(
   holdMs: number,
-  basePeriodMs: number,
-  periodDecayMs: number,
+  sweepDurationMs: number,
+  speedup: number,
+  maxSweeps: number,
 ): number {
-  return basePeriodMs / (1 + holdMs / periodDecayMs);
+  let remaining = Math.max(0, holdMs);
+  let sweep = 0;
+  while (true) {
+    const duration = sweepDurationMs * Math.pow(speedup, Math.min(sweep, maxSweeps - 1));
+    if (remaining < duration) return sweep;
+    remaining -= duration;
+    sweep++;
+  }
 }
 
-// --- Y-offset formula ---
-// A sine wave whose period shrinks with hold duration — the orb oscillates faster
-// the longer it is held. Clamped to [-amplitudePx, +amplitudePx] (the GDD cap of
-// ±80 px) to keep the orb readable at all charge levels.
-export function yOffset(
+// ── Orb angle ─────────────────────────────────────────────────────────────────
+
+/**
+ * Returns the orb's current angle in degrees (−sweepRangeDeg..+sweepRangeDeg).
+ *
+ * Sweep 0 starts at −sweepRangeDeg and travels to +sweepRangeDeg.
+ * Odd sweeps reverse direction. The speed steps up on each reversal up to maxSweeps.
+ *
+ * `sweepDurationMs` is BASE_SWEEP_MS (duration of sweep 0).
+ * `speedup` is SWEEP_SPEEDUP (< 1 → faster each reversal).
+ * `maxSweeps` is MAX_SWEEPS.
+ */
+export function orbAngle(
   holdMs: number,
-  amplitudePx: number,
-  basePeriodMs: number,
-  periodDecayMs: number,
+  sweepRangeDeg: number,
+  sweepDurationMs: number,
+  speedup: number,
+  maxSweeps: number,
 ): number {
-  const period = oscillationPeriod(holdMs, basePeriodMs, periodDecayMs);
-  const raw = amplitudePx * Math.sin((2 * Math.PI * holdMs) / period);
-  // Clamp: amplitude should never exceed the cap even if floating-point rounds over.
-  return Math.max(-amplitudePx, Math.min(amplitudePx, raw));
+  let remaining = Math.max(0, holdMs);
+  let sweep = 0;
+  while (true) {
+    const duration = sweepDurationMs * Math.pow(speedup, Math.min(sweep, maxSweeps - 1));
+    if (remaining < duration) {
+      // Position within this sweep (0..1 fraction)
+      const frac = remaining / duration;
+      // Even sweeps: −range → +range. Odd sweeps: +range → −range.
+      if (sweep % 2 === 0) {
+        return -sweepRangeDeg + frac * 2 * sweepRangeDeg;
+      } else {
+        return sweepRangeDeg - frac * 2 * sweepRangeDeg;
+      }
+    }
+    remaining -= duration;
+    sweep++;
+  }
 }
 
-// --- Hit check ---
-// Returns true when the orb's Y position at the release moment is within the
-// hit cone (±HIT_CONE_PX of the centre line).
-export function isHit(holdMs: number, hitConePx: number, amplitudePx: number, basePeriodMs: number, periodDecayMs: number): boolean {
-  return Math.abs(yOffset(holdMs, amplitudePx, basePeriodMs, periodDecayMs)) <= hitConePx;
+// ── Hit check ────────────────────────────────────────────────────────────────
+
+/**
+ * Returns true when the orb's angle at the release moment is within the hit cone
+ * (|angle| ≤ hitConeDeg). The sweet spot is 0° (aimed at the opponent).
+ */
+export function isHitAngle(
+  holdMs: number,
+  sweepRangeDeg: number,
+  sweepDurationMs: number,
+  hitConeDeg: number,
+  speedup: number,
+  maxSweeps: number,
+): boolean {
+  return Math.abs(orbAngle(holdMs, sweepRangeDeg, sweepDurationMs, speedup, maxSweeps)) <= hitConeDeg;
 }
 
-// --- Sharpness ---
-// 0 = no charge (tap), 1 = maximum charge (MAX_CHARGE_MS or beyond). Clamped.
-export function sharpness(holdMs: number, maxChargeMs: number): number {
-  return Math.max(0, Math.min(1, holdMs / maxChargeMs));
+// ── Sharpness ────────────────────────────────────────────────────────────────
+
+/**
+ * Sharpness derived from sweep index (0-based):
+ *   sweep 0: 1/3 (floor — a charged release always beats a tap)
+ *   sweep 1: 2/3
+ *   sweep 2+: 1.0
+ *
+ * A tap (holdMs < CHARGE_THRESHOLD_MS) returns 0, handled upstream by the caller
+ * before the orb enters the arc-swing path. This function only applies on the
+ * charged path (holdMs ≥ CHARGE_THRESHOLD_MS).
+ */
+export function sharpnessFromSweep(
+  holdMs: number,
+  sweepDurationMs: number,
+  speedup: number,
+  maxSweeps: number,
+): number {
+  const sweep = sweepIndex(holdMs, sweepDurationMs, speedup, maxSweeps);
+  if (sweep === 0) return 1 / 3;
+  if (sweep === 1) return 2 / 3;
+  return 1.0;
 }
 
-// --- Telegraph duration ---
-// Varies from the standard TELEGRAPH_MS down to CHARGE_TELEGRAPH_MIN_MS as
-// sharpness increases. A tap attack gets the full 900 ms; a maxed charge gets
-// the compressed minimum.
+// ── Telegraph duration ────────────────────────────────────────────────────────
+
+/**
+ * Varies from the standard TELEGRAPH_MS down to CHARGE_TELEGRAPH_MIN_MS as
+ * sharpness increases. A tap attack gets the full 900 ms; a maxed charge gets
+ * the compressed minimum.
+ */
 export function telegraphDuration(
   sharpnessVal: number,
   baseTelegraphMs: number,

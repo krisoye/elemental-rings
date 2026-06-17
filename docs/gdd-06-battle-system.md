@@ -51,39 +51,40 @@ The **initiative holder** chooses one of three actions:
 
 **Option A — Attack (Tap or Charge):** Press A1 or A2 to throw the ring in that slot. There are two forms:
 
-**Tap (hold < `CHARGE_THRESHOLD_MS`, default 150 ms):** Release quickly. The orb spawns on release and fires horizontally at the standard **900 ms** telegraph. Defender phase opens at full baseline window. This is always a hit — no Y-positioning required.
+**Tap (hold < `CHARGE_THRESHOLD_MS`, default 150 ms):** Release quickly. The orb spawns on release and fires horizontally at the standard **900 ms** telegraph. Defender phase opens at full baseline window. This is always a hit — no arc-timing required.
 
 **Charged Attack (hold ≥ `CHARGE_THRESHOLD_MS`):** Hold the button. As soon as the hold begins:
-- The attack orb **spawns immediately** in front of the attacker and begins oscillating up and down (a sine wave that tightens — oscillates faster — as hold duration increases).
-- Y amplitude is capped at **±80 px** so the orb stays visible at all charge levels.
-- The orb **glows gold** when within the hit cone (±`HIT_CONE_PX`, default 20 px); it dims when outside.
-- **Both players see the oscillating orb** — the defender gets information about the attacker's charge level before the throw.
+- The attack orb **spawns immediately** in front of the attacker and begins sweeping in a **constant-angular-velocity arc** from −45° to +45° (pivoting at the spawn point). 0° is the sweet spot — aimed directly at the opponent.
+- The sweep **speeds up on each reversal** (3 sweeps to max speed, controlled by `SWEEP_SPEEDUP = 0.75`): each successive sweep takes 75% as long as the previous. Max speed is reached at sweep 3 and held there.
+- The orb **glows gold** when within the hit cone (±`HIT_CONE_DEG`, default 10°); it dims when outside.
+- **Both players see the arc-swinging orb** — the defender gets information about the attacker's charge level before the throw.
 
-**Release = throw.** The orb's Y position at the exact moment of release determines the outcome:
+**Release = throw.** The orb's angle at the exact moment of release determines the outcome:
 
-| Release Y position | Result | Defender Phase |
+| Release angle | Result | Defender Phase |
 |---|---|---|
-| Within ±`HIT_CONE_PX` of the centre line | **Hit** — orb flies toward defender at a compressed telegraph | Yes — window scales with charge sharpness |
+| Within ±`HIT_CONE_DEG` (10°) of 0° | **Hit** — orb flies toward defender at a compressed telegraph | Yes — window scales with charge sharpness |
 | Outside hit cone | **Miss** — orb flies off-screen at that angle | **No** — defender does nothing; attacker −1 use |
 
 On a **miss**: the attacker loses 1 ring use, a brief "WHIFF" label appears on the attacker's side, and initiative passes immediately. The defender is never punished for an attacker's miss.
 
-On a **hit**: telegraph duration scales with **sharpness** (charge level):
+On a **hit**: telegraph duration and sharpness scale with the number of **sweeps completed**:
 
-| Charge Level | Sharpness | Telegraph Window | Parry Window |
+| Sweep (0-based) | Sharpness | Telegraph Window | Parry Window |
 |---|---|---|---|
 | Tap (no charge) | 0 | 900 ms (baseline) | Standard |
-| Low charge | ~0.17 | ~750 ms | Slightly compressed |
-| High charge | ~0.67 | ~600 ms | Significantly compressed |
-| Maximum charge (`MAX_CHARGE_MS` = 3 s) | 1.0 | `CHARGE_TELEGRAPH_MIN_MS` (500 ms) | Most compressed |
+| Sweep 0 (first pass, ~0–1200ms) | 1/3 | ~767 ms | Slightly compressed |
+| Sweep 1 (return pass, ~1200–2100ms) | 2/3 | ~633 ms | Significantly compressed |
+| Sweep 2+ (max speed, ~2100ms+) | 1.0 | `CHARGE_TELEGRAPH_MIN_MS` (500 ms) | Most compressed |
 
-The oscillation formulas are deterministic and computed server-side to prevent Y-spoofing:
+The arc formulas are deterministic and computed server-side to prevent angle-spoofing:
 ```
-oscillationPeriod(t) = BASE_PERIOD_MS / (1 + t / PERIOD_DECAY_MS)
-yOffset(t)           = Y_AMPLITUDE_PX × sin(2π × t / oscillationPeriod(t))   [clamped ±80]
-isHit                = |yOffset(holdDuration)| ≤ HIT_CONE_PX
-sharpness            = clamp(holdDuration / MAX_CHARGE_MS, 0, 1)
-telegraphDuration    = lerp(TELEGRAPH_MS, CHARGE_TELEGRAPH_MIN_MS, sharpness)
+sweepDuration(n)  = BASE_SWEEP_MS × SWEEP_SPEEDUP ^ min(n, MAX_SWEEPS − 1)
+sweepIndex(t)     = 0-based sweep we are in at holdMs t
+orbAngle(t)       = −SWEEP_RANGE_DEG..+SWEEP_RANGE_DEG (degrees)   0° = sweet spot
+isHit             = |orbAngle(holdDuration)| ≤ HIT_CONE_DEG
+sharpness         = 1/3 (sweep 0) | 2/3 (sweep 1) | 1.0 (sweep 2+)
+telegraphDuration = lerp(TELEGRAPH_MS, CHARGE_TELEGRAPH_MIN_MS, sharpness)
 ```
 
 **Common rules for both tap and charge:**
@@ -111,12 +112,12 @@ telegraphDuration    = lerp(TELEGRAPH_MS, CHARGE_TELEGRAPH_MIN_MS, sharpness)
 
 When the attacker holds one attack button (A1 or A2) while the orb oscillates, tapping the **other** attack button triggers a **fusion double-attack release** — the same hold-cross-tap gesture as the standard double attack (§3.4), but with the charge mechanic applied:
 
-- **Held orb (A1):** flies from whatever Y position it occupies **at the moment A2 is tapped**. Applies the normal hit/miss check against `HIT_CONE_PX`. If outside the hit cone → **miss** (−1 use for A1, no A1 defender window); A2 still fires regardless.
+- **Held orb (A1):** flies from whatever arc angle it occupies **at the moment A2 is tapped**. Applies the normal hit/miss check against `HIT_CONE_DEG` (±10° around 0°). If outside the hit cone → **miss** (−1 use for A1, no A1 defender window); A2 still fires regardless.
 - **Tapped orb (A2):** treated as a **tap** — always spawns and fires horizontal. Always hits.
-- Both orbs fire simultaneously (as with all fusion double-attacks). The telegraph window for the combined phase is determined by A1's sharpness at the moment A2 is tapped, provided A1 hits.
+- Both orbs fire simultaneously (as with all fusion double-attacks). The telegraph window for the combined phase is determined by A1's sharpness (sweep index) at the moment A2 is tapped, provided A1 hits.
 - If A1 misses but A2 hits: a single defender phase opens for A2 only, at full baseline telegraph (A1 contributed no sharpness to the hit path).
 
-**Strategic implication:** The attacker must nail the A1 orb's center position **at the tap moment**, not just execute the hold-cross-tap gesture. Tapping A2 prematurely (when A1 is far from center) sacrifices the first orb while the second still lands — creating genuine attacker skill pressure on fusion double-attacks.
+**Strategic implication:** The attacker must time the A1 orb at 0° (sweet spot) **at the tap moment**, not just execute the hold-cross-tap gesture. Tapping A2 when A1 is far off-center sacrifices the first orb while the second still lands — creating genuine attacker skill pressure on fusion double-attacks. The arc model makes the sweet-spot window slightly wider than the old Y-sine model on sweep 0, but narrower on sweep 2+ as the orb accelerates.
 
 **Phase-locked input:** Attack buttons (A1/A2) only register during the **attack phase**. Defense buttons (D1/D2) only register during the **defense phase**. Wrong-phase presses are silently ignored — protective, not punishing. The phase transition is the most visually prominent UI moment in a battle.
 

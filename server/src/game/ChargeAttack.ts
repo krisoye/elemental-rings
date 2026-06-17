@@ -1,6 +1,6 @@
-// Charge attack formula wrappers (#485, GDD §6.3 Option A).
+// Charge attack formula wrappers (#491, GDD §6.3).
 //
-// These thin wrappers bind the shared oscillation functions to the server's
+// These thin wrappers bind the shared arc-swing functions to the server's
 // authoritative constants so callers only import this module (not the shared
 // module + constants separately). They are also the target of the unit test
 // suite (tests/unit/ChargeAttack.test.ts), which imports them directly.
@@ -9,54 +9,59 @@
 // always produces the same result.
 
 import {
-  oscillationPeriod,
-  yOffset,
-  isHit,
-  sharpness,
+  sweepIndex,
+  orbAngle,
+  isHitAngle,
+  sharpnessFromSweep,
   telegraphDuration,
 } from '../../../shared/oscillation';
 import {
-  HIT_CONE_PX,
-  Y_AMPLITUDE_PX,
-  BASE_PERIOD_MS,
-  PERIOD_DECAY_MS,
-  MAX_CHARGE_MS,
+  SWEEP_RANGE_DEG,
+  HIT_CONE_DEG,
+  BASE_SWEEP_MS,
+  SWEEP_SPEEDUP,
+  MAX_SWEEPS,
   CHARGE_TELEGRAPH_MIN_MS,
 } from './constants';
 import { TELEGRAPH_MS } from '../../../shared/timing';
 
 /**
- * The current oscillation period at `holdMs` ms of charge. Shorter period =
- * faster oscillation = more demanding for the attacker to time the release.
+ * The 0-based sweep index the orb is in at `holdMs` ms of charge. Sweep 0 is
+ * the first pass (−SWEEP_RANGE_DEG → +SWEEP_RANGE_DEG); higher sweeps reverse
+ * and speed up on each reversal.
  */
-export function computeOscillationPeriod(holdMs: number): number {
-  return oscillationPeriod(holdMs, BASE_PERIOD_MS, PERIOD_DECAY_MS);
+export function computeSweepIndex(holdMs: number): number {
+  return sweepIndex(holdMs, BASE_SWEEP_MS, SWEEP_SPEEDUP, MAX_SWEEPS);
 }
 
 /**
- * The orb's Y offset at `holdMs` ms of charge. Range: [-Y_AMPLITUDE_PX, +Y_AMPLITUDE_PX].
+ * The orb's angle in degrees at `holdMs` ms of charge. Range: [−SWEEP_RANGE_DEG,
+ * +SWEEP_RANGE_DEG] (i.e. [−45, +45]). 0° = sweet spot (aimed at opponent).
  * Both client (for display) and server (for hit resolution) use this function with
  * the same constants to guarantee identical results.
  */
-export function computeYOffset(holdMs: number): number {
-  return yOffset(holdMs, Y_AMPLITUDE_PX, BASE_PERIOD_MS, PERIOD_DECAY_MS);
+export function computeOrbAngle(holdMs: number): number {
+  return orbAngle(holdMs, SWEEP_RANGE_DEG, BASE_SWEEP_MS, SWEEP_SPEEDUP, MAX_SWEEPS);
 }
 
 /**
- * Returns true when the orb is within the hit cone (|yOffset| <= HIT_CONE_PX).
+ * Returns true when the orb is within the hit cone (|angle| ≤ HIT_CONE_DEG, i.e. ±10°).
  * The server calls this on the hold duration it measured authoritatively — the
  * client value is only a fallback (or not used for hit classification at all).
  */
-export function computeIsHit(holdMs: number): boolean {
-  return isHit(holdMs, HIT_CONE_PX, Y_AMPLITUDE_PX, BASE_PERIOD_MS, PERIOD_DECAY_MS);
+export function computeIsHitAngle(holdMs: number): boolean {
+  return isHitAngle(holdMs, SWEEP_RANGE_DEG, BASE_SWEEP_MS, HIT_CONE_DEG, SWEEP_SPEEDUP, MAX_SWEEPS);
 }
 
 /**
- * Sharpness in [0, 1]. 0 = tap; 1 = maximum charge (MAX_CHARGE_MS or beyond).
- * Drives the telegraph duration and parry window compression.
+ * Sharpness in {1/3, 2/3, 1.0} based on the current sweep:
+ *   sweep 0: 1/3 (floor — a charged release always beats a tap)
+ *   sweep 1: 2/3
+ *   sweep 2+: 1.0
+ * A tap (holdMs < CHARGE_THRESHOLD_MS) returns 0, handled upstream.
  */
 export function computeSharpness(holdMs: number): number {
-  return sharpness(holdMs, MAX_CHARGE_MS);
+  return sharpnessFromSweep(holdMs, BASE_SWEEP_MS, SWEEP_SPEEDUP, MAX_SWEEPS);
 }
 
 /**
