@@ -42,6 +42,9 @@ import {
   GOLD_FORFEIT_PENALTY,
   BOSS_MODIFIERS,
   type BossModifier,
+  // #485 — charge attack constants
+  CHARGE_THRESHOLD_MS,
+  CHARGE_PARRY_COMPRESSION,
 } from '../game/constants';
 import {
   ElementEnum,
@@ -57,7 +60,12 @@ import {
   AttackSlot,
   DefenseSlot,
   AIPersonality,
+  // #485 — charge attack
+  ChargeStartPayload,
+  ReleaseAttackPayload,
+  ChargeMissPayload,
 } from '../../../shared/types';
+import { computeIsHit as chargeIsHit, computeSharpness as chargeSharpness, computeTelegraphDuration as chargeTelegraphDuration } from '../game/ChargeAttack';
 
 /** Fixed sessionId used for the virtual AI player (it has no Colyseus client). */
 const AI_ID = 'AI';
@@ -129,6 +137,12 @@ export class BattleRoom extends Room<{ state: BattleState }> {
   private orb2LaunchTimer: ReturnType<typeof setTimeout> | null = null;
   /** Fires DEFEND_WINDOW_MS after orb 2's launch to resolve it. */
   private orb2Timer: ReturnType<typeof setTimeout> | null = null;
+  // #485 — charge attack per-session state. chargeStartTimes tracks when each
+  // session began their current hold (set on `chargeStart`, cleared on
+  // `releaseAttack`). The server timestamps authoritatively — holdDuration from
+  // the client is a fallback for the tap path (holdDuration = 0).
+  private chargeStartTimes: Map<string, number> = new Map();
+
   /** Non-null only in vsAI (`battle-ai`) rooms; a no-op via notifyAI() in PvP. */
   private ai: AIController | null = null;
   /**
@@ -247,6 +261,17 @@ export class BattleRoom extends Room<{ state: BattleState }> {
 
     this.onMessage('selectAttack', (client, payload: SelectAttackPayload) =>
       this.handleSelectAttack(client.sessionId, payload),
+    );
+    // #485 — charge attack: record the server-authoritative hold-start timestamp.
+    // Phase-/turn-locked in the handler; wrong-phase or wrong-sender messages are
+    // silently ignored.
+    this.onMessage('chargeStart', (client, payload: ChargeStartPayload) =>
+      this.handleChargeStart(client.sessionId, payload),
+    );
+    // #485 — release a charged (or tap) attack. Replaces selectAttack for all
+    // held-then-released attacks; selectAttack remains for instant-tap compatibility.
+    this.onMessage('releaseAttack', (client, payload: ReleaseAttackPayload) =>
+      this.handleReleaseAttack(client.sessionId, payload),
     );
     // EPIC #264 / #265 — fusion-thumb double attack. Eligibility is re-validated
     // server-side (canDoubleAttack); an ineligible request is silently dropped.
@@ -709,6 +734,7 @@ export class BattleRoom extends Room<{ state: BattleState }> {
 
   onLeave(client: Client): void {
     this.state.players.delete(client.sessionId);
+    this.chargeStartTimes.delete(client.sessionId);
   }
 
   /** Notify the AI of a phase transition. No-op in PvP rooms. */
@@ -1036,6 +1062,178 @@ export class BattleRoom extends Room<{ state: BattleState }> {
     this.defensePressTime = 0;
 
     this.windowTimer = setTimeout(() => this._resolveExchange(), DEFEND_WINDOW_MS);
+    this.notifyAI();
+  }
+
+  /**
+   * #485 — charge attack start. Records the server-authoritative hold timestamp for
+   * this session so holdDuration can be computed precisely on releaseAttack.
+   * Phase-/turn-locked: only the current attacker in ATTACK_SELECT may arm a charge.
+   */
+  handleChargeStart(id: string, payload: ChargeStartPayload): void {
+    const state = this.state;
+    if (state.phase !== 'ATTACK_SELECT') return;
+    if (id !== state.currentAttackerId) return;
+    if (!ATTACK_SLOTS.has(payload.slot)) return;
+    const attacker = state.players.get(id)!;
+    if (attacker.getSlot(payload.slot).isExtinguished) return;
+    this.chargeStartTimes.set(id, Date.now());
+  }
+
+  /**
+   * #485 — release a charged attack. Computes holdDuration server-authoritatively
+   * from the chargeStart timestamp. A hold below CHARGE_THRESHOLD_MS is treated as
+   * a tap (always hits, standard telegraph). A hold above the threshold checks the
+   * oscillation Y against HIT_CONE_PX:
+   *   - Hit  → launch telegraph with variable duration based on sharpness; defender
+   *             phase proceeds at compressed parry window.
+   *   - Miss → deduct one ring use, broadcast `chargeMiss`, return to initiative.
+   *             The defender phase is skipped entirely.
+   *
+   * Fusion variant: when `fusionSecondSlot` is present the caller held the first
+   * slot and tapped the second. A1 is the charged slot (hit/miss determined by Y);
+   * A2 always hits (tap). If A1 misses, only A2's exchange opens a defend window.
+   * Both slots' uses are deducted regardless of hit/miss on A1.
+   */
+  handleReleaseAttack(id: string, payload: ReleaseAttackPayload): void {
+    const state = this.state;
+    if (state.phase !== 'ATTACK_SELECT') return;
+    if (id !== state.currentAttackerId) return;
+    if (!ATTACK_SLOTS.has(payload.slot)) return;
+
+    const attacker = state.players.get(id)!;
+    const ring = attacker.getSlot(payload.slot);
+    if (ring.isExtinguished) return;
+
+    // Compute server-authoritative hold duration. Fall back to client-supplied
+    // value only when no chargeStart was recorded (should not happen in normal play,
+    // but defends against connection issues or clients that skip chargeStart for taps).
+    const startTime = this.chargeStartTimes.get(id);
+    const holdMs = startTime !== undefined ? Date.now() - startTime : payload.holdDuration;
+    this.chargeStartTimes.delete(id);
+
+    // Below threshold → tap: delegate to the existing selectAttack path (no oscillation).
+    if (holdMs < CHARGE_THRESHOLD_MS) {
+      this.handleSelectAttack(id, { slot: payload.slot });
+      // Fusion tap on the second slot when present.
+      if (payload.fusionSecondSlot && ATTACK_SLOTS.has(payload.fusionSecondSlot)) {
+        // A fusion tap-tap falls through to selectDoubleAttack only when eligible;
+        // here we treat the second slot as an independent tap via selectAttack to
+        // avoid duplicating the combo eligibility logic.
+        // Per GDD §6.3: for a fusion hold+tap the second always fires horizontal; the
+        // tap-tap case (both below threshold) is just two independent attacks. This
+        // only matters when two taps happen in sub-threshold time, which is effectively
+        // instantaneous user input. The server treats them sequentially: first slot
+        // opens the first defend window; the second slot fires after that resolves.
+        // Leave the second for its own releaseAttack message.
+      }
+      return;
+    }
+
+    // Compute oscillation outcome from the server's holdDuration.
+    const hit = chargeIsHit(holdMs);
+    const sharp = chargeSharpness(holdMs);
+
+    if (!hit) {
+      // Miss: deduct attacker ring use, broadcast miss event, return to initiative.
+      const usePaidByStake = StakeResolver.applyTailwind(attacker, ring);
+      if (!usePaidByStake) consumeUse(ring);
+
+      const missPayload: ChargeMissPayload = { attackerId: id, attackerSlot: payload.slot };
+      this.broadcast('chargeMiss', missPayload);
+
+      // Fusion miss on A1: the tapped A2 still fires (tap = always horizontal = always hit).
+      if (payload.fusionSecondSlot && ATTACK_SLOTS.has(payload.fusionSecondSlot)) {
+        const secondRing = attacker.getSlot(payload.fusionSecondSlot);
+        if (!secondRing.isExtinguished) {
+          // Fire A2 as a tap (standard telegraph, full window).
+          consumeUse(secondRing);
+          state.attackerSlot = payload.fusionSecondSlot;
+          state.phase = 'DEFEND_WINDOW';
+          this.impactTime = Date.now() + TELEGRAPH_MS;
+          this.defenseSubmitted = false;
+          this.defenseSlotKey = '';
+          this.defensePressTime = 0;
+          this.windowTimer = setTimeout(() => this._resolveExchange(), DEFEND_WINDOW_MS);
+          this.notifyAI();
+          return;
+        }
+      }
+
+      // No second slot or it was extinguished: return to initiative (opponent's turn).
+      this.advanceTurn();
+      return;
+    }
+
+    // Hit: compute variable telegraph duration based on sharpness. The parry window
+    // compresses proportionally (CHARGE_PARRY_COMPRESSION controls how tight it gets).
+    const compressedTelegraphMs = chargeTelegraphDuration(holdMs);
+
+    // Spend the ring use (same as selectAttack).
+    const usePaidByStake = StakeResolver.applyTailwind(attacker, ring);
+    if (!usePaidByStake) consumeUse(ring);
+
+    state.attackerSlot = payload.slot;
+    state.phase = 'DEFEND_WINDOW';
+
+    this.impactTime = Date.now() + compressedTelegraphMs;
+    this.defenseSubmitted = false;
+    this.defenseSlotKey = '';
+    this.defensePressTime = 0;
+
+    // Compress the defend window proportionally so the parry/block bands stay
+    // centred on the (earlier) impact. The full window = telegraph + catch band;
+    // when the telegraph shrinks, the window shrinks too.
+    const compressedDefendWindowMs = compressedTelegraphMs + BLOCK_WINDOW_MS;
+
+    // Fusion hit on A1 + tap on A2 → delegate to the double-attack combo path.
+    // We reuse the existing combo machinery (launched from selectDoubleAttack) by
+    // directly triggering the combo state here, mirroring handleSelectDoubleAttack
+    // but with the compressed telegraph and no gap (both orbs effectively launch
+    // together from the player's perspective).
+    if (payload.fusionSecondSlot && ATTACK_SLOTS.has(payload.fusionSecondSlot)) {
+      const secondRing = attacker.getSlot(payload.fusionSecondSlot);
+      if (!secondRing.isExtinguished) {
+        // Consume second slot (it's a tap → always hits horizontal).
+        consumeUse(secondRing);
+
+        // Use MIN_COMBO_GAP_MS so the two orbs separate cleanly (A2 launches after
+        // A1's parry-determination margin). This mirrors the standard combo gap logic.
+        const gapMs = MIN_COMBO_GAP_MS;
+
+        this.comboActive = true;
+        this.comboSecondSlot = payload.fusionSecondSlot;
+        this.comboGapMs = gapMs;
+        this.impact2 = 0;
+        this.defense2Submitted = false;
+        this.defense2SlotKey = '';
+        this.defense2PressTime = 0;
+
+        this.broadcast('doubleAttackStart', {
+          first: payload.slot,
+          second: payload.fusionSecondSlot,
+          firstElements: componentsOf(ring.element),
+          secondElements: componentsOf(secondRing.element),
+          gapMs,
+        } satisfies DoubleAttackStartPayload);
+
+        // Orb 1 resolves compressedDefendWindowMs after its launch.
+        this.windowTimer = setTimeout(() => this._resolveCombo(), compressedDefendWindowMs);
+
+        this.orb2LaunchTimer = setTimeout(() => {
+          this.orb2LaunchTimer = null;
+          if (!this.comboActive || this.state.phase === 'ENDED') return;
+          this.impact2 = Date.now() + TELEGRAPH_MS;
+          this.orb2Timer = setTimeout(() => this._resolveOrb2(), DEFEND_WINDOW_MS);
+        }, gapMs);
+
+        this.notifyAI();
+        return;
+      }
+    }
+
+    // Single slot hit: standard window (compressed).
+    this.windowTimer = setTimeout(() => this._resolveExchange(), compressedDefendWindowMs);
     this.notifyAI();
   }
 
