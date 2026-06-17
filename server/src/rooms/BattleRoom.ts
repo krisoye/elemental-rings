@@ -142,9 +142,13 @@ export class BattleRoom extends Room<{ state: BattleState }> {
   private orb2Timer: ReturnType<typeof setTimeout> | null = null;
   // #485 — charge attack per-session state. chargeStartTimes tracks when each
   // session began their current hold (set on `chargeStart`, cleared on
-  // `releaseAttack`). The server timestamps authoritatively — holdDuration from
-  // the client is a fallback for the tap path (holdDuration = 0).
+  // `releaseAttack`). The server timestamps authoritatively — absent entry
+  // means no chargeStart was received (treat as tap, holdMs = 0).
   private chargeStartTimes: Map<string, number> = new Map();
+  // Set by handleReleaseAttack (hit path) to the sharpness-compressed parry
+  // window for THIS exchange. resolveOrb reads it once and resets to null so
+  // non-charge exchanges always use the standard PARRY_WINDOW_MS.
+  private chargeParryWindowMs: number | null = null;
 
   /** Non-null only in vsAI (`battle-ai`) rooms; a no-op via notifyAI() in PvP. */
   private ai: AIController | null = null;
@@ -1158,6 +1162,15 @@ export class BattleRoom extends Room<{ state: BattleState }> {
     const hit = chargeIsHit(holdMs);
     const sharp = chargeSharpness(holdMs);
 
+    // Whether the fusionSecondSlot path is eligible (requires canDoubleAttack just
+    // like selectDoubleAttack). If not eligible the second slot is silently ignored
+    // and the attack resolves as a single-slot charge. Checked once here so both
+    // the miss and hit branches share the same guard.
+    const fusionEligible =
+      payload.fusionSecondSlot !== undefined &&
+      ATTACK_SLOTS.has(payload.fusionSecondSlot) &&
+      canDoubleAttack(attacker);
+
     if (!hit) {
       // Miss: deduct attacker ring use, broadcast miss event, return to initiative.
       const usePaidByStake = StakeResolver.applyTailwind(attacker, ring);
@@ -1167,12 +1180,16 @@ export class BattleRoom extends Room<{ state: BattleState }> {
       this.broadcast('chargeMiss', missPayload);
 
       // Fusion miss on A1: the tapped A2 still fires (tap = always horizontal = always hit).
-      if (payload.fusionSecondSlot && ATTACK_SLOTS.has(payload.fusionSecondSlot)) {
-        const secondRing = attacker.getSlot(payload.fusionSecondSlot);
+      // Gate on fusionEligible so only legal fusion combos reach this path.
+      if (fusionEligible) {
+        const secondSlot = payload.fusionSecondSlot!;
+        const secondRing = attacker.getSlot(secondSlot);
         if (!secondRing.isExtinguished) {
-          // Fire A2 as a tap (standard telegraph, full window).
+          // Charge at commit: A2−1, thumb−1 (matches selectDoubleAttack economy —
+          // NO Tailwind / setup / Earth passive on fusion combo uses).
           consumeUse(secondRing);
-          state.attackerSlot = payload.fusionSecondSlot;
+          consumeUse(attacker.thumb);
+          state.attackerSlot = secondSlot;
           state.phase = 'DEFEND_WINDOW';
           this.impactTime = Date.now() + TELEGRAPH_MS;
           this.defenseSubmitted = false;
@@ -1184,14 +1201,20 @@ export class BattleRoom extends Room<{ state: BattleState }> {
         }
       }
 
-      // No second slot or it was extinguished: return to initiative (opponent's turn).
+      // No second slot, not eligible, or A2 extinguished: return to initiative.
       this.advanceTurn();
       return;
     }
 
     // Hit: compute variable telegraph duration based on sharpness. The parry window
-    // compresses proportionally (CHARGE_PARRY_COMPRESSION controls how tight it gets).
+    // compresses proportionally (CHARGE_PARRY_COMPRESSION shrinks the PARRY band
+    // at full charge — stored for resolveOrb to read via chargeParryWindowMs).
     const compressedTelegraphMs = chargeTelegraphDuration(holdMs);
+    // Compressed parry window: lerp from PARRY_WINDOW_MS down to
+    // floor(PARRY_WINDOW_MS × (1 − CHARGE_PARRY_COMPRESSION)) at sharpness 1.
+    this.chargeParryWindowMs = Math.round(
+      PARRY_WINDOW_MS * (1 - sharp * CHARGE_PARRY_COMPRESSION),
+    );
 
     // Spend the ring use (same as selectAttack).
     const usePaidByStake = StakeResolver.applyTailwind(attacker, ring);
@@ -1213,20 +1236,23 @@ export class BattleRoom extends Room<{ state: BattleState }> {
     // Fusion hit on A1 + tap on A2 → delegate to the double-attack combo path.
     // We reuse the existing combo machinery (launched from selectDoubleAttack) by
     // directly triggering the combo state here, mirroring handleSelectDoubleAttack
-    // but with the compressed telegraph and no gap (both orbs effectively launch
-    // together from the player's perspective).
-    if (payload.fusionSecondSlot && ATTACK_SLOTS.has(payload.fusionSecondSlot)) {
-      const secondRing = attacker.getSlot(payload.fusionSecondSlot);
+    // but with the compressed telegraph. Gate on fusionEligible (canDoubleAttack).
+    if (fusionEligible) {
+      const secondSlot = payload.fusionSecondSlot!;
+      const secondRing = attacker.getSlot(secondSlot);
       if (!secondRing.isExtinguished) {
-        // Consume second slot (it's a tap → always hits horizontal).
+        // Charge at commit: A2−1, thumb−1. A1 use already consumed above.
+        // NO Tailwind / setup / Earth passive — fusion thumbs spend their own use
+        // (matches handleSelectDoubleAttack economy exactly).
         consumeUse(secondRing);
+        consumeUse(attacker.thumb);
 
         // Use MIN_COMBO_GAP_MS so the two orbs separate cleanly (A2 launches after
         // A1's parry-determination margin). This mirrors the standard combo gap logic.
         const gapMs = MIN_COMBO_GAP_MS;
 
         this.comboActive = true;
-        this.comboSecondSlot = payload.fusionSecondSlot;
+        this.comboSecondSlot = secondSlot;
         this.comboGapMs = gapMs;
         this.impact2 = 0;
         this.defense2Submitted = false;
@@ -1235,7 +1261,7 @@ export class BattleRoom extends Room<{ state: BattleState }> {
 
         this.broadcast('doubleAttackStart', {
           first: payload.slot,
-          second: payload.fusionSecondSlot,
+          second: secondSlot,
           firstElements: componentsOf(ring.element),
           secondElements: componentsOf(secondRing.element),
           gapMs,
@@ -1560,7 +1586,11 @@ export class BattleRoom extends Room<{ state: BattleState }> {
       capture.submitted && capture.slotKey ? defenderPlayer.getSlot(capture.slotKey) : null;
 
     const offsetMs = capture.pressTime - capture.impactTime;
-    const timing = classifyTiming(offsetMs, capture.submitted, PARRY_WINDOW_MS, BLOCK_WINDOW_MS);
+    // #485 — a charge hit sets chargeParryWindowMs to the sharpness-compressed
+    // band; clear it after consuming so non-charge exchanges use PARRY_WINDOW_MS.
+    const parryMs = this.chargeParryWindowMs ?? PARRY_WINDOW_MS;
+    this.chargeParryWindowMs = null;
+    const timing = classifyTiming(offsetMs, capture.submitted, parryMs, BLOCK_WINDOW_MS);
 
     const result = resolveBlock(attackerRing, defenderRing, timing);
 
