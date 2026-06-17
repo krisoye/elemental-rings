@@ -21,6 +21,7 @@ import {
   isHitAngle as chargeIsHitAngle,
 } from '../../../shared/oscillation';
 import type { OrbHandle, IdleOrbHandle } from '../objects/Orb';
+import { IDLE_ORB_RADIUS } from '../objects/Orb';
 import {
   PLAYER_X,
   PLAYER_Y,
@@ -900,12 +901,14 @@ export class BattleScene extends Phaser.Scene {
     this.chargeHoldStart = now;
     window.__room!.send('chargeStart', { slot });
 
-    // Spawn the oscillating orb in front of the player (toward the opponent, x − 60).
+    // Spawn the oscillating orb in front of the player (toward the opponent, x − IDLE_ORB_RADIUS).
+    // facing opens the arc leftward (toward OPPONENT_X, which is to the left of PLAYER_X).
     // update() will reposition its Y each frame while the hold is active.
     const elements = this._getAttackElements(slot);
-    const spawnX = PLAYER_X - 60;
+    const spawnX = PLAYER_X - IDLE_ORB_RADIUS;
+    const facing = Math.sign(OPPONENT_X - PLAYER_X) as 1 | -1;
     this.chargeOrbSpawnX = spawnX;
-    this.chargeOrbHandle = Orb.spawnIdle(this, elements, { x: spawnX, y: PLAYER_Y });
+    this.chargeOrbHandle = Orb.spawnIdle(this, elements, { x: spawnX, y: PLAYER_Y }, facing);
   }
 
   /**
@@ -965,13 +968,16 @@ export class BattleScene extends Phaser.Scene {
     const ring = oppState?.[p.slot as SlotKey];
     const elements = ring ? ringComponents(ring) : [0];
 
-    // Spawn at OPPONENT_X + 60 (in front of opponent, toward the player).
-    const oppSpawnX = OPPONENT_X + 60;
+    // Spawn at OPPONENT_X + IDLE_ORB_RADIUS (in front of opponent, toward the player).
+    // facing opens the arc rightward (toward PLAYER_X, which is to the right of OPPONENT_X).
+    const oppSpawnX = OPPONENT_X + IDLE_ORB_RADIUS;
+    const oppFacing = Math.sign(PLAYER_X - OPPONENT_X) as 1 | -1;
     this.opponentChargeOrbSpawnX = oppSpawnX;
     this.opponentChargeOrbHandle = Orb.spawnIdle(
       this,
       elements,
       { x: oppSpawnX, y: OPPONENT_Y },
+      oppFacing,
     );
     this.opponentChargeStartTime = p.startTime;
     this.opponentChargeSlot = p.slot as SlotKey;
@@ -1399,6 +1405,27 @@ export class BattleScene extends Phaser.Scene {
 
   get opponentChargeOrbAngle(): number | null {
     return this.opponentChargeOrbHandle ? this.opponentChargeOrbHandle.getAngle() : null;
+  }
+
+  /**
+   * #495 — E2E test-support accessors for the actual rendered x of the leading
+   * orb circle at the current arc angle. Used to verify arc opens toward the opponent
+   * (not behind the attacker). Returns null when no orb is active.
+   *
+   * Formula: pivot + facing * IDLE_ORB_RADIUS * cos(angleDeg * π/180)
+   */
+  get chargeOrbRenderX(): number | null {
+    if (!this.chargeOrbHandle || this.chargeOrbSpawnX === null) return null;
+    const facing = Math.sign(OPPONENT_X - PLAYER_X);
+    const rad = (this.chargeOrbHandle.getAngle() * Math.PI) / 180;
+    return this.chargeOrbSpawnX + facing * IDLE_ORB_RADIUS * Math.cos(rad);
+  }
+
+  get opponentChargeOrbRenderX(): number | null {
+    if (!this.opponentChargeOrbHandle || this.opponentChargeOrbSpawnX === null) return null;
+    const facing = Math.sign(PLAYER_X - OPPONENT_X);
+    const rad = (this.opponentChargeOrbHandle.getAngle() * Math.PI) / 180;
+    return this.opponentChargeOrbSpawnX + facing * IDLE_ORB_RADIUS * Math.cos(rad);
   }
 
   /**
