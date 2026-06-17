@@ -255,7 +255,7 @@ export const BOSS_MODIFIERS: Record<BossTier, BossModifier> = {
 // accessible). REGION_STEP = 25 matches the old bonus table's per-biome increment.
 //
 // Verification:
-//   spiritFloor('forest','gate')   = 0  + 25*0 = 15  ✓
+//   spiritFloor('forest','gate')   = 15 + 25*0 = 15  ✓
 //   spiritFloor('snow',  'gate')   = 15 + 25*1 = 40  ✓
 //   spiritFloor('swamp', 'sub')    = 25 + 25*2 = 75  ✓
 //   spiritFloor('desert','major')  = 40 + 25*3 = 115 ✓
