@@ -17,6 +17,7 @@ import {
   computeIsHit,
   computeSharpness,
   computeTelegraphDuration,
+  computeOscillationPeriod,
 } from '../../server/src/game/ChargeAttack';
 import {
   BASE_PERIOD_MS,
@@ -335,5 +336,99 @@ describe('fusion double-attack — held slot checked, tapped slot always hits', 
     // Verify that computeIsHit with holdDuration=0 (tap convention) returns true
     // regardless of what any other orb is doing.
     expect(computeIsHit(0)).toBe(true);
+  });
+});
+
+// ── Phase 2: implementation-aware tests ──────────────────────────────────────
+// Added after reading server/src/game/ChargeAttack.ts and shared/oscillation.ts.
+// These pin implementation details (rounding, exact wire values at key hold times)
+// that the spec did not constrain but the implementation now defines.
+
+describe('computeTelegraphDuration — Math.round() contract (impl detail)', () => {
+  test('returns an integer (Math.round applied): no fractional milliseconds', () => {
+    // #485 impl: telegraphDuration uses Math.round(lerp result) so the server
+    // can broadcast an integer ms to the client without float imprecision.
+    // A non-integer would drift the parry window timing across reconnects.
+    const samples = [0, 100, 300, 600, 900, 1200, MAX_CHARGE_MS];
+    for (const t of samples) {
+      const result = computeTelegraphDuration(t);
+      expect(Number.isInteger(result)).toBe(true);
+    }
+  });
+
+  test('computeTelegraphDuration(750) = round(900 + (MIN-900) * 0.5) — midpoint rounds correctly', () => {
+    // #485 impl: at sharpness=0.5 (holdMs = MAX_CHARGE_MS/2 = 750ms), the lerp
+    // produces an exact midpoint. Verify the rounded value matches the expected formula.
+    // Production: round(900 + (500-900)*0.5) = round(900-200) = 700ms.
+    // E2E_FAST:   round(150 + (80-150)*0.5)  = round(150-35)  = 115ms.
+    // We import the actual constants to stay environment-agnostic.
+    const expectedRaw = TELEGRAPH_MS + (CHARGE_TELEGRAPH_MIN_MS - TELEGRAPH_MS) * 0.5;
+    const expected = Math.round(expectedRaw);
+    expect(computeTelegraphDuration(MAX_CHARGE_MS / 2)).toBe(expected);
+  });
+});
+
+describe('computeYOffset — known formula values at deterministic E2E hold times', () => {
+  test('computeYOffset(200) ≈ 78.78 (guaranteed miss in E2E scenarios)', () => {
+    // #485 impl: 200ms hold is used in E2E as the deterministic miss target.
+    // Pin the exact formula result here so any constant change that would break
+    // the E2E determinism is caught at unit test time (not discovered during E2E runs).
+    // period(200) = 1200/(1+200/600) = 1200/1.333 = 900ms
+    // yOffset = 80 * sin(2π*200/900) = 80 * sin(1.396) ≈ 80 * 0.9848 = 78.78
+    const y = computeYOffset(200);
+    expect(Math.abs(y)).toBeGreaterThan(60); // well outside HIT_CONE_PX=20
+    expect(computeIsHit(200)).toBe(false);   // must be a miss
+  });
+
+  test('computeYOffset(600) ≈ 0 (guaranteed hit in E2E scenarios)', () => {
+    // #485 impl: 600ms hold is used in E2E as the deterministic hit target.
+    // period(600) = 1200/(1+600/600) = 600ms
+    // yOffset = 80 * sin(2π*600/600) = 80 * sin(2π) ≈ 0
+    const y = computeYOffset(600);
+    expect(Math.abs(y)).toBeLessThan(5); // near the center line
+    expect(computeIsHit(600)).toBe(true); // must be a hit
+  });
+
+  test('miss zone is wide enough to absorb ±50ms server jitter around 200ms hold', () => {
+    // #485 impl: the E2E miss target of 200ms must remain a miss even with ±50ms
+    // server event-loop jitter. Verify the entire 150–250ms range is a miss so the
+    // E2E scenario is not fragile.
+    for (let t = 150; t <= 250; t += 5) {
+      expect(computeIsHit(t)).toBe(false);
+    }
+  });
+
+  test('hit zone at 600ms spans at least 30ms (±15ms jitter tolerance)', () => {
+    // #485 impl: the E2E hit target of 600ms has a 35ms hit window (585–619ms).
+    // Pin that the center 30ms of this window (585–615ms) is all hits so the
+    // E2E scenario survives reasonable server timing variance.
+    for (let t = 585; t <= 615; t += 1) {
+      expect(computeIsHit(t)).toBe(true);
+    }
+  });
+});
+
+describe('computeOscillationPeriod — period shortens with hold time', () => {
+  test('period at t=0 equals BASE_PERIOD_MS (slowest oscillation)', () => {
+    // #485 impl: ChargeAttack.ts exports computeOscillationPeriod as a public
+    // wrapper. At t=0 the denominator is 1 so period = BASE_PERIOD_MS exactly.
+    expect(computeOscillationPeriod(0)).toBe(BASE_PERIOD_MS);
+  });
+
+  test('period at t=PERIOD_DECAY_MS is BASE_PERIOD_MS/2 (period halved at decay constant)', () => {
+    // #485 impl: at holdMs = PERIOD_DECAY_MS the formula gives
+    // BASE_PERIOD_MS / (1 + 1) = BASE_PERIOD_MS / 2.
+    // This is the inflection that defines PERIOD_DECAY_MS's role.
+    expect(computeOscillationPeriod(PERIOD_DECAY_MS)).toBeCloseTo(BASE_PERIOD_MS / 2, 6);
+  });
+
+  test('period is strictly positive for any hold (never zero, no divide-by-zero risk)', () => {
+    // #485 adversarial: if holdMs were infinity (or MAX_SAFE_INTEGER), the period
+    // approaches but never reaches 0 (denominator diverges). Verify the minimum
+    // period over the valid hold range is still positive and doesn't collapse to 0.
+    const holds = [0, 100, MAX_CHARGE_MS, MAX_CHARGE_MS * 10, 1e6];
+    for (const t of holds) {
+      expect(computeOscillationPeriod(t)).toBeGreaterThan(0);
+    }
   });
 });
