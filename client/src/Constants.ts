@@ -169,3 +169,13 @@ export const SLOT_LABELS: Record<SlotKey, string> = {
 export const HAND_Y = 510;
 export const HAND_SLOT_X = [580, 648, 716, 784, 852];
 export const HAND_SLOT_SPACING = 68;
+
+// #490 — RECHARGE slot card in the Hand row (left of Thumb at HAND_SLOT_X[0]=580).
+// Center at 580 - HAND_SLOT_SPACING (68) = 512; divider midpoint between 512 and 580.
+// Gold styling shared with BenchHealthCombat's RECHARGE slot — imported by both files.
+export const RECHARGE_SLOT_X = 512;
+export const RECHARGE_DIVIDER_X = 546;
+export const RECHARGE_FILL = 0x443300;
+export const RECHARGE_ALPHA = 0.6;
+export const RECHARGE_STROKE = 0xffcc44;
+export const RECHARGE_STROKE_WIDTH = 2;

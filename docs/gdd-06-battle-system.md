@@ -95,7 +95,7 @@ telegraphDuration = lerp(TELEGRAPH_MS, CHARGE_TELEGRAPH_MIN_MS, sharpness)
 5. If the reactor achieves **Parry + Strong**, a counter fires (see §6.4 Rally).
 6. When the chain ends, **initiative passes to the other player**.
 
-**Option B — Recharge:** Press `R` (or the "↻ Recharge" touch button) during your initiative phase to enter **recharge-armed state**. The HUD shows "RECHARGE — pick a ring". Then press any ring key (`1`/`2`/`3`/`4`) or tap any ring card to recharge that ring. This gesture unifies attack-ring and defense-ring recharge under a single two-step input. Cancel with `R` again, `Esc`, or no input for ~2,500 ms.
+**Option B — Recharge:** Press `R` (or tap the RECHARGE slot card in the Hand row) during your initiative phase to enter **recharge-armed state**. The HUD shows "RECHARGE — pick a ring". Then press any ring key (`1`/`2`/`3`/`4`) or tap any ring card to recharge that ring. This gesture unifies attack-ring and defense-ring recharge under a single two-step input. Cancel with `R` again, `Esc`, or no input for ~2,500 ms.
 - Cost: **1 spirit per use restored** (same rate as overworld recharging, §4.3). A Tier 1 ring at 0 uses costs 3 spirit; one at 1 use costs 2 spirit.
 - The ring is restored to its full `max_uses`. The initiative phase ends immediately — no attack is thrown.
 - Spirit-gated: only the affordable portion is restored. If the player lacks spirit for a full recharge, the affordable uses are restored (or none, at zero affordable) and the phase is still consumed.
@@ -127,7 +127,7 @@ When the attacker holds one attack button (A1 or A2) while the orb oscillates, t
 |---|---|---|
 | Attack A1 | `1` | `Z` (single press, attack phase) |
 | Attack A2 | `2` | `C` (single press, attack phase) |
-| Arm Recharge | `R` / "↻ Recharge" touch button | — (attack phase only) |
+| Arm Recharge | `R` / RECHARGE slot card (Hand row, left of Thumb) | — (attack phase only) |
 | Complete Recharge | `1`/`2`/`3`/`4` or any ring card tap | — (while recharge-armed) |
 | Forfeit | `3` + `4` simultaneously | — (attack phase only) |
 | Defend D1 | `3` | `Z` (defense phase) |

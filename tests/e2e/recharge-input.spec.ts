@@ -18,6 +18,26 @@ async function setState(page: Page, patch: Record<string, unknown>): Promise<voi
   await page.evaluate((p) => (window as any).__room.send('__testSetState', p), patch);
 }
 
+/**
+ * Convert logical Phaser canvas coordinates (1024×576 space) to page coordinates,
+ * accounting for any CSS or browser scaling applied to the <canvas> element.
+ * Mirrors the helper in anchorage-campfire.spec.ts.
+ */
+async function canvasCoords(
+  page: Page,
+  logicalX: number,
+  logicalY: number,
+): Promise<{ x: number; y: number }> {
+  const box = await page.locator('canvas').first().boundingBox();
+  if (!box) throw new Error('canvas element not found');
+  const scaleX = box.width / 1024;
+  const scaleY = box.height / 576;
+  return {
+    x: Math.round(box.x + logicalX * scaleX),
+    y: Math.round(box.y + logicalY * scaleY),
+  };
+}
+
 async function readSlot(page: Page, slot: SlotKey): Promise<{ currentUses: number; maxUses: number }> {
   return page.evaluate((s) => {
     const room = (window as any).__room;
@@ -795,6 +815,173 @@ test('R then hold on 1 (≥150ms) completes recharge and spawns NO charge orb', 
     return (scene as any)?.chargeOrbX ?? null;
   });
   expect(orbX).toBeNull();
+
+  await closeBattle(h);
+});
+
+// ── Scenario 17 (#490): pointer tap on RECHARGE slot card arms recharge ────────
+// #490 adversarial: the gold RECHARGE card at (512,510) must call onArmRecharge()
+// on pointerdown — same as R-key. Without this wire-up the touch path is silently
+// broken and only keyboard users can recharge, violating the spec's parity contract.
+test('#490 pointer tap on RECHARGE slot card at (512,510) arms recharge state and sends recharge on subsequent ring-key', async ({
+  browser,
+}) => {
+  const h = await setupBattle(browser);
+  const { attacker } = await attackerDefender(h.p1, h.p2);
+
+  await waitForMyAttackTurn(attacker);
+  await spyOnAllSends(attacker);
+
+  // Act via real pointer on the gold RECHARGE slot card — no __* hook for input.
+  // canvasCoords converts logical 1024×576 coords to page coords (accounts for scaling).
+  const slotPos17 = await canvasCoords(attacker, 512, 510);
+  await attacker.mouse.click(slotPos17.x, slotPos17.y);
+
+  // The slot tap must arm recharge — window.__rechargeArmed is the read-only hook
+  // set by BattleScene.armRecharge() at line 1143 of BattleScene.ts.
+  await attacker.waitForFunction(
+    () => (window as any).__rechargeArmed === true,
+    { timeout: 3000 },
+  );
+  expect(await attacker.evaluate(() => (window as any).__rechargeArmed)).toBe(true);
+
+  // Complete recharge via ring key (real keyboard) — no recharge message fired yet.
+  await attacker.keyboard.press('1');
+
+  // Gate on the recharge message reaching the server before asserting counts.
+  await attacker.waitForFunction(() => ((window as any).__allSends?.recharge ?? 0) >= 1, {
+    timeout: 8000,
+  });
+
+  expect(await getSentCount(attacker, 'recharge')).toBe(1);
+  expect(await getSentCount(attacker, 'selectAttack')).toBe(0);
+
+  // rechargeArmed must clear after completion.
+  expect(await attacker.evaluate(() => (window as any).__rechargeArmed ?? false)).toBe(false);
+
+  await closeBattle(h);
+});
+
+// ── Scenario 18 (#490): old blue button location (944,462) is dead ────────────
+// #490 adversarial: clicking the old floating blue button coordinates must NOT arm
+// recharge. If the old button is still present (not fully removed), this click would
+// call onArmRecharge() and __rechargeArmed would flip to true — a silent regression.
+test('#490 clicking old blue button position (944,462) does not arm recharge and sends no recharge message', async ({
+  browser,
+}) => {
+  const h = await setupBattle(browser);
+  const { attacker } = await attackerDefender(h.p1, h.p2);
+
+  await waitForMyAttackTurn(attacker);
+  await spyOnAllSends(attacker);
+
+  // Click the old blue button location — the button must be fully gone, not just restyled.
+  const oldBtnPos = await canvasCoords(attacker, 944, 462);
+  await attacker.mouse.click(oldBtnPos.x, oldBtnPos.y);
+
+  // Allow any async side-effects to settle (pointer events are synchronous in Phaser
+  // but give an event loop tick for any delayed handlers).
+  await attacker.waitForTimeout(300);
+
+  // No arm transition — __rechargeArmed must remain false (or undefined).
+  expect(await attacker.evaluate(() => (window as any).__rechargeArmed ?? false)).toBe(false);
+  expect(await getSentCount(attacker, 'recharge')).toBe(0);
+
+  await closeBattle(h);
+});
+
+// ── Scenario 19 (#490): double-tap on RECHARGE slot does not double-arm ────────
+// #490 adversarial: two rapid clicks on the slot must leave recharge armed exactly
+// once (second tap while already armed: armRecharge() is idempotent — it resets the
+// timeout and stays armed). The server must not receive spurious recharge messages
+// from the double-tap, and __rechargeArmed must be true (not toggled off).
+test('#490 double-tap on RECHARGE slot card does not double-arm or desync: armed once, no spurious recharge sent', async ({
+  browser,
+}) => {
+  const h = await setupBattle(browser);
+  const { attacker } = await attackerDefender(h.p1, h.p2);
+
+  await waitForMyAttackTurn(attacker);
+  await spyOnAllSends(attacker);
+
+  // Two rapid clicks — first arms, second must be idempotent (not complete a recharge).
+  const slotPos19 = await canvasCoords(attacker, 512, 510);
+  await attacker.mouse.click(slotPos19.x, slotPos19.y);
+  await attacker.mouse.click(slotPos19.x, slotPos19.y);
+
+  // After two taps the state is armed (not cancelled, not double-completed).
+  await attacker.waitForFunction(
+    () => (window as any).__rechargeArmed === true,
+    { timeout: 3000 },
+  );
+
+  // No recharge message sent yet — the slot tap only arms; ring-key press completes.
+  await attacker.waitForTimeout(200);
+  expect(await getSentCount(attacker, 'recharge')).toBe(0);
+  expect(await attacker.evaluate(() => (window as any).__rechargeArmed)).toBe(true);
+
+  await closeBattle(h);
+});
+
+// ── Scenario 20 (#490): off-turn pointer tap on RECHARGE slot is a no-op ──────
+// #490 adversarial: tapping the RECHARGE slot when it is NOT the player's turn
+// must be ignored — armRecharge() has a phase guard (ATTACK_SELECT + my turn).
+// Without this guard, a touch user could pre-arm recharge out-of-turn and have it
+// fire unexpectedly when their turn arrives, breaking server-authoritative guarantees.
+test('#490 pointer tap on RECHARGE slot during opponent turn is a no-op: __rechargeArmed stays false', async ({
+  browser,
+}) => {
+  const h = await setupBattle(browser);
+  const { attacker, defender } = await attackerDefender(h.p1, h.p2);
+
+  await spyOnAllSends(defender);
+
+  // Ensure it is the attacker's turn (not the defender's).
+  await waitForMyAttackTurn(attacker);
+
+  // Tap the RECHARGE slot on the DEFENDER's page — it is not their turn.
+  const slotPos20 = await canvasCoords(defender, 512, 510);
+  await defender.mouse.click(slotPos20.x, slotPos20.y);
+
+  await attacker.waitForTimeout(300);
+
+  // The defender's armRecharge() phase guard must block the tap entirely.
+  expect(await defender.evaluate(() => (window as any).__rechargeArmed ?? false)).toBe(false);
+  expect(await getSentCount(defender, 'recharge')).toBe(0);
+
+  await closeBattle(h);
+});
+
+// ── Scenario 21 (#490/impl): rechargeBg has no setDepth — pointer must still hit ─
+// #490 impl: rechargeBg is added via scene.add.rectangle() at default depth 0 (the
+// old blue button was at depth 500). Without a setDepth call the card renders behind
+// the ring slot cards (also at default depth 0 in the Hand container). A ring slot
+// card or HUD layer occluding (512,510) would silently eat the click and never fire
+// pointerdown on rechargeBg — __rechargeArmed stays false even though the card exists.
+// This test proves the card is actually hittable at that canvas position.
+test('#490 rechargeBg at default depth is pointer-hittable: click at (512,510) arms recharge without any ring slot occlusion', async ({
+  browser,
+}) => {
+  const h = await setupBattle(browser);
+  const { attacker } = await attackerDefender(h.p1, h.p2);
+
+  await waitForMyAttackTurn(attacker);
+  await spyOnAllSends(attacker);
+
+  // A single pointer click at the exact rechargeBg center — if occlusion were present
+  // __rechargeArmed would stay false (the click lands on a non-interactive layer instead).
+  const slotPos21 = await canvasCoords(attacker, 512, 510);
+  await attacker.mouse.click(slotPos21.x, slotPos21.y);
+
+  // Gate: armRecharge() must fire within 3s; a timeout here is the occlusion signal.
+  await attacker.waitForFunction(
+    () => (window as any).__rechargeArmed === true,
+    { timeout: 3000 },
+  );
+  expect(await attacker.evaluate(() => (window as any).__rechargeArmed)).toBe(true);
+
+  // No recharge message sent yet (click only arms, does not complete).
+  expect(await getSentCount(attacker, 'recharge')).toBe(0);
 
   await closeBattle(h);
 });
