@@ -54,7 +54,7 @@ The **initiative holder** chooses one of three actions:
 **Tap (hold < `CHARGE_THRESHOLD_MS`, default 150 ms):** Release quickly. The orb spawns on release and fires horizontally at the standard **900 ms** telegraph. Defender phase opens at full baseline window. This is always a hit — no arc-timing required.
 
 **Charged Attack (hold ≥ `CHARGE_THRESHOLD_MS`):** Hold the button. As soon as the hold begins:
-- The attack orb **spawns immediately** in front of the attacker and begins sweeping in a **constant-angular-velocity arc** from −45° to +45° (pivoting at the spawn point). 0° is the sweet spot — aimed directly at the opponent.
+- The attack orb **spawns immediately** in front of the attacker and begins sweeping in a **constant-angular-velocity arc** from −45° to +45° (pivoting at the spawn point). 0° is the sweet spot — aimed directly at the opponent. The arc opens toward the opponent: at every angle the orb stays between the attacker's pivot and the opponent, never behind the attacker.
 - The sweep **speeds up on each reversal** (3 sweeps to max speed, controlled by `SWEEP_SPEEDUP = 0.75`): each successive sweep takes 75% as long as the previous. Max speed is reached at sweep 3 and held there.
 - The orb **glows gold** when within the hit cone (±`HIT_CONE_DEG`, default 10°); it dims when outside.
 - **Both players see the arc-swinging orb** — the defender gets information about the attacker's charge level before the throw.

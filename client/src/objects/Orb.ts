@@ -17,7 +17,7 @@ export interface OrbHandle {
 }
 
 // Radius (px) from the pivot point at which the orb circles orbit.
-const IDLE_ORB_RADIUS = 60;
+export const IDLE_ORB_RADIUS = 60;
 
 /**
  * A handle to an idle (non-flying) charge orb. The caller repositions it each frame
@@ -50,21 +50,27 @@ export class Orb {
    * #485 — spawn a stationary (idle) charge orb at `pos`. The orb does not fly;
    * the caller repositions it each frame via `IdleOrbHandle.setY`. Used to display
    * the oscillating orb while the attacker is holding the attack button.
+   *
+   * `facing` controls which horizontal direction the arc opens: +1 opens rightward
+   * (toward a target to the right), −1 opens leftward (toward a target to the left).
+   * Derive as `Math.sign(targetX − pivotX)` at the call site — do not hardcode.
    */
   static spawnIdle(
     scene: Phaser.Scene,
     elements: number[],
     pos: { x: number; y: number },
+    facing: 1 | -1,
   ): IdleOrbHandle & OrbHandle {
     const circles: Phaser.GameObjects.Arc[] = [];
     let dispersed = false;
     let currentAngleDeg = -45; // orb starts at −SWEEP_RANGE_DEG
 
     // Position all circles at the initial arc angle (−45° = left of arc).
+    // The facing sign ensures the arc opens toward the opponent, not behind the attacker.
     const angleRad = (currentAngleDeg * Math.PI) / 180;
     elements.forEach((el, idx) => {
       const offset = (idx - (elements.length - 1) / 2) * 18;
-      const x = pos.x + IDLE_ORB_RADIUS * Math.cos(angleRad);
+      const x = pos.x + facing * IDLE_ORB_RADIUS * Math.cos(angleRad);
       const y = pos.y + IDLE_ORB_RADIUS * Math.sin(angleRad) + offset;
       const orb = scene.add.circle(x, y, 10, ELEMENT_COLORS[el]);
       circles.push(orb);
@@ -77,7 +83,7 @@ export class Orb {
         const rad = (angleDeg * Math.PI) / 180;
         circles.forEach((orb, idx) => {
           const offset = (idx - (circles.length - 1) / 2) * 18;
-          orb.x = pos.x + IDLE_ORB_RADIUS * Math.cos(rad);
+          orb.x = pos.x + facing * IDLE_ORB_RADIUS * Math.cos(rad);
           orb.y = pos.y + IDLE_ORB_RADIUS * Math.sin(rad) + offset;
         });
       },
