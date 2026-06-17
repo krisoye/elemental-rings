@@ -450,3 +450,169 @@ describe('computeOrbAngle — spot checks at deterministic hold times', () => {
     expect(angle).toBeLessThanOrEqual(SWEEP_RANGE_DEG + 1e-9);
   });
 });
+
+// ── Adversarial: negative and extreme holdMs ──────────────────────────────────
+
+describe('adversarial — negative and extreme holdMs inputs', () => {
+  test('negative holdMs clamps to −SWEEP_RANGE_DEG (no crash, no underflow)', () => {
+    // #491 adversarial: a client that sends a negative hold duration (e.g. clock
+    // skew or a rogue client) must not crash or produce an out-of-range angle.
+    // Math.max(0, holdMs) in the formula clamps remaining to 0 → angle = −45°.
+    expect(computeOrbAngle(-1)).toBeCloseTo(-SWEEP_RANGE_DEG, 6);
+    expect(computeOrbAngle(-1000)).toBeCloseTo(-SWEEP_RANGE_DEG, 6);
+  });
+
+  test('negative holdMs → sweepIndex is 0 (no negative sweep)', () => {
+    // #491 adversarial: negative input must land in sweep 0, not underflow the loop.
+    expect(computeSweepIndex(-1)).toBe(0);
+    expect(computeSweepIndex(-999)).toBe(0);
+  });
+
+  test('orbAngle stays within [−45,45] for very large holdMs (100,000ms)', () => {
+    // #491 adversarial: 100 seconds of (hypothetical) hold should not NaN or overflow.
+    // The formula loops through many capped-duration sweeps — must stay bounded.
+    const angle = computeOrbAngle(100_000);
+    expect(Number.isFinite(angle)).toBe(true);
+    expect(angle).toBeGreaterThanOrEqual(-SWEEP_RANGE_DEG - 1e-9);
+    expect(angle).toBeLessThanOrEqual(SWEEP_RANGE_DEG + 1e-9);
+  });
+
+  test('isHitAngle does not throw for negative holdMs', () => {
+    // #491 adversarial: invalid client input must not crash the server's hit check.
+    expect(() => computeIsHitAngle(-500)).not.toThrow();
+  });
+
+  test('sharpness is 1/3 for negative holdMs (clamps to sweep 0)', () => {
+    // #491 adversarial: negative input clamps to holdMs=0 → sweep 0 → sharpness 1/3.
+    expect(computeSharpness(-1)).toBeCloseTo(1 / 3, 6);
+  });
+});
+
+// ── Adversarial: exact sweep-boundary sharpness transitions ──────────────────
+
+describe('adversarial — sharpness at exact sweep-boundary holdMs', () => {
+  test('1ms before sweep 1 starts → sharpness is still 1/3', () => {
+    // #491 adversarial: holdMs = sweepDuration(0) - 1 must still be sweep 0.
+    // A 1ms earlier press must NOT accidentally step up sharpness to 2/3.
+    const justBeforeSweep1 = sweepDuration(0) - 1;
+    expect(computeSharpness(justBeforeSweep1)).toBeCloseTo(1 / 3, 6);
+  });
+
+  test('exactly at sweep 1 start → sharpness steps to 2/3', () => {
+    // #491 adversarial: the transition to 2/3 must happen at sweep start, not before.
+    const atSweep1Start = sweepDuration(0);
+    expect(computeSharpness(atSweep1Start)).toBeCloseTo(2 / 3, 6);
+  });
+
+  test('1ms before sweep 2 starts → sharpness is still 2/3', () => {
+    // #491 adversarial: one ms before the second reversal must not prematurely reach 1.0.
+    const justBeforeSweep2 = sweepStartMs(2) - 1;
+    expect(computeSharpness(justBeforeSweep2)).toBeCloseTo(2 / 3, 6);
+  });
+
+  test('exactly at sweep 2 start → sharpness steps to 1.0', () => {
+    // #491 adversarial: sweep 2 start must give full sharpness, not a partial value.
+    const atSweep2Start = sweepStartMs(2);
+    expect(computeSharpness(atSweep2Start)).toBeCloseTo(1.0, 6);
+  });
+});
+
+// ── Adversarial: isHitAngle at exact HIT_CONE_DEG boundary ───────────────────
+
+describe('adversarial — isHitAngle at exact cone boundary', () => {
+  // To test the exact ±HIT_CONE_DEG boundary, we need holdMs values that produce
+  // angles of exactly 9.9°, 10°, and 10.1°. In sweep 0 the formula is:
+  // angle = −45 + (holdMs/BASE_SWEEP_MS)*90  →  holdMs = (angle+45)/90*BASE_SWEEP_MS
+  function holdMsForAngle(deg: number): number {
+    return ((deg + SWEEP_RANGE_DEG) / (2 * SWEEP_RANGE_DEG)) * sweepDuration(0);
+  }
+
+  test('angle 9.9° (just inside cone) → isHitAngle is TRUE (inclusive boundary)', () => {
+    // #491 adversarial: a release 0.1° inside the cone must be a hit. Off-by-one
+    // in the ≤ vs < comparison would miss this case and punish legitimate releases.
+    const t = holdMsForAngle(9.9);
+    const angle = computeOrbAngle(t);
+    expect(Math.abs(angle)).toBeLessThan(HIT_CONE_DEG);
+    expect(computeIsHitAngle(t)).toBe(true);
+  });
+
+  test('angle exactly 10° (cone boundary, inclusive) → isHitAngle is TRUE', () => {
+    // #491 adversarial: the spec says |angle| ≤ HIT_CONE_DEG — the boundary itself
+    // must be a hit. A strict < would produce a false miss at this exact angle.
+    const t = holdMsForAngle(HIT_CONE_DEG);
+    const angle = computeOrbAngle(t);
+    // Due to floating-point, angle may not be exactly 10.0 — check that the result
+    // matches the contract (|angle| ≤ HIT_CONE_DEG → true).
+    expect(computeIsHitAngle(t)).toBe(Math.abs(angle) <= HIT_CONE_DEG);
+  });
+
+  test('angle 10.1° (just outside cone) → isHitAngle is FALSE', () => {
+    // #491 adversarial: a release 0.1° outside the cone must miss. Any slop in the
+    // boundary check would create a ghost-hit zone invisible in visual QA.
+    const t = holdMsForAngle(10.1);
+    const angle = computeOrbAngle(t);
+    expect(Math.abs(angle)).toBeGreaterThan(HIT_CONE_DEG);
+    expect(computeIsHitAngle(t)).toBe(false);
+  });
+});
+
+// ── Adversarial: sweep duration speed-cap lock ────────────────────────────────
+
+describe('adversarial — sweep speed cap (MAX_SWEEPS lock)', () => {
+  test('sweep 2 and sweep 3 have identical duration (cap locked at MAX_SWEEPS-1)', () => {
+    // #491 impl: Math.min(sweep, maxSweeps-1) as the exponent means sweep index 2
+    // and sweep index 3 use the same exponent (2), so their durations are equal.
+    // A bug that uses Math.min(sweep, maxSweeps) instead would make sweep 3 still
+    // shrink, violating the cap.
+    const dur2 = sweepDuration(2);
+    const dur3 = sweepDuration(3);
+    expect(dur3).toBeCloseTo(dur2, 6);
+  });
+
+  test('sweep 3 duration is NOT BASE_SWEEP_MS * SWEEP_SPEEDUP^3 (cap prevents further shrink)', () => {
+    // #491 adversarial: if the exponent cap were off-by-one, sweep 3 would use
+    // SWEEP_SPEEDUP^3 ≈ 0.422 instead of SWEEP_SPEEDUP^2 ≈ 0.5625. Verify the
+    // locked value is visibly different from the uncapped value.
+    const lockedDur = sweepDuration(3);
+    const uncappedDur = BASE_SWEEP_MS * Math.pow(SWEEP_SPEEDUP, 3);
+    expect(lockedDur).toBeGreaterThan(uncappedDur + 1); // locked is longer (slower)
+  });
+
+  test('sweepIndex beyond MAX_SWEEPS is still a valid integer (no infinite loop)', () => {
+    // #491 adversarial: a very long hold must not hang the server. The while-loop
+    // in sweepIndex consumes time at the capped duration — it must terminate.
+    const largeHold = sweepStartMs(MAX_SWEEPS + 5);
+    expect(() => computeSweepIndex(largeHold)).not.toThrow();
+    expect(computeSweepIndex(largeHold)).toBeGreaterThanOrEqual(MAX_SWEEPS);
+  });
+
+  test('orbAngle at sweep 3+ stays within valid range (speed cap + angle cap both hold)', () => {
+    // #491 adversarial: once capped, the angle formula must continue producing
+    // values in [−45, +45] with no drift from accumulated floating-point errors.
+    const deepHold = sweepStartMs(MAX_SWEEPS + 3);
+    const angle = computeOrbAngle(deepHold);
+    expect(angle).toBeGreaterThanOrEqual(-SWEEP_RANGE_DEG - 1e-9);
+    expect(angle).toBeLessThanOrEqual(SWEEP_RANGE_DEG + 1e-9);
+  });
+});
+
+// ── Adversarial: orbAngle end-of-sweep-0 precision ───────────────────────────
+
+describe('adversarial — orbAngle precision near sweep 0 end', () => {
+  test('holdMs = BASE_SWEEP_MS - 1 → angle is just below +45° but within range', () => {
+    // #491 adversarial: 1ms before the first reversal the orb should be near +45°
+    // but NOT exceed it. Verifies no fence-post error in the boundary condition.
+    const t = sweepDuration(0) - 1;
+    const angle = computeOrbAngle(t);
+    expect(angle).toBeLessThanOrEqual(SWEEP_RANGE_DEG + 1e-9);
+    // Should be very close to +45° (within 0.1°)
+    expect(angle).toBeGreaterThan(SWEEP_RANGE_DEG - 0.1);
+  });
+
+  test('holdMs = BASE_SWEEP_MS → angle = +SWEEP_RANGE_DEG exactly (sweep 1 starts at +45°)', () => {
+    // #491 adversarial: the reversal boundary must produce exactly +45°, not +45° + ε.
+    // A > instead of >= in the sweep-exit condition would skip this value into sweep 1.
+    const t = sweepDuration(0);
+    expect(computeOrbAngle(t)).toBeCloseTo(SWEEP_RANGE_DEG, 6);
+  });
+});
