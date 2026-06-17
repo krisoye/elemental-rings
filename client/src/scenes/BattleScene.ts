@@ -144,6 +144,8 @@ export class BattleScene extends Phaser.Scene {
   private rechargeArmedTimer: Phaser.Time.TimerEvent | null = null;
   // Overlay shown while recharge-armed; torn down on cancel/complete.
   private rechargePrompt: Phaser.GameObjects.Container | null = null;
+  // Transient "not your turn" cue text (null while not showing; prevents stacking).
+  private notYourTurnCue: Phaser.GameObjects.Text | null = null;
 
   // EPIC #264 / #266 — hold-cross-tap double-attack gesture state. heldAt records
   // the keydown time of each ATTACK slot while it is held (undefined once
@@ -176,12 +178,15 @@ export class BattleScene extends Phaser.Scene {
   // is set when the hold+tap fusion gesture commits so the server knows both slots.
   // chargeStartTimer is the deferred-threshold timer: keydown arms it; beginCharge
   // fires if the key is still held when it fires; key-up before it fires → tap path.
+  // chargeOrbSpawnX / opponentChargeOrbSpawnX record the spawn X for E2E assertions
+  // (IdleOrbHandle does not expose x; capturing at spawn time is the stable surface).
   private chargeHoldStart: number | null = null;
   private chargeSlot: SlotKey | null = null;
   private chargeOrbHandle: (IdleOrbHandle & OrbHandle) | null = null;
   private chargeFusionSecondSlot: 'a1' | 'a2' | null = null;
   private chargeStartTimer: Phaser.Time.TimerEvent | null = null;
   private chargeStartSlot: 'a1' | 'a2' | null = null;
+  private chargeOrbSpawnX: number | null = null;
 
   // #485 — DEFENDER-side oscillating orb state. When the server broadcasts
   // 'chargeOrbStart', the defender spawns an idle orb at the OPPONENT position and
@@ -190,6 +195,12 @@ export class BattleScene extends Phaser.Scene {
   private opponentChargeOrbHandle: (IdleOrbHandle & OrbHandle) | null = null;
   private opponentChargeStartTime: number | null = null;
   private opponentChargeSlot: SlotKey | null = null;
+  private opponentChargeOrbSpawnX: number | null = null;
+
+  // #487 — one-shot suppress for the recharge/hold race. When completeRecharge fires
+  // on an a1/a2 key press, onAttackHold's synchronous hold-start for the same event
+  // must be swallowed. This field holds the slot name for exactly one check-and-clear.
+  private rechargeCompletedSlot: 'a1' | 'a2' | null = null;
 
   constructor() {
     super({ key: 'BattleScene' });
@@ -235,6 +246,7 @@ export class BattleScene extends Phaser.Scene {
     this.rechargeArmed = false;
     this.rechargeArmedTimer = null;
     this.rechargePrompt = null;
+    this.notYourTurnCue = null;
     this.heldAt = {};
     this.comboFired = false;
     this.deferredHeldAttack = null;
@@ -248,7 +260,10 @@ export class BattleScene extends Phaser.Scene {
     this.chargeFusionSecondSlot = null;
     this.chargeStartTimer = null;
     this.chargeStartSlot = null;
+    this.chargeOrbSpawnX = null;
     this.opponentChargeOrbHandle = null;
+    this.opponentChargeOrbSpawnX = null;
+    this.rechargeCompletedSlot = null;
     this.opponentChargeStartTime = null;
     this.opponentChargeSlot = null;
   }
@@ -789,6 +804,15 @@ export class BattleScene extends Phaser.Scene {
       return;
     }
 
+    // #487 — P1 race guard: completeRecharge sets this for a1/a2 presses so the
+    // coincident onAttackHold keydown (same DOM event, fires synchronously after
+    // triggerSlot) does not arm chargeStartTimer or set heldAt for a key whose turn
+    // has already been consumed by a recharge. One-shot: clear after the check.
+    if (this.rechargeCompletedSlot === slot) {
+      this.rechargeCompletedSlot = null;
+      return;
+    }
+
     const now = Date.now();
     const other: 'a1' | 'a2' = slot === 'a1' ? 'a2' : 'a1';
     const otherAt = this.heldAt[other];
@@ -878,7 +902,9 @@ export class BattleScene extends Phaser.Scene {
     // Spawn the oscillating orb in front of the player (toward the opponent, x − 60).
     // update() will reposition its Y each frame while the hold is active.
     const elements = this._getAttackElements(slot);
-    this.chargeOrbHandle = Orb.spawnIdle(this, elements, { x: PLAYER_X - 60, y: PLAYER_Y });
+    const spawnX = PLAYER_X - 60;
+    this.chargeOrbSpawnX = spawnX;
+    this.chargeOrbHandle = Orb.spawnIdle(this, elements, { x: spawnX, y: PLAYER_Y });
   }
 
   /**
@@ -919,6 +945,7 @@ export class BattleScene extends Phaser.Scene {
     this.chargeStartSlot = null;
     this.chargeOrbHandle?.disperse();
     this.chargeOrbHandle = null;
+    this.chargeOrbSpawnX = null;
     this.chargeSlot = null;
     this.chargeHoldStart = null;
     this.chargeFusionSecondSlot = null;
@@ -938,10 +965,12 @@ export class BattleScene extends Phaser.Scene {
     const elements = ring ? ringComponents(ring) : [0];
 
     // Spawn at OPPONENT_X + 60 (in front of opponent, toward the player).
+    const oppSpawnX = OPPONENT_X + 60;
+    this.opponentChargeOrbSpawnX = oppSpawnX;
     this.opponentChargeOrbHandle = Orb.spawnIdle(
       this,
       elements,
-      { x: OPPONENT_X + 60, y: OPPONENT_Y },
+      { x: oppSpawnX, y: OPPONENT_Y },
     );
     this.opponentChargeStartTime = p.startTime;
     this.opponentChargeSlot = p.slot as SlotKey;
@@ -954,6 +983,7 @@ export class BattleScene extends Phaser.Scene {
   private cancelOpponentChargeOrb(): void {
     this.opponentChargeOrbHandle?.disperse();
     this.opponentChargeOrbHandle = null;
+    this.opponentChargeOrbSpawnX = null;
     this.opponentChargeStartTime = null;
     this.opponentChargeSlot = null;
   }
@@ -1130,8 +1160,16 @@ export class BattleScene extends Phaser.Scene {
   /**
    * #487 — complete a recharge for `slot`. Sends `recharge` to the server, pulses
    * the ring card, and tears down the armed state. Only called when rechargeArmed is true.
+   *
+   * For a1/a2 presses, the same DOM event synchronously fires BOTH triggerSlot (→ here)
+   * AND onAttackHold(slot, true). Set rechargeCompletedSlot so onAttackHold's keydown
+   * branch swallows the coincident hold-start, preventing a spurious chargeStartTimer
+   * arm and subsequent selectAttack/chargeStart before the server turn-advance lands.
    */
   private completeRecharge(slot: SlotKey): void {
+    if (slot === 'a1' || slot === 'a2') {
+      this.rechargeCompletedSlot = slot;
+    }
     window.__room!.send('recharge', { slot });
     this.hand.pulseSlot(slot);
     this.cancelRecharge(); // tear down the armed state — turn advances server-side
@@ -1157,8 +1195,10 @@ export class BattleScene extends Phaser.Scene {
     this.rechargePrompt = null;
   }
 
-  /** Brief "not your turn" flash (off-turn R press). */
+  /** Brief "not your turn" flash (off-turn R press). Idempotent — a cue already
+   *  fading is left as-is so rapid R presses do not stack labels. */
   private showNotYourTurnCue(): void {
+    if (this.notYourTurnCue) return; // already showing
     const t = crispCanvasText(
       this.add.text(512, 120, 'Not your turn', {
         fontSize: '18px',
@@ -1168,12 +1208,16 @@ export class BattleScene extends Phaser.Scene {
     )
       .setOrigin(0.5)
       .setDepth(1400);
+    this.notYourTurnCue = t;
     this.tweens.add({
       targets: t,
       alpha: 0,
       duration: 700,
       ease: 'Power2',
-      onComplete: () => t.destroy(),
+      onComplete: () => {
+        t.destroy();
+        this.notYourTurnCue = null;
+      },
     });
   }
 
@@ -1328,6 +1372,19 @@ export class BattleScene extends Phaser.Scene {
       window.__duelOrigin = null;
       this.scene.start('EncounterScene', openBattleHand ? { openBattleHand: true } : {});
     }
+  }
+
+  /**
+   * #487 — E2E test-support accessors for charge orb spawn positions. The
+   * IdleOrbHandle interface does not expose x, so the spawn X is captured at
+   * creation time. Returns null when no orb is currently alive.
+   */
+  get chargeOrbX(): number | null {
+    return this.chargeOrbHandle ? this.chargeOrbSpawnX : null;
+  }
+
+  get opponentChargeOrbX(): number | null {
+    return this.opponentChargeOrbHandle ? this.opponentChargeOrbSpawnX : null;
   }
 
   /**
