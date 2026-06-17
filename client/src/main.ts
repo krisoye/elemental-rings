@@ -140,6 +140,9 @@ declare global {
     // #211 — the latest per-client recharge result, published by BattleScene so
     // E2E can assert partial/insufficient feedback without reading pixels.
     __lastRechargeResult?: RechargeResultPayload | null;
+    // #485 — charge attack miss hook. Published by BattleScene.handleChargeMiss so
+    // E2E can assert a miss without reading pixels (WHIFF label / orb off-angle).
+    __lastChargeMiss?: { attackerId: string; attackerSlot: string } | null;
     // #212 — won-ring payload captured at the connection level (Connection.ts),
     // carrying the element so the end-of-battle modal can name the ring
     // ("Won: FIRE Ring"). null when the just-finished duel granted no ring.
@@ -415,6 +418,7 @@ window.__orbLaunchCount = 0;
 window.__lastOrbOutcome = null;
 window.__orbOutcomeLog = [];
 window.__orbDispersed = 0;
+window.__lastChargeMiss = null;
 window.connectToRoom = async (roomName: string, opts?: BattleRoomOptions): Promise<void> => {
   const { connectToRoom } = await import('./net/Connection');
   await connectToRoom(roomName, opts);

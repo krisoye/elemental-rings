@@ -12,8 +12,13 @@ import type {
   BattleSummaryPayload,
   DoubleAttackStartPayload,
   DoubleAttackCancelledPayload,
+  ChargeMissPayload,
 } from '../../../shared/types';
-import type { OrbHandle } from '../objects/Orb';
+import {
+  yOffset as chargeYOffset,
+  isHit as chargeIsHit,
+} from '../../../shared/oscillation';
+import type { OrbHandle, IdleOrbHandle } from '../objects/Orb';
 import {
   PLAYER_X,
   PLAYER_Y,
@@ -22,6 +27,13 @@ import {
   SlotKey,
   ringComponents,
 } from '../Constants';
+import {
+  CHARGE_THRESHOLD_MS,
+  HIT_CONE_PX,
+  Y_AMPLITUDE_PX,
+  BASE_PERIOD_MS,
+  PERIOD_DECAY_MS,
+} from '../../../shared/chargeConstants';
 
 const ATTACK_KEYS: ReadonlySet<SlotKey> = new Set<SlotKey>(['a1', 'a2']);
 const DEFENSE_KEYS: ReadonlySet<SlotKey> = new Set<SlotKey>(['d1', 'd2']);
@@ -161,6 +173,16 @@ export class BattleScene extends Phaser.Scene {
   private orb2Handle: OrbHandle | null = null;
   private orb2LaunchTimer: Phaser.Time.TimerEvent | null = null;
 
+  // #485 — charge attack render state. chargeHoldStart is the timestamp when the
+  // attacker began holding a button (for client-side Y oscillation display). The
+  // oscillating orb is stored so its Y can be updated in update(). chargeSlot is the
+  // slot currently being charged (null when not charging). chargeFusionSecondSlot
+  // is set when a fusion tap completes the hold+tap gesture while charging.
+  private chargeHoldStart: number | null = null;
+  private chargeSlot: SlotKey | null = null;
+  private chargeOrbHandle: (IdleOrbHandle & OrbHandle) | null = null;
+  private chargeFusionSecondSlot: 'a1' | 'a2' | null = null;
+
   constructor() {
     super({ key: 'BattleScene' });
   }
@@ -211,6 +233,10 @@ export class BattleScene extends Phaser.Scene {
     this.comboOrbIndex = 0;
     this.orb2Handle = null;
     this.orb2LaunchTimer = null;
+    this.chargeHoldStart = null;
+    this.chargeSlot = null;
+    this.chargeOrbHandle = null;
+    this.chargeFusionSecondSlot = null;
   }
 
   create(): void {
@@ -311,6 +337,11 @@ export class BattleScene extends Phaser.Scene {
       (_p: DoubleAttackCancelledPayload) => this.handleDoubleAttackCancelled(),
     );
 
+    // #485 — charge miss: orb flies off-screen; show WHIFF label on attacker side.
+    const offChargeMiss = room.onMessage('chargeMiss', (p: ChargeMissPayload) => {
+      this.handleChargeMiss(p, myId);
+    });
+
     this.events.once('shutdown', () => {
       room.onStateChange.remove(onState);
       offExchange();
@@ -318,9 +349,11 @@ export class BattleScene extends Phaser.Scene {
       offRecharge();
       offDoubleStart();
       offDoubleCancel();
+      offChargeMiss();
       this.orb2LaunchTimer?.remove(false);
       this.orb2LaunchTimer = null;
       this.cancelPendingAttack();
+      this.cancelChargeOrb();
       this.dismissForfeitPrompt();
       this.endModal?.destroy();
       this.endModal = null;
@@ -682,10 +715,29 @@ export class BattleScene extends Phaser.Scene {
    * round-trip — the server re-validates authoritatively and drops an ineligible
    * send. An ineligible hand sends nothing here; its keys still arm single attacks
    * through handleAttackPhasePress as normal.
+   *
+   * #485 — also drives the charge attack. On hold start, emit `chargeStart` and
+   * spawn the oscillating orb (if only this slot is held). On hold end (key up,
+   * no combo fired), emit `releaseAttack` with the server-computed holdDuration so
+   * the server can independently resolve hit/miss.
    */
   private onAttackHold(slot: 'a1' | 'a2', down: boolean): void {
+    const state = window.__room?.state;
+    const myId = window.__room?.sessionId;
+
     if (!down) {
+      const wasHeld = this.heldAt[slot] !== undefined;
       this.heldAt[slot] = undefined;
+
+      // #485 — key released: if this was a pure charge hold (no combo fired),
+      // fire releaseAttack with the hold duration. The single-attack deferral path
+      // (fireDeferredHeldAttack) then handles the actual send via sendReleaseAttack.
+      if (wasHeld && this.chargeSlot === slot && !this.comboFired) {
+        // Cancel the oscillating orb; the server will tell us the outcome and the
+        // orb tween will fly on chargeMiss or DEFEND_WINDOW state change.
+        this.endChargeOrb();
+      }
+
       // If a single attack was deferred while this key was held (waiting to see if
       // it became the first half of a combo), fire it now on release — provided no
       // combo committed and the turn is still live.
@@ -703,12 +755,41 @@ export class BattleScene extends Phaser.Scene {
     this.heldAt[slot] = now;
 
     // Only the SECOND key of a held pair fires the combo, once per hold.
-    if (this.comboFired || otherAt === undefined) return;
+    if (this.comboFired || otherAt === undefined) {
+      // #485 — single hold start: begin charge tracking. Emit chargeStart so the
+      // server records its authoritative timestamp. Spawn the oscillating orb if
+      // the turn is live and we're in the attack phase.
+      if (!this.comboFired && otherAt === undefined) {
+        if (state && myId && state.phase === 'ATTACK_SELECT' && state.currentAttackerId === myId) {
+          this.beginCharge(slot, now);
+        }
+      }
+      return;
+    }
+
+    // #485 — fusion charge: hold+tap. The held slot is the charged attack (Y
+    // oscillates), the tapped slot is always horizontal. Cancel the charge orb on
+    // the held slot since the combo is taking over; the server handles fusion
+    // resolution via releaseAttack with fusionSecondSlot set.
+    if (this.chargeSlot === other && this.chargeHoldStart !== null) {
+      const holdMs = now - this.chargeHoldStart;
+      this.cancelChargeOrb();
+      // Gate the send on local eligibility + the live attack phase.
+      if (!state || !myId) return;
+      if (state.phase !== 'ATTACK_SELECT' || state.currentAttackerId !== myId) return;
+      if (!this.hand.comboEligible) return;
+
+      // Use releaseAttack with fusionSecondSlot for the charge-fusion path.
+      const first = other; // the held (charged) slot
+      const second = slot; // the tapped slot (always horizontal)
+      this.comboFired = true;
+      this.cancelPendingAttack();
+      window.__room!.send('releaseAttack', { slot: first, holdDuration: holdMs, fusionSecondSlot: second });
+      return;
+    }
 
     // Gate the send on local eligibility + the live attack phase (presentation
     // mirror only — the server is the authority).
-    const state = window.__room?.state;
-    const myId = window.__room?.sessionId;
     if (!state || !myId) return;
     if (state.phase !== 'ATTACK_SELECT' || state.currentAttackerId !== myId) return;
     if (!this.hand.comboEligible) return;
@@ -722,6 +803,131 @@ export class BattleScene extends Phaser.Scene {
     this.comboFired = true;
     this.cancelPendingAttack(); // supersede any single attack armed for these slots
     window.__room!.send('selectDoubleAttack', { first, second, gapMs });
+  }
+
+  /**
+   * #485 — begin a charge hold for `slot` at the given timestamp. Emits
+   * `chargeStart` to the server, records the hold time, and spawns the oscillating
+   * orb in front of the player character. Only called when we are in ATTACK_SELECT
+   * and it is our turn (gated by onAttackHold caller).
+   */
+  private beginCharge(slot: 'a1' | 'a2', now: number): void {
+    // Abort any previous charge state that was not cleaned up.
+    this.cancelChargeOrb();
+
+    this.chargeSlot = slot;
+    this.chargeHoldStart = now;
+    window.__room!.send('chargeStart', { slot });
+
+    // Spawn the oscillating orb in front of the player. It stays stationary (won't
+    // fly toward the opponent) until released. We place it at the standard start
+    // position; update() will reposition it each frame.
+    const elements = this._getAttackElements(slot);
+    this.chargeOrbHandle = Orb.spawnIdle(this, elements, { x: PLAYER_X + 60, y: PLAYER_Y });
+  }
+
+  /**
+   * #485 — end the charge hold (key released, no combo). Sends `releaseAttack`
+   * with the accurate hold duration, then launches the orb animation (the orb
+   * either flies toward the defender on hit, or off-screen on miss — the server
+   * decides; the client waits for chargeMiss or DEFEND_WINDOW to know the outcome).
+   * The orb handle is cleared so update() stops repositioning it.
+   */
+  private endChargeOrb(): void {
+    if (this.chargeSlot === null || this.chargeHoldStart === null) return;
+
+    const holdMs = Date.now() - this.chargeHoldStart;
+    const slot = this.chargeSlot;
+    this.chargeSlot = null;
+    this.chargeHoldStart = null;
+
+    // The orb handle stays alive until chargeMiss or DEFEND_WINDOW — we need it
+    // to either fly off-screen (miss) or to be replaced by the standard Orb.launch
+    // animation (hit, via checkPhaseTransition). Store it for the miss handler.
+    // (chargeOrbHandle already holds it; we just clear the charge book-keeping.)
+
+    if (holdMs < CHARGE_THRESHOLD_MS) {
+      // Sub-threshold: treat as a tap. Discard the idle orb and use the normal path.
+      this.cancelChargeOrb();
+      this.sendSingleAttack(slot);
+    } else {
+      // Above threshold: send releaseAttack. The orb handle stays for the miss
+      // animation; on hit, DEFEND_WINDOW auto-launches a fresh orb via
+      // checkPhaseTransition (the idle orb is replaced/dispersed then).
+      window.__room!.send('releaseAttack', { slot, holdDuration: holdMs });
+    }
+  }
+
+  /**
+   * #485 — destroy the idle charge orb (if any) and reset all charge fields.
+   * Called on: combo commit, forceful cancel, shutdown.
+   */
+  private cancelChargeOrb(): void {
+    this.chargeOrbHandle?.disperse();
+    this.chargeOrbHandle = null;
+    this.chargeSlot = null;
+    this.chargeHoldStart = null;
+    this.chargeFusionSecondSlot = null;
+  }
+
+  /**
+   * #485 — get the element array for a given attack slot (for orb color display).
+   */
+  private _getAttackElements(slot: SlotKey): number[] {
+    const myId = window.__room?.sessionId;
+    if (!myId) return [0];
+    const ring = window.__room?.state.players.get(myId)?.[slot];
+    return ring ? ringComponents(ring) : [0];
+  }
+
+  /**
+   * #485 — charge miss handler. The orb flies off-screen (up or down based on Y
+   * sign), and a brief "WHIFF" label appears on the attacker side.
+   */
+  private handleChargeMiss(p: ChargeMissPayload, myId: string): void {
+    const imAttacker = p.attackerId === myId;
+    const from = imAttacker ? { x: PLAYER_X, y: PLAYER_Y } : { x: OPPONENT_X, y: OPPONENT_Y };
+
+    // If the idle orb handle is still alive (our own miss), disperse it and let a
+    // fresh off-angle orb launch in its place. For opponent misses the orb was
+    // never spawned locally (only the attacker sees the idle orb); we just play
+    // the off-angle animation from the attacker's position.
+    if (imAttacker && this.chargeOrbHandle) {
+      this.chargeOrbHandle.disperse();
+      this.chargeOrbHandle = null;
+    }
+
+    // Play the off-angle orb animation: fly off-screen upward/downward.
+    // We use the standard Orb.launch but toward a point far above/below.
+    const elements = this._getAttackElements(p.attackerSlot as SlotKey);
+    const offTarget = { x: from.x + 300, y: from.y - 200 }; // angled upward off-screen
+    Orb.launch(this, elements, from, offTarget);
+
+    // Show a WHIFF label on the attacker's side.
+    const labelX = imAttacker ? PLAYER_X : OPPONENT_X;
+    const labelY = imAttacker ? PLAYER_Y - 60 : OPPONENT_Y - 60;
+    // #364 — animated, transient WHIFF label (fades + rises) → crispCanvasText.
+    const t = crispCanvasText(
+      this.add.text(labelX, labelY, 'WHIFF', {
+        fontSize: '28px',
+        color: '#aaaaaa',
+        fontStyle: 'bold',
+        stroke: '#000000',
+        strokeThickness: 4,
+      }),
+    )
+      .setOrigin(0.5)
+      .setDepth(1100);
+    this.tweens.add({
+      targets: t,
+      alpha: 0,
+      y: labelY - 35,
+      duration: 800,
+      ease: 'Power2',
+      onComplete: () => t.destroy(),
+    });
+    // E2E observable.
+    window.__lastChargeMiss = { attackerId: p.attackerId, attackerSlot: p.attackerSlot };
   }
 
   /**
@@ -957,6 +1163,23 @@ export class BattleScene extends Phaser.Scene {
       // EncounterScene.init sees undefined personality → npcDuel=null → hub.
       window.__duelOrigin = null;
       this.scene.start('EncounterScene', openBattleHand ? { openBattleHand: true } : {});
+    }
+  }
+
+  /**
+   * #485 — per-frame update. Repositions the idle charge orb according to the
+   * oscillation formula so the attacker sees the orb oscillate in real time. Also
+   * tints the orb gold when within HIT_CONE_PX (feedback without a separate indicator
+   * per Code Reuse Directive — the orb itself is the indicator).
+   */
+  update(_time: number, _delta: number): void {
+    if (this.chargeOrbHandle && this.chargeHoldStart !== null) {
+      const holdMs = Date.now() - this.chargeHoldStart;
+      const y = chargeYOffset(holdMs, Y_AMPLITUDE_PX, BASE_PERIOD_MS, PERIOD_DECAY_MS);
+      const orbY = PLAYER_Y + y;
+      this.chargeOrbHandle.setY(orbY);
+      const inZone = chargeIsHit(holdMs, HIT_CONE_PX, Y_AMPLITUDE_PX, BASE_PERIOD_MS, PERIOD_DECAY_MS);
+      this.chargeOrbHandle.setInHitZone(inZone);
     }
   }
 
