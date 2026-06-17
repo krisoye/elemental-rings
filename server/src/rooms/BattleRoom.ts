@@ -1091,7 +1091,11 @@ export class BattleRoom extends Room<{ state: BattleState }> {
     if (!ATTACK_SLOTS.has(payload.slot)) return;
     const attacker = state.players.get(id)!;
     if (attacker.getSlot(payload.slot).isExtinguished) return;
-    this.chargeStartTimes.set(id, Date.now());
+    // Back-date by CHARGE_THRESHOLD_MS so the server's hold-duration measurement
+    // starts from the key-down moment, not from when the client's deferred
+    // threshold timer fired and sent this message. Without this offset the server
+    // would consistently under-measure by 150ms, shifting the entire hit/miss cone.
+    this.chargeStartTimes.set(id, Date.now() - CHARGE_THRESHOLD_MS);
     // Broadcast chargeOrbStart so the DEFENDER also sees the oscillating orb
     // (GDD §6.3: "Both players see the oscillating orb"). The defender renders
     // the oscillation from the shared deterministic formula keyed off startTime.
