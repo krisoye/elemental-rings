@@ -117,9 +117,10 @@ test('R then 1 in attack phase recharges a1: ring use restored, no attack thrown
 
   await waitForMyAttackTurn(attacker);
 
-  // Step 1: press R to arm recharge state. Step 2: press 1 to complete recharge.
-  // Real keyboard input — not __* hooks.
+  // Step 1: press R to arm recharge state. Brief tick so armRecharge's timer is live.
+  // Step 2: press 1 to complete recharge. Real keyboard input — not __* hooks.
   await attacker.keyboard.press('r');
+  await attacker.waitForTimeout(50);
   await attacker.keyboard.press('1');
 
   // The ring restores above its pre-tap value and the turn advances to the opponent
@@ -256,6 +257,9 @@ test('Defense phase: Z fires D1 normally, no forfeit prompt, no recharge', async
 
   // Attacker throws; defender presses Z (→ D1) inside the catch window. Z must act
   // as a single defense press — no forfeit chord, no recharge gesture.
+  // Gate: ensure it is the attacker's turn and BattleScene is mounted before pressing.
+  // Without this gate the keypress fires before the scene is ready → DEFEND_WINDOW never opens.
+  await waitForMyAttackTurn(attacker);
   await attacker.keyboard.press('1');
   await defender.waitForFunction(
     () => (window as any).__room.state.phase === 'DEFEND_WINDOW',
@@ -348,6 +352,8 @@ test('R then 3 on depleted d1 with no spirit: no restore but the turn is still c
   expect(await spiritOf(token)).toBe(0);
 
   await waitForMyAttackTurn(attacker);
+  // Small tick after turn gate so Phaser's key handlers are definitely ready.
+  await attacker.waitForTimeout(50);
 
   // R to arm, then 3 to complete — recharge d1. With zero affordable spirit the
   // ring stays at 0 but the turn is still consumed (recharge always advances the turn).
@@ -380,6 +386,7 @@ test('3+4 simultaneous in attack phase still shows the forfeit confirm (no regre
   // not shadow the forfeit chord. The chord check in handleAttackPhasePress must still
   // fire BEFORE any R-armed recharge logic, so a clean 3+4 gesture triggers the prompt
   // even with the new input model in place.
+  await waitForMyAttackTurn(attacker);
   await attacker.keyboard.down('3');
   await attacker.keyboard.down('4');
   await attacker.keyboard.up('3');
@@ -599,19 +606,21 @@ test('R then 3 in attack phase recharges d1: confirms A-ring and D-ring share si
   await waitForMyAttackTurn(attacker);
   await spyOnAllSends(attacker);
 
-  const before = await readSlot(attacker, 'd1');
+  const beforeUses = (await readSlot(attacker, 'd1')).currentUses;
 
   await attacker.keyboard.press('r');
   await attacker.keyboard.press('3');
 
-  await attacker.waitForFunction(() => {
+  // Pass beforeUses as an arg so it's serialized into the browser context — Node-side
+  // variables cannot be referenced directly inside page.waitForFunction closures.
+  await attacker.waitForFunction((prev: number) => {
     const room = (window as any).__room;
     const me = room.state.players.get(room.sessionId);
-    return me.d1.currentUses > before.currentUses || room.state.currentAttackerId !== room.sessionId;
-  }, { timeout: 5000 });
+    return me.d1.currentUses > prev || room.state.currentAttackerId !== room.sessionId;
+  }, beforeUses, { timeout: 5000 });
 
   const after = await readSlot(attacker, 'd1');
-  expect(after.currentUses).toBeGreaterThanOrEqual(before.currentUses);
+  expect(after.currentUses).toBeGreaterThanOrEqual(beforeUses);
   expect(await isMyTurn(attacker)).toBe(false); // turn advanced
 
   // Recharge fired (not selectAttack or releaseAttack).
@@ -647,9 +656,18 @@ test('R then quick tap on 1 completes recharge and sends NO spurious attack or c
   await spyOnAllSends(attacker);
 
   await attacker.keyboard.press('r'); // arm recharge
+  // Small tick after R to ensure armRecharge's timer is live before the completion press.
+  await attacker.waitForTimeout(50);
   await attacker.keyboard.press('1'); // quick tap — completeRecharge fires on keydown
 
-  // Turn must advance (recharge consumed it).
+  // Gate on recharge send-count first (confirms completeRecharge ran and room.send fired
+  // before we assert the absence of other messages). This removes the flaky race where
+  // the 250ms timer fired before the recharge round-trip completed, giving a count of 0.
+  await attacker.waitForFunction(() => ((window as any).__allSends?.recharge ?? 0) >= 1, {
+    timeout: 5000,
+  });
+
+  // Turn must advance (recharge consumed it) — gate before counting spurious messages.
   await attacker.waitForFunction(() => {
     const room = (window as any).__room;
     return room.state.currentAttackerId !== room.sessionId;
@@ -690,16 +708,20 @@ test('R then hold on 1 (≥150ms) completes recharge and spawns NO charge orb', 
   }, { timeout: 4000 });
 
   await waitForMyAttackTurn(attacker);
+  // Small tick after turn gate so Phaser's key handlers are definitely ready.
+  await attacker.waitForTimeout(50);
   await spyOnAllSends(attacker);
 
   await attacker.keyboard.press('r'); // arm recharge
 
   // Hold the key — completeRecharge fires on keydown; turn advances server-side.
+  // Release key first, then wait for turn-advance (ensures onAttackHold key-up runs
+  // before we poll state, and avoids leaving a dangling held key).
   await attacker.keyboard.down('1');
   await attacker.waitForTimeout(200); // hold 200ms > 150ms threshold
   await attacker.keyboard.up('1');
 
-  // Turn must have advanced during the hold (recharge consumed it on keydown).
+  // Turn must have advanced (recharge consumed it on keydown).
   await attacker.waitForFunction(() => {
     const room = (window as any).__room;
     return room.state.currentAttackerId !== room.sessionId;
