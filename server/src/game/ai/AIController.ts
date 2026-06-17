@@ -5,7 +5,12 @@ import {
   SubmitDefensePayload,
   RechargePayload,
   SlotKey,
+  AttackSlot,
+  ChargeStartPayload,
+  ReleaseAttackPayload,
 } from '../../../../shared/types';
+import { sweepHoldMs } from '../../../../shared/oscillation';
+import { BASE_SWEEP_MS, SWEEP_SPEEDUP } from '../../../../shared/chargeConstants';
 import { BattleState } from '../../schemas/BattleState';
 import { canDoubleAttack } from '../DoubleAttack';
 import { AI_PROFILES, AIProfile, makeRng, Rng, isLowHearts } from './AIProfiles';
@@ -41,6 +46,10 @@ export interface AIRoomHandle {
   // the controller calls this (the same handler a human's `selectDoubleAttack`
   // message reaches), mirroring how handleSelectAttack is called for a single throw.
   handleSelectDoubleAttack(id: string, payload: SelectDoubleAttackPayload): void;
+  // #493 — AI charged attack. Record hold-start timestamp (same path as human chargeStart).
+  handleChargeStart(id: string, payload: ChargeStartPayload): void;
+  // #493 — AI charged release. Resolves using the stored chargeStart timestamp.
+  handleReleaseAttack(id: string, payload: ReleaseAttackPayload): void;
   handleSubmitDefense(id: string, payload: SubmitDefensePayload): void;
   handleRecharge(id: string, payload: RechargePayload): void;
   handleForfeit(id: string): void;
@@ -278,11 +287,22 @@ export class AIController {
           : { ...this.profile, personality: this.attackPersonality };
       const decision = decideAttack(v, attackProfile, this.rng);
       this.committedElement = decision.committedElement;
+      // #493 — charged attack: send chargeStart, wait holdMs, then release.
+      if (decision.charge) {
+        const slot = decision.slot;
+        const targetSweep = decision.charge.targetSweep;
+        this.room.handleChargeStart(this.aiId, { slot });
+        const releaseDeg = this.rng.normal() * this.profile.chargeReleaseSigmaDeg;
+        const holdMs = sweepHoldMs(targetSweep, releaseDeg, BASE_SWEEP_MS, SWEEP_SPEEDUP);
+        this.pending = setTimeout(() => {
+          this.pending = null;
+          this.room.handleReleaseAttack(this.aiId, { slot, holdDuration: holdMs });
+        }, holdMs);
       // EPIC #268 — when the policy chose a fusion-thumb DOUBLE attack (eligible +
       // favorable; only ever set for a boss hand), fire both orbs via the same
       // server handler a human's `selectDoubleAttack` reaches. Otherwise the normal
       // single-attack path. The server re-validates eligibility and re-clamps gapMs.
-      if (decision.double) {
+      } else if (decision.double) {
         this.room.handleSelectDoubleAttack(this.aiId, decision.double);
       } else {
         this.room.handleSelectAttack(this.aiId, { slot: decision.slot });

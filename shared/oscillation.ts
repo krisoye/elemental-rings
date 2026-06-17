@@ -121,6 +121,47 @@ export function sharpnessFromSweep(
   return 1.0;
 }
 
+// ── Angle inverse ────────────────────────────────────────────────────────────
+
+/**
+ * Converts a desired release angle and target sweep to the holdDuration (ms)
+ * at which `orbAngle` first equals `releaseDeg` within that sweep.
+ *
+ * `targetSweep` is 1-based: 1=sweep 0 (−range→+range), 2=sweep 1, 3=sweep 2.
+ * `releaseDeg` is clamped to [−SWEEP_RANGE_DEG, +SWEEP_RANGE_DEG].
+ * Even sweeps travel −range→+range; odd sweeps travel +range→−range.
+ */
+export function sweepHoldMs(
+  targetSweep: number,
+  releaseDeg: number,
+  baseSweepMs: number,
+  sweepSpeedup: number,
+): number {
+  const SWEEP_RANGE_DEG = 45;
+  const MAX_SWEEPS = 3;
+  const sweep = targetSweep - 1; // convert to 0-based
+  const clamped = Math.min(Math.max(releaseDeg, -SWEEP_RANGE_DEG), SWEEP_RANGE_DEG);
+
+  // Sum durations of all preceding sweeps.
+  let accumulated = 0;
+  for (let i = 0; i < sweep; i++) {
+    accumulated += baseSweepMs * Math.pow(sweepSpeedup, Math.min(i, MAX_SWEEPS - 1));
+  }
+
+  // Position within the target sweep.
+  const duration = baseSweepMs * Math.pow(sweepSpeedup, Math.min(sweep, MAX_SWEEPS - 1));
+  let frac: number;
+  if (sweep % 2 === 0) {
+    // Even sweep: −range → +range
+    frac = (clamped + SWEEP_RANGE_DEG) / (2 * SWEEP_RANGE_DEG);
+  } else {
+    // Odd sweep: +range → −range
+    frac = (SWEEP_RANGE_DEG - clamped) / (2 * SWEEP_RANGE_DEG);
+  }
+
+  return accumulated + frac * duration;
+}
+
 // ── Telegraph duration ────────────────────────────────────────────────────────
 
 /**

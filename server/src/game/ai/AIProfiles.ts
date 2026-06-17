@@ -78,6 +78,16 @@ export interface AIProfile {
    *   STATUS_HUNTER ≈ 0.10, RESILIENT ≈ 0.10.
    */
   elementMistakeProb: number;
+  /** Probability the AI chooses a charged attack over a tap on its attack turn. */
+  chargeAttemptProb: number;
+  /** Which sweep (1-based) the AI aims to release on. */
+  targetSweep: 1 | 2 | 3;
+  /** Standard deviation (degrees) of Gaussian noise applied to the release angle. */
+  chargeReleaseSigmaDeg: number;
+  /** chargeAttemptProb override when hearts ≤ lowHeartThreshold (RESILIENT). */
+  lowHeartChargeAttemptProb?: number;
+  /** targetSweep override when hearts ≤ lowHeartThreshold (RESILIENT). */
+  lowHeartTargetSweep?: 1 | 2 | 3;
 }
 
 export const AI_PROFILES: Record<AIPersonality, AIProfile> = {
@@ -96,6 +106,9 @@ export const AI_PROFILES: Record<AIPersonality, AIProfile> = {
     comboGapMaxMs: MIN_COMBO_GAP_MS + 100,
     // #492 — AGGRESSIVE chases optimal picks; low baseline mistake probability.
     elementMistakeProb: 0.05,
+    chargeAttemptProb: 1.0,
+    targetSweep: 3,
+    chargeReleaseSigmaDeg: 5,
   },
   DEFENSIVE: {
     personality: 'DEFENSIVE',
@@ -113,6 +126,9 @@ export const AI_PROFILES: Record<AIPersonality, AIProfile> = {
     // #492 — DEFENSIVE plays conservatively; higher element-mistake to model
     // deliberate safe picks that are suboptimal offensively.
     elementMistakeProb: 0.15,
+    chargeAttemptProb: 0.0,
+    targetSweep: 1,
+    chargeReleaseSigmaDeg: 999,
   },
   STATUS_HUNTER: {
     personality: 'STATUS_HUNTER',
@@ -130,6 +146,9 @@ export const AI_PROFILES: Record<AIPersonality, AIProfile> = {
     // #492 — STATUS_HUNTER focuses on gauge-building; moderate element mistakes
     // from committing to a triangle element over the optimal pick.
     elementMistakeProb: 0.10,
+    chargeAttemptProb: 0.2,
+    targetSweep: 1,
+    chargeReleaseSigmaDeg: 15,
   },
   RESILIENT: {
     personality: 'RESILIENT',
@@ -146,6 +165,11 @@ export const AI_PROFILES: Record<AIPersonality, AIProfile> = {
     comboGapMaxMs: MIN_COMBO_GAP_MS + 100,
     // #492 — RESILIENT plays mixed-element endurance; moderate mistake probability.
     elementMistakeProb: 0.10,
+    chargeAttemptProb: 0.0,
+    targetSweep: 2,
+    chargeReleaseSigmaDeg: 10,
+    lowHeartChargeAttemptProb: 0.8,
+    lowHeartTargetSweep: 2,
   },
 };
 
