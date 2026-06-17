@@ -135,64 +135,65 @@ Applied in `BattleRoom.onJoin` after the base spirit computation, before `aiPs.s
 
 ### `shared/chargeConstants.ts`
 
-Charge attack constants shared between client and server (#485, GDD §6.3 Option A). The server re-exports these from `server/src/game/constants.ts` (aliasing `*_SHARED` suffixes back to the canonical names); the client imports directly from this file so it never reaches into the server source tree. `CHARGE_TELEGRAPH_MIN_MS_PROD` is the only export here — the server derives the E2E_FAST variant (`CHARGE_TELEGRAPH_MIN_MS`) locally in `constants.ts`.
+Charge attack constants shared between client and server (#491, GDD §6.3). The server re-exports these from `server/src/game/constants.ts`; the client imports directly from this file so it never reaches into the server source tree.
 
 | Constant | Type | Value | Description |
 |----------|------|-------|-------------|
-| `CHARGE_THRESHOLD_MS` | `number` | 150 | Hold below this duration is classified as an instant tap (no oscillation, always horizontal). The client imports this constant directly and uses it as the deferred-threshold timer duration (same value in both prod and E2E — the `CHARGE_THRESHOLD_CLIENT_MS` / `__E2E_FAST__` conditional was removed in #487). |
-| `HIT_CONE_PX` | `number` | 20 | Half-width of the centre-line hit zone in pixels. `\|yOffset\| ≤ HIT_CONE_PX` → hit. |
-| `Y_AMPLITUDE_PX` | `number` | 80 | Maximum Y displacement of the oscillating orb (±80 px). |
-| `BASE_PERIOD_MS` | `number` | 1200 | Oscillation period at t = 0 (slowest oscillation, first moment of hold). |
-| `PERIOD_DECAY_MS` | `number` | 600 | Controls how quickly the period shortens with hold time. Period at time t = `BASE_PERIOD_MS / (1 + t / PERIOD_DECAY_MS)`. |
-| `MAX_CHARGE_MS` | `number` | 3000 | Hold duration at which sharpness clamps to 1.0 (full charge). |
-| `CHARGE_TELEGRAPH_MIN_MS_PROD` | `number` | 500 | Production telegraph duration at maximum charge. Server re-exports as `CHARGE_TELEGRAPH_MIN_MS`; E2E_FAST shortens this to 80 ms server-side only. |
+| `CHARGE_THRESHOLD_MS` | `number` | 150 | Hold below this duration is classified as an instant tap (no arc swing, always horizontal, always hits). Used as the deferred-threshold timer duration on the client. |
+| `MAX_CHARGE_MS` | `number` | 3000 | Maximum hold duration tracked by the server (clamped). Beyond this the sweep speed/sharpness stay at max. |
+| `CHARGE_TELEGRAPH_MIN_MS_PROD` | `number` | 500 | Production telegraph duration at maximum sharpness. Server re-exports as `CHARGE_TELEGRAPH_MIN_MS`; E2E_FAST shortens this to 80 ms server-side only. |
+| `SWEEP_RANGE_DEG` | `number` | 45 | Half-sweep angle: orb swings from −45° to +45° (90° total arc). |
+| `HIT_CONE_DEG` | `number` | 10 | Half-width of the sweet-spot hit cone in degrees. Release within ±10° of 0° → hit. |
+| `BASE_SWEEP_MS` | `number` | 1200 | Duration of the first full sweep (−45° → +45°) in ms. |
+| `SWEEP_SPEEDUP` | `number` | 0.75 | Per-reversal duration multiplier: each sweep is 75% the duration of the previous. |
+| `MAX_SWEEPS` | `number` | 3 | Sweeps until max speed; beyond this the sweep duration stays fixed at `BASE_SWEEP_MS × SWEEP_SPEEDUP^2`. |
 
 **Server-only charge constants** (in `server/src/game/constants.ts`, not in the shared module):
 
 | Constant | Type | Value | Description |
 |----------|------|-------|-------------|
-| `CHARGE_TELEGRAPH_MIN_MS` | `number` | 500 (prod) / 80 (E2E_FAST) | Telegraph window at maximum charge. Derived from `CHARGE_TELEGRAPH_MIN_MS_PROD`; shortened under `E2E_FAST=1`. |
-| `CHARGE_PARRY_COMPRESSION` | `number` | 0.35 | Fractional parry window compression at full sharpness. Formula: `round(PARRY_WINDOW_MS × (1 − sharpness × 0.35))`. Applied by `handleReleaseAttack` on a charge hit; consumed once by `resolveOrb` via the `chargeParryWindowMs` instance field. |
+| `CHARGE_TELEGRAPH_MIN_MS` | `number` | 500 (prod) / 80 (E2E_FAST) | Telegraph window at maximum sharpness. Derived from `CHARGE_TELEGRAPH_MIN_MS_PROD`; shortened under `E2E_FAST=1`. |
+| `CHARGE_PARRY_COMPRESSION` | `number` | 0.35 | Fractional parry window compression at full sharpness. Formula: `round(PARRY_WINDOW_MS × (1 − sharpness × 0.35))`. Applied by `handleReleaseAttack` on a charge hit. |
 
 ---
 
 ### `ChargeAttack.ts`
 
-Server-side charge attack formula wrappers (#485, GDD §6.3 Option A). Thin wrappers that bind the shared oscillation functions (`shared/oscillation.ts`) to the server's authoritative constants so callers only import this module. All functions are pure and stateless.
+Server-side charge attack formula wrappers (#491, GDD §6.3). Thin wrappers that bind the shared arc-swing functions (`shared/oscillation.ts`) to the server's authoritative constants so callers only import this module. All functions are pure and stateless.
 
 ```ts
 import {
-  computeYOffset,
-  computeIsHit,
+  computeSweepIndex,
+  computeOrbAngle,
+  computeIsHitAngle,
   computeSharpness,
   computeTelegraphDuration,
-  computeOscillationPeriod,
 } from 'server/src/game/ChargeAttack';
 ```
 
-#### `computeOscillationPeriod`
+#### `computeSweepIndex`
 
 ```ts
-export function computeOscillationPeriod(holdMs: number): number
+export function computeSweepIndex(holdMs: number): number
 ```
 
-The current oscillation period in ms at `holdMs` of charge. Period shrinks with hold time (`BASE_PERIOD_MS / (1 + holdMs / PERIOD_DECAY_MS)`); shorter period = faster oscillation = harder to time the release.
+Zero-based sweep index the orb is in at `holdMs` of charge. Sweep 0 = first pass (−45°→+45°); each reversal increments the index and speeds up the sweep (up to `MAX_SWEEPS`).
 
-#### `computeYOffset`
+#### `computeOrbAngle`
 
 ```ts
-export function computeYOffset(holdMs: number): number
+export function computeOrbAngle(holdMs: number): number
 ```
 
-The orb's Y offset in pixels at `holdMs` of charge. Range: `[-Y_AMPLITUDE_PX, +Y_AMPLITUDE_PX]`. Both the server (for hit resolution) and the client (for display) call this function with the same constants to guarantee identical results.
+The orb's angle in degrees at `holdMs` of charge. Range: `[−SWEEP_RANGE_DEG, +SWEEP_RANGE_DEG]` (i.e. [−45, +45]). 0° = sweet spot aimed at the opponent. Both server (hit resolution) and client (display) use this function with the same constants.
 
-#### `computeIsHit`
+#### `computeIsHitAngle`
 
 ```ts
-export function computeIsHit(holdMs: number): boolean
+export function computeIsHitAngle(holdMs: number): boolean
 ```
 
-True when the orb is within the hit cone at `holdMs` (`|computeYOffset(holdMs)| ≤ HIT_CONE_PX`). The server calls this on the hold duration it measured authoritatively from `chargeStartTimes`; the client value is never used for hit classification.
+True when `|computeOrbAngle(holdMs)| ≤ HIT_CONE_DEG` (±10° sweet-spot cone). The server calls this on the hold duration measured server-authoritatively from `chargeStartTimes`; the client display value is not used for hit classification.
 
 #### `computeSharpness`
 
@@ -200,7 +201,7 @@ True when the orb is within the hit cone at `holdMs` (`|computeYOffset(holdMs)| 
 export function computeSharpness(holdMs: number): number
 ```
 
-Sharpness in `[0, 1]`. 0 = tap or zero hold; 1 = maximum charge (`holdMs ≥ MAX_CHARGE_MS`). Drives telegraph duration and parry window compression. Formula: `Math.min(1, holdMs / MAX_CHARGE_MS)`.
+Sharpness in `{1/3, 2/3, 1.0}` based on sweep index: sweep 0 → 1/3, sweep 1 → 2/3, sweep 2+ → 1.0. A tap (holdMs < CHARGE_THRESHOLD_MS) returns 0 and is handled upstream before this function is called.
 
 #### `computeTelegraphDuration`
 
@@ -208,7 +209,7 @@ Sharpness in `[0, 1]`. 0 = tap or zero hold; 1 = maximum charge (`holdMs ≥ MAX
 export function computeTelegraphDuration(holdMs: number): number
 ```
 
-Variable telegraph duration in ms. Lerps from `TELEGRAPH_MS` (standard, at sharpness 0) down to `CHARGE_TELEGRAPH_MIN_MS` (fastest, at sharpness 1). Rounded to the nearest millisecond. A tap uses `TELEGRAPH_MS` (900 ms prod); a full charge uses `CHARGE_TELEGRAPH_MIN_MS` (500 ms prod / 80 ms E2E_FAST).
+Variable telegraph duration in ms. Lerps from `TELEGRAPH_MS` (standard, at sharpness 0) down to `CHARGE_TELEGRAPH_MIN_MS` (fastest, at sharpness 1.0). Rounded to the nearest millisecond.
 
 ---
 
