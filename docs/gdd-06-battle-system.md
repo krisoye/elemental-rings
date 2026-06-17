@@ -94,12 +94,12 @@ telegraphDuration    = lerp(TELEGRAPH_MS, CHARGE_TELEGRAPH_MIN_MS, sharpness)
 5. If the reactor achieves **Parry + Strong**, a counter fires (see §6.4 Rally).
 6. When the chain ends, **initiative passes to the other player**.
 
-**Option B — Recharge:** Double-press A1, A2, D1, or D2 to fully restore that ring's uses. Attack rings recharge via double-tap `1`/`2` or `Z`/`C`; defense rings recharge via double-tap `3`/`4` or a double-tap on the D1/D2 card. All four combat rings are rechargeable in-duel (the Thumb is not).
+**Option B — Recharge:** Press `R` (or the "↻ Recharge" touch button) during your initiative phase to enter **recharge-armed state**. The HUD shows "RECHARGE — pick a ring". Then press any ring key (`1`/`2`/`3`/`4`) or tap any ring card to recharge that ring. This gesture unifies attack-ring and defense-ring recharge under a single two-step input. Cancel with `R` again, `Esc`, or no input for ~2,500 ms.
 - Cost: **1 spirit per use restored** (same rate as overworld recharging, §4.3). A Tier 1 ring at 0 uses costs 3 spirit; one at 1 use costs 2 spirit.
 - The ring is restored to its full `max_uses`. The initiative phase ends immediately — no attack is thrown.
 - Spirit-gated: only the affordable portion is restored. If the player lacks spirit for a full recharge, the affordable uses are restored (or none, at zero affordable) and the phase is still consumed.
 - Only one ring can be recharged per initiative phase.
-- Defense recharge has **no letter-key (Z/C) form** — during the attack phase `Z`/`C` bind to A1/A2, so defense rings are reachable only by the number keys `3`/`4` and by tapping the D1/D2 cards.
+- `R` off-turn is a no-op with a brief visual cue; recharge can only be armed during your own initiative phase.
 
 **Option C — Forfeit:** Press D1 and D2 simultaneously during the attack phase to flee.
 - The forfeiting player **loses their staked Thumb ring** and pays **25 gold** (`GOLD_FORFEIT_PENALTY` in constants.ts).
@@ -126,15 +126,13 @@ When the attacker holds one attack button (A1 or A2) while the orb oscillates, t
 |---|---|---|
 | Attack A1 | `1` | `Z` (single press, attack phase) |
 | Attack A2 | `2` | `C` (single press, attack phase) |
-| Recharge A1 | `1` `1` | `Z` `Z` (double-tap, attack phase) |
-| Recharge A2 | `2` `2` | `C` `C` (double-tap, attack phase) |
-| Recharge D1 | `3` `3` / double-tap D1 card | — (no Z/C form; Z/C bind to A1/A2 in attack phase) |
-| Recharge D2 | `4` `4` / double-tap D2 card | — (no Z/C form; Z/C bind to A1/A2 in attack phase) |
-| Forfeit | `3` + `4` simultaneously | `Z` + `C` simultaneously (attack phase) |
+| Arm Recharge | `R` / "↻ Recharge" touch button | — (attack phase only) |
+| Complete Recharge | `1`/`2`/`3`/`4` or any ring card tap | — (while recharge-armed) |
+| Forfeit | `3` + `4` simultaneously | — (attack phase only) |
 | Defend D1 | `3` | `Z` (defense phase) |
 | Defend D2 | `4` | `C` (defense phase) |
 
-`Z` always maps to slot-1 for the current phase; `C` always maps to slot-2. Double-tap is disambiguated by a short timing window — two presses within the window trigger recharge; outside it each press is treated independently (and phase-locked anyway). Simultaneous D1+D2 is only recognized during the attack phase; during the defense phase the two buttons act independently. Wrong-phase presses are silently ignored.
+`Z` always maps to slot-1 for the current phase; `C` always maps to slot-2. Simultaneous D1+D2 is only recognized during the attack phase; during the defense phase the two buttons act independently. Wrong-phase presses are silently ignored.
 
 Because the defender sees the incoming element before committing, there is no simultaneous hidden selection. Bluffing lives in the loadout, stake, and jewelry layers (§9), not in the turn itself.
 
