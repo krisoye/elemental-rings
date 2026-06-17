@@ -144,7 +144,7 @@ export interface ChargeStartPayload {
 // from its own chargeStart timestamp, using holdDuration only as a fallback for
 // backwards-compat / pre-threshold taps.
 //   holdDuration = 0  → treated as an instant tap (always hits, horizontal).
-//   holdDuration > 0  → server recomputes yOffset / isHit from timestamp delta.
+//   holdDuration > 0  → server recomputes orbAngle / isHitAngle from timestamp delta.
 // Fusion: when the player holds `slot` and taps the other attack slot, both slots
 // fire simultaneously. `fusionSecondSlot` carries the tapped slot (always a tap,
 // always horizontal). When absent, a normal single-slot charge attack.
