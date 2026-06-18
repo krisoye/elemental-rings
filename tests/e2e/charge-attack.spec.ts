@@ -1653,10 +1653,13 @@ test('#504 acceptance criterion 4: defender blocking at compressedTelegraphMs la
 
   const results: any[] = await getMessages(defender, 'exchangeResult');
   expect(results.length).toBeGreaterThan(0);
+  // ExchangeResultPayload.timing: 'PARRY' | 'BLOCK' | 'MISTIME' | 'NO_BLOCK' (shared/types.ts:252).
   // The defense must register as BLOCK or PARRY — never MISTIME.
-  // MISTIME is the observable symptom of the desync bug.
-  const outcome: string = results[0].defenseResult ?? '';
-  expect(['BLOCK', 'PARRY', 'WEAK_BLOCK', 'WEAK_PARRY']).toContain(outcome);
+  // MISTIME is the observable symptom of the desync bug (defender pressed at the
+  // compressed visual landing but the server window had already closed).
+  const outcome: string = results[0].timing ?? '';
+  expect(outcome).not.toBe('MISTIME');
+  expect(['BLOCK', 'PARRY']).toContain(outcome);
 
   await closeBattle(h);
 });
@@ -1665,7 +1668,9 @@ test('#504 acceptance criterion 4: defender blocking at compressedTelegraphMs la
 // These test server-state invariants only visible after reading the implementation:
 //   - stale-value invariant: compressed telegraphMs from a charged exchange must
 //     NOT persist into the next tap/rally exchange
-//   - combo orb-2 fallback: telegraphMs=0 path in _resolveCombo → client uses TELEGRAPH_MS
+//   - combo orb-2 default: orb-2 is launched by handleDoubleAttackStart's client-side
+//     timer BEFORE _resolveCombo fires, so it uses Orb.launch's DEFAULT durationMs
+//     (= TELEGRAPH_MS) — __lastOrbDurationMs must equal TELEGRAPH_MS, never 0
 
 // ── #504 Impl Scenario 1: stale compressed value cleared on the next tap exchange ──
 
@@ -1729,17 +1734,19 @@ test('#504 impl: after a charged HIT, the next tap exchange has state.telegraphM
   await closeBattle(h);
 });
 
-// ── #504 Impl Scenario 2: combo orb-2 telegraphMs=0 → client falls back ─────────
+// ── #504 Impl Scenario 2: combo orb-2 uses tap-speed default, never 0 ───────────
 
-test('#504 impl: combo orb-2 (_resolveCombo) sets state.telegraphMs=0; client falls back to TELEGRAPH_MS', async ({
+test('#504 impl: combo orb-2 (fusion double-attack) launches at tap-speed TELEGRAPH_MS — __lastOrbDurationMs === TELEGRAPH_MS', async ({
   browser,
 }) => {
-  // #504 adversarial: the _resolveCombo orb-2 path sets state.telegraphMs=0 (the
-  // fallback sentinel — no new impactTime is set there). The client guard
-  // `state.telegraphMs || TELEGRAPH_MS` must fire, so __lastOrbDurationMs equals
-  // TELEGRAPH_MS, not 0. A 0-duration tween would be invisible and fire instantly,
-  // making orb-2 unblockable. This test verifies the fallback activates on the
-  // combo (fusion double-attack) orb-2 path.
+  // #504 adversarial: orb-2 in a fusion combo is launched client-side by
+  // handleDoubleAttackStart's gapMs timer (~200ms after orb-1), calling
+  // Orb.launch with no explicit durationMs → defaults to TELEGRAPH_MS.
+  // _resolveCombo only sets state.telegraphMs=0 when orb-1's defend window
+  // closes (~827ms later) — long after orb-2 has already launched. So the
+  // assertion is: __lastOrbDurationMs === TELEGRAPH_MS after orb-2 launches,
+  // proving orb-2 used the tap-speed default and was never 0 (which would make
+  // it an invisible instant-impact tween, unblockable by the defender).
   const h = await setupBattle(browser);
   const { attacker, defender } = await attackerDefender(h.p1, h.p2);
 
@@ -1787,18 +1794,19 @@ test('#504 impl: combo orb-2 (_resolveCombo) sets state.telegraphMs=0; client fa
   );
 
   // At this point __lastOrbDurationMs is the orb-2 duration.
-  // state.telegraphMs was 0 at the time of launch; client guard must have fired.
-  const stateTelegraphMs: number = await defender.evaluate(
-    () => (window as any).__room?.state?.telegraphMs ?? -1,
-  );
+  // Orb-2 is launched client-side by handleDoubleAttackStart's timer (~gapMs ≈ 200ms
+  // after orb-1), which calls Orb.launch with the DEFAULT durationMs = TELEGRAPH_MS.
+  // _resolveCombo (which sets state.telegraphMs = 0) only fires when orb-1's defend
+  // window closes (~827ms after orb-1 launch) — well AFTER orb-2 has already launched.
+  // So the invariant is NOT that state.telegraphMs === 0 at this moment (it will still
+  // be orb-1's charged value ≈ 627ms); the invariant is that __lastOrbDurationMs
+  // equals TELEGRAPH_MS, proving orb-2 used the tap-speed default (not a stale
+  // compressed value and never 0).
   const lastOrbDurationMs: number | null = await defender.evaluate(
     () => (window as any).__lastOrbDurationMs ?? null,
   );
 
-  // state.telegraphMs is 0 on orb-2 path (per the implementation).
-  expect(stateTelegraphMs).toBe(0);
-
-  // __lastOrbDurationMs must NOT be 0 — client fallback must have applied TELEGRAPH_MS.
+  // __lastOrbDurationMs must be TELEGRAPH_MS: orb-2 launched at tap-speed default.
   const expectedTelegraphMs = (process.env.E2E_FAST !== '0') ? 150 : 900;
   expect(lastOrbDurationMs).toBe(expectedTelegraphMs);
 
