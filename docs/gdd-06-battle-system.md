@@ -51,7 +51,7 @@ The **initiative holder** chooses one of three actions:
 
 **Option A — Attack (Tap or Charge):** Press A1 or A2 to throw the ring in that slot. There are two forms:
 
-**Tap (hold < `CHARGE_THRESHOLD_MS`, default 150 ms):** Release quickly. The orb spawns on release and fires horizontally at the standard **900 ms** telegraph. Defender phase opens at full baseline window. This is always a hit — no arc-timing required.
+**Tap (hold < `CHARGE_THRESHOLD_MS`, default 450 ms):** Release quickly. The orb spawns on release and fires horizontally at the standard **900 ms** telegraph. Defender phase opens at full baseline window. This is always a hit — no arc-timing required. The threshold was raised from 150 ms to 450 ms to eliminate a guaranteed-miss dead zone: at 150 ms, holds of 150–467 ms were charged but outside the hit cone (which first becomes reachable at ~467 ms), causing intended simple attacks to silently whiff.
 
 **Charged Attack (hold ≥ `CHARGE_THRESHOLD_MS`):** Hold the button. As soon as the hold begins:
 - The attack orb **spawns immediately** in front of the attacker and begins sweeping in a **constant-angular-velocity arc** from −45° to +45° (pivoting at the spawn point). 0° is the sweet spot — aimed directly at the opponent. The arc opens toward the opponent: at every angle the orb stays between the attacker's pivot and the opponent, never behind the attacker.
