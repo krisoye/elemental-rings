@@ -151,6 +151,31 @@ describe('vsAI: duels reach completion deterministically', () => {
   });
 });
 
+describe('vsAI: E2E_FAST charge fallback (#493)', () => {
+  test('AGGRESSIVE AI under E2E_FAST=1 uses tap path (reaches DEFEND_WINDOW without stalling)', async () => {
+    // #493 adversarial: when E2E_FAST=1, the AI must fall back from chargeStart
+    // to handleSelectAttack (tap). If chargeStart were dispatched under E2E_FAST,
+    // the AI would wait for wall-clock time to elapse before releasing — exceeding
+    // the vsAI duel timeout and causing flaky test failures.
+    // AGGRESSIVE always charges (chargeAttemptProb=1.0), so it is the ideal
+    // persona to verify the E2E_FAST fallback fires a tap instead of holding.
+    const origFast = process.env.E2E_FAST;
+    process.env.E2E_FAST = '1';
+    try {
+      const { room } = await joinVsAI('AGGRESSIVE', 5678);
+      // Under E2E_FAST, think delay is 20–50ms. Allow 30×20ms = 600ms for the tap.
+      for (let i = 0; i < 30 && room.state.phase !== 'DEFEND_WINDOW'; i++) await sleep(20);
+      // The room must enter DEFEND_WINDOW — a charge stall would leave it in ATTACK_SELECT.
+      expect(room.state.phase).toBe('DEFEND_WINDOW');
+      // The attacker slot must be a1 or a2 (tap dispatch sets attackerSlot).
+      expect(['a1', 'a2']).toContain(room.state.attackerSlot);
+    } finally {
+      if (origFast === undefined) delete process.env.E2E_FAST;
+      else process.env.E2E_FAST = origFast;
+    }
+  });
+});
+
 describe('room-name isolation', () => {
   test("joinOrCreate('battle') never lands in a locked battle-ai room", async () => {
     // Create a vsAI room first; it is locked.
