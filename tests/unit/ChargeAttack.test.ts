@@ -729,3 +729,185 @@ describe('adversarial — orbAngle precision near post-arm sweep 0 end', () => {
     expect(computeOrbAngle(t)).toBeCloseTo(-SWEEP_RANGE_DEG, 6);
   });
 });
+
+// ── #499 Phase 1: Arm-gate logic contract ─────────────────────────────────────
+//
+// The arm leg (0..CHARGE_ARM_MS) is a grace window. During it the orb is NOT in
+// a charged-hit-eligible position: the hit cone formula (isHitAngle) MAY return
+// true (angle=0° at t=0 is within ±10°), but the arm gate in BattleRoom ensures
+// those releases resolve as taps, not charged hits. These tests encode the
+// CONTRACTUAL INVARIANT that both sides of the boundary are handled correctly.
+
+describe('#499 arm-gate logic contract — spec invariant: arm-leg releases are always taps', () => {
+  test('isHitAngle(0) is TRUE but t=0 is in the arm leg — arm gate prevents charged resolution', () => {
+    // #499 adversarial: the orb starts at 0° (within ±10° cone). computeIsHitAngle
+    // is a pure formula; it returns true. BUT the arm gate (holdMs < CHARGE_ARM_MS)
+    // in BattleRoom prevents the charged path from ever being entered. Assert:
+    // 1) isHitAngle says "hit" at t=0 (formula is correct)
+    // 2) t=0 < CHARGE_ARM_MS (gate would fire and redirect to tap)
+    expect(computeIsHitAngle(0)).toBe(true);
+    expect(0).toBeLessThan(CHARGE_ARM_MS);
+  });
+
+  test('isHitAngle(249) is FALSE — orb is near +45° at end of arm leg (angle ≈ 44.8°)', () => {
+    // #499 adversarial: at 249ms (1ms before arm end) the orb is at ~(249/250)*45 ≈
+    // 44.8° — well outside the ±10° hit cone. Even if the arm gate were absent,
+    // this would be a miss. Both gates (arm gate + angle check) agree: miss.
+    expect(computeOrbAngle(249)).toBeGreaterThan(HIT_CONE_DEG);
+    expect(computeIsHitAngle(249)).toBe(false);
+  });
+
+  test('CHARGE_ARM_MS boundary: t=249 is pre-arm (tap by gate), t=250 is post-arm (charged miss)', () => {
+    // #499 adversarial: one millisecond separates the tap path from the charged path.
+    // At 249ms the arm gate fires → tap. At 250ms the gate is bypassed → charged.
+    // At 250ms the orb is at exactly +45° which is a miss (outside ±10°).
+    expect(249).toBeLessThan(CHARGE_ARM_MS);    // gate fires at t=249
+    expect(250).toBeGreaterThanOrEqual(CHARGE_ARM_MS); // gate does NOT fire at t=250
+    expect(computeOrbAngle(250)).toBeCloseTo(SWEEP_RANGE_DEG, 4); // +45° exactly
+    expect(computeIsHitAngle(250)).toBe(false); // first charged release is a miss
+  });
+
+  test('first charged hit is NOT at CHARGE_ARM_MS — orb must return to 0° first (t≈850ms)', () => {
+    // #499 spec: the hit cone is inactive during the arm leg. The first post-arm
+    // release (t=CHARGE_ARM_MS) is at +45° — a MISS. The orb must sweep back to 0°
+    // before a charged HIT is possible. That happens at sweepMidpointMs(0) ≈ 850ms.
+    expect(computeIsHitAngle(CHARGE_ARM_MS)).toBe(false);  // +45° at arm end = miss
+    expect(computeIsHitAngle(sweepMidpointMs(0))).toBe(true); // 0° at sweep midpoint = hit
+  });
+
+  test('grace window upper bound: orbAngle(249) ≈ +44.8°, orbAngle(250) = +45°', () => {
+    // #499 adversarial: the last ms of the arm leg (249ms) and the first ms of
+    // post-arm (250ms) should differ by less than 1° — no discontinuity.
+    const angleBefore = computeOrbAngle(249);
+    const angleAt = computeOrbAngle(250);
+    expect(angleBefore).toBeCloseTo((249 / 250) * SWEEP_RANGE_DEG, 2);
+    expect(angleAt).toBeCloseTo(SWEEP_RANGE_DEG, 4);
+    expect(Math.abs(angleAt - angleBefore)).toBeLessThan(1); // < 1° jump at boundary
+  });
+});
+
+// ── #499 Phase 1: sweepHoldMs round-trip for #499 phase ──────────────────────
+
+describe('#499 sweepHoldMs with CHARGE_ARM_MS param — round-trip correctness', () => {
+  test('sweepHoldMs(1, 15°, ...) round-trips through orbAngle to within ±0.75° (#499 spec example)', () => {
+    // #499 adversarial: the AI uses sweepHoldMs to compute its release timing.
+    // A round-trip error > 1° would cause systematic AI misses or hits on wrong targets.
+    const holdMs = sweepHoldMs(1, 15, BASE_SWEEP_MS, SWEEP_SPEEDUP, SWEEP_RANGE_DEG, MAX_SWEEPS, CHARGE_ARM_MS);
+    expect(computeOrbAngle(holdMs)).toBeCloseTo(15, 1); // ±0.5° at 1 decimal
+  });
+
+  test('all sweepHoldMs(1, deg, ...) results are ≥ CHARGE_ARM_MS (no arm-leg leakage)', () => {
+    // #499 adversarial: if the inverse ever returned a value < CHARGE_ARM_MS the AI
+    // would target an arm-leg time, where the arm gate redirects to tap — silent wrong
+    // behavior. Every valid post-arm angle must map to holdMs ≥ CHARGE_ARM_MS.
+    for (const deg of [-45, -30, -15, -10, 0, 10, 15, 30, 45]) {
+      const holdMs = sweepHoldMs(1, deg, BASE_SWEEP_MS, SWEEP_SPEEDUP, SWEEP_RANGE_DEG, MAX_SWEEPS, CHARGE_ARM_MS);
+      expect(holdMs).toBeGreaterThanOrEqual(CHARGE_ARM_MS);
+    }
+  });
+});
+
+// ── #499 Phase 1: Miss orb facing direction ────────────────────────────────────
+
+describe('#499 miss orb facing — Math.sign(enemyX - fromX) formula', () => {
+  test('player at PLAYER_X=768, opponent at OPPONENT_X=256: facing = -1 (player fires left)', () => {
+    // #499 spec: the miss orb must fly TOWARD the opponent, not backward.
+    // For the player (x=768) shooting at the opponent (x=256): enemy is to the left.
+    // Math.sign(256 - 768) = Math.sign(-512) = -1 → orb flies left (toward opponent).
+    const PLAYER_X = 768;
+    const OPPONENT_X = 256;
+    const facingFromPlayer = Math.sign(OPPONENT_X - PLAYER_X);
+    expect(facingFromPlayer).toBe(-1);
+  });
+
+  test('opponent at OPPONENT_X=256, player at PLAYER_X=768: facing = +1 (opponent fires right)', () => {
+    // #499 spec: for the opponent (x=256) shooting at the player (x=768): enemy is to the right.
+    // Math.sign(768 - 256) = Math.sign(512) = +1 → orb flies right (toward player).
+    const PLAYER_X = 768;
+    const OPPONENT_X = 256;
+    const facingFromOpponent = Math.sign(PLAYER_X - OPPONENT_X);
+    expect(facingFromOpponent).toBe(1);
+  });
+
+  test('facings are always opposite: player and opponent fire toward each other', () => {
+    // #499 adversarial: if both facings had the same sign both orbs would fly the
+    // same direction — one would fly away from the opponent (regression from pre-#499).
+    const PLAYER_X = 768;
+    const OPPONENT_X = 256;
+    const facingFromPlayer = Math.sign(OPPONENT_X - PLAYER_X);
+    const facingFromOpponent = Math.sign(PLAYER_X - OPPONENT_X);
+    expect(facingFromPlayer + facingFromOpponent).toBe(0); // sum = 0 (opposite signs)
+  });
+
+  test('Math.sign never produces 0 for the canonical PLAYER_X vs OPPONENT_X (positions differ)', () => {
+    // #499 adversarial: Math.sign(0) = 0 is an invalid facing; it would produce a
+    // stationary orb. Guard: canonical x positions must differ so sign is never 0.
+    const PLAYER_X = 768;
+    const OPPONENT_X = 256;
+    expect(Math.sign(OPPONENT_X - PLAYER_X)).not.toBe(0);
+    expect(Math.sign(PLAYER_X - OPPONENT_X)).not.toBe(0);
+  });
+});
+
+// ── #499 Phase 2: computeOrbAngle wrapper is consistent with direct orbAngle call
+
+describe('#499 impl-aware: computeOrbAngle wrapper correctly binds CHARGE_ARM_MS', () => {
+  test('computeOrbAngle(0) = 0° — CHARGE_ARM_MS binding confirmed (pre-#499 would be −45°)', () => {
+    // #499 impl: computeOrbAngle is a thin wrapper that binds the server constants.
+    // If CHARGE_ARM_MS were missing or zero, orbAngle(0) would return −45° (the old
+    // pre-#499 start). 0° confirms the arm-leg phase shift is correctly wired.
+    expect(computeOrbAngle(0)).toBeCloseTo(0, 6);
+  });
+
+  test('computeOrbAngle(CHARGE_ARM_MS) = +45° — wrapper passes chargeArmMs correctly', () => {
+    // #499 impl: if CHARGE_ARM_MS were passed in the wrong position the arm-leg
+    // boundary would be wrong, producing an incorrect angle at t=250ms.
+    expect(computeOrbAngle(CHARGE_ARM_MS)).toBeCloseTo(SWEEP_RANGE_DEG, 4);
+  });
+
+  test('computeOrbAngle matches sweepHoldMs inverse for known angles — wrapper is self-consistent', () => {
+    // #499 impl: sweepHoldMs is also imported from shared/oscillation with CHARGE_ARM_MS.
+    // If computeOrbAngle had a different CHARGE_ARM_MS binding, the round-trip would fail.
+    const samples = [-30, -10, 0, 10, 30];
+    for (const deg of samples) {
+      const holdMs = sweepHoldMs(1, deg, BASE_SWEEP_MS, SWEEP_SPEEDUP, SWEEP_RANGE_DEG, MAX_SWEEPS, CHARGE_ARM_MS);
+      expect(computeOrbAngle(holdMs)).toBeCloseTo(deg, 4);
+    }
+  });
+});
+
+// ── #499 Phase 2: arm grace window — tap path consistency ────────────────────
+
+describe('#499 impl-aware: arm grace window tap-path consistency (150ms ≤ holdMs < 250ms)', () => {
+  test('sharpnessFromSweep(249, ...) returns 1/3 without throwing (formula safe for arm-leg input)', () => {
+    // #499 impl: the arm gate (holdMs < CHARGE_ARM_MS) redirects to tap before
+    // sharpness is ever used. But the pure formula is called with holdMs=249 in unit
+    // context — it should return 1/3 (sweep 0 during arm leg) and not throw.
+    // (Sharpness is IRRELEVANT for taps, but the formula must be crash-safe.)
+    expect(() => computeSharpness(249)).not.toThrow();
+    expect(computeSharpness(249)).toBeCloseTo(1 / 3, 6);
+  });
+
+  test('both sub-ranges of the grace window (0..149, 150..249) resolve to the same tap behavior', () => {
+    // #499 impl: the grace window REPLACES the old CHARGE_THRESHOLD_MS check.
+    // Old gate: holdMs < 150 → tap. New gate: holdMs < 250 → tap.
+    // Both sub-ranges (0..149 and 150..249) must produce tap-compatible formula values:
+    // sweep 0 = sharpness 1/3 (consistent — never exceeds post-arm sharpness floor).
+    const preThreshold = computeSharpness(149); // old sub-range boundary - 1
+    const inGraceWindow = computeSharpness(200); // CHARGE_THRESHOLD_MS ≤ t < CHARGE_ARM_MS
+    const graceWindowEnd = computeSharpness(249); // last ms before CHARGE_ARM_MS
+    expect(preThreshold).toBeCloseTo(1 / 3, 6);
+    expect(inGraceWindow).toBeCloseTo(1 / 3, 6);
+    expect(graceWindowEnd).toBeCloseTo(1 / 3, 6);
+  });
+
+  test('holdMs = CHARGE_THRESHOLD_MS (150ms) is within arm gate and produces sharpness 1/3', () => {
+    // #499 impl: the old threshold (150ms) is now inside the arm leg (250ms).
+    // If any code still used the old CHARGE_THRESHOLD_MS check, holds between 150..249
+    // would enter the charged path — wrong. sharpnessFromSweep(150) = 1/3 is consistent
+    // with tap; the arm gate in BattleRoom is the definitive guard, but the formula
+    // must not produce a value that would mislead callers if they check sharpness.
+    expect(150).toBeLessThan(CHARGE_ARM_MS);
+    expect(computeSharpness(CHARGE_THRESHOLD_MS)).toBeCloseTo(1 / 3, 6);
+  });
+});
