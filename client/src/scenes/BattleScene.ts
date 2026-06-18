@@ -1025,7 +1025,10 @@ export class BattleScene extends Phaser.Scene {
     // Play the off-angle orb animation: fly off-screen upward/downward.
     // We use the standard Orb.launch but toward a point far above/below.
     const elements = this._getAttackElements(p.attackerSlot as SlotKey);
-    const offTarget = { x: from.x + 300, y: from.y - 200 }; // angled upward off-screen
+    const facing = imAttacker
+      ? Math.sign(OPPONENT_X - PLAYER_X)
+      : Math.sign(PLAYER_X - OPPONENT_X);
+    const offTarget = { x: from.x + facing * 300, y: from.y - 200 }; // angled upward off-screen
     Orb.launch(this, elements, from, offTarget);
 
     // Show a WHIFF label on the attacker's side.
@@ -1052,7 +1055,7 @@ export class BattleScene extends Phaser.Scene {
       onComplete: () => t.destroy(),
     });
     // E2E observable.
-    window.__lastChargeMiss = { attackerId: p.attackerId, attackerSlot: p.attackerSlot };
+    window.__lastChargeMiss = { attackerId: p.attackerId, attackerSlot: p.attackerSlot, offTargetX: offTarget.x };
   }
 
   /**
