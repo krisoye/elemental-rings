@@ -142,6 +142,7 @@ Charge attack constants shared between client and server (#491, GDD §6.3). The 
 | `CHARGE_THRESHOLD_MS` | `number` | 150 | Hold below this duration is classified as an instant tap (no arc swing, always horizontal, always hits). Used as the deferred-threshold timer duration on the client. |
 | `MAX_CHARGE_MS` | `number` | 3000 | Maximum hold duration tracked by the server (clamped). Beyond this the sweep speed/sharpness stay at max. |
 | `CHARGE_TELEGRAPH_MIN_MS_PROD` | `number` | 500 | Production telegraph duration at maximum sharpness. Server re-exports as `CHARGE_TELEGRAPH_MIN_MS`; E2E_FAST shortens this to 80 ms server-side only. |
+| `CHARGE_ARM_MS` | `number` | 250 | Hold duration at which the orb has completed its initial outward leg and the hit cone arms. Releases before this threshold resolve as taps (grace window). |
 | `SWEEP_RANGE_DEG` | `number` | 45 | Half-sweep angle: orb swings from −45° to +45° (90° total arc). |
 | `HIT_CONE_DEG` | `number` | 10 | Half-width of the sweet-spot hit cone in degrees. Release within ±10° of 0° → hit. |
 | `BASE_SWEEP_MS` | `number` | 1200 | Duration of the first full sweep (−45° → +45°) in ms. |
@@ -177,7 +178,7 @@ import {
 export function computeSweepIndex(holdMs: number): number
 ```
 
-Zero-based sweep index the orb is in at `holdMs` of charge. Sweep 0 = first pass (−45°→+45°); each reversal increments the index and speeds up the sweep (up to `MAX_SWEEPS`).
+Zero-based sweep index the orb is in at `holdMs` of charge. Returns 0 during the arm leg and for the first full post-arm pass (−SWEEP_RANGE_DEG → +SWEEP_RANGE_DEG); each subsequent reversal increments the index and speeds up the sweep (up to `MAX_SWEEPS`).
 
 #### `computeOrbAngle`
 
@@ -185,7 +186,7 @@ Zero-based sweep index the orb is in at `holdMs` of charge. Sweep 0 = first pass
 export function computeOrbAngle(holdMs: number): number
 ```
 
-The orb's angle in degrees at `holdMs` of charge. Range: `[−SWEEP_RANGE_DEG, +SWEEP_RANGE_DEG]` (i.e. [−45, +45]). 0° = sweet spot aimed at the opponent. Both server (hit resolution) and client (display) use this function with the same constants.
+The orb's angle in degrees at `holdMs` of charge. Range: `[−SWEEP_RANGE_DEG, +SWEEP_RANGE_DEG]` (i.e. [−45, +45]). 0° = sweet spot aimed at the opponent. `holdMs=0` returns 0° (#499: phase-shift — orb starts aimed at the opponent); the arm leg (0 ≤ holdMs < CHARGE_ARM_MS) sweeps from 0° to +SWEEP_RANGE_DEG. Both server (hit resolution) and client (display) use this function with the same constants.
 
 #### `computeIsHitAngle`
 
@@ -193,7 +194,7 @@ The orb's angle in degrees at `holdMs` of charge. Range: `[−SWEEP_RANGE_DEG, +
 export function computeIsHitAngle(holdMs: number): boolean
 ```
 
-True when `|computeOrbAngle(holdMs)| ≤ HIT_CONE_DEG` (±10° sweet-spot cone). The server calls this on the hold duration measured server-authoritatively from `chargeStartTimes`; the client display value is not used for hit classification.
+True when `|computeOrbAngle(holdMs)| ≤ HIT_CONE_DEG` (±10° sweet-spot cone). The server calls this on the hold duration measured server-authoritatively from `chargeStartTimes`; the client display value is not used for hit classification. Callers must guard: releases during the arm leg (holdMs < CHARGE_ARM_MS) must resolve as taps, not charged misses.
 
 #### `computeSharpness`
 
@@ -201,7 +202,7 @@ True when `|computeOrbAngle(holdMs)| ≤ HIT_CONE_DEG` (±10° sweet-spot cone).
 export function computeSharpness(holdMs: number): number
 ```
 
-Sharpness in `{1/3, 2/3, 1.0}` based on sweep index: sweep 0 → 1/3, sweep 1 → 2/3, sweep 2+ → 1.0. A tap (holdMs < CHARGE_THRESHOLD_MS) returns 0 and is handled upstream before this function is called.
+Sharpness in `{1/3, 2/3, 1.0}` based on sweep index: arm leg / sweep 0 → 1/3 (floor — charged always beats tap), sweep 1 → 2/3, sweep 2+ → 1.0. A tap (holdMs < CHARGE_THRESHOLD_MS) returns 0 and is handled upstream before this function is called.
 
 #### `computeTelegraphDuration`
 
