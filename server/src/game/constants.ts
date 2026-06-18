@@ -25,6 +25,7 @@ import {
   BASE_SWEEP_MS as BASE_SWEEP_MS_SHARED,
   SWEEP_SPEEDUP as SWEEP_SPEEDUP_SHARED,
   MAX_SWEEPS as MAX_SWEEPS_SHARED,
+  CHARGE_ARM_MS as CHARGE_ARM_MS_SHARED,
 } from '../../../shared/chargeConstants';
 
 // Re-export the shared timing constants so existing server imports of
@@ -42,6 +43,7 @@ export {
   BASE_SWEEP_MS_SHARED as BASE_SWEEP_MS,
   SWEEP_SPEEDUP_SHARED as SWEEP_SPEEDUP,
   MAX_SWEEPS_SHARED as MAX_SWEEPS,
+  CHARGE_ARM_MS_SHARED as CHARGE_ARM_MS,
 };
 
 const E2E_FAST = process.env.E2E_FAST === '1';

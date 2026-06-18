@@ -53,37 +53,43 @@ The **initiative holder** chooses one of three actions:
 
 **Tap (hold < `CHARGE_THRESHOLD_MS`, default 150 ms):** Release quickly. The orb spawns on release and fires horizontally at the standard **900 ms** telegraph. Defender phase opens at full baseline window. This is always a hit — no arc-timing required.
 
-**Charged Attack (hold ≥ `CHARGE_THRESHOLD_MS`):** Hold the button. As soon as the hold begins:
-- The attack orb **spawns immediately** in front of the attacker and begins sweeping in a **constant-angular-velocity arc** from −45° to +45° (pivoting at the spawn point). 0° is the sweet spot — aimed directly at the opponent. The arc opens toward the opponent: at every angle the orb stays between the attacker's pivot and the opponent, never behind the attacker.
-- The sweep **speeds up on each reversal** (3 sweeps to max speed, controlled by `SWEEP_SPEEDUP = 0.75`): each successive sweep takes 75% as long as the previous. Max speed is reached at sweep 3 and held there.
+**Tap grace window (`CHARGE_THRESHOLD_MS` ≤ hold < `CHARGE_ARM_MS`, default 150–249 ms):** The orb spawns and begins its outward arm swing, but the hit cone has not yet armed. A release in this window resolves as a normal tap — no charged miss is possible. This prevents short holds from accidentally entering the arc and immediately missing.
+
+**Charged Attack (hold ≥ `CHARGE_ARM_MS`, default 250 ms):** The orb has completed its outward arm swing and the hit cone is now active. The arc oscillates fully; release angle determines hit or miss.
+
+The orb's arc:
+- The orb **spawns immediately** aimed at the opponent (0°). It swings outward to the first extreme (±`SWEEP_RANGE_DEG`) over `CHARGE_ARM_MS` (250 ms) — this is the **arm leg**. The arc opens toward the opponent: the orb always stays between the attacker's pivot and the opponent, never behind the attacker.
+- After reaching the first extreme, the orb oscillates back and forth in full sweeps (`BASE_SWEEP_MS = 1200 ms` for the first full sweep). The sweep **speeds up on each reversal** (3 sweeps to max speed, `SWEEP_SPEEDUP = 0.75`): each successive sweep takes 75% as long as the previous.
 - The orb **glows gold** when within the hit cone (±`HIT_CONE_DEG`, default 10°); it dims when outside.
 - **Both players see the arc-swinging orb** — the defender gets information about the attacker's charge level before the throw.
 
 **Release = throw.** The orb's angle at the exact moment of release determines the outcome:
 
-| Release angle | Result | Defender Phase |
+| Hold duration | Result | Defender Phase |
 |---|---|---|
-| Within ±`HIT_CONE_DEG` (10°) of 0° | **Hit** — orb flies toward defender at a compressed telegraph | Yes — window scales with charge sharpness |
-| Outside hit cone | **Miss** — orb flies off-screen at that angle | **No** — defender does nothing; attacker −1 use |
+| < `CHARGE_THRESHOLD_MS` (150 ms) | **Tap** — orb fires horizontal, always hits | Yes — standard window |
+| `CHARGE_THRESHOLD_MS`–`CHARGE_ARM_MS` (150–249 ms) | **Tap (grace)** — orb not yet armed, resolves as tap | Yes — standard window |
+| ≥ `CHARGE_ARM_MS` within ±`HIT_CONE_DEG` (10°) of 0° | **Hit** — orb flies toward defender at a compressed telegraph | Yes — window scales with charge sharpness |
+| ≥ `CHARGE_ARM_MS` outside hit cone | **Miss** — orb flies toward the opponent at that angle | **No** — defender does nothing; attacker −1 use |
 
-On a **miss**: the attacker loses 1 ring use, a brief "WHIFF" label appears on the attacker's side, and initiative passes immediately. The defender is never punished for an attacker's miss.
+On a **miss**: the attacker loses 1 ring use, a brief "WHIFF" label appears, the miss orb flies toward the opponent (not off to the side), and initiative passes immediately. The defender is never punished for an attacker's miss.
 
-On a **hit**: telegraph duration and sharpness scale with the number of **sweeps completed**:
+On a **hit**: telegraph duration and sharpness scale with the number of **full sweeps completed** after arming:
 
-| Sweep (0-based) | Sharpness | Telegraph Window | Parry Window |
+| Sweep (0-based, post-arm) | Sharpness | Telegraph Window | Parry Window |
 |---|---|---|---|
 | Tap (no charge) | 0 | 900 ms (baseline) | Standard |
-| Sweep 0 (first pass, ~0–1200ms) | 1/3 | ~767 ms | Slightly compressed |
-| Sweep 1 (return pass, ~1200–2100ms) | 2/3 | ~633 ms | Significantly compressed |
-| Sweep 2+ (max speed, ~2100ms+) | 1.0 | `CHARGE_TELEGRAPH_MIN_MS` (500 ms) | Most compressed |
+| Sweep 0 (first post-arm pass, ~250–1450ms) | 1/3 | ~767 ms | Slightly compressed |
+| Sweep 1 (return pass, ~1450–2350ms) | 2/3 | ~633 ms | Significantly compressed |
+| Sweep 2+ (max speed, ~2350ms+) | 1.0 | `CHARGE_TELEGRAPH_MIN_MS` (500 ms) | Most compressed |
 
 The arc formulas are deterministic and computed server-side to prevent angle-spoofing:
 ```
-sweepDuration(n)  = BASE_SWEEP_MS × SWEEP_SPEEDUP ^ min(n, MAX_SWEEPS − 1)
-sweepIndex(t)     = 0-based sweep we are in at holdMs t
-orbAngle(t)       = −SWEEP_RANGE_DEG..+SWEEP_RANGE_DEG (degrees)   0° = sweet spot
-isHit             = |orbAngle(holdDuration)| ≤ HIT_CONE_DEG
-sharpness         = 1/3 (sweep 0) | 2/3 (sweep 1) | 1.0 (sweep 2+)
+armLeg(t)         = (t / CHARGE_ARM_MS) × SWEEP_RANGE_DEG    (for t < CHARGE_ARM_MS)
+orbAngle(t)       = −SWEEP_RANGE_DEG..+SWEEP_RANGE_DEG       0° = sweet spot (aimed at opponent)
+orbAngle(0)       = 0° (starts aimed at the opponent)
+isHit             = holdMs ≥ CHARGE_ARM_MS AND |orbAngle(holdMs)| ≤ HIT_CONE_DEG
+sharpness         = 1/3 (post-arm sweep 0) | 2/3 (sweep 1) | 1.0 (sweep 2+)
 telegraphDuration = lerp(TELEGRAPH_MS, CHARGE_TELEGRAPH_MIN_MS, sharpness)
 ```
 

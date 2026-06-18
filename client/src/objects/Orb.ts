@@ -63,9 +63,9 @@ export class Orb {
   ): IdleOrbHandle & OrbHandle {
     const circles: Phaser.GameObjects.Arc[] = [];
     let dispersed = false;
-    let currentAngleDeg = -45; // orb starts at −SWEEP_RANGE_DEG
+    let currentAngleDeg = 0; // orb starts at 0° (aimed at opponent — #499)
 
-    // Position all circles at the initial arc angle (−45° = left of arc).
+    // Position all circles at the initial arc angle (0° = aimed at opponent).
     // The facing sign ensures the arc opens toward the opponent, not behind the attacker.
     const angleRad = (currentAngleDeg * Math.PI) / 180;
     elements.forEach((el, idx) => {

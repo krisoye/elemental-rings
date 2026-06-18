@@ -37,6 +37,7 @@ import {
   BASE_SWEEP_MS,
   SWEEP_SPEEDUP,
   MAX_SWEEPS,
+  CHARGE_ARM_MS,
 } from '../../../shared/chargeConstants';
 
 const ATTACK_KEYS: ReadonlySet<SlotKey> = new Set<SlotKey>(['a1', 'a2']);
@@ -1022,10 +1023,14 @@ export class BattleScene extends Phaser.Scene {
       this.chargeOrbHandle = null;
     }
 
-    // Play the off-angle orb animation: fly off-screen upward/downward.
-    // We use the standard Orb.launch but toward a point far above/below.
+    // Play the off-angle orb animation: fly toward the opponent (angled upward).
+    // The miss orb travels in the direction the attacker is facing — toward their
+    // opponent — so the visual reads correctly regardless of which side we're on.
+    // Reuse the Math.sign(target − origin) facing pattern from #495.
     const elements = this._getAttackElements(p.attackerSlot as SlotKey);
-    const offTarget = { x: from.x + 300, y: from.y - 200 }; // angled upward off-screen
+    const enemyX = imAttacker ? OPPONENT_X : PLAYER_X;
+    const facing = Math.sign(enemyX - from.x);
+    const offTarget = { x: from.x + facing * 300, y: from.y - 200 };
     Orb.launch(this, elements, from, offTarget);
 
     // Show a WHIFF label on the attacker's side.
@@ -1438,18 +1443,18 @@ export class BattleScene extends Phaser.Scene {
     // Attacker-side: drive the attacker's own idle charge orb along the arc.
     if (this.chargeOrbHandle && this.chargeHoldStart !== null) {
       const holdMs = Date.now() - this.chargeHoldStart;
-      const angle = chargeOrbAngleFn(holdMs, SWEEP_RANGE_DEG, BASE_SWEEP_MS, SWEEP_SPEEDUP, MAX_SWEEPS);
+      const angle = chargeOrbAngleFn(holdMs, SWEEP_RANGE_DEG, BASE_SWEEP_MS, SWEEP_SPEEDUP, MAX_SWEEPS, CHARGE_ARM_MS);
       this.chargeOrbHandle.setAngle(angle);
-      this.chargeOrbHandle.setInHitZone(chargeIsHitAngle(holdMs, SWEEP_RANGE_DEG, BASE_SWEEP_MS, HIT_CONE_DEG, SWEEP_SPEEDUP, MAX_SWEEPS));
+      this.chargeOrbHandle.setInHitZone(chargeIsHitAngle(holdMs, SWEEP_RANGE_DEG, BASE_SWEEP_MS, HIT_CONE_DEG, SWEEP_SPEEDUP, MAX_SWEEPS, CHARGE_ARM_MS));
     }
 
     // Defender-side: drive the opponent's idle charge orb using the server's
     // authoritative startTime (same deterministic formula — no skew).
     if (this.opponentChargeOrbHandle && this.opponentChargeStartTime !== null) {
       const holdMs = Date.now() - this.opponentChargeStartTime;
-      const angle = chargeOrbAngleFn(holdMs, SWEEP_RANGE_DEG, BASE_SWEEP_MS, SWEEP_SPEEDUP, MAX_SWEEPS);
+      const angle = chargeOrbAngleFn(holdMs, SWEEP_RANGE_DEG, BASE_SWEEP_MS, SWEEP_SPEEDUP, MAX_SWEEPS, CHARGE_ARM_MS);
       this.opponentChargeOrbHandle.setAngle(angle);
-      this.opponentChargeOrbHandle.setInHitZone(chargeIsHitAngle(holdMs, SWEEP_RANGE_DEG, BASE_SWEEP_MS, HIT_CONE_DEG, SWEEP_SPEEDUP, MAX_SWEEPS));
+      this.opponentChargeOrbHandle.setInHitZone(chargeIsHitAngle(holdMs, SWEEP_RANGE_DEG, BASE_SWEEP_MS, HIT_CONE_DEG, SWEEP_SPEEDUP, MAX_SWEEPS, CHARGE_ARM_MS));
     }
   }
 
