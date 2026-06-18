@@ -1115,11 +1115,25 @@ test('#495 arc-direction: opponentChargeOrbRenderX is always > 316 (pivot) on de
   await closeBattle(h);
 });
 
-// ── Arc-direction Scenario 3: symmetry — same |angle|, equal displacement from pivot ─
+// ── Arc-direction Scenario 3: geometry — renderX matches pivot + facing*radius*cos(angle) ─
 
-test('#495 arc-direction: at same |angle|, player leftward displacement equals opponent rightward displacement (mirror symmetry)', async ({
+test('#495 arc-direction: renderX matches pivot+facing*radius*cos(angle) on both attacker and defender views (formula invariant)', async ({
   browser,
 }) => {
+  // #495 adversarial: detects radius/sign/formula divergence between the player-orb
+  // and opponent-orb rendering paths without any cross-page timing dependency.
+  //
+  // Strategy: on each page independently, read (renderX, angle) at the same instant
+  // and verify renderX ≈ pivot + facing*IDLE_ORB_RADIUS*cos(angle_deg * π/180) within ±2px.
+  // A copy-paste error (wrong radius, wrong sign, wrong trig) breaks this on that page.
+  //
+  // Attacker page: pivot=708, facing=−1  → renderX = 708 − 60*cos(angleDeg*π/180)
+  // Defender page: pivot=316, facing=+1  → renderX = 316 + 60*cos(angleDeg*π/180)
+  const PIVOT_PLAYER = 708;
+  const PIVOT_OPPONENT = 316;
+  const IDLE_ORB_RADIUS = 60;
+  const TOLERANCE = 2; // px — floating-point only, no cross-page sync needed
+
   const h = await setupBattle(browser);
   const { attacker, defender } = await attackerDefender(h.p1, h.p2);
 
@@ -1133,40 +1147,43 @@ test('#495 arc-direction: at same |angle|, player leftward displacement equals o
     timeout: 8000,
   });
 
-  // Gate: both getters are non-null simultaneously.
+  // Gate: both orb handles are alive and angle getters are non-null.
   await attacker.waitForFunction(
-    () => (window as any).__scene?.chargeOrbRenderX !== null &&
-          (window as any).__scene?.chargeOrbRenderX !== undefined,
+    () => (window as any).__scene?.chargeOrbAngle !== null &&
+          (window as any).__scene?.chargeOrbAngle !== undefined,
     { timeout: 8000 },
   );
   await defender.waitForFunction(
-    () => (window as any).__scene?.opponentChargeOrbRenderX !== null &&
-          (window as any).__scene?.opponentChargeOrbRenderX !== undefined,
+    () => (window as any).__scene?.opponentChargeOrbAngle !== null &&
+          (window as any).__scene?.opponentChargeOrbAngle !== undefined,
     { timeout: 5000 },
   );
 
-  // Sample both orb positions at 3 different moments. Because the two clients
-  // are driven by the same deterministic formula with the same startTime, their
-  // angles should be near-equal — meaning displacements from their respective
-  // pivots should match within ±2px (floating-point + frame-timing jitter).
-  //
-  // #495 adversarial: if the radius or trig formula differs between player and
-  // opponent paths, displacement equality would break, exposing a copy-paste error.
-  const TOLERANCE = 2; // px
-  for (let i = 0; i < 3; i++) {
-    await attacker.waitForTimeout(100);
+  // Sample each page independently. Read (renderX, angle) in a single evaluate call
+  // per page so there is no intra-page skew between the two values.
+  for (let i = 0; i < 5; i++) {
+    await attacker.waitForTimeout(80);
 
-    const playerRx: number | null = await attacker.evaluate(
-      () => (window as any).__scene?.chargeOrbRenderX ?? null,
-    );
-    const oppRx: number | null = await defender.evaluate(
-      () => (window as any).__scene?.opponentChargeOrbRenderX ?? null,
-    );
+    // Attacker page: verify player-orb geometry.
+    const playerSample: { rx: number | null; angle: number | null } = await attacker.evaluate(() => ({
+      rx: (window as any).__scene?.chargeOrbRenderX ?? null,
+      angle: (window as any).__scene?.chargeOrbAngle ?? null,
+    }));
+    if (playerSample.rx !== null && playerSample.angle !== null) {
+      const rad = (playerSample.angle * Math.PI) / 180;
+      const expected = PIVOT_PLAYER - IDLE_ORB_RADIUS * Math.cos(rad); // facing = −1
+      expect(Math.abs(playerSample.rx - expected)).toBeLessThanOrEqual(TOLERANCE);
+    }
 
-    if (playerRx !== null && oppRx !== null) {
-      const playerDisplacement = 708 - playerRx;     // leftward from player pivot
-      const opponentDisplacement = oppRx - 316;       // rightward from opponent pivot
-      expect(Math.abs(playerDisplacement - opponentDisplacement)).toBeLessThanOrEqual(TOLERANCE);
+    // Defender page: verify opponent-orb geometry.
+    const oppSample: { rx: number | null; angle: number | null } = await defender.evaluate(() => ({
+      rx: (window as any).__scene?.opponentChargeOrbRenderX ?? null,
+      angle: (window as any).__scene?.opponentChargeOrbAngle ?? null,
+    }));
+    if (oppSample.rx !== null && oppSample.angle !== null) {
+      const rad = (oppSample.angle * Math.PI) / 180;
+      const expected = PIVOT_OPPONENT + IDLE_ORB_RADIUS * Math.cos(rad); // facing = +1
+      expect(Math.abs(oppSample.rx - expected)).toBeLessThanOrEqual(TOLERANCE);
     }
   }
 
@@ -1176,65 +1193,66 @@ test('#495 arc-direction: at same |angle|, player leftward displacement equals o
 
 // ── Arc-direction Scenario 4: sweet spot (0°) is MAXIMAL extent toward opponent ──
 
-test('#495 arc-direction: at 0° sweet spot (~600ms from keydown), player renderX is more extreme (farther left) than at +30° (~1000ms from keydown)', async ({
+test('#495 arc-direction: minimum chargeOrbRenderX across a full sweep ≈ 648 and is at least 6px less than the last sample', async ({
   browser,
 }) => {
-  // #495 adversarial: the facing-sign inversion must make the orb reach its
-  // LEFTMOST position at 0° (cos(0°)=1, max displacement ≈ 648px), not at rest
-  // at the player X. At +30°, cos(30°)≈0.866 so renderX≈656 — LESS extreme.
+  // #495 adversarial: the facing-sign inversion makes the orb reach its LEFTMOST
+  // position at 0° (cos(0°)=1, max displacement). Without the fix the orb would be
+  // at its RIGHTMOST at 0° (wrong sign), and renderX would never dip to ~648.
   //
-  // After #506, chargeHoldStart is back-dated by CHARGE_THRESHOLD_MS (450ms), so
-  // the orb animation is referenced from keydown (T0). The early sweep angles
-  // (−45°..−11.25°) happen before the orb spawns and are not observable. The first
-  // observable angle is ≈ −11.25° at the moment the orb appears (~450ms from keydown).
-  // We sample from two post-spawn positions:
-  //   sweet spot: holdMs ≈ 600ms from keydown → angle ≈  0°   → renderX ≈ 648
-  //   late point: holdMs ≈ 1000ms from keydown → angle ≈ +30° → renderX ≈ 656
-  // The sweet-spot renderX must be at least 5px farther left (smaller) than the
-  // late-point renderX.
+  // Strategy: hold through the full sweep (orb spawns at ~450ms, 0° at ~600ms,
+  // ~+22.5° at ~900ms). Collect ~10 samples every ~80ms starting from orb-alive.
+  // Assert:
+  //   (a) minRx ≈ 648 ± 10px  — orb reaches the correct max-left extent at 0°
+  //   (b) minRx ≤ lastRx − 6  — the sweet spot is meaningfully farther left than
+  //       a later, larger-angle sample (last sample is at ~+22.5°, renderX ≈ 654)
+  // No target-angle targeting — we just sweep past the cos peak naturally.
   const h = await setupBattle(browser);
   const { attacker } = await attackerDefender(h.p1, h.p2);
 
   await waitForMyAttackTurn(attacker);
 
-  // Hold past threshold (450ms) so beginCharge fires and orb spawns.
+  // Hold past threshold (450ms) so beginCharge fires and the orb spawns.
   await attacker.keyboard.down('1');
-  await attacker.waitForTimeout(550); // ~550ms from keydown — orb is now alive
+  await attacker.waitForTimeout(550); // past 450ms threshold — orb is alive
 
+  // Gate: wait until chargeOrbRenderX is non-null (orb handle is set).
   await attacker.waitForFunction(
     () => (window as any).__scene?.chargeOrbRenderX !== null &&
           (window as any).__scene?.chargeOrbRenderX !== undefined,
     { timeout: 8000 },
   );
 
-  // Advance to sweet-spot: need ~600ms total from keydown; already at ~550ms.
-  // Wait another 50ms to land near 0° (±30ms jitter tolerance is fine — the
-  // cone is ±10° ≈ ±133ms wide, so 600ms ± a few frames is solidly in-cone).
-  await attacker.waitForTimeout(50); // ≈ 600ms total from keydown
-
-  const sweetSpotRx: number | null = await attacker.evaluate(
-    () => (window as any).__scene?.chargeOrbRenderX ?? null,
-  );
-
-  // Advance to late sweep point: ~1000ms from keydown = +400ms more.
-  // angle = −45 + (1000/1200)*90 ≈ +30° → renderX ≈ 708 − 60*cos(30°) ≈ 656.
-  await attacker.waitForTimeout(400);
-
-  const lateRx: number | null = await attacker.evaluate(
-    () => (window as any).__scene?.chargeOrbRenderX ?? null,
-  );
-
-  await attacker.keyboard.up('1');
-
-  // Sweet spot (0°) must be at least 5px farther left (smaller x) than late (+30°).
-  if (sweetSpotRx !== null && lateRx !== null) {
-    expect(sweetSpotRx).toBeLessThanOrEqual(lateRx - 5);
-    // Confirm approximate value for sweet spot: renderX ≈ 648 ± 12px.
-    expect(sweetSpotRx).toBeLessThan(662);
-    expect(sweetSpotRx).toBeGreaterThan(636);
+  // Collect samples across the remainder of sweep 0. At spawn the orb is at
+  // ~−11.25°; it passes through 0° (~600ms from keydown, ~150ms after spawn)
+  // and reaches ~+22.5° at ~900ms from keydown (~350ms after spawn). Ten samples
+  // at ~80ms intervals cover ~800ms — enough to capture the 0° peak and several
+  // post-peak angles.
+  const samples: number[] = [];
+  for (let i = 0; i < 10; i++) {
+    await attacker.waitForTimeout(80);
+    const rx: number | null = await attacker.evaluate(
+      () => (window as any).__scene?.chargeOrbRenderX ?? null,
+    );
+    if (rx !== null) samples.push(rx);
   }
 
+  await attacker.keyboard.up('1');
   await closeBattle(h);
+
+  // Need at least a few samples to make a meaningful assertion.
+  expect(samples.length).toBeGreaterThanOrEqual(5);
+
+  const minRx = Math.min(...samples);
+  const lastRx = samples[samples.length - 1];
+
+  // (a) Min renderX ≈ 648 ± 10px: confirms orb reaches cos(0°)=1 peak leftward.
+  expect(minRx).toBeGreaterThan(638); // 648 − 10
+  expect(minRx).toBeLessThan(658);    // 648 + 10
+
+  // (b) Min is at least 6px farther left than the last sample (a later, larger angle).
+  // At ~+22.5° the last sample is ≈ 654; min ≈ 648 → margin ≈ 6px.
+  expect(minRx).toBeLessThanOrEqual(lastRx - 6);
 });
 
 // ── Arc-direction Scenario 5: null before charge starts and after orb disperses ──
