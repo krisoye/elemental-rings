@@ -772,6 +772,11 @@ test('#487 R key during ATTACK_SELECT (when recharge cancelled before hold) does
 // These test the new constant-angular-velocity arc model.
 
 // ── Arc Scenario 1: tap (< 150ms) — always hits ───────────────────────────────
+// #504: tap path sets state.telegraphMs = TELEGRAPH_MS and Orb.launch receives
+// that value → __lastOrbDurationMs === TELEGRAPH_MS (150ms under E2E_FAST).
+// This is a regression lock: if telegraphMs compression bled into the tap path,
+// __lastOrbDurationMs would be < 150 and the orb would arrive before the server
+// expects, breaking defender timing.
 
 test('#491 arc: tap (hold < 150ms) fires instantly horizontal and always hits (no chargeMiss)', async ({
   browser,
@@ -792,6 +797,17 @@ test('#491 arc: tap (hold < 150ms) fires instantly horizontal and always hits (n
 
   // Defend phase opens (hit).
   await waitForPhase(defender, 'DEFEND_WINDOW', 5000);
+
+  // #504 regression lock: tap orb must travel TELEGRAPH_MS (150ms E2E_FAST).
+  // __lastOrbDurationMs is populated by Orb.launch — proves the tap path passes
+  // the uncompressed duration and state.telegraphMs is not leaking a charged value.
+  const lastDurationMs: number | null = await defender.evaluate(
+    () => (window as any).__lastOrbDurationMs ?? null,
+  );
+  expect(lastDurationMs).not.toBeNull();
+  // In E2E_FAST: TELEGRAPH_MS = 150ms; production: 900ms.
+  const expectedTelegraphMs = (process.env.E2E_FAST !== '0') ? 150 : 900;
+  expect(lastDurationMs).toBe(expectedTelegraphMs);
 
   await closeBattle(h);
 });
@@ -1490,6 +1506,294 @@ test('#495 impl: chargeOrbRenderX null guard — returns null when handle is nul
 
   expect(pivotAfter == null).toBe(true);
   expect(renderXAfter == null).toBe(true);
+
+  await closeBattle(h);
+});
+
+// ── #504 Phase 1: telegraph desync fix — spec-driven (E2E scenario + acceptance) ────
+// These tests lock in the core fix: charged HIT compresses state.telegraphMs, the
+// client reads it via __lastOrbDurationMs, and a defender pressing block timed to
+// the compressed visual landing never receives MISTIME.
+
+// ── #504 Scenario A: charged HIT → __lastOrbDurationMs < TELEGRAPH_MS ────────────
+
+test('#504 charged HIT (~600ms hold): __lastOrbDurationMs is compressed (< TELEGRAPH_MS) and equals state.telegraphMs', async ({
+  browser,
+}) => {
+  // #504 adversarial: before the fix Orb.launch always used the hardcoded
+  // TELEGRAPH_MS constant. __lastOrbDurationMs would equal TELEGRAPH_MS (150ms
+  // fast) even on a charged HIT — the orb visually arrived at 150ms while the
+  // server resolved impact at ~80ms (compressedTelegraphMs). Defenders pressing
+  // block at the visual landing (~150ms) pressed AFTER the window had closed.
+  // After the fix __lastOrbDurationMs must equal state.telegraphMs (compressed).
+  const h = await setupBattle(browser);
+  const { attacker, defender } = await attackerDefender(h.p1, h.p2);
+
+  await waitForMyAttackTurn(attacker);
+  // Register collectMessages BEFORE the gesture that produces the DEFEND_WINDOW
+  // transition — a known footgun: messages sent before onMessage is registered are lost.
+  await collectMessages(defender, 'exchangeResult');
+
+  // Hold ~600ms — sweet spot (angle ≈ 0°) → guaranteed HIT with high sharpness.
+  // At 600ms sharpness > 0, so compressedTelegraphMs < TELEGRAPH_MS.
+  await attacker.keyboard.down('1');
+  await attacker.waitForTimeout(600);
+  await attacker.keyboard.up('1');
+
+  // Wait for DEFEND_WINDOW on the defender.
+  await waitForPhase(defender, 'DEFEND_WINDOW', 5000);
+
+  // Read state.telegraphMs from the defender's authoritative BattleState broadcast.
+  const stateTelegraphMs: number = await defender.evaluate(
+    () => (window as any).__room?.state?.telegraphMs ?? -1,
+  );
+  // Read the orb duration the client actually used.
+  const lastOrbDurationMs: number | null = await defender.evaluate(
+    () => (window as any).__lastOrbDurationMs ?? null,
+  );
+
+  // Acceptance criterion 1 + 3: charged HIT must produce compressed telegraphMs.
+  // In E2E_FAST: TELEGRAPH_MS=150ms, CHARGE_TELEGRAPH_MIN_MS=80ms.
+  // At 600ms hold, sharpness > 0 → state.telegraphMs must be < 150ms fast (< 900ms prod).
+  const telegraphFloor = (process.env.E2E_FAST !== '0') ? 149 : 899;
+  expect(stateTelegraphMs).toBeLessThan(telegraphFloor);
+  expect(stateTelegraphMs).toBeGreaterThan(0); // must not be 0 (fallback sentinel)
+
+  // Acceptance criterion 2: __lastOrbDurationMs must equal state.telegraphMs.
+  expect(lastOrbDurationMs).not.toBeNull();
+  expect(lastOrbDurationMs).toBe(stateTelegraphMs);
+
+  await closeBattle(h);
+});
+
+// ── #504 Scenario B: tap → __lastOrbDurationMs === TELEGRAPH_MS (no compression) ──
+
+test('#504 tap (keyboard.press): state.telegraphMs === TELEGRAPH_MS; __lastOrbDurationMs matches (no compression on tap)', async ({
+  browser,
+}) => {
+  // #504 adversarial: the fix must NOT compress the tap path. All six DEFEND_WINDOW
+  // entries other than the charged-HIT row set state.telegraphMs = TELEGRAPH_MS.
+  // If a prior charged exchange left a stale compressed value in state.telegraphMs
+  // and the next DEFEND_WINDOW entry failed to reset it, a tap would inherit the
+  // compressed value and the orb would travel too fast for the server timing.
+  const h = await setupBattle(browser);
+  const { attacker, defender } = await attackerDefender(h.p1, h.p2);
+
+  await waitForMyAttackTurn(attacker);
+
+  // keyboard.press() is ~10–40ms — tap path, no compression.
+  await attacker.keyboard.press('1');
+
+  await waitForPhase(defender, 'DEFEND_WINDOW', 5000);
+
+  const stateTelegraphMs: number = await defender.evaluate(
+    () => (window as any).__room?.state?.telegraphMs ?? -1,
+  );
+  const lastOrbDurationMs: number | null = await defender.evaluate(
+    () => (window as any).__lastOrbDurationMs ?? null,
+  );
+
+  // Tap: state.telegraphMs must equal TELEGRAPH_MS (150ms E2E_FAST / 900ms prod).
+  const expectedMs = (process.env.E2E_FAST !== '0') ? 150 : 900;
+  expect(stateTelegraphMs).toBe(expectedMs);
+
+  // __lastOrbDurationMs must match (client read state.telegraphMs, not the fallback 0 path).
+  expect(lastOrbDurationMs).not.toBeNull();
+  expect(lastOrbDurationMs).toBe(stateTelegraphMs);
+
+  await closeBattle(h);
+});
+
+// ── #504 Scenario C: charged HIT defender block at compressed landing → BLOCK/PARRY ─
+
+test('#504 acceptance criterion 4: defender blocking at compressedTelegraphMs landing registers BLOCK or PARRY, never MISTIME', async ({
+  browser,
+}) => {
+  // #504 root-cause regression test: this is the exact bug. Before the fix:
+  // server resolved impact at ~80ms (compressed), but the client orb traveled 150ms.
+  // A defender pressing at the visual landing (~150ms) was already past the window.
+  // After the fix the client orb travels state.telegraphMs (e.g. ~80ms) so the visual
+  // landing matches the server impact → a timely press cannot be MISTIME.
+  const h = await setupBattle(browser);
+  const { attacker, defender } = await attackerDefender(h.p1, h.p2);
+
+  await waitForMyAttackTurn(attacker);
+  // Register BEFORE the charge gesture — messages sent before registration are lost.
+  await collectMessages(defender, 'exchangeResult');
+
+  // Hold ~600ms → sweet spot HIT with compressed telegraph.
+  await attacker.keyboard.down('1');
+  await attacker.waitForTimeout(600);
+  await attacker.keyboard.up('1');
+
+  await waitForPhase(defender, 'DEFEND_WINDOW', 5000);
+
+  // Read the compressed travel duration from the state.
+  const compressedMs: number = await defender.evaluate(
+    () => (window as any).__room?.state?.telegraphMs ?? 150,
+  );
+
+  // Press defense at compressedMs - 50ms after DEFEND_WINDOW opened.
+  // This press arrives just before the compressed visual landing → must be inside
+  // the block window. Use 50ms of headroom above compressedMs to land before impact
+  // but still inside the ±200ms BLOCK band.
+  const pressDelay = Math.max(0, compressedMs - 50);
+  await defender.waitForTimeout(pressDelay);
+  await defender.keyboard.press('3');
+
+  await defender.waitForFunction(
+    () => ((window as any).__msgs?.exchangeResult?.length ?? 0) >= 1,
+    { timeout: 8000 },
+  );
+
+  const results: any[] = await getMessages(defender, 'exchangeResult');
+  expect(results.length).toBeGreaterThan(0);
+  // The defense must register as BLOCK or PARRY — never MISTIME.
+  // MISTIME is the observable symptom of the desync bug.
+  const outcome: string = results[0].defenseResult ?? '';
+  expect(['BLOCK', 'PARRY', 'WEAK_BLOCK', 'WEAK_PARRY']).toContain(outcome);
+
+  await closeBattle(h);
+});
+
+// ── #504 Phase 2: implementation-aware tests ────────────────────────────────────
+// These test server-state invariants only visible after reading the implementation:
+//   - stale-value invariant: compressed telegraphMs from a charged exchange must
+//     NOT persist into the next tap/rally exchange
+//   - combo orb-2 fallback: telegraphMs=0 path in _resolveCombo → client uses TELEGRAPH_MS
+
+// ── #504 Impl Scenario 1: stale compressed value cleared on the next tap exchange ──
+
+test('#504 impl: after a charged HIT, the next tap exchange has state.telegraphMs === TELEGRAPH_MS (no stale leak)', async ({
+  browser,
+}) => {
+  // #504 adversarial: the implementation sets state.telegraphMs at each of the six
+  // DEFEND_WINDOW entries (grep-verified exhaustive). The stale-value invariant
+  // requires every tap/rally entry to reset to TELEGRAPH_MS — if even one entry
+  // was missed, a compressed value could carry forward into the next exchange.
+  // This test proves behaviorally that the reset happens: after a charged HIT
+  // resolves, the subsequent exchange (driven via the block press) enters
+  // ATTACK_SELECT and the following tap shows state.telegraphMs === TELEGRAPH_MS.
+  const h = await setupBattle(browser);
+  const { attacker, defender } = await attackerDefender(h.p1, h.p2);
+
+  await waitForMyAttackTurn(attacker);
+  await collectMessages(defender, 'exchangeResult');
+
+  // Exchange 1: charged HIT (~600ms → compressed telegraphMs).
+  await attacker.keyboard.down('1');
+  await attacker.waitForTimeout(600);
+  await attacker.keyboard.up('1');
+
+  await waitForPhase(defender, 'DEFEND_WINDOW', 5000);
+
+  // Verify exchange 1 has a compressed telegraphMs.
+  const compressedMs: number = await defender.evaluate(
+    () => (window as any).__room?.state?.telegraphMs ?? -1,
+  );
+  const expectedMax = (process.env.E2E_FAST !== '0') ? 149 : 899;
+  expect(compressedMs).toBeLessThan(expectedMax);
+
+  // Let the first DEFEND_WINDOW lapse (no block press) so exchange resolves naturally.
+  await waitForPhase(attacker, 'ATTACK_SELECT', 8000);
+
+  // Now it's the defender's turn as attacker. Identify new attacker/defender.
+  const { attacker: attacker2, defender: defender2 } = await attackerDefender(h.p1, h.p2);
+
+  await waitForMyAttackTurn(attacker2);
+
+  // Exchange 2: tap (no charge) on the new attacker.
+  await attacker2.keyboard.press('1');
+
+  await waitForPhase(defender2, 'DEFEND_WINDOW', 5000);
+
+  // #504 stale-value invariant: state.telegraphMs must equal TELEGRAPH_MS again.
+  const tapTelegraphMs: number = await defender2.evaluate(
+    () => (window as any).__room?.state?.telegraphMs ?? -1,
+  );
+  const expectedTelegraphMs = (process.env.E2E_FAST !== '0') ? 150 : 900;
+  expect(tapTelegraphMs).toBe(expectedTelegraphMs);
+
+  // __lastOrbDurationMs on the defender must also track the reset value.
+  const lastOrbDurationMs: number | null = await defender2.evaluate(
+    () => (window as any).__lastOrbDurationMs ?? null,
+  );
+  expect(lastOrbDurationMs).toBe(expectedTelegraphMs);
+
+  await closeBattle(h);
+});
+
+// ── #504 Impl Scenario 2: combo orb-2 telegraphMs=0 → client falls back ─────────
+
+test('#504 impl: combo orb-2 (_resolveCombo) sets state.telegraphMs=0; client falls back to TELEGRAPH_MS', async ({
+  browser,
+}) => {
+  // #504 adversarial: the _resolveCombo orb-2 path sets state.telegraphMs=0 (the
+  // fallback sentinel — no new impactTime is set there). The client guard
+  // `state.telegraphMs || TELEGRAPH_MS` must fire, so __lastOrbDurationMs equals
+  // TELEGRAPH_MS, not 0. A 0-duration tween would be invisible and fire instantly,
+  // making orb-2 unblockable. This test verifies the fallback activates on the
+  // combo (fusion double-attack) orb-2 path.
+  const h = await setupBattle(browser);
+  const { attacker, defender } = await attackerDefender(h.p1, h.p2);
+
+  await setState(attacker, {
+    elements: { thumb: MUD, a1: WATER, a2: EARTH },
+    uses: { thumb: 3, a1: 3, a2: 3 },
+  });
+
+  await waitForMyAttackTurn(attacker);
+  // Register BEFORE the fusion gesture.
+  await collectMessages(defender, 'exchangeResult');
+  await collectMessages(defender, 'doubleAttackStart');
+
+  // Fusion HIT: hold A1 600ms (sweet spot), tap A2 while held.
+  await attacker.keyboard.down('1');
+  await attacker.waitForTimeout(600);
+  await attacker.keyboard.press('2');
+  await attacker.keyboard.up('1');
+
+  // Wait for doubleAttackStart to confirm both orbs are in flight.
+  await defender.waitForFunction(
+    () => ((window as any).__msgs?.doubleAttackStart?.length ?? 0) >= 1,
+    { timeout: 6000 },
+  );
+
+  // Orb 1 enters DEFEND_WINDOW with telegraphMs = TELEGRAPH_MS (the initial
+  // handleSelectDoubleAttack entry); when orb 1 resolves (non-parry) _resolveCombo
+  // sets telegraphMs=0 and stays in DEFEND_WINDOW for orb 2. At that point
+  // checkPhaseTransition fires with state.telegraphMs=0 → the `|| TELEGRAPH_MS`
+  // guard on the client must make the orb-2 launch use TELEGRAPH_MS, not 0.
+  // We assert __lastOrbDurationMs after orb 2 launches equals TELEGRAPH_MS.
+  //
+  // The orbLaunchCount increments on each Orb.launch: orb-1 fires first (count=N),
+  // orb-2 fires after _resolveCombo (count=N+1). Wait for count to increment twice.
+  const orbCountBefore: number = await defender.evaluate(
+    () => (window as any).__orbLaunchCount ?? 0,
+  );
+
+  // Wait for orb-2 launch (count increments again after _resolveCombo).
+  await defender.waitForFunction(
+    (count) => ((window as any).__orbLaunchCount ?? 0) > count,
+    orbCountBefore,
+    { timeout: 8000 },
+  );
+
+  // At this point __lastOrbDurationMs is the orb-2 duration.
+  // state.telegraphMs was 0 at the time of launch; client guard must have fired.
+  const stateTelegraphMs: number = await defender.evaluate(
+    () => (window as any).__room?.state?.telegraphMs ?? -1,
+  );
+  const lastOrbDurationMs: number | null = await defender.evaluate(
+    () => (window as any).__lastOrbDurationMs ?? null,
+  );
+
+  // state.telegraphMs is 0 on orb-2 path (per the implementation).
+  expect(stateTelegraphMs).toBe(0);
+
+  // __lastOrbDurationMs must NOT be 0 — client fallback must have applied TELEGRAPH_MS.
+  const expectedTelegraphMs = (process.env.E2E_FAST !== '0') ? 150 : 900;
+  expect(lastOrbDurationMs).toBe(expectedTelegraphMs);
 
   await closeBattle(h);
 });
