@@ -349,8 +349,8 @@ describe('CHARGE_THRESHOLD_MS boundary — tap vs. charge distinction', () => {
   });
 
   test('holdDuration slightly above threshold → still in sweep 0', () => {
-    // A brief charge (e.g. 200ms) is well within sweep 0 (BASE_SWEEP_MS=1200ms).
-    expect(computeSweepIndex(200)).toBe(0);
+    // A brief charge (e.g. 500ms) is well within sweep 0 (BASE_SWEEP_MS=1200ms).
+    expect(computeSweepIndex(500)).toBe(0);
   });
 });
 
