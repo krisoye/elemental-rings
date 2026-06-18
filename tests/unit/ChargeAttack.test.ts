@@ -352,6 +352,43 @@ describe('CHARGE_THRESHOLD_MS boundary — tap vs. charge distinction', () => {
     // A brief charge (e.g. 500ms) is well within sweep 0 (BASE_SWEEP_MS=1200ms).
     expect(computeSweepIndex(500)).toBe(0);
   });
+
+  // ── #506: threshold-specific regression locks ─────────────────────────────
+
+  test('#506 spec: CHARGE_THRESHOLD_MS equals 450 (regression guard against silent constant change)', () => {
+    // #506 adversarial: the constant is the single source of truth for the entire
+    // tap/charge boundary. A stale build or accidental revert would silently restore
+    // the old dead zone. This assertion locks the value so any regression fails loudly.
+    expect(CHARGE_THRESHOLD_MS).toBe(450);
+  });
+
+  test('#506 spec: computeSharpness(CHARGE_THRESHOLD_MS) > 0 — charge path is immediately active at boundary', () => {
+    // #506 spec conformance: "holds ≥ 450ms are deliberate charges where the charge
+    // arc immediately offers a real hit opportunity." At exactly the boundary the
+    // formula must produce a nonzero sharpness (sweep 0 = 1/3 > 0), confirming the
+    // charge arc path is entered (not the tap path).
+    expect(computeSharpness(CHARGE_THRESHOLD_MS)).toBeGreaterThan(0);
+  });
+
+  test('#506 spec: CHARGE_THRESHOLD_MS < first-cone-entry time (~467ms) — no dead zone reopens', () => {
+    // #506 design invariant: the threshold must remain strictly less than the first
+    // hit-cone entry time so there is no gap between tap-boundary and charge-hit-zone.
+    // First cone entry: BASE_SWEEP_MS × (SWEEP_RANGE_DEG − HIT_CONE_DEG) / (2 × SWEEP_RANGE_DEG)
+    // = 1200 × (45 − 10) / 90 ≈ 466.7ms. If this ever flips (threshold ≥ 467ms),
+    // the dead zone reopens.
+    const firstConeEntryMs = BASE_SWEEP_MS * (SWEEP_RANGE_DEG - HIT_CONE_DEG) / (2 * SWEEP_RANGE_DEG);
+    expect(CHARGE_THRESHOLD_MS).toBeLessThan(firstConeEntryMs);
+  });
+
+  test('#506 impl: holdDuration just below threshold (449ms) → still in sweep 0, sharpness=1/3', () => {
+    // #506 adversarial: 449ms is below CHARGE_THRESHOLD_MS=450ms (sub-threshold = tap).
+    // The charge-path formula at 449ms produces sweep 0, but BattleRoom classifies
+    // this as a tap (holdMs < CHARGE_THRESHOLD_MS → handleSelectAttack). Lock in
+    // that the formula itself at 449ms is coherent: sweep 0, sharpness=1/3.
+    // (The tap/charge branching is in BattleRoom, not ChargeAttack functions.)
+    expect(computeSweepIndex(449)).toBe(0);
+    expect(computeSharpness(449)).toBeCloseTo(1 / 3, 6);
+  });
 });
 
 // ── fusion independence ───────────────────────────────────────────────────────
@@ -693,6 +730,31 @@ describe('sweepHoldMs — arc-angle inverse (#493)', () => {
     expect(holdMs).toBeLessThan(CHARGE_THRESHOLD_MS);
     // Math.max(0, holdMs - CHARGE_THRESHOLD_MS) must be 0 — no negative wait.
     expect(Math.max(0, holdMs - CHARGE_THRESHOLD_MS)).toBe(0);
+  });
+
+  test('#506 impl: AI waitMs clamp stays 0 for near-left-edge at new 450ms threshold', () => {
+    // #506 adversarial: AIController.ts:312 computes waitMs = Math.max(0, holdMs - CHARGE_THRESHOLD_MS).
+    // The spec confirmed sweepHoldMs(1, -44°, ...) ≈ 13ms < 150ms — and 13ms < 450ms still holds.
+    // Lock this in explicitly against the new threshold so any future threshold drift that
+    // makes the AI wait period go negative is caught.
+    const holdMs = sweepHoldMs(1, -44, BASE_SWEEP_MS, SWEEP_SPEEDUP, SWEEP_RANGE_DEG, MAX_SWEEPS);
+    expect(holdMs).toBeLessThan(CHARGE_THRESHOLD_MS); // 13ms < 450ms ✓
+    const waitMs = Math.max(0, holdMs - CHARGE_THRESHOLD_MS);
+    expect(waitMs).toBe(0); // clamps to 0, never negative
+  });
+
+  test('#506 impl: AI waitMs is positive for targeted sweet-spot hold (600ms > 450ms threshold)', () => {
+    // #506 adversarial: after the threshold increase, any AI target that is a true
+    // charge (holdMs > 450ms) must produce a positive waitMs. If CHARGE_THRESHOLD_MS
+    // were accidentally raised above a typical charge holdMs, the AI would always
+    // clamp to 0 and fire too early (always miss). Assert 600ms − 450ms > 0.
+    const sweetSpotHoldMs = sweepHoldMs(1, 0, BASE_SWEEP_MS, SWEEP_SPEEDUP, SWEEP_RANGE_DEG, MAX_SWEEPS);
+    // sweepHoldMs(1, 0°, ...) = BASE_SWEEP_MS/2 = 600ms.
+    expect(sweetSpotHoldMs).toBeCloseTo(BASE_SWEEP_MS / 2, 4); // 600ms
+    const waitMs = Math.max(0, sweetSpotHoldMs - CHARGE_THRESHOLD_MS);
+    // 600 − 450 = 150ms wait — strictly positive.
+    expect(waitMs).toBeGreaterThan(0);
+    expect(waitMs).toBeCloseTo(sweetSpotHoldMs - CHARGE_THRESHOLD_MS, 4);
   });
 });
 

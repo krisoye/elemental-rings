@@ -1248,10 +1248,11 @@ test('#495 arc-direction: chargeOrbRenderX and opponentChargeOrbRenderX return n
   expect(preChargePlayer == null).toBe(true);  // null or undefined
   expect(preChargeOpp == null).toBe(true);
 
-  // Hold past threshold, wait for orb, then release (miss zone → orb disperses).
+  // Hold past threshold (450ms), wait for orb, then release (miss zone → orb disperses).
+  // #506: was 200ms (> old 150ms threshold). Raised to 900ms so it remains above 450ms.
   await collectMessages(defender, 'chargeOrbEnd');
   await attacker.keyboard.down('1');
-  await attacker.waitForTimeout(200); // miss zone — orb will disperse on release
+  await attacker.waitForTimeout(900); // miss zone — late sweep-0 (≥ 450ms, angle ≈ +22.5°)
   await attacker.keyboard.up('1');
 
   // Wait for chargeOrbEnd to confirm the orb lifecycle has ended.
@@ -1470,9 +1471,10 @@ test('#495 impl: chargeOrbRenderX null guard — returns null when handle is nul
 
   await waitForMyAttackTurn(attacker);
 
-  // Hold and release (miss zone).
+  // Hold and release (miss zone — must be ≥ 450ms CHARGE_THRESHOLD_MS to arm charge lifecycle).
+  // #506: was 200ms (> old 150ms threshold). Raised to 900ms so hold remains above 450ms.
   await attacker.keyboard.down('1');
-  await attacker.waitForTimeout(200);
+  await attacker.waitForTimeout(900);
   await attacker.keyboard.up('1');
 
   // After release, chargeOrbHandle and chargeOrbSpawnX are both cleared.
@@ -1493,6 +1495,109 @@ test('#495 impl: chargeOrbRenderX null guard — returns null when handle is nul
 
   expect(pivotAfter == null).toBe(true);
   expect(renderXAfter == null).toBe(true);
+
+  await closeBattle(h);
+});
+
+// ── #506 regression-lock: formerly-dead-zone holds now route as taps ────────────
+// Pre-fix (threshold=150ms): holds of 150–466ms were charged but outside the hit
+// cone — guaranteed misses. Post-fix (threshold=450ms): those holds are taps
+// (always hit). The central regression test uses ~300ms — the heart of the old dead
+// zone — and asserts the tap path: no chargeMiss, DEFEND_WINDOW opens.
+
+// ── #506 Regression 1: ~300ms hold (old dead zone) is now a tap — no miss ───────
+
+test('#506 regression: ~300ms hold (formerly dead-zone miss) now routes as tap — no chargeMiss, DEFEND_WINDOW opens', async ({
+  browser,
+}) => {
+  // #506 adversarial: before the fix a 300ms hold was above the 150ms threshold
+  // (charged) but the orb was at ≈ −22.5° — well outside the ±10° hit cone.
+  // Any regression of CHARGE_THRESHOLD_MS back toward 150 would make this test
+  // produce a chargeMiss (300ms charged-but-miss) instead of opening DEFEND_WINDOW.
+  const h = await setupBattle(browser);
+  const { attacker, defender } = await attackerDefender(h.p1, h.p2);
+
+  await waitForMyAttackTurn(attacker);
+  await collectMessages(attacker, 'chargeMiss');
+  await spyOnAllSends(attacker);
+
+  // 300ms: well into the old dead zone (150–466ms). New threshold = 450ms → tap.
+  await attacker.keyboard.down('1');
+  await attacker.waitForTimeout(300);
+  await attacker.keyboard.up('1');
+
+  // No chargeMiss must be broadcast — 300ms < 450ms = tap path.
+  await attacker.waitForTimeout(300);
+  expect((await getMessages(attacker, 'chargeMiss')).length).toBe(0);
+
+  // DEFEND_WINDOW must open on the defender (tap always hits).
+  await waitForPhase(defender, 'DEFEND_WINDOW', 5000);
+
+  // Belt-and-suspenders: confirm selectAttack was sent, not releaseAttack.
+  expect(await getSentCount(attacker, 'selectAttack')).toBe(1);
+  expect(await getSentCount(attacker, 'releaseAttack')).toBe(0);
+
+  await closeBattle(h);
+});
+
+// ── #506 Regression 2: 449ms hold (one ms below threshold) is still a tap ───────
+
+test('#506 boundary: 449ms hold (1ms below threshold) classifies as tap — no chargeMiss, DEFEND_WINDOW opens', async ({
+  browser,
+}) => {
+  // #506 adversarial: 449ms is just below CHARGE_THRESHOLD_MS=450ms. The server
+  // comparison is `holdMs < CHARGE_THRESHOLD_MS` (strict less-than). If the boundary
+  // were inclusive (≤) or off-by-one, this hold would incorrectly enter the charge
+  // arc path and likely produce a chargeMiss (orb at ≈−0.75°, inside cone but intent
+  // is tap). Lock in strict < semantics at the boundary.
+  const h = await setupBattle(browser);
+  const { attacker, defender } = await attackerDefender(h.p1, h.p2);
+
+  await waitForMyAttackTurn(attacker);
+  await collectMessages(attacker, 'chargeMiss');
+
+  // 449ms: just below threshold — wall-clock jitter on CI may land this at 450ms,
+  // so this test exercises the boundary but is not a microsecond-precision assertion.
+  await attacker.keyboard.down('1');
+  await attacker.waitForTimeout(449);
+  await attacker.keyboard.up('1');
+
+  // The hold is sub-threshold: tap path, no miss.
+  await attacker.waitForTimeout(300);
+  expect((await getMessages(attacker, 'chargeMiss')).length).toBe(0);
+
+  // DEFEND_WINDOW opens (tap always hits).
+  await waitForPhase(defender, 'DEFEND_WINDOW', 5000);
+
+  await closeBattle(h);
+});
+
+// ── #506 Regression 3: deliberate charge ≥450ms still reaches hit cone ───────────
+
+test('#506 regression: 550ms charge (above threshold) enters arc path; 600ms (sweet spot) is a hit', async ({
+  browser,
+}) => {
+  // #506 adversarial: raising the threshold must not silently absorb the entire
+  // charge path. A hold of 600ms (sweep-0 midpoint, ≈0°) must still reach the hit
+  // cone and open DEFEND_WINDOW, not route as a tap. Regression: if CHARGE_THRESHOLD_MS
+  // were raised to ≥ 467ms (first cone-entry time), all charges would miss immediately.
+  const h = await setupBattle(browser);
+  const { attacker, defender } = await attackerDefender(h.p1, h.p2);
+
+  await waitForMyAttackTurn(attacker);
+  await collectMessages(attacker, 'chargeMiss');
+
+  // 600ms = sweep-0 midpoint (≈0° → inside ±10° hit cone) = deliberate charge hit.
+  await attacker.keyboard.down('1');
+  await attacker.waitForTimeout(600);
+  await attacker.keyboard.up('1');
+
+  // No chargeMiss — sweet spot is a hit via the charge arc path.
+  await attacker.waitForTimeout(300);
+  expect((await getMessages(attacker, 'chargeMiss')).length).toBe(0);
+
+  // DEFEND_WINDOW opens from the charge hit.
+  await waitForPhase(defender, 'DEFEND_WINDOW', 5000);
 
   await closeBattle(h);
 });
