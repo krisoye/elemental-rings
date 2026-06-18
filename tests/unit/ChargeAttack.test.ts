@@ -158,11 +158,13 @@ describe('computeOrbAngle — arc position formula', () => {
 
   test('angle is continuous across sweep boundaries (no jumps)', () => {
     // #491 adversarial: the arc must not jump at reversal points. Sample densely
-    // around the first reversal (sweepDuration(0)).
-    const boundary = sweepDuration(0);
+    // around the first post-arm reversal (sweepStartMs(1) = CHARGE_ARM_MS + sweepDuration(0) = 1450ms).
+    // #499: the old boundary (sweepDuration(0) = 1200ms) is mid-sweep, not a reversal —
+    // the true first reversal is at sweepStartMs(1) where the orb reaches -SWEEP_RANGE_DEG.
+    const boundary = sweepStartMs(1); // 1450ms — end of post-arm sweep 0, both sides near -45°
     const before = computeOrbAngle(boundary - 1);
     const after = computeOrbAngle(boundary);
-    // Both should be near +45°; difference must be small.
+    // Both should be near -45°; difference must be small (< 1° for 1ms step).
     expect(Math.abs(before - after)).toBeLessThan(1); // within 1°
   });
 });
