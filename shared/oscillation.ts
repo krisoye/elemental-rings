@@ -128,7 +128,8 @@ export function sharpnessFromSweep(
  * at which `orbAngle` first equals `releaseDeg` within that sweep.
  *
  * `targetSweep` is 1-based: 1=sweep 0 (−range→+range), 2=sweep 1, 3=sweep 2.
- * `releaseDeg` is clamped to [−SWEEP_RANGE_DEG, +SWEEP_RANGE_DEG].
+ * `releaseDeg` is clamped to [−sweepRangeDeg, +sweepRangeDeg].
+ * `sweepRangeDeg` is SWEEP_RANGE_DEG; `maxSweeps` is MAX_SWEEPS.
  * Even sweeps travel −range→+range; odd sweeps travel +range→−range.
  */
 export function sweepHoldMs(
@@ -136,27 +137,27 @@ export function sweepHoldMs(
   releaseDeg: number,
   baseSweepMs: number,
   sweepSpeedup: number,
+  sweepRangeDeg: number,
+  maxSweeps: number,
 ): number {
-  const SWEEP_RANGE_DEG = 45;
-  const MAX_SWEEPS = 3;
   const sweep = targetSweep - 1; // convert to 0-based
-  const clamped = Math.min(Math.max(releaseDeg, -SWEEP_RANGE_DEG), SWEEP_RANGE_DEG);
+  const clamped = Math.min(Math.max(releaseDeg, -sweepRangeDeg), sweepRangeDeg);
 
   // Sum durations of all preceding sweeps.
   let accumulated = 0;
   for (let i = 0; i < sweep; i++) {
-    accumulated += baseSweepMs * Math.pow(sweepSpeedup, Math.min(i, MAX_SWEEPS - 1));
+    accumulated += baseSweepMs * Math.pow(sweepSpeedup, Math.min(i, maxSweeps - 1));
   }
 
   // Position within the target sweep.
-  const duration = baseSweepMs * Math.pow(sweepSpeedup, Math.min(sweep, MAX_SWEEPS - 1));
+  const duration = baseSweepMs * Math.pow(sweepSpeedup, Math.min(sweep, maxSweeps - 1));
   let frac: number;
   if (sweep % 2 === 0) {
     // Even sweep: −range → +range
-    frac = (clamped + SWEEP_RANGE_DEG) / (2 * SWEEP_RANGE_DEG);
+    frac = (clamped + sweepRangeDeg) / (2 * sweepRangeDeg);
   } else {
     // Odd sweep: +range → −range
-    frac = (SWEEP_RANGE_DEG - clamped) / (2 * SWEEP_RANGE_DEG);
+    frac = (sweepRangeDeg - clamped) / (2 * sweepRangeDeg);
   }
 
   return accumulated + frac * duration;

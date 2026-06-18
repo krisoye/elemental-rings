@@ -115,7 +115,7 @@ export const AI_PROFILES: Record<AIPersonality, AIProfile> = {
     comboGapMaxMs: MIN_COMBO_GAP_MS + 100,
     chargeAttemptProb: 0.0,
     targetSweep: 1,
-    chargeReleaseSigmaDeg: 999,
+    chargeReleaseSigmaDeg: 999, // unused — chargeAttemptProb=0 so charge never fires
   },
   STATUS_HUNTER: {
     personality: 'STATUS_HUNTER',

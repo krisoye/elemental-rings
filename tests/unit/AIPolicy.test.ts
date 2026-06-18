@@ -43,6 +43,7 @@ function view(overrides: Partial<BoardView> = {}): BoardView {
     // double-attack tests opt in via overrides.
     canDoubleAttack: false,
     opponentDefenseSlots: [],
+    spirit: 999, // non-zero so spirit-gate doesn't suppress optional recharges
     ...overrides,
   };
 }

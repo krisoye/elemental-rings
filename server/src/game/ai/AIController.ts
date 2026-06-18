@@ -10,7 +10,7 @@ import {
   ReleaseAttackPayload,
 } from '../../../../shared/types';
 import { sweepHoldMs } from '../../../../shared/oscillation';
-import { BASE_SWEEP_MS, SWEEP_SPEEDUP, CHARGE_THRESHOLD_MS } from '../../../../shared/chargeConstants';
+import { BASE_SWEEP_MS, SWEEP_SPEEDUP, CHARGE_THRESHOLD_MS, SWEEP_RANGE_DEG, MAX_SWEEPS } from '../../../../shared/chargeConstants';
 import { BattleState } from '../../schemas/BattleState';
 import { canDoubleAttack } from '../DoubleAttack';
 import { AI_PROFILES, AIProfile, makeRng, Rng, isLowHearts } from './AIProfiles';
@@ -307,12 +307,14 @@ export class AIController {
           const targetSweep = decision.charge.targetSweep;
           this.room.handleChargeStart(this.aiId, { slot });
           const releaseDeg = this.rng.normal() * this.profile.chargeReleaseSigmaDeg;
-          const holdMs = sweepHoldMs(targetSweep, releaseDeg, BASE_SWEEP_MS, SWEEP_SPEEDUP);
+          const holdMs = sweepHoldMs(targetSweep, releaseDeg, BASE_SWEEP_MS, SWEEP_SPEEDUP, SWEEP_RANGE_DEG, MAX_SWEEPS);
           // Subtract the back-dated offset so the server reads the intended holdMs.
           const waitMs = Math.max(0, holdMs - CHARGE_THRESHOLD_MS);
           this.pending = setTimeout(() => {
             this.pending = null;
-            this.room.handleReleaseAttack(this.aiId, { slot, holdDuration: holdMs });
+            // holdDuration is ignored by handleReleaseAttack (server derives hold
+            // time from wall-clock timestamps); passed as 0 to avoid confusion.
+            this.room.handleReleaseAttack(this.aiId, { slot, holdDuration: 0 });
           }, waitMs);
         }
       // EPIC #268 — when the policy chose a fusion-thumb DOUBLE attack (eligible +
