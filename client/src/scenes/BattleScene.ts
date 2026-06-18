@@ -27,6 +27,7 @@ import {
   PLAYER_Y,
   OPPONENT_X,
   OPPONENT_Y,
+  TELEGRAPH_MS,
   SlotKey,
   ringComponents,
 } from '../Constants';
@@ -1491,7 +1492,7 @@ export class BattleScene extends Phaser.Scene {
       const attackerRing = state.attackerSlot ? attackerState?.[state.attackerSlot as SlotKey] : null;
       // Fusion rings show both component colors; base rings show one.
       const elements = attackerRing ? ringComponents(attackerRing) : [0];
-      Orb.launch(this, elements, from, to);
+      Orb.launch(this, elements, from, to, state.telegraphMs || TELEGRAPH_MS);
     }
   }
 }

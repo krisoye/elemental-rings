@@ -1083,6 +1083,7 @@ export class BattleRoom extends Room<{ state: BattleState }> {
     }
 
     state.attackerSlot = payload.slot;
+    state.telegraphMs = TELEGRAPH_MS;
     state.phase = 'DEFEND_WINDOW';
 
     this.impactTime = Date.now() + TELEGRAPH_MS;
@@ -1223,6 +1224,7 @@ export class BattleRoom extends Room<{ state: BattleState }> {
           consumeUse(secondRing);
           consumeUse(attacker.thumb);
           state.attackerSlot = secondSlot;
+          state.telegraphMs = TELEGRAPH_MS;
           state.phase = 'DEFEND_WINDOW';
           this.impactTime = Date.now() + TELEGRAPH_MS;
           this.defenseSubmitted = false;
@@ -1254,6 +1256,7 @@ export class BattleRoom extends Room<{ state: BattleState }> {
     if (!usePaidByStake) consumeUse(ring);
 
     state.attackerSlot = payload.slot;
+    state.telegraphMs = compressedTelegraphMs;
     state.phase = 'DEFEND_WINDOW';
 
     this.impactTime = Date.now() + compressedTelegraphMs;
@@ -1748,6 +1751,7 @@ export class BattleRoom extends Room<{ state: BattleState }> {
       this.defenseSlotKey = '';
       this.defensePressTime = 0;
       this.impactTime = Date.now() + TELEGRAPH_MS;
+      state.telegraphMs = TELEGRAPH_MS;
       state.phase = 'DEFEND_WINDOW';
       this.windowTimer = setTimeout(() => this._resolveExchange(), DEFEND_WINDOW_MS);
       // Rally stays in DEFEND_WINDOW. Ring exhaustion no longer auto-forfeits
@@ -1840,6 +1844,7 @@ export class BattleRoom extends Room<{ state: BattleState }> {
 
     // Launch orb 1 immediately (reuses the primary defense capture + impactTime).
     state.attackerSlot = payload.first;
+    state.telegraphMs = TELEGRAPH_MS;
     state.phase = 'DEFEND_WINDOW';
     this.impactTime = Date.now() + TELEGRAPH_MS;
     this.defenseSubmitted = false;
@@ -1948,6 +1953,7 @@ export class BattleRoom extends Room<{ state: BattleState }> {
     // timer (set in handleSelectDoubleAttack) opens its window; _resolveOrb2 ends
     // the combo. If orb 2 already launched (gap < orb-1 resolution), its window is
     // already open; if not, the launch timer is still pending.
+    state.telegraphMs = 0; // fallback — no new impactTime set here; client uses TELEGRAPH_MS
     state.phase = 'DEFEND_WINDOW';
     state.attackerSlot = this.comboSecondSlot;
     // The defender continues defending; orb 2's capture is separate (defense2*).
