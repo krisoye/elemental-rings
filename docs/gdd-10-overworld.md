@@ -104,6 +104,16 @@ Each personality draws from a set of archetype templates. The variant is chosen 
 | Wind-Resilient | 🟢 Wind | Fire | Water | Earth | Wood | Tailwind |
 | Wood-Resilient | 💚 Wood | Wind | Fire | Earth | Water | Deep Roots |
 
+#### Biome Difficulty Floor and Skill Distribution (#492)
+
+Every NPC's combat profile is modulated by two independent factors that scale with the world region:
+
+**Spirit floor.** Each NPC class has a minimum spirit pool that increases with biome depth (`REGION_STEP` = 25 per biome). Bosses receive the floor as an addend on top of their player-scaled base; roamers use the floor as a minimum (forest roamers, floor=0, remain fully player-scaled). This ensures a jungle-gate boss always presents a meaningful challenge regardless of how underpowered the player is, while roamers in late biomes feel genuinely threatening even to under-leveled adventurers.
+
+**Skill roll.** Each NPC has a deterministic skill score seeded from their spawn ID (so the same named encounter always fights at the same skill level across sessions). The skill score is drawn from a class-specific band: major bosses draw from a tight high band (`[0.90, 1.00]`), roamers from a wide low band (`[0.20, 0.70]`). A higher skill score sharpens the NPC's timing sigma and reduces its element-mistake probability, producing individually varied opponents within each class. This variation is intentional — some roamers are genuinely dangerous, and not all gate bosses are equal.
+
+The effective encounter tier drives the profile scaling: `max(biome floor tier, player-XP-derived tier)`. A veteran entering a new biome faces at least the biome's floor tier regardless of their XP.
+
 ---
 
 ### 10.6 The Sanctum

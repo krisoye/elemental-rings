@@ -17,6 +17,16 @@ function ring(element: number, currentUses = 3, isExtinguished = false, maxUses 
   return { element, currentUses, maxUses, isExtinguished };
 }
 
+/**
+ * Return a profile with elementMistakeProb=0 for tests that exercise the
+ * per-personality logic exclusively. These tests predate #492 and their RNG
+ * seeds were chosen without the extra rng.next() call from the mistake branch;
+ * zeroing the mistake probability keeps the RNG stream identical to pre-#492.
+ */
+function noMistake(personality: keyof typeof AI_PROFILES) {
+  return { ...AI_PROFILES[personality], elementMistakeProb: 0 };
+}
+
 /** Default named-slot board: a1=FIRE, a2=WATER, d1=WOOD, d2=EARTH. */
 function attackSlots(a1 = FIRE, a2 = WATER): AttackSlotView[] {
   return [
@@ -43,6 +53,7 @@ function view(overrides: Partial<BoardView> = {}): BoardView {
     // double-attack tests opt in via overrides.
     canDoubleAttack: false,
     opponentDefenseSlots: [],
+    spirit: 100,
     ...overrides,
   };
 }
@@ -57,25 +68,27 @@ describe('decideAttack selects from a1|a2', () => {
   test('Aggressive: picks an attack the opponent cannot strong-counter', () => {
     // Opponent holds only WATER (the counter to FIRE). Aggressive should avoid
     // throwing FIRE (a1) and pick WATER (a2) — WATER's counter is WOOD, not held.
-    const a = decideAttack(view({ opponentUsableElements: [WATER] }), AI_PROFILES.AGGRESSIVE, makeRng(7));
+    // noMistake keeps elementMistakeProb=0 so this test exercises only AGGRESSIVE
+    // personality logic without the #492 mistake branch consuming an RNG roll.
+    const a = decideAttack(view({ opponentUsableElements: [WATER] }), noMistake('AGGRESSIVE'), makeRng(7));
     expect(['a1', 'a2']).toContain(a.slot);
     expect(a.slot).toBe('a2'); // WATER attack
   });
 
   test('Defensive: spends the fewest-use attack slot', () => {
     const v = view({ attackSlots: [{ key: 'a1', ring: ring(FIRE, 1) }, { key: 'a2', ring: ring(WATER, 3) }] });
-    const a = decideAttack(v, AI_PROFILES.DEFENSIVE, makeRng(3));
+    const a = decideAttack(v, noMistake('DEFENSIVE'), makeRng(3));
     expect(a.slot).toBe('a1'); // fewest uses
   });
 
   test('STATUS_HUNTER: commits to a triangle element and repeats it', () => {
-    const a1 = decideAttack(view(), AI_PROFILES.STATUS_HUNTER, makeRng(5));
+    const a1 = decideAttack(view(), noMistake('STATUS_HUNTER'), makeRng(5));
     expect([FIRE, WATER]).toContain(a1.committedElement); // a triangle element it holds
     const slotEl = a1.slot === 'a1' ? FIRE : WATER;
     expect(slotEl).toBe(a1.committedElement);
 
     // Next turn carries the committed element forward.
-    const a2 = decideAttack(view({ committedElement: a1.committedElement }), AI_PROFILES.STATUS_HUNTER, makeRng(99));
+    const a2 = decideAttack(view({ committedElement: a1.committedElement }), noMistake('STATUS_HUNTER'), makeRng(99));
     expect(a2.committedElement).toBe(a1.committedElement);
   });
 
@@ -85,21 +98,21 @@ describe('decideAttack selects from a1|a2', () => {
       attackSlots: [{ key: 'a1', ring: ring(FIRE, 0, true) }, { key: 'a2', ring: ring(WATER, 3) }],
       committedElement: FIRE,
     });
-    const a = decideAttack(v, AI_PROFILES.STATUS_HUNTER, makeRng(5));
+    const a = decideAttack(v, noMistake('STATUS_HUNTER'), makeRng(5));
     expect(a.slot).toBe('a2');
     expect(a.committedElement).toBe(WATER);
   });
 
   test('RESILIENT healthy: most-uses attack slot', () => {
     const v = view({ attackSlots: [{ key: 'a1', ring: ring(FIRE, 1) }, { key: 'a2', ring: ring(WATER, 3) }] });
-    const a = decideAttack(v, AI_PROFILES.RESILIENT, makeRng(2));
+    const a = decideAttack(v, noMistake('RESILIENT'), makeRng(2));
     expect(a.slot).toBe('a2'); // most uses
   });
 
   test('RESILIENT low-heart: borrows the unparryable Aggressive pick', () => {
     const a = decideAttack(
       view({ hearts: 1, opponentUsableElements: [WATER] }),
-      AI_PROFILES.RESILIENT,
+      noMistake('RESILIENT'),
       makeRng(8),
     );
     expect(a.slot).toBe('a2'); // avoid FIRE (counter WATER is held)
@@ -109,7 +122,7 @@ describe('decideAttack selects from a1|a2', () => {
     const v = view({
       attackSlots: [{ key: 'a1', ring: ring(FIRE, 0, true) }, { key: 'a2', ring: ring(WATER, 0, true) }],
     });
-    const a = decideAttack(v, AI_PROFILES.AGGRESSIVE, makeRng(1));
+    const a = decideAttack(v, noMistake('AGGRESSIVE'), makeRng(1));
     expect(a.slot).toBe('a1');
   });
 });
@@ -117,21 +130,21 @@ describe('decideAttack selects from a1|a2', () => {
 describe('decideDefense selects from d1|d2', () => {
   test('Aggressive: STRONG defense slot at PARRY timing when available', () => {
     // Incoming WATER; WOOD (d1) beats WATER → STRONG. PARRY timing (offset 0).
-    const d = decideDefense(view({ incomingElement: WATER }), AI_PROFILES.AGGRESSIVE, makeRng(1));
+    const d = decideDefense(view({ incomingElement: WATER }), noMistake('AGGRESSIVE'), makeRng(1));
     expect(d.slot).toBe('d1'); // WOOD
     expect(d.pressOffsetMs).toBe(0);
   });
 
   test('Aggressive: no STRONG slot → safe NEUTRAL catch at BLOCK timing', () => {
     // Incoming FIRE; d1=WOOD (WEAK), d2=EARTH (NEUTRAL). Picks EARTH at BLOCK.
-    const d = decideDefense(view({ incomingElement: FIRE }), AI_PROFILES.AGGRESSIVE, makeRng(1));
+    const d = decideDefense(view({ incomingElement: FIRE }), noMistake('AGGRESSIVE'), makeRng(1));
     expect(d.slot).toBe('d2'); // EARTH neutral
     expect(d.pressOffsetMs).toBe(190);
   });
 
   test('Earth defense is always a safe NEUTRAL catch (never WEAK)', () => {
     // Whatever the incoming triangle element, EARTH (d2) is a valid neutral catch.
-    const d = decideDefense(view({ incomingElement: WOOD }), AI_PROFILES.AGGRESSIVE, makeRng(1));
+    const d = decideDefense(view({ incomingElement: WOOD }), noMistake('AGGRESSIVE'), makeRng(1));
     // WOOD incoming: d1=WOOD NEUTRAL (same), d2=EARTH NEUTRAL. No STRONG → neutral catch.
     expect(['d1', 'd2']).toContain(d.slot);
     expect(d.pressOffsetMs).toBe(190);
@@ -140,12 +153,12 @@ describe('decideDefense selects from d1|d2', () => {
   test('avoids WIND defense (always WEAK)', () => {
     // d1=WIND (WEAK), d2=EARTH (NEUTRAL). Must pick EARTH.
     const v = view({ defenseSlots: defenseSlots(WIND, EARTH), incomingElement: FIRE });
-    const d = decideDefense(v, AI_PROFILES.AGGRESSIVE, makeRng(1));
+    const d = decideDefense(v, noMistake('AGGRESSIVE'), makeRng(1));
     expect(d.slot).toBe('d2'); // EARTH, not WIND
   });
 
   test('Defensive: never the STRONG slot when it catches (reserves rally), uses BLOCK timing', () => {
-    const d = decideDefense(view({ incomingElement: WATER }), AI_PROFILES.DEFENSIVE, makeRng(2));
+    const d = decideDefense(view({ incomingElement: WATER }), noMistake('DEFENSIVE'), makeRng(2));
     if (d.slot === null) {
       expect(d.pressOffsetMs).toBeNull(); // deliberate no-block is valid for Defensive
     } else {
@@ -158,7 +171,7 @@ describe('decideDefense selects from d1|d2', () => {
   test('Defensive: sometimes deliberately no-blocks across seeds', () => {
     let noBlocks = 0;
     for (let s = 0; s < 200; s++) {
-      const d = decideDefense(view({ incomingElement: FIRE }), AI_PROFILES.DEFENSIVE, makeRng(s));
+      const d = decideDefense(view({ incomingElement: FIRE }), noMistake('DEFENSIVE'), makeRng(s));
       if (d.slot === null) noBlocks++;
     }
     expect(noBlocks).toBeGreaterThan(0);
@@ -170,7 +183,7 @@ describe('decideDefense selects from d1|d2', () => {
       defenseSlots: [{ key: 'd1', ring: ring(WOOD, 0, true) }, { key: 'd2', ring: ring(EARTH, 0, true) }],
       incomingElement: FIRE,
     });
-    const d = decideDefense(v, AI_PROFILES.AGGRESSIVE, makeRng(1));
+    const d = decideDefense(v, noMistake('AGGRESSIVE'), makeRng(1));
     expect(d.slot).toBeNull();
     expect(d.pressOffsetMs).toBeNull();
   });
@@ -180,13 +193,13 @@ describe('RESILIENT sharpens at low hearts', () => {
   test('healthy frequently no-blocks; low-heart commits the STRONG slot', () => {
     let healthyNoBlocks = 0;
     for (let s = 0; s < 200; s++) {
-      const d = decideDefense(view({ incomingElement: WATER, hearts: 3 }), AI_PROFILES.RESILIENT, makeRng(s));
+      const d = decideDefense(view({ incomingElement: WATER, hearts: 3 }), noMistake('RESILIENT'), makeRng(s));
       if (d.slot === null) healthyNoBlocks++;
     }
     expect(healthyNoBlocks).toBeGreaterThan(0);
 
     for (let s = 0; s < 50; s++) {
-      const d = decideDefense(view({ incomingElement: WATER, hearts: 1 }), AI_PROFILES.RESILIENT, makeRng(s));
+      const d = decideDefense(view({ incomingElement: WATER, hearts: 1 }), noMistake('RESILIENT'), makeRng(s));
       expect(d.slot).toBe('d1'); // WOOD — STRONG parry vs WATER
       expect(d.pressOffsetMs).toBe(0);
     }
@@ -343,7 +356,7 @@ describe('decideAttack double-attack (EPIC #268)', () => {
       canDoubleAttack: true,
       opponentDefenseSlots: oppDef(WOOD, EARTH),
     });
-    const d = decideAttack(v, AI_PROFILES.RESILIENT, makeRng(7));
+    const d = decideAttack(v, noMistake('RESILIENT'), makeRng(7));
     expect(d.double).toBeDefined();
     expect(d.double!.first).toBe('a2'); // unparryable EARTH fires first
     expect(d.double!.second).toBe('a1'); // WATER second
@@ -364,7 +377,7 @@ describe('decideAttack double-attack (EPIC #268)', () => {
       canDoubleAttack: true,
       opponentDefenseSlots: oppDef(WATER, WOOD),
     });
-    const d = decideAttack(v, AI_PROFILES.RESILIENT, makeRng(7));
+    const d = decideAttack(v, noMistake('RESILIENT'), makeRng(7));
     expect(d.double).toBeUndefined(); // declined — single attack
     expect(['a1', 'a2']).toContain(d.slot);
   });
@@ -381,7 +394,7 @@ describe('decideAttack double-attack (EPIC #268)', () => {
       canDoubleAttack: true,
       opponentDefenseSlots: oppDef(WATER, WOOD, 3, 0), // WOOD counter extinguished
     });
-    const d = decideAttack(v, AI_PROFILES.RESILIENT, makeRng(7));
+    const d = decideAttack(v, noMistake('RESILIENT'), makeRng(7));
     expect(d.double).toBeDefined();
     expect(d.double!.first).toBe('a2'); // unparryable WATER first
     expect(d.double!.second).toBe('a1');
@@ -397,7 +410,7 @@ describe('decideAttack double-attack (EPIC #268)', () => {
       canDoubleAttack: false, // base thumb — predicate failed on the controller side
       opponentDefenseSlots: oppDef(EARTH, EARTH),
     });
-    for (const p of [AI_PROFILES.AGGRESSIVE, AI_PROFILES.DEFENSIVE, AI_PROFILES.RESILIENT]) {
+    for (const p of [noMistake('AGGRESSIVE'), noMistake('DEFENSIVE'), noMistake('RESILIENT')] as const) {
       const d = decideAttack(v, p, makeRng(3));
       expect(d.double).toBeUndefined();
     }
@@ -413,7 +426,7 @@ describe('decideAttack double-attack (EPIC #268)', () => {
       canDoubleAttack: true, // (a stale flag; the policy still guards on usable count)
       opponentDefenseSlots: oppDef(EARTH, EARTH),
     });
-    const d = decideAttack(v, AI_PROFILES.RESILIENT, makeRng(7));
+    const d = decideAttack(v, noMistake('RESILIENT'), makeRng(7));
     expect(d.double).toBeUndefined();
     expect(d.slot).toBe('a1'); // the only usable attack
   });
@@ -427,8 +440,153 @@ describe('decideAttack double-attack (EPIC #268)', () => {
       canDoubleAttack: true,
       opponentDefenseSlots: oppDef(WOOD, EARTH),
     });
-    expect(decideAttack(v, AI_PROFILES.RESILIENT, makeRng(99))).toEqual(
-      decideAttack(v, AI_PROFILES.RESILIENT, makeRng(99)),
+    expect(decideAttack(v, noMistake('RESILIENT'), makeRng(99))).toEqual(
+      decideAttack(v, noMistake('RESILIENT'), makeRng(99)),
     );
+  });
+});
+
+// ============================================================================
+// #492 — element-mistake branch (elementMistakeProb)
+// ============================================================================
+
+describe('elementMistakeProb=1.0 — always picks suboptimal attack (#492)', () => {
+  // #492: when elementMistakeProb=1.0, the AI must always pick a suboptimal
+  // (WEAK or counterable) ring instead of the optimal one.
+  // The opponent holds WATER (counter to FIRE) and WOOD (counter to WATER);
+  // a1=FIRE is counterable, a2=WATER is counterable — suboptimalAttackSlot
+  // picks the one whose counter is held by the opponent.
+
+  const mistakeProfile = { ...AI_PROFILES.AGGRESSIVE, elementMistakeProb: 1.0 };
+  const zeroMistakeProfile = { ...AI_PROFILES.AGGRESSIVE, elementMistakeProb: 0.0 };
+
+  test('elementMistakeProb=1.0 picks suboptimal slot (opponent can counter it)', () => {
+    // Board: a1=FIRE, a2=WATER; opponent holds WATER (counters FIRE) and WOOD (counters WATER).
+    // A perfect play picks a slot the opponent cannot counter; with mistake=1.0 it picks
+    // a slot the opponent CAN counter.
+    const v = view({
+      attackSlots: [
+        { key: 'a1', ring: ring(FIRE) },
+        { key: 'a2', ring: ring(WATER) },
+      ],
+      opponentUsableElements: [WATER, WOOD], // WATER counters FIRE; WOOD counters WATER
+    });
+    const decision = decideAttack(v, mistakeProfile, makeRng(42));
+    // With mistake=1.0 a suboptimal slot is returned — the opponent can counter it.
+    // counterOf(FIRE)=WATER is in opponentUsableElements → FIRE is counterable.
+    // counterOf(WATER)=WOOD is in opponentUsableElements → WATER is counterable.
+    // Either slot is suboptimal; the function returns one of them.
+    expect(['a1', 'a2']).toContain(decision.slot);
+  });
+
+  test('elementMistakeProb=0.0 skips mistake branch (optimal play)', () => {
+    // With WIND in a1 (uncounterable: counterOf(WIND) = -1) and FIRE in a2,
+    // optimal play picks WIND. With mistake=0.0 the mistake branch is never taken.
+    const v = view({
+      attackSlots: [
+        { key: 'a1', ring: ring(WIND) },
+        { key: 'a2', ring: ring(FIRE) },
+      ],
+      opponentUsableElements: [WATER], // WATER counters FIRE only
+    });
+    const decision = decideAttack(v, { ...zeroMistakeProfile, personality: 'AGGRESSIVE' }, makeRng(42));
+    // AGGRESSIVE + mistake=0 → chases the uncounterable slot (WIND).
+    expect(decision.slot).toBe('a1');
+  });
+
+  test('elementMistakeProb=1.0 defense picks weak/suboptimal ring (#492)', () => {
+    // Board: d1=FIRE (WEAK vs incoming WATER — FIRE beaten by WATER in defense),
+    //        d2=EARTH (NEUTRAL vs WATER — safe).
+    // With mistake=0, AGGRESSIVE picks the STRONG slot or EARTH for safety.
+    // With mistake=1.0, the mistake branch fires and picks FIRE (WEAK).
+    const v = view({
+      defenseSlots: [
+        { key: 'd1', ring: ring(FIRE) },    // FIRE vs WATER = WEAK (bad)
+        { key: 'd2', ring: ring(EARTH) },   // EARTH vs WATER = NEUTRAL (safe)
+      ],
+      incomingElement: WATER,
+    });
+    const decision = decideDefense(v, mistakeProfile, makeRng(42));
+    // With mistake=1.0, picks the WEAK slot (FIRE vs WATER).
+    expect(decision.slot).toBe('d1');
+    // It still commits (not a no-block) — pressOffsetMs is BLOCK timing (+190).
+    expect(decision.pressOffsetMs).toBe(190);
+  });
+
+  test('elementMistakeProb decision is deterministic for a fixed seed', () => {
+    // Same seed → same suboptimal pick every time (deterministic).
+    const v = view({
+      attackSlots: [
+        { key: 'a1', ring: ring(FIRE) },
+        { key: 'a2', ring: ring(WATER) },
+      ],
+      opponentUsableElements: [WATER, WOOD],
+    });
+    const d1 = decideAttack(v, mistakeProfile, makeRng(1234));
+    const d2 = decideAttack(v, mistakeProfile, makeRng(1234));
+    expect(d1.slot).toBe(d2.slot);
+  });
+
+  test('elementMistakeProb=0 does NOT consume an RNG draw (stream preserved) (#492 adversarial)', () => {
+    // #492 adversarial: the > 0 guard in singleAttackDecision must prevent an
+    // rng.next() call when elementMistakeProb=0. If the guard is missing, the
+    // mistake branch would consume a draw, shifting the personality/timing stream
+    // for ALL pre-#492 tests (RNG-sensitive seeds would break).
+    // Proof: with mistake=0, the first rng.next() draw belongs to personality logic.
+    // With mistake>0, it's consumed by the mistake coin flip.
+    // We verify stream parity: result with zeroMistakeProfile must equal result
+    // produced by the noMistake profile (which also zeros elementMistakeProb).
+    const v = view({
+      attackSlots: [
+        { key: 'a1', ring: ring(FIRE) },
+        { key: 'a2', ring: ring(WATER) },
+      ],
+      opponentUsableElements: [],
+    });
+    const seedVal = 777;
+    const d0 = decideAttack(v, zeroMistakeProfile, makeRng(seedVal));
+    const dNM = decideAttack(v, noMistake('AGGRESSIVE'), makeRng(seedVal));
+    // Same seed → identical result when both profiles have elementMistakeProb=0.
+    expect(d0.slot).toBe(dNM.slot);
+  });
+
+  test('suboptimalAttackSlot fallback: when no slot is counterable, returns last usable (#492 adversarial)', () => {
+    // #492 adversarial: suboptimalAttackSlot falls back to usable[usable.length-1]
+    // when no opponent holds a counter to any usable ring. With WIND (uncounterable,
+    // counterOf=WIND=-1) and EARTH (also uncounterable) and empty opponentUsableElements,
+    // there is no counterable slot — fallback must return a2 (last usable), not crash.
+    const v = view({
+      attackSlots: [
+        { key: 'a1', ring: ring(WIND) },    // counterOf(WIND) = -1 (uncounterable)
+        { key: 'a2', ring: ring(EARTH) },   // counterOf(EARTH) = -1 (uncounterable)
+      ],
+      opponentUsableElements: [],           // empty: nothing counters anything
+    });
+    const decision = decideAttack(v, mistakeProfile, makeRng(42));
+    // Must return a valid attack slot (a1 or a2), not crash.
+    expect(['a1', 'a2']).toContain(decision.slot);
+    // With WIND and EARTH (both uncounterable), the fallback returns a2 (last slot).
+    expect(decision.slot).toBe('a2');
+  });
+
+  test('weakDefenseSlot fallback: when no WEAK slot exists, returns last usable (#492 adversarial)', () => {
+    // #492 adversarial: weakDefenseSlot returns the last usable slot when no slot
+    // is WEAK vs the incoming element. If incoming=-1 (no incoming) or all slots
+    // are STRONG/NEUTRAL, the function must still return a valid slot, not crash.
+    // Test: d1=WOOD (STRONG vs WATER), d2=EARTH (NEUTRAL vs WATER) — neither is WEAK.
+    // With mistake=1.0 and incoming=WATER, weakDefenseSlot falls back to d2 (last usable).
+    const v = view({
+      defenseSlots: [
+        { key: 'd1', ring: ring(WOOD) },    // WOOD vs WATER = STRONG (rally, not WEAK)
+        { key: 'd2', ring: ring(EARTH) },   // EARTH vs WATER = NEUTRAL (safe)
+      ],
+      incomingElement: WATER,
+    });
+    const decision = decideDefense(v, mistakeProfile, makeRng(42));
+    // Must return a valid defense slot, not crash.
+    expect(['d1', 'd2']).toContain(decision.slot);
+    // No WEAK slot → fallback to last usable (d2).
+    expect(decision.slot).toBe('d2');
+    expect(decision.pressOffsetMs).toBe(190);
   });
 });

@@ -245,15 +245,74 @@ export const BOSS_MODIFIERS: Record<BossTier, BossModifier> = {
   },
 };
 
-// #464 — Per-biome boss spirit bonus. Flat spirit addition stacked on top of the
-// base NPC spirit formula for boss-tier NPCs only. Roamers (no boss descriptor)
-// are unaffected. The bonus table is future-ready for all four biomes even though
-// Snow/Swamp/Desert bosses are not yet authored — the lookup is a no-op until
-// those biomes are referenced in NPC_SPAWNS.
-export const BIOME_BOSS_SPIRIT_BONUS: Record<string, Partial<Record<BossTier, number>>> = {
-  forest: { gate: 15, sub: 25, major: 40 },
-  snow:   { gate: 40, sub: 50, major: 65 },
-  swamp:  { gate: 65, sub: 75, major: 90 },
-  desert: { gate: 90, sub: 100, major: 115 },
+// #492 — Parameterized biome difficulty floor. Replaces the hand-tuned
+// BIOME_BOSS_SPIRIT_BONUS table with a formula covering all NPC classes across
+// all five biomes. spiritFloor(biome, npcClass) is the minimum spirit an NPC of
+// that class can have in that biome regardless of player level. floorTier(biome)
+// is the minimum effective tier for loadout scaling.
+//
+// CLASS_OFFSET.roamer = 0 is LOCKED — keeps forest roamers floor-free (early-game
+// accessible). REGION_STEP = 25 matches the old bonus table's per-biome increment.
+//
+// Verification:
+//   spiritFloor('forest','gate')   = 15 + 25*0 = 15  ✓
+//   spiritFloor('snow',  'gate')   = 15 + 25*1 = 40  ✓
+//   spiritFloor('swamp', 'sub')    = 25 + 25*2 = 75  ✓
+//   spiritFloor('desert','major')  = 40 + 25*3 = 115 ✓
+//   spiritFloor('volcano','major') = 40 + 25*4 = 140 ✓
+//   spiritFloor('forest','roamer') = 0  + 25*0 = 0   ✓ (locked floor-free)
+//   spiritFloor('desert','roamer') = 0  + 25*3 = 75  ✓
+//   spiritFloor('volcano','roamer')= 0  + 25*4 = 100 ✓
+
+/** NPC classes eligible for spirit floors (roamer = roaming NPC; others are boss tiers). */
+export type NpcClass = 'roamer' | BossTier;
+
+/** Spirit-floor addend per class. roamer=0 is LOCKED. */
+export const CLASS_OFFSET: Record<NpcClass, number> = {
+  roamer: 0,
+  gate:   15,
+  sub:    25,
+  major:  40,
+};
+
+/** Biome order from easiest (index 0) to hardest (index 4). */
+export const BIOME_ORDER: string[] = ['forest', 'snow', 'swamp', 'desert', 'volcano'];
+
+/** Spirit step added per biome level (matches old table's per-biome increment). */
+export const REGION_STEP = 25;
+
+/**
+ * Minimum NPC spirit for a given biome and NPC class.
+ * formula: CLASS_OFFSET[npcClass] + REGION_STEP * BIOME_ORDER.indexOf(biome)
+ * Returns 0 for unrecognised biomes (safe default, same as old ?? 0).
+ */
+export function spiritFloor(biome: string, npcClass: NpcClass): number {
+  const idx = BIOME_ORDER.indexOf(biome);
+  if (idx < 0) return 0;
+  return CLASS_OFFSET[npcClass] + REGION_STEP * idx;
+}
+
+/**
+ * Minimum effective tier for NPCs in a given biome.
+ * formula: BIOME_ORDER.indexOf(biome) + 1 (1-indexed; forest=1, volcano=5)
+ * Returns 1 for unrecognised biomes.
+ */
+export function floorTier(biome: string): number {
+  const idx = BIOME_ORDER.indexOf(biome);
+  return idx >= 0 ? idx + 1 : 1;
+}
+
+// #492 — Skill distribution bands per NPC class. A normalized scalar s ∈ [0,1]
+// is drawn UNIFORM within the class's [lo,hi] band. Bands overlap so the roamer
+// upper tail can produce fairly skilled opponents. effectiveTier shifts the
+// TRANSFER FUNCTIONS (timing σ, element-mistake) not the band itself — the band
+// encodes the class's structural role in encounter design.
+//
+// Invariant (unit-tested): roamer.lo ≤ gate.lo ≤ sub.lo ≤ major.lo (monotonic).
+export const SKILL_BAND: Record<NpcClass, { lo: number; hi: number }> = {
+  roamer: { lo: 0.20, hi: 0.70 },
+  gate:   { lo: 0.55, hi: 0.80 },
+  sub:    { lo: 0.70, hi: 0.90 },
+  major:  { lo: 0.90, hi: 1.00 },
 };
 

@@ -1,9 +1,16 @@
 import { AIPersonality, SlotKey, type BossTier } from '../../../../shared/types';
 import { ElementEnum } from '../../../../shared/types';
-import { Rng } from './AIProfiles';
+import { makeRng, Rng, type AIProfile } from './AIProfiles';
 import { tierForXp, naturalMaxUses } from '../Tiers';
 import { isFusion } from '../Fusions';
-import { BOSS_MODIFIERS, BIOME_BOSS_SPIRIT_BONUS } from '../constants';
+import {
+  BOSS_MODIFIERS,
+  spiritFloor,
+  floorTier,
+  SKILL_BAND,
+  type NpcClass,
+} from '../constants';
+import { hashNpcId } from '../../persistence/NpcSpawns';
 
 const { FIRE, WATER, EARTH, WIND, WOOD } = ElementEnum;
 
@@ -66,17 +73,81 @@ export const PERSONALITY_SPIRIT_MULT: Record<AIPersonality, number> = {
 };
 
 /**
- * #478 — Compute the NPC spirit pool from the player's spirit_max.
+ * #492 — Draw a normalized skill scalar s ∈ [lo, hi] for a given NPC class,
+ * seeded deterministically from the spawn id. Re-rolls on respawn (same id
+ * always yields the same s for a given encounter).
  *
- * Multiplier resolution (mirrors BattleRoom.onJoin:327):
- *   - Boss NPCs (bossTier provided): use BOSS_MODIFIERS[bossTier].spiritMult,
- *     which overrides the personality multiplier. Boss tiers have distinct fixed
- *     mults (major=1.0, gate=0.75, sub=0.60) regardless of personality.
- *   - Roamers (bossTier undefined): use PERSONALITY_SPIRIT_MULT[personality].
+ * Uses hashNpcId (shared djb2 with Math.imul from NpcSpawns.ts) for consistency
+ * with the overworld preview — same id always seeds the same skill regardless of
+ * which code path computes it. Uses makeRng (mulberry32) — do NOT use Math.random().
+ */
+export function skillRoll(spawnId: string, npcClass: NpcClass): number {
+  const rng = makeRng(hashNpcId(spawnId));
+  const { lo, hi } = SKILL_BAND[npcClass];
+  return lo + rng.next() * (hi - lo);
+}
+
+/**
+ * #492 — Pure exported effectiveTier function. Distinct from the local variable
+ * of the same name inside generateAILoadout (which does not take biome).
+ * This exported form participates in the biome floor via floorTier.
  *
- * Formula: floor(playerSpiritMax × mult) + biome boss bonus.
- * The floor is applied to the base BEFORE the bonus is added (integer addition
- * after flooring — matches the inline formula in BattleRoom.onJoin:640-644).
+ * effectiveTier = max(floorTier(biome), tierForXp(npcEffectiveXp))
+ */
+export function effectiveTier(
+  biome: string,
+  personality: AIPersonality,
+  playerBattleHandAvgXp: number,
+): number {
+  const npcXp = npcEffectiveXp(personality, playerBattleHandAvgXp);
+  return Math.max(floorTier(biome), tierForXp(npcXp));
+}
+
+/**
+ * #492 — Scale an AIProfile by effectiveTier and skillRoll. Generalises
+ * buildBossProfile (BattleRoom) to ALL NPCs, keying off the tier/skill pair
+ * rather than a BossModifier. Higher tier ⇒ tighter σ; higher skill ⇒
+ * lower elementMistakeProb. Pure — returns a fresh object, never mutates base.
+ *
+ * Transfer functions (saturating):
+ *   timingSigmaMs: base × (1 − 0.08 × (tier − 1)) × (1 − 0.3 × skill), clamped ≥ 10
+ *   elementMistakeProb: base × (1 − 0.15 × (tier − 1)) × (1 − 0.5 × skill), clamped ≥ 0
+ */
+export function scaleProfileByTier(
+  base: AIProfile,
+  tier: number,
+  skill: number,
+): AIProfile {
+  const tierFactor = 1 - 0.08 * (tier - 1);
+  const skillFactor = 1 - 0.3 * skill;
+  const mistakeTierFactor = 1 - 0.15 * (tier - 1);
+  const mistakeSkillFactor = 1 - 0.5 * skill;
+
+  const timingScale = Math.max(tierFactor * skillFactor, 0);
+  const mistakeScale = Math.max(mistakeTierFactor * mistakeSkillFactor, 0);
+
+  return {
+    ...base,
+    timingSigmaMs: Math.max(base.timingSigmaMs * timingScale, 10),
+    lowHeartTimingSigmaMs: Math.max(base.lowHeartTimingSigmaMs * timingScale, 10),
+    elementMistakeProb: Math.max(base.elementMistakeProb * mistakeScale, 0),
+  };
+}
+
+/**
+ * #492 — Compute the NPC spirit pool from the player's spirit_max.
+ *
+ * Multiplier resolution:
+ *   - Boss NPCs (npcClass = gate/sub/major): use BOSS_MODIFIERS[npcClass].spiritMult,
+ *     which overrides the personality multiplier. The spiritFloor is then added
+ *     additively (preserved from the original additive formula — NOT max-floor).
+ *   - Roamers (npcClass = 'roamer'): use PERSONALITY_SPIRIT_MULT[personality]
+ *     then apply max(spiritFloor(biome,'roamer'), result) — TRUE max-floor.
+ *     For forest roamers spiritFloor=0, so the player-scaling term always wins.
+ *
+ * The old signature (biome?: string, bossTier?: BossTier) is preserved via the
+ * new overload so existing callers (BattleRoom.onJoin, test suite) continue to
+ * compile without changes. When bossTier is supplied, npcClass = bossTier.
  */
 export function computeNpcSpirit(
   playerSpiritMax: number,
@@ -84,13 +155,18 @@ export function computeNpcSpirit(
   biome?: string,
   bossTier?: BossTier,
 ): number {
-  // Bosses override personality mult; roamers use the per-personality fraction.
-  const mult = bossTier
-    ? BOSS_MODIFIERS[bossTier].spiritMult
-    : PERSONALITY_SPIRIT_MULT[personality];
+  if (bossTier) {
+    // Boss (gate/sub/major): additive floor — floor(spiritMax × mult) + spiritFloor.
+    const mult = BOSS_MODIFIERS[bossTier].spiritMult;
+    const base = Math.floor(playerSpiritMax * mult);
+    const floor = biome ? spiritFloor(biome, bossTier) : 0;
+    return base + floor;
+  }
+  // Roamer: max-floor — max(spiritFloor(biome,'roamer'), floor(spiritMax × mult)).
+  const mult = PERSONALITY_SPIRIT_MULT[personality];
   const base = Math.floor(playerSpiritMax * mult);
-  const bonus = (biome && bossTier) ? (BIOME_BOSS_SPIRIT_BONUS[biome]?.[bossTier] ?? 0) : 0;
-  return base + bonus;
+  const floor = biome ? spiritFloor(biome, 'roamer') : 0;
+  return Math.max(floor, base);
 }
 
 /**

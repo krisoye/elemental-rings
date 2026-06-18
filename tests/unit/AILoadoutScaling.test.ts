@@ -3,6 +3,7 @@ import {
   generateAILoadout,
   npcEffectiveXp,
   previewOpponent,
+  skillRoll,
 } from '../../server/src/game/ai/AILoadout';
 import { makeRng } from '../../server/src/game/ai/AIProfiles';
 import { tierForXp, naturalMaxUses } from '../../server/src/game/Tiers';
@@ -164,16 +165,16 @@ describe('previewOpponent scaling (#244)', () => {
 });
 
 // ============================================================================
-// computeNpcSpirit (#478) — roamer + boss spirit preview helper
+// computeNpcSpirit (#478/#492) — roamer + boss spirit preview helper
 // ============================================================================
 //
-// computeNpcSpirit is extracted from the BattleRoom.onJoin inline formula and
-// exported from AILoadout.ts. It is the single source of truth for NPC spirit
-// pool computation used by both BattleRoom and GET /api/overworld/npcs.
+// computeNpcSpirit is exported from AILoadout.ts. It is the single source of
+// truth for NPC spirit pool computation used by both BattleRoom and GET
+// /api/overworld/npcs.
 //
-// Roamer path: floor(playerSpiritMax × PERSONALITY_SPIRIT_MULT[personality])
-// Boss path:   floor(playerSpiritMax × BOSS_MODIFIERS[bossTier].spiritMult)
-//              + BIOME_BOSS_SPIRIT_BONUS[biome][bossTier]
+// Roamer path (#492): max(spiritFloor(biome,'roamer'), floor(spiritMax × PERSONALITY_SPIRIT_MULT))
+// Boss path (preserved): floor(spiritMax × BOSS_MODIFIERS[bossTier].spiritMult)
+//                       + spiritFloor(biome, bossTier)
 //
 // Mirror of PERSONALITY_SPIRIT_MULT from AILoadout.ts — a drift here breaks tests:
 //   AGGRESSIVE: 0.25, DEFENSIVE: 0.30, STATUS_HUNTER: 0.35, RESILIENT: 0.40
@@ -181,11 +182,12 @@ describe('previewOpponent scaling (#244)', () => {
 // Mirror of BOSS_MODIFIERS.spiritMult from constants.ts:
 //   gate: 0.75, sub: 0.60, major: 1.0
 //
-// Mirror of BIOME_BOSS_SPIRIT_BONUS from constants.ts:
-//   forest: { gate: 15, sub: 25, major: 40 }
-//   snow:   { gate: 40, sub: 50, major: 65 }
-//   swamp:  { gate: 65, sub: 75, major: 90 }
-//   desert: { gate: 90, sub: 100, major: 115 }
+// Mirror of spiritFloor(biome, npcClass) = CLASS_OFFSET[npcClass] + REGION_STEP * BIOME_ORDER.indexOf(biome):
+//   forest: { gate: 15, sub: 25, major: 40, roamer: 0 }
+//   snow:   { gate: 40, sub: 50, major: 65, roamer: 25 }
+//   swamp:  { gate: 65, sub: 75, major: 90, roamer: 50 }
+//   desert: { gate: 90, sub: 100, major: 115, roamer: 75 }
+//   volcano:{ gate: 115, sub: 125, major: 140, roamer: 100 }
 
 const SPIRIT_MULT: Record<AIPersonality, number> = {
   AGGRESSIVE: 0.25,
@@ -200,11 +202,13 @@ const BOSS_SPIRIT_MULT: Record<string, number> = {
   major: 1.0,
 };
 
+// #492: spiritFloor(biome, npcClass) = CLASS_OFFSET[npcClass] + REGION_STEP * BIOME_ORDER.indexOf(biome)
 const BOSS_BONUS: Record<string, Record<string, number>> = {
-  forest: { gate: 15,  sub: 25,  major: 40  },
-  snow:   { gate: 40,  sub: 50,  major: 65  },
-  swamp:  { gate: 65,  sub: 75,  major: 90  },
-  desert: { gate: 90,  sub: 100, major: 115 },
+  forest:  { gate: 15,  sub: 25,  major: 40  },
+  snow:    { gate: 40,  sub: 50,  major: 65  },
+  swamp:   { gate: 65,  sub: 75,  major: 90  },
+  desert:  { gate: 90,  sub: 100, major: 115 },
+  volcano: { gate: 115, sub: 125, major: 140 },
 };
 
 // #478 — computeNpcSpirit is loaded via dynamic import so tests fail with a
@@ -397,13 +401,20 @@ describe('computeNpcSpirit — adversarial edge cases (#478)', () => {
     expect(result).toBe(forestGateBonus); // 0 + 15 = 15
   });
 
-  test('unknown biome with valid bossTier returns base only (no bonus, no crash)', () => {
-    // #478 adversarial: a newly-authored biome not yet in BIOME_BOSS_SPIRIT_BONUS
-    // must not crash. The ?. + ?? 0 fallback must produce 0 bonus.
-    // biome='volcano' not in the table → bonus = 0 → result = base only.
+  test('volcano biome with valid bossTier returns base + spiritFloor(volcano,gate)=115', () => {
+    // #492: volcano is now in BIOME_ORDER (index 4), so spiritFloor('volcano','gate')=115.
+    // floor(100 × 0.75) + 115 = 75 + 115 = 190.
     const spiritMax = 100;
     const result = computeNpcSpirit(spiritMax, 'DEFENSIVE' as AIPersonality, 'volcano', 'gate');
-    // base: floor(100 × 0.75) = 75; bonus: 0 (unknown biome)
+    const expected = Math.floor(spiritMax * BOSS_SPIRIT_MULT['gate']) + BOSS_BONUS['volcano']['gate'];
+    expect(result).toBe(expected); // 75 + 115 = 190
+  });
+
+  test('unknown biome (not in BIOME_ORDER) with valid bossTier returns base only (no bonus, no crash)', () => {
+    // #492: a biome not in BIOME_ORDER returns spiritFloor=0 safely.
+    const spiritMax = 100;
+    const result = computeNpcSpirit(spiritMax, 'DEFENSIVE' as AIPersonality, 'cavern', 'gate');
+    // base: floor(100 × 0.75) = 75; spiritFloor('cavern','gate') = 0
     const expected = Math.floor(spiritMax * BOSS_SPIRIT_MULT['gate']) + 0;
     expect(result).toBe(expected); // 75
   });
@@ -459,10 +470,10 @@ describe('computeNpcSpirit — spec conformance (#478)', () => {
     expect(computeNpcSpirit(140, 'DEFENSIVE' as AIPersonality)).toBe(42);
   });
 
-  test('AC: boss path adds BIOME_BOSS_SPIRIT_BONUS AFTER the floor', () => {
+  test('AC: boss path adds spiritFloor AFTER the floor (additive preserved)', () => {
     // Spec §Design: "floor applied to the base before the bonus is added — this
-    // matches the existing inline behavior exactly (floor(playerSpiritMax × mult) + bonus)."
-    // Test: forest/gate, spiritMax=100 → floor(100×0.75) + 15 = 75 + 15 = 90.
+    // matches the existing inline behavior exactly (floor(playerSpiritMax × mult) + spiritFloor)."
+    // Test: forest/gate, spiritMax=100 → floor(100×0.75) + spiritFloor(forest,gate) = 75 + 15 = 90.
     expect(computeNpcSpirit(100, 'DEFENSIVE' as AIPersonality, 'forest', 'gate')).toBe(90);
   });
 
@@ -482,5 +493,45 @@ describe('computeNpcSpirit — spec conformance (#478)', () => {
     const bossBonus = BOSS_BONUS['forest']['sub']; // 25
     const inlineBoss = Math.floor(spiritMax * bossSpiritMult) + bossBonus; // floor(180×0.60)+25=108+25=133
     expect(computeNpcSpirit(spiritMax, personality, 'forest', 'sub')).toBe(inlineBoss);
+  });
+});
+
+// ============================================================================
+// skillRoll — generic spawnId fallback (#492 impl-aware)
+// ============================================================================
+//
+// BattleRoom.ts line 400: spawnIdForSkill = options.npcId ?? `generic_${personality}`
+// When no npcId is provided (generic vsAI from the AI-battle integration test),
+// the spawn id is `generic_AGGRESSIVE`, `generic_DEFENSIVE`, etc.
+// Two different personalities must yield different skill rolls so their scaled
+// profiles differ — otherwise the distinction between personalities is lost at the
+// skill dimension.
+
+describe('skillRoll — generic spawnId personality fallback (#492 impl-aware)', () => {
+  test('generic_AGGRESSIVE and generic_DEFENSIVE yield different skill rolls (roamer)', () => {
+    // #492 impl-aware: BattleRoom falls back to `generic_${personality}` when no npcId
+    // is provided. Different personalities must hash to different skill values so the
+    // difficulty ladder still applies for generic duels.
+    const aggressiveSkill = skillRoll('generic_AGGRESSIVE', 'roamer');
+    const defensiveSkill  = skillRoll('generic_DEFENSIVE',  'roamer');
+    expect(aggressiveSkill).not.toBe(defensiveSkill);
+  });
+
+  test('generic spawnIds still produce rolls within class band (#492 impl-aware)', () => {
+    // #492 impl-aware: the generic fallback spawnIds must still land within the
+    // roamer SKILL_BAND [0.20, 0.70]. A hash collision or out-of-bounds would
+    // silently bypass the difficulty floor.
+    const personalities = ['AGGRESSIVE', 'DEFENSIVE', 'STATUS_HUNTER', 'RESILIENT'];
+    for (const p of personalities) {
+      const skill = skillRoll(`generic_${p}`, 'roamer');
+      expect(skill).toBeGreaterThanOrEqual(0.20);
+      expect(skill).toBeLessThanOrEqual(0.70);
+    }
+  });
+
+  test('generic spawnId is deterministic (same personality always same skill) (#492 impl-aware)', () => {
+    // #492 impl-aware: generic duels must be repeatable — same personality seed
+    // produces the same skill on every call (mulberry32 is seeded from hash, no state).
+    expect(skillRoll('generic_RESILIENT', 'roamer')).toBe(skillRoll('generic_RESILIENT', 'roamer'));
   });
 });

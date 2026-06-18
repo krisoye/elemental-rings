@@ -7,7 +7,7 @@ import { canDoubleAttack } from '../game/DoubleAttack';
 import * as StatusEffects from '../game/StatusEffects';
 import { AIController, type EnrageConfig } from '../game/ai/AIController';
 import { makeRng, AI_PROFILES, type AIProfile } from '../game/ai/AIProfiles';
-import { generateAILoadout, PERSONALITY_SPIRIT_MULT, computeNpcSpirit, type SlotSpec } from '../game/ai/AILoadout';
+import { generateAILoadout, PERSONALITY_SPIRIT_MULT, computeNpcSpirit, scaleProfileByTier, skillRoll, effectiveTier as computeEffectiveTier, type SlotSpec } from '../game/ai/AILoadout';
 import * as StakeResolver from '../game/StakeResolver';
 import {
   consumeUse,
@@ -321,7 +321,11 @@ export class BattleRoom extends Room<{ state: BattleState }> {
         ? NPC_SPAWNS.find((n) => n.id === options.npcId)
         : undefined;
       this.boss = bossSpawn?.boss;
-      if (this.boss) this.npcBiome = bossSpawn?.biome;
+      // #492 — capture biome for all NPC classes (bosses AND roamers) so that
+      // spiritFloor and floorTier apply the correct biome difficulty floor.
+      // Previously gated on this.boss, which caused roamers outside forest to
+      // receive undefined biome and silently fall back to forest semantics.
+      this.npcBiome = bossSpawn?.biome;
       const personality = options.personality ?? 'AGGRESSIVE';
       const seed = options.aiSeed ?? (Date.now() & 0xffffffff);
       // Use a separate RNG stream for loadout generation so the combat RNG
@@ -389,14 +393,27 @@ export class BattleRoom extends Room<{ state: BattleState }> {
         }
       }
 
-      // Build the boss-modified AI profile (no-op when not a boss). The modifier
-      // multiplies the base profile's σ / no-block / think fields (both healthy
-      // and low-heart variants stay proportional).
-      const profileOverride = mod ? this.buildBossProfile(personality, mod) : undefined;
+      // #492 — Compute per-encounter skill roll seeded from the spawn id. For
+      // generic vsAI rooms (no npcId) fall back to a stable id derived from
+      // personality so the profile is deterministic (not Math.random()).
+      const npcClass = this.boss?.tier ?? 'roamer';
+      const spawnIdForSkill = options.npcId ?? `generic_${personality}`;
+      const skill = skillRoll(spawnIdForSkill, npcClass as 'roamer' | 'gate' | 'sub' | 'major');
+
+      // Build the boss-modified AI profile then apply scaleProfileByTier to ALL
+      // NPCs. For bosses, buildBossProfile first applies the BOSS_MODIFIERS
+      // (σ/noBlock/think multipliers); scaleProfileByTier then applies on top
+      // using the encounter's effective tier and skill roll. For roamers,
+      // scaleProfileByTier is applied directly to the base profile — roamers get
+      // the biome floor + skill-scaled element-mistake without bonus hearts/uses.
+      const bossModdedProfile = mod ? this.buildBossProfile(personality, mod) : AI_PROFILES[personality];
+      const biomeForTier = this.npcBiome ?? 'forest';
+      const encTier = computeEffectiveTier(biomeForTier, personality, playerXp);
+      const profileOverride = scaleProfileByTier(bossModdedProfile, encTier, skill);
       // #259 — enrage config (major boss only; threshold 0 disables it). The
       // enraged profile sharpens the already-modified profile further.
       const enrage: EnrageConfig | undefined =
-        mod && profileOverride && mod.enrageThreshold > 0
+        mod && mod.enrageThreshold > 0
           ? {
               threshold: mod.enrageThreshold,
               profile: this.buildEnragedProfile(profileOverride, mod),
@@ -470,11 +487,16 @@ export class BattleRoom extends Room<{ state: BattleState }> {
   }
 
   /**
-   * #258 — derive a boss-modified AIProfile from the base personality profile by
-   * scaling its timing-σ / no-block / think-delay fields by the tier modifier.
-   * Both the healthy and the low-heart variants are scaled so the boss stays
-   * proportionally sharper at every health level. Pure — returns a fresh object,
-   * never mutates AI_PROFILES.
+   * #258 / #492 — Derive a boss-modified AIProfile from the base personality
+   * profile by scaling its timing-σ / no-block / think-delay fields by the tier
+   * modifier. Both the healthy and the low-heart variants are scaled so the boss
+   * stays proportionally sharper at every health level.
+   *
+   * This is now a thin wrapper: it applies BOSS_MODIFIERS fields (σ/noBlock/think
+   * multipliers + combo gap) and returns the result. The caller then applies
+   * scaleProfileByTier on top to all NPCs (boss and roamer alike).
+   *
+   * Pure — returns a fresh object, never mutates AI_PROFILES.
    */
   private buildBossProfile(personality: AIPersonality, mod: BossModifier): AIProfile {
     const base = AI_PROFILES[personality];

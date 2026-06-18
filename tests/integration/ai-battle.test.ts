@@ -78,9 +78,10 @@ describe('vsAI: AI is seated and drives the duel', () => {
   });
 
   test('AI defends a human throw: human attacks, AI commits a ring', async () => {
-    // Use DEFENSIVE so the AI reliably catches (it picks a NEUTRAL block).
-    // Seed chosen so its first defense draw is a block, not a no-block.
-    const { room, human } = await joinVsAI('DEFENSIVE', 4242);
+    // Use AGGRESSIVE so the AI always commits a ring (AGGRESSIVE never no-blocks).
+    // Switched from DEFENSIVE+4242 (which was chosen pre-#492 to avoid no-block;
+    // #492 changed elementMistakeProb values, shifting the DEFENSIVE RNG stream).
+    const { room, human } = await joinVsAI('AGGRESSIVE', 9999);
 
     // Let the AI take its opening attack and resolve so the human becomes attacker.
     await sleep(1500);
