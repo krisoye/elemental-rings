@@ -158,7 +158,7 @@ test('tap A1 (< threshold): client sends ONE selectAttack; no chargeStart, no re
   await waitForMyAttackTurn(attacker);
   await spyOnAllSends(attacker);
 
-  // keyboard.press() (~10–40ms) is well below CHARGE_THRESHOLD_CLIENT_MS=150ms.
+  // keyboard.press() (~10–40ms) is well below CHARGE_THRESHOLD_CLIENT_MS=450ms.
   await attacker.keyboard.press('1');
 
   await attacker.waitForFunction(() => ((window as any).__allSends?.selectAttack ?? 0) >= 1, {
@@ -189,9 +189,9 @@ test('chargeOrbStart is broadcast to the DEFENDER (defender visibility contract)
   await collectMessages(defender, 'chargeOrbStart');
   await collectMessages(defender, 'chargeOrbEnd');
 
-  // Hold long enough to arm chargeStart (> 150ms threshold).
+  // Hold long enough to arm chargeStart (> 450ms threshold).
   await attacker.keyboard.down('1');
-  await attacker.waitForTimeout(300);
+  await attacker.waitForTimeout(550);
 
   // chargeOrbStart must arrive at the DEFENDER.
   await defender.waitForFunction(() => ((window as any).__msgs?.chargeOrbStart?.length ?? 0) >= 1, {
@@ -232,9 +232,9 @@ test('chargeOrbStart is broadcast to the ATTACKER too (room.broadcast, not clien
   await waitForMyAttackTurn(attacker);
   await collectMessages(attacker, 'chargeOrbStart');
 
-  // Hold past the 150ms threshold so chargeStart fires.
+  // Hold past the 450ms threshold so chargeStart fires.
   await attacker.keyboard.down('1');
-  await attacker.waitForTimeout(300);
+  await attacker.waitForTimeout(550);
 
   await attacker.waitForFunction(() => ((window as any).__msgs?.chargeOrbStart?.length ?? 0) >= 1, {
     timeout: 5000,
@@ -251,13 +251,15 @@ test('chargeOrbStart is broadcast to the ATTACKER too (room.broadcast, not clien
 
 // ── Scenario 4: MISS path — hold in miss zone, ring −1 use, no defend phase ──────
 
-test('hold A1 at MISS angle (early sweep 0, ~200ms): chargeMiss broadcast, attacker ring −1 use, phase → ATTACK_SELECT', async ({
+test('hold A1 at MISS angle (late sweep 0, ~900ms): chargeMiss broadcast, attacker ring −1 use, phase → ATTACK_SELECT', async ({
   browser,
 }) => {
   const h = await setupBattle(browser);
   const { attacker, defender } = await attackerDefender(h.p1, h.p2);
 
-  // #491: 200ms hold → angle ≈ −30° (outside ±10° cone) = guaranteed miss.
+  // #506: miss zone holds must be ≥ CHARGE_THRESHOLD_MS (450ms) AND outside the hit
+  // cone (±10°). Hit-cone in sweep 0: ~467–733ms. Late miss zone: 733–1200ms.
+  // 900ms → angle = −45 + (900/1200)*90 = +22.5° (well outside ±10° cone).
   await setState(attacker, { uses: { a1: 3 } });
   await setState(defender, { hearts: 3 });
   await waitForMyAttackTurn(attacker);
@@ -266,9 +268,9 @@ test('hold A1 at MISS angle (early sweep 0, ~200ms): chargeMiss broadcast, attac
 
   const usesBeforeA = await myUses(attacker, 'a1');
 
-  // Hold 200ms — well into sweep 0 miss zone (angle ≈ −30°).
+  // Hold 900ms — late sweep-0 miss zone (angle ≈ +22.5°, outside ±10° cone).
   await attacker.keyboard.down('1');
-  await attacker.waitForTimeout(200);
+  await attacker.waitForTimeout(900);
   await attacker.keyboard.up('1');
 
   await attacker.waitForFunction(() => ((window as any).__msgs?.chargeMiss?.length ?? 0) >= 1, {
@@ -314,9 +316,9 @@ test('chargeMiss on a miss-zone hold: broadcast reaches DEFENDER (not just attac
   await waitForMyAttackTurn(attacker);
   await collectMessages(defender, 'chargeMiss');
 
-  // Hold 200ms → miss zone.
+  // Hold 900ms → late sweep-0 miss zone (angle ≈ +22.5°, > threshold, outside cone).
   await attacker.keyboard.down('1');
-  await attacker.waitForTimeout(200);
+  await attacker.waitForTimeout(900);
   await attacker.keyboard.up('1');
 
   await defender.waitForFunction(() => ((window as any).__msgs?.chargeMiss?.length ?? 0) >= 1, {
@@ -421,9 +423,9 @@ test('chargeOrbEnd is broadcast on a MISS release (not only on hit)', async ({
   await waitForMyAttackTurn(attacker);
   await collectMessages(defender, 'chargeOrbEnd');
 
-  // Hold 200ms → miss zone.
+  // Hold 900ms → late sweep-0 miss zone (angle ≈ +22.5°, > threshold, outside cone).
   await attacker.keyboard.down('1');
-  await attacker.waitForTimeout(200);
+  await attacker.waitForTimeout(900);
   await attacker.keyboard.up('1');
 
   await defender.waitForFunction(() => ((window as any).__msgs?.chargeOrbEnd?.length ?? 0) >= 1, {
@@ -438,7 +440,7 @@ test('chargeOrbEnd is broadcast on a MISS release (not only on hit)', async ({
 
 // ── Scenario 9: fusion off-center miss — A1 misses, A2 always hits ─────────────────
 
-test('fusion A1 at MISS angle (200ms) + tap A2: chargeMiss for A1, A2 orb hits, defend phase opens', async ({
+test('fusion A1 at MISS angle (900ms) + tap A2: chargeMiss for A1, A2 orb hits, defend phase opens', async ({
   browser,
 }) => {
   const h = await setupBattle(browser);
@@ -458,9 +460,9 @@ test('fusion A1 at MISS angle (200ms) + tap A2: chargeMiss for A1, A2 orb hits, 
   const a2Before = await myUses(attacker, 'a2');
   const thumbBefore = await myUses(attacker, 'thumb');
 
-  // Drive fusion miss: hold A1 200ms (miss angle), tap A2 while holding.
+  // Drive fusion miss: hold A1 900ms (late miss zone, angle ≈ +22.5°), tap A2 while holding.
   await attacker.keyboard.down('1'); // begin hold on A1
-  await attacker.waitForTimeout(200); // hold past threshold, into miss zone
+  await attacker.waitForTimeout(900); // past threshold (450ms), into late miss zone
   // Tap A2 while A1 is still held (fusion chord).
   await attacker.keyboard.press('2');
   await attacker.keyboard.up('1'); // release A1
@@ -564,9 +566,9 @@ test('fusion charge with ineligible hand (non-fusion thumb): fusionSecondSlot ig
   const thumbBefore = await myUses(attacker, 'thumb');
   const a2Before = await myUses(attacker, 'a2');
 
-  // Hold A1 200ms (miss angle) then tap A2 (ineligible fusion attempt).
+  // Hold A1 900ms (late miss zone, angle ≈ +22.5°) then tap A2 (ineligible fusion attempt).
   await attacker.keyboard.down('1');
-  await attacker.waitForTimeout(200);
+  await attacker.waitForTimeout(900);
   await attacker.keyboard.press('2');
   await attacker.keyboard.up('1');
 
@@ -618,7 +620,7 @@ test('real keyboard tap A1: exactly ONE selectAttack emitted; no releaseAttack, 
 
 // ── Scenario 13: real hold+release — keyboard hold emits chargeStart then ONE releaseAttack ──
 
-test('real keyboard hold A1 (~400ms) then release: one chargeStart, one chargeOrbEnd, one releaseAttack(holdDuration>0)', async ({
+test('real keyboard hold A1 (~550ms) then release: one chargeStart, one chargeOrbEnd, one releaseAttack(holdDuration>0)', async ({
   browser,
 }) => {
   const h = await setupBattle(browser);
@@ -632,7 +634,7 @@ test('real keyboard hold A1 (~400ms) then release: one chargeStart, one chargeOr
   await waitForMyAttackTurn(attacker);
 
   await attacker.keyboard.down('1');
-  await attacker.waitForTimeout(400);
+  await attacker.waitForTimeout(550);
   await attacker.keyboard.up('1');
 
   await attacker.waitForFunction(() => ((window as any).__releaseAttacks?.length ?? 0) >= 1, {
@@ -684,7 +686,7 @@ test('#487 charge orb spawns at PLAYER_X - 60 (in front of player, toward oppone
   await waitForMyAttackTurn(attacker);
 
   await attacker.keyboard.down('1');
-  await attacker.waitForTimeout(300);
+  await attacker.waitForTimeout(550);
 
   await attacker.waitForFunction(
     () => (window as any).__scene?.chargeOrbX !== null && (window as any).__scene?.chargeOrbX !== undefined,
@@ -710,9 +712,9 @@ test('#487 defender-view charge orb spawns at OPPONENT_X + 60 (in front of oppon
   await waitForMyAttackTurn(attacker);
   await collectMessages(defender, 'chargeOrbStart');
 
-  // Hold past threshold so chargeStart fires and defender receives chargeOrbStart.
+  // Hold past threshold (450ms) so chargeStart fires and defender receives chargeOrbStart.
   await attacker.keyboard.down('1');
-  await attacker.waitForTimeout(300);
+  await attacker.waitForTimeout(550);
 
   await defender.waitForFunction(() => ((window as any).__msgs?.chargeOrbStart?.length ?? 0) >= 1, {
     timeout: 8000,
@@ -743,7 +745,7 @@ test('#487 R key during ATTACK_SELECT (when recharge cancelled before hold) does
   await attacker.waitForTimeout(50);
 
   await attacker.keyboard.down('1');
-  await attacker.waitForTimeout(400);
+  await attacker.waitForTimeout(550);
   await attacker.keyboard.up('1');
 
   await attacker.waitForFunction(() => ((window as any).__allSends?.releaseAttack ?? 0) >= 1, {
@@ -771,9 +773,9 @@ test('#487 R key during ATTACK_SELECT (when recharge cancelled before hold) does
 // ── Arc-swing scenarios (#491): 7 new scenarios ─────────────────────────────────
 // These test the new constant-angular-velocity arc model.
 
-// ── Arc Scenario 1: tap (< 150ms) — always hits ───────────────────────────────
+// ── Arc Scenario 1: tap (< 450ms) — always hits ───────────────────────────────
 
-test('#491 arc: tap (hold < 150ms) fires instantly horizontal and always hits (no chargeMiss)', async ({
+test('#491 arc: tap (hold < 450ms) fires instantly horizontal and always hits (no chargeMiss)', async ({
   browser,
 }) => {
   const h = await setupBattle(browser);
@@ -782,7 +784,7 @@ test('#491 arc: tap (hold < 150ms) fires instantly horizontal and always hits (n
   await waitForMyAttackTurn(attacker);
   await collectMessages(attacker, 'chargeMiss');
 
-  // keyboard.press() is ~10–40ms — well below 150ms threshold = tap path.
+  // keyboard.press() is ~10–40ms — well below 450ms threshold = tap path.
   await attacker.keyboard.press('1');
 
   // No chargeMiss — tap always hits.
@@ -822,9 +824,9 @@ test('#491 arc: hold through sweep-0 midpoint (~600ms) → angle≈0° (sweet sp
   await closeBattle(h);
 });
 
-// ── Arc Scenario 3: early sweep-0 hold → miss position ──────────────────────────
+// ── Arc Scenario 3: late sweep-0 hold → miss position ───────────────────────────
 
-test('#491 arc: hold ~200ms → angle≈−30° (outside ±10° cone) → chargeMiss', async ({
+test('#506 arc: hold ~900ms → angle≈+22.5° (outside ±10° cone) → chargeMiss', async ({
   browser,
 }) => {
   const h = await setupBattle(browser);
@@ -833,9 +835,10 @@ test('#491 arc: hold ~200ms → angle≈−30° (outside ±10° cone) → charge
   await waitForMyAttackTurn(attacker);
   await collectMessages(attacker, 'chargeMiss');
 
-  // 200ms: angle = −45 + (200/1200)*90 ≈ −30° >> HIT_CONE_DEG=10° → miss.
+  // 900ms: angle = −45 + (900/1200)*90 = +22.5° >> HIT_CONE_DEG=10° → miss.
+  // (Must be ≥ 450ms CHARGE_THRESHOLD_MS so server classifies as charge, not tap.)
   await attacker.keyboard.down('1');
-  await attacker.waitForTimeout(200);
+  await attacker.waitForTimeout(900);
   await attacker.keyboard.up('1');
 
   await attacker.waitForFunction(() => ((window as any).__msgs?.chargeMiss?.length ?? 0) >= 1, {
@@ -932,7 +935,7 @@ test('#491 arc: chargeOrbAngle getter returns a value in [−45, 45] during an a
 
   // Hold past threshold so beginCharge runs and the arc orb is spawned.
   await attacker.keyboard.down('1');
-  await attacker.waitForTimeout(400); // well past 150ms threshold
+  await attacker.waitForTimeout(550); // well past 450ms threshold
 
   // Gate: wait until chargeOrbAngle is non-null (beginCharge has run).
   await attacker.waitForFunction(
