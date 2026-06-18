@@ -1660,4 +1660,51 @@ test('#505 charge-miss: fusion-miss on A1 (200ms) — off-target orb still heads
   await closeBattle(h);
 });
 
+// ── #505 Scenario 20 (Phase 2 impl): offTargetX offset magnitude is exactly 300 ──
+
+test('#505 impl: player miss offTargetX is exactly PLAYER_X + facing*300 (magnitude 300, not a smaller or larger offset)', async ({
+  browser,
+}) => {
+  // #505 adversarial: Phase 1 asserts direction (sign) only — offTargetX < PLAYER_X.
+  // If someone changed `facing * 300` to `facing * 1` or `facing * 150`, the direction
+  // test would still pass but the visual would be wrong (orb barely moves off-screen).
+  // This test locks in the exact magnitude by asserting |offTargetX - PLAYER_X| === 300.
+  // From BattleScene.ts:1031: offTarget.x = from.x + facing * 300; facing = -1 for player.
+  // Expected: 768 + (-1)*300 = 468.
+  const PLAYER_X = 768;
+  const EXPECTED_OFFSET = 300;
+  const EXPECTED_OFF_TARGET_X = PLAYER_X - EXPECTED_OFFSET; // 468
+
+  const h = await setupBattle(browser);
+  const { attacker } = await attackerDefender(h.p1, h.p2);
+
+  await waitForMyAttackTurn(attacker);
+
+  // Hold 200ms → miss zone.
+  await attacker.keyboard.down('1');
+  await attacker.waitForTimeout(200);
+  await attacker.keyboard.up('1');
+
+  await attacker.waitForFunction(() => ((window as any).__msgs?.chargeMiss?.length ?? 0) >= 1, {
+    timeout: 5000,
+  });
+  await collectMessages(attacker, 'chargeMiss');
+
+  await attacker.waitForFunction(
+    () => (window as any).__lastChargeMiss?.offTargetX !== undefined,
+    { timeout: 3000 },
+  );
+
+  const offTargetX: number = await attacker.evaluate(
+    () => (window as any).__lastChargeMiss.offTargetX,
+  );
+
+  // Exact magnitude: distance from from.x must equal 300.
+  expect(Math.abs(offTargetX - PLAYER_X)).toBe(EXPECTED_OFFSET);
+  // Exact value: 768 − 300 = 468.
+  expect(offTargetX).toBe(EXPECTED_OFF_TARGET_X);
+
+  await closeBattle(h);
+});
+
 }); // end test.describe('charge attack')
