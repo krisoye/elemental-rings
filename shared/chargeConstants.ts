@@ -30,3 +30,7 @@ export const BASE_SWEEP_MS = 1200;
 export const SWEEP_SPEEDUP = 0.75;
 /** Number of sweeps until max speed (speed stays at max beyond this). */
 export const MAX_SWEEPS = 3;
+/** Hold duration at which the orb has swung out to the first extreme and the
+ *  hit cone arms (#499). Releases before this threshold resolve as a tap (grace
+ *  window): CHARGE_THRESHOLD_MS ≤ holdMs < CHARGE_ARM_MS → tap path. */
+export const CHARGE_ARM_MS = 250;

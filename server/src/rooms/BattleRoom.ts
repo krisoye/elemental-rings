@@ -42,8 +42,9 @@ import {
   GOLD_FORFEIT_PENALTY,
   BOSS_MODIFIERS,
   type BossModifier,
-  // #485 — charge attack constants
+  // #485/#499 — charge attack constants
   CHARGE_THRESHOLD_MS,
+  CHARGE_ARM_MS,
   CHARGE_PARRY_COMPRESSION,
   MAX_CHARGE_MS,
 } from '../game/constants';
@@ -1125,7 +1126,7 @@ export class BattleRoom extends Room<{ state: BattleState }> {
       attackerId: id,
       slot: payload.slot,
       startTime: this.chargeStartTimes.get(id)!,
-      startAngle: -45, // orb always starts at −SWEEP_RANGE_DEG (locked choice)
+      startAngle: 0, // orb starts at 0° (aimed at opponent — #499)
     } satisfies ChargeOrbStartPayload);
   }
 
@@ -1167,18 +1168,20 @@ export class BattleRoom extends Room<{ state: BattleState }> {
     // their oscillating orb render regardless of hit/miss outcome).
     this.broadcast('chargeOrbEnd', { attackerId: id } satisfies ChargeOrbEndPayload);
 
-    // Below threshold → tap-tap: both slots below CHARGE_THRESHOLD_MS means
-    // neither is a charged attack. If fusionSecondSlot is present AND the hand is
-    // eligible (canDoubleAttack), fire as a standard selectDoubleAttack with a
-    // minimal gap (both tapped near-simultaneously). If not eligible, fire only
-    // the primary slot as a standard tap and let the second be a separate message.
-    if (holdMs < CHARGE_THRESHOLD_MS) {
+    // Below threshold OR within the arm grace window → tap path.
+    //   holdMs < CHARGE_THRESHOLD_MS (150 ms): below threshold (no arc entered).
+    //   CHARGE_THRESHOLD_MS ≤ holdMs < CHARGE_ARM_MS (250 ms): arm grace window
+    //     — the orb has not yet reached the first extreme, so the hit cone is still
+    //     inactive; resolve as a normal tap to prevent forced misses on short holds
+    //     that just barely exceeded the charge threshold.
+    // Both cases use the identical tap branch (#499).
+    if (holdMs < CHARGE_ARM_MS) {
       if (
         payload.fusionSecondSlot &&
         ATTACK_SLOTS.has(payload.fusionSecondSlot) &&
         canDoubleAttack(attacker)
       ) {
-        // Sub-threshold fusion tap-tap → standard double attack (minimum gap).
+        // Sub-arm fusion tap-tap → standard double attack (minimum gap).
         this.handleSelectDoubleAttack(id, {
           first: payload.slot,
           second: payload.fusionSecondSlot,
