@@ -1494,4 +1494,170 @@ test('#495 impl: chargeOrbRenderX null guard — returns null when handle is nul
   await closeBattle(h);
 });
 
+// ── #505 charge-miss orb direction scenarios ────────────────────────────────
+// These lock in the fix for the hardcoded +300 off-target X in handleChargeMiss.
+// Root cause: `from.x + 300` always flew rightward; for PLAYER (at x=768) that
+// means behind the attacker (toward x=1068), not toward OPPONENT (at x=256).
+// Fix: `facing * 300` where facing = Math.sign(OPPONENT_X - PLAYER_X) = -1.
+//
+// Hook: `window.__lastChargeMiss.offTargetX` is exposed by handleChargeMiss at
+// BattleScene.ts:1055 (unchanged by the fix — only the value written changes).
+//
+// Constants:
+//   PLAYER_X   = 768
+//   OPPONENT_X = 256
+//   facing (player-as-attacker)   = Math.sign(256 - 768) = -1
+//   facing (opponent-as-attacker) = Math.sign(768 - 256) = +1
+
+// ── #505 Scenario 17: player miss offTargetX < PLAYER_X (toward opponent) ────
+
+test('#505 charge-miss: player miss offTargetX < PLAYER_X (orb heads toward opponent, not behind attacker)', async ({
+  browser,
+}) => {
+  // #505 adversarial: the hardcoded +300 sent the whiff orb to 768+300=1068 —
+  // behind the player character, off-screen right. The fix must produce a value
+  // strictly less than PLAYER_X (768), confirming the facing sign is -1.
+  const PLAYER_X = 768;
+
+  const h = await setupBattle(browser);
+  const { attacker } = await attackerDefender(h.p1, h.p2);
+
+  await waitForMyAttackTurn(attacker);
+
+  // Hold 200ms → miss zone (angle ≈ -30°, outside ±10° hit cone).
+  await attacker.keyboard.down('1');
+  await attacker.waitForTimeout(200);
+  await attacker.keyboard.up('1');
+
+  // Wait for chargeMiss to confirm the miss path executed.
+  await attacker.waitForFunction(() => ((window as any).__msgs?.chargeMiss?.length ?? 0) >= 1, {
+    timeout: 5000,
+  });
+
+  // Gate: __lastChargeMiss hook must be populated.
+  await attacker.waitForFunction(
+    () => (window as any).__lastChargeMiss?.offTargetX !== undefined,
+    { timeout: 3000 },
+  );
+
+  const offTargetX: number = await attacker.evaluate(
+    () => (window as any).__lastChargeMiss.offTargetX,
+  );
+
+  // Core acceptance criterion: orb flies toward opponent (leftward from PLAYER_X).
+  expect(offTargetX).toBeLessThan(PLAYER_X);
+  // Confirm it is not the pre-fix value (1068) — belt-and-suspenders.
+  expect(offTargetX).toBeLessThan(1000);
+
+  await closeBattle(h);
+});
+
+// ── #505 Scenario 18: opponent miss offTargetX > OPPONENT_X (preserved, rightward) ──
+
+test('#505 charge-miss: opponent miss offTargetX > OPPONENT_X (orb heads toward player — existing correct behavior preserved)', async ({
+  browser,
+}) => {
+  // #505 adversarial: the opponent-as-attacker case was "correct by accident"
+  // (256 + 300 = 556, which is toward PLAYER at 768). The fix must not regress
+  // this: facing = Math.sign(768 - 256) = +1, so offTargetX = 256 + 300 = 556.
+  // Assert offTargetX > OPPONENT_X (256) — the orb must head rightward toward player.
+  const OPPONENT_X = 256;
+
+  const h = await setupBattle(browser);
+  const { attacker: p1, defender: p2 } = await attackerDefender(h.p1, h.p2);
+
+  // We need the OPPONENT to be the attacker. Wait for p2's turn.
+  // After p1 taps (no charge), it becomes p2's turn as attacker.
+  await waitForMyAttackTurn(p1);
+  // p1 taps to hand the turn to p2.
+  await p1.keyboard.press('1');
+  await waitForPhase(p2, 'DEFEND_WINDOW', 5000);
+
+  // p2 (opponent) is now defending; after the exchange resolves, p2 becomes attacker.
+  // Wait for ATTACK_SELECT on p2 where p2 is the currentAttackerId.
+  await p2.waitForFunction(
+    () => {
+      const room = (window as any).__room;
+      return (
+        room?.state?.phase === 'ATTACK_SELECT' &&
+        room?.state?.currentAttackerId === room?.sessionId
+      );
+    },
+    { timeout: 15000 },
+  );
+
+  // Collect chargeMiss on p2 side; hold 200ms → miss zone.
+  await collectMessages(p2, 'chargeMiss');
+  await p2.keyboard.down('1');
+  await p2.waitForTimeout(200);
+  await p2.keyboard.up('1');
+
+  await p2.waitForFunction(() => ((window as any).__msgs?.chargeMiss?.length ?? 0) >= 1, {
+    timeout: 5000,
+  });
+
+  await p2.waitForFunction(
+    () => (window as any).__lastChargeMiss?.offTargetX !== undefined,
+    { timeout: 3000 },
+  );
+
+  const offTargetX: number = await p2.evaluate(
+    () => (window as any).__lastChargeMiss.offTargetX,
+  );
+
+  // Opponent orb must travel rightward (toward player) — preserved, not regressed.
+  expect(offTargetX).toBeGreaterThan(OPPONENT_X);
+
+  await closeBattle(h);
+});
+
+// ── #505 Scenario 19: fusion-miss A1 offTargetX < PLAYER_X (fusion path preserves fix) ──
+
+test('#505 charge-miss: fusion-miss on A1 (200ms) — off-target orb still heads toward opponent (offTargetX < PLAYER_X)', async ({
+  browser,
+}) => {
+  // #505 adversarial: the fusion-miss path (A1 misses, A2 tapped) calls the same
+  // handleChargeMiss internally. If the fix only patched the non-fusion branch,
+  // the fusion-miss orb would still fly backward. Confirm the fix covers both paths.
+  const PLAYER_X = 768;
+
+  const h = await setupBattle(browser);
+  const { attacker, defender } = await attackerDefender(h.p1, h.p2);
+
+  await setState(attacker, {
+    elements: { thumb: MUD, a1: WATER, a2: EARTH },
+    uses: { thumb: 3, a1: 3, a2: 3 },
+  });
+  await setState(defender, { hearts: 3 });
+
+  await waitForMyAttackTurn(attacker);
+  await collectMessages(attacker, 'chargeMiss');
+
+  // Drive fusion miss: hold A1 200ms (miss angle), tap A2 while holding.
+  await attacker.keyboard.down('1');
+  await attacker.waitForTimeout(200);
+  await attacker.keyboard.press('2');
+  await attacker.keyboard.up('1');
+
+  // chargeMiss for A1 must fire.
+  await attacker.waitForFunction(() => ((window as any).__msgs?.chargeMiss?.length ?? 0) >= 1, {
+    timeout: 5000,
+  });
+
+  // Gate: hook populated by handleChargeMiss.
+  await attacker.waitForFunction(
+    () => (window as any).__lastChargeMiss?.offTargetX !== undefined,
+    { timeout: 3000 },
+  );
+
+  const offTargetX: number = await attacker.evaluate(
+    () => (window as any).__lastChargeMiss.offTargetX,
+  );
+
+  // Fusion-miss A1: off-target orb must head toward opponent (leftward from PLAYER_X).
+  expect(offTargetX).toBeLessThan(PLAYER_X);
+
+  await closeBattle(h);
+});
+
 }); // end test.describe('charge attack')
