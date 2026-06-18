@@ -170,6 +170,109 @@ Charge attack constants shared between client and server (#491, GDD §6.3). The 
 
 ---
 
+### `shared/oscillation.ts`
+
+Arc-swing formula suite for the charge attack orb animation (#491, GDD §6.3). The orb swings on a constant-angular-velocity arc from −SWEEP_RANGE_DEG to +SWEEP_RANGE_DEG, speeding up on each reversal up to a maximum speed, and used identically client-side (display) and server-side (hit resolution) so the client cannot spoof the release angle. All functions are pure and parameter-based — they accept sweep speed/duration constants as arguments and compute no state.
+
+```ts
+import {
+  sweepIndex,
+  orbAngle,
+  isHitAngle,
+  sharpnessFromSweep,
+  telegraphDuration,
+  sweepHoldMs,
+} from 'shared/oscillation';
+```
+
+#### `sweepIndex`
+
+```ts
+export function sweepIndex(
+  holdMs: number,
+  sweepDurationMs: number,
+  speedup: number,
+  maxSweeps: number,
+): number
+```
+
+Zero-based sweep index the orb is in at `holdMs` of charge. Sweep 0 = first pass (−45°→+45°); each reversal increments the index and speeds up the arc up to `maxSweeps`. Used to compute the orb's playhead position and sharpness tier.
+
+#### `orbAngle`
+
+```ts
+export function orbAngle(
+  holdMs: number,
+  sweepRangeDeg: number,
+  sweepDurationMs: number,
+  speedup: number,
+  maxSweeps: number,
+): number
+```
+
+The orb's angle in degrees at `holdMs` of charge. Range: `[−sweepRangeDeg, +sweepRangeDeg]` (i.e. [−45, +45]). 0° = sweet spot aimed at the opponent. Both server (hit resolution) and client (display) use this function with the same constants to ensure the display and the authoritative result are always in sync.
+
+#### `isHitAngle`
+
+```ts
+export function isHitAngle(
+  holdMs: number,
+  sweepRangeDeg: number,
+  sweepDurationMs: number,
+  hitConeDeg: number,
+  speedup: number,
+  maxSweeps: number,
+): boolean
+```
+
+True when the orb's angle at the release moment is within the hit cone (`|angle| ≤ hitConeDeg`). The sweet spot is 0° (aimed at the opponent), and ±10° cone is the catch window.
+
+#### `sharpnessFromSweep`
+
+```ts
+export function sharpnessFromSweep(
+  holdMs: number,
+  sweepDurationMs: number,
+  speedup: number,
+  maxSweeps: number,
+): number
+```
+
+Sharpness in `{1/3, 2/3, 1.0}` based on sweep index: sweep 0 → 1/3, sweep 1 → 2/3, sweep 2+ → 1.0. A tap (holdMs < CHARGE_THRESHOLD_MS) returns 0 and is handled upstream before this function is called. Used to compute telegraph duration and parry window compression.
+
+#### `telegraphDuration`
+
+```ts
+export function telegraphDuration(
+  sharpnessVal: number,
+  baseTelegraphMs: number,
+  chargeTelegraphMinMs: number,
+): number
+```
+
+Varies from `baseTelegraphMs` (standard, sharpness 0) down to `chargeTelegraphMinMs` (fastest, sharpness 1.0). A tap attack gets the full duration; a maxed charge gets the compressed minimum. Rounded to the nearest millisecond.
+
+#### `sweepHoldMs` (NEW in #493)
+
+```ts
+export function sweepHoldMs(
+  targetSweep: number,
+  releaseDeg: number,
+  baseSweepMs: number,
+  sweepSpeedup: number,
+  sweepRangeDeg: number,
+  maxSweeps: number,
+): number
+```
+
+**Inverse of `orbAngle`.** Given a desired release angle `releaseDeg` (degrees, clamped to ±sweepRangeDeg) and a 1-based `targetSweep`, returns the hold duration (ms) at which the orb reaches that angle within that sweep. The release angle is the angle the orb will be at when `releaseAttack` fires.
+
+Used by the AI to dispatch a charged attack targeting the sweet spot (0°) with Gaussian noise applied to the release angle. The AI samples `releaseDeg = normal(0, profile.chargeReleaseSigmaDeg)` and calls this function to compute the exact `holdMs` at which to schedule the release message so the orb is at the intended angle when the attack lands.
+
+**Example:** `sweepHoldMs(1, 0, 1200, 0.75, 45, 3) = 600ms` — to release at 0° on sweep 1 (the first pass, assuming `BASE_SWEEP_MS=1200` and `SWEEP_SPEEDUP=0.75`), hold for 600 ms.
+
+---
+
 ### `ChargeAttack.ts`
 
 Server-side charge attack formula wrappers (#491, GDD §6.3). Thin wrappers that bind the shared arc-swing functions (`shared/oscillation.ts`) to the server's authoritative constants so callers only import this module. All functions are pure and stateless.
@@ -602,6 +705,30 @@ export function scaleProfileByTier(base: AIProfile, effectiveTier: number, skill
 ```
 
 Returns a new `AIProfile` with `timingSigmaMs`, `lowHeartTimingSigmaMs`, and `elementMistakeProb` scaled by tier and skill. Higher tier and higher skill both reduce timing sigma (sharper AI) and reduce mistake probability. Floors: `timingSigmaMs ≥ 10`, `elementMistakeProb ≥ 0`. Applied to ALL NPC profiles in `BattleRoom` (both bosses and roamers).
+
+### `AIProfile` — Charged Attack Fields (NEW in #493)
+
+The `AIProfile` interface carries four new charge-attack parameters controlling AI behavior on the charged attack path:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `chargeAttemptProb` | `number` (0–1) | Probability the AI chooses a charged attack over a tap on its attack turn. |
+| `targetSweep` | `1 \| 2 \| 3` | Which sweep (1-based; 1=sweep 0) the AI aims to release on. Sweep 1 → sharpness 1/3, sweep 2 → 2/3, sweep 3+ → 1.0. |
+| `chargeReleaseSigmaDeg` | `number` (degrees) | Standard deviation of Gaussian noise applied to the release angle. Sampled as `normal(0, sigma)` to add variance around the targeted sweet spot (0°). |
+| `lowHeartChargeAttemptProb?` | `number` (0–1) | Override for `chargeAttemptProb` when hearts ≤ `lowHeartThreshold` (RESILIENT personality only). |
+| `lowHeartTargetSweep?` | `1 \| 2 \| 3` | Override for `targetSweep` when hearts ≤ `lowHeartThreshold` (RESILIENT personality only). |
+
+**Dispatch mechanism** (`AIController.scheduleAttack`, #493):
+
+When the AI decides to charge (probability `chargeAttemptProb`), `AIController` calls `handleChargeStart`, then schedules a delayed `handleReleaseAttack` via `sweepHoldMs`:
+
+1. Call `room.handleChargeStart(aiId, { slot })`.
+2. Sample `releaseDeg = normal(0, profile.chargeReleaseSigmaDeg)` (Gaussian noise).
+3. Compute `holdMs = sweepHoldMs(targetSweep, releaseDeg, BASE_SWEEP_MS, SWEEP_SPEEDUP, SWEEP_RANGE_DEG, MAX_SWEEPS)`.
+4. Subtract the server back-date offset: `waitMs = max(0, holdMs - CHARGE_THRESHOLD_MS)`.
+5. Schedule `handleReleaseAttack` to fire after `waitMs`, so the server's back-dated timestamp reads the target `holdMs`.
+
+**E2E_FAST fallback:** Under `E2E_FAST=1` (test suite), the AI falls through to the instant-tap path (`handleSelectAttack`) to complete duels deterministically within the test timeout, bypassing the real charge path.
 
 ---
 
