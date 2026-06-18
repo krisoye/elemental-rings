@@ -65,12 +65,14 @@ describe('vsAI: AI is seated and drives the duel', () => {
   });
 
   test('AI attacks unprompted: human idles, phase advances to DEFEND_WINDOW', async () => {
-    const { room } = await joinVsAI('AGGRESSIVE', 999);
+    // RESILIENT has chargeAttemptProb=0.0 and thinkDelayMax=800ms — always taps
+    // so DEFEND_WINDOW is reached reliably without a charge-miss stall.
+    const { room } = await joinVsAI('RESILIENT', 999);
     expect(room.state.currentAttackerId).toBe('AI');
 
-    // Poll until the AI opens a DEFEND_WINDOW (think-delay + optional charge hold).
-    // Under E2E_FAST: total ≈ 20–50ms think + tap/charge; max budget 800ms.
-    for (let i = 0; i < 40 && room.state.phase !== 'DEFEND_WINDOW'; i++) await sleep(20);
+    // Poll until the AI opens a DEFEND_WINDOW (think-delay + tap dispatch).
+    // Budget 60×20ms=1200ms covers RESILIENT's thinkDelayMax (800ms) + dispatch.
+    for (let i = 0; i < 60 && room.state.phase !== 'DEFEND_WINDOW'; i++) await sleep(20);
     expect(room.state.phase).toBe('DEFEND_WINDOW');
     expect(room.state.currentAttackerId).toBe('AI');
     // The AI must pick a real attack slot (a1 or a2), never a defense slot.
@@ -135,13 +137,13 @@ describe('vsAI: duels reach completion deterministically', () => {
   }, 25000);
 
   test('determinism: same aiSeed reproduces the same opening attack slot', async () => {
-    // STATUS_HUNTER has chargeAttemptProb=0.2 — poll until DEFEND_WINDOW so we
-    // capture attackerSlot while it is still set (before the phase clears it).
-    const a = await joinVsAI('STATUS_HUNTER', 77);
+    // DEFENSIVE has chargeAttemptProb=0.0 — always taps so attackerSlot is set
+    // immediately on DEFEND_WINDOW without a charge-miss clearing it to null.
+    const a = await joinVsAI('DEFENSIVE', 77);
     for (let i = 0; i < 20 && a.room.state.phase !== 'DEFEND_WINDOW'; i++) await sleep(100);
     const slotA = a.room.state.attackerSlot;
 
-    const b = await joinVsAI('STATUS_HUNTER', 77);
+    const b = await joinVsAI('DEFENSIVE', 77);
     for (let i = 0; i < 20 && b.room.state.phase !== 'DEFEND_WINDOW'; i++) await sleep(100);
     const slotB = b.room.state.attackerSlot;
 
