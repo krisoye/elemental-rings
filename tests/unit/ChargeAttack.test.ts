@@ -652,6 +652,48 @@ describe('sweepHoldMs — arc-angle inverse (#493)', () => {
     const unclamped = sweepHoldMs(1, SWEEP_RANGE_DEG, BASE_SWEEP_MS, SWEEP_SPEEDUP, SWEEP_RANGE_DEG, MAX_SWEEPS);
     expect(clamped).toBeCloseTo(unclamped, 4);
   });
+
+  test('sweepHoldMs(1, 90, ...) clamps to +45° → returns BASE_SWEEP_MS', () => {
+    // #493 adversarial: 90° is outside the swing range — must clamp to +45°.
+    // spec example: sweepHoldMs(1, 90, 1200, 0.75, 45, 3) → 1200ms (end of sweep 0).
+    expect(sweepHoldMs(1, 90, BASE_SWEEP_MS, SWEEP_SPEEDUP, SWEEP_RANGE_DEG, MAX_SWEEPS)).toBeCloseTo(BASE_SWEEP_MS, 4);
+  });
+
+  test('sweepHoldMs(1, -45, ...) returns 0ms (negative boundary, no clamp needed)', () => {
+    // #493 adversarial: -45° is the exact lower bound — no clamping required and
+    // the formula must not produce a negative holdMs.
+    const holdMs = sweepHoldMs(1, -45, BASE_SWEEP_MS, SWEEP_SPEEDUP, SWEEP_RANGE_DEG, MAX_SWEEPS);
+    expect(holdMs).toBeCloseTo(0, 4);
+    expect(holdMs).toBeGreaterThanOrEqual(0);
+  });
+
+  test('sweepHoldMs(1, -90, ...) clamps to -45° → returns 0ms (negative over-clamping)', () => {
+    // #493 adversarial: -90° is below the swing range — must clamp to -45°, giving 0ms.
+    // Without the clamp, frac would be negative and produce a negative holdMs.
+    const holdMs = sweepHoldMs(1, -90, BASE_SWEEP_MS, SWEEP_SPEEDUP, SWEEP_RANGE_DEG, MAX_SWEEPS);
+    expect(holdMs).toBeCloseTo(0, 4);
+    expect(holdMs).toBeGreaterThanOrEqual(0);
+  });
+
+  test('orbAngle(sweepHoldMs(1, 15, ...)) ≈ 15° (spec example round-trip)', () => {
+    // #493 adversarial: the inverse is used by AIController to compute release timing.
+    // If the round-trip diverges beyond ±0.5°, the AI will consistently miss the
+    // intended angle due to accumulated formula drift.
+    const holdMs = sweepHoldMs(1, 15, BASE_SWEEP_MS, SWEEP_SPEEDUP, SWEEP_RANGE_DEG, MAX_SWEEPS);
+    expect(computeOrbAngle(holdMs)).toBeCloseTo(15, 1); // within ±0.5° (1 decimal)
+  });
+
+  test('sweepHoldMs(1, near-left-edge, ...) produces holdMs < CHARGE_THRESHOLD_MS', () => {
+    // #493 impl: when holdMs < CHARGE_THRESHOLD_MS the AI's scheduleAttack wait
+    // clamps to Math.max(0, holdMs - CHARGE_THRESHOLD_MS) = 0 — the AI fires
+    // immediately after chargeStart. Verify the formula produces a sub-threshold
+    // holdMs for a very small releaseDeg angle (e.g., sweepHoldMs for -44° in
+    // sweep 0 is (~1/90)*1200 ≈ 13ms, well below 150ms).
+    const holdMs = sweepHoldMs(1, -44, BASE_SWEEP_MS, SWEEP_SPEEDUP, SWEEP_RANGE_DEG, MAX_SWEEPS);
+    expect(holdMs).toBeLessThan(CHARGE_THRESHOLD_MS);
+    // Math.max(0, holdMs - CHARGE_THRESHOLD_MS) must be 0 — no negative wait.
+    expect(Math.max(0, holdMs - CHARGE_THRESHOLD_MS)).toBe(0);
+  });
 });
 
 // ── Adversarial: orbAngle end-of-sweep-0 precision ───────────────────────────
