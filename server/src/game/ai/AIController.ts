@@ -5,7 +5,12 @@ import {
   SubmitDefensePayload,
   RechargePayload,
   SlotKey,
+  AttackSlot,
+  ChargeStartPayload,
+  ReleaseAttackPayload,
 } from '../../../../shared/types';
+import { sweepHoldMs } from '../../../../shared/oscillation';
+import { BASE_SWEEP_MS, SWEEP_SPEEDUP, CHARGE_THRESHOLD_MS, SWEEP_RANGE_DEG, MAX_SWEEPS } from '../../../../shared/chargeConstants';
 import { BattleState } from '../../schemas/BattleState';
 import { canDoubleAttack } from '../DoubleAttack';
 import { AI_PROFILES, AIProfile, makeRng, Rng, isLowHearts } from './AIProfiles';
@@ -41,6 +46,10 @@ export interface AIRoomHandle {
   // the controller calls this (the same handler a human's `selectDoubleAttack`
   // message reaches), mirroring how handleSelectAttack is called for a single throw.
   handleSelectDoubleAttack(id: string, payload: SelectDoubleAttackPayload): void;
+  // #493 — AI charged attack. Record hold-start timestamp (same path as human chargeStart).
+  handleChargeStart(id: string, payload: ChargeStartPayload): void;
+  // #493 — AI charged release. Resolves using the stored chargeStart timestamp.
+  handleReleaseAttack(id: string, payload: ReleaseAttackPayload): void;
   handleSubmitDefense(id: string, payload: SubmitDefensePayload): void;
   handleRecharge(id: string, payload: RechargePayload): void;
   handleForfeit(id: string): void;
@@ -278,11 +287,41 @@ export class AIController {
           : { ...this.profile, personality: this.attackPersonality };
       const decision = decideAttack(v, attackProfile, this.rng);
       this.committedElement = decision.committedElement;
+      // #493 — charged attack: send chargeStart, wait until the server's
+      // back-dated timestamp will read the desired holdMs, then release.
+      // handleChargeStart back-dates by CHARGE_THRESHOLD_MS, so rawHoldMs =
+      // (elapsed since our call) + CHARGE_THRESHOLD_MS. To land at the target
+      // holdMs the AI must wait max(0, holdMs - CHARGE_THRESHOLD_MS) after the
+      // chargeStart call.
+      //
+      // E2E_FAST fallback: the server derives holdMs from wall-clock timestamps,
+      // so collapsing the wait under E2E_FAST would always miss. Instead, fall
+      // through to a tap (handleSelectAttack) under E2E_FAST so vsAI duels
+      // complete deterministically in the expected time budget.
+      if (decision.charge) {
+        const slot = decision.slot;
+        if (fast) {
+          // E2E_FAST: use tap path so the test suite can drive full duels in time.
+          this.room.handleSelectAttack(this.aiId, { slot });
+        } else {
+          const targetSweep = decision.charge.targetSweep;
+          this.room.handleChargeStart(this.aiId, { slot });
+          const releaseDeg = this.rng.normal() * this.profile.chargeReleaseSigmaDeg;
+          const holdMs = sweepHoldMs(targetSweep, releaseDeg, BASE_SWEEP_MS, SWEEP_SPEEDUP, SWEEP_RANGE_DEG, MAX_SWEEPS);
+          // Subtract the back-dated offset so the server reads the intended holdMs.
+          const waitMs = Math.max(0, holdMs - CHARGE_THRESHOLD_MS);
+          this.pending = setTimeout(() => {
+            this.pending = null;
+            // holdDuration is ignored by handleReleaseAttack (server derives hold
+            // time from wall-clock timestamps); passed as 0 to avoid confusion.
+            this.room.handleReleaseAttack(this.aiId, { slot, holdDuration: 0 });
+          }, waitMs);
+        }
       // EPIC #268 — when the policy chose a fusion-thumb DOUBLE attack (eligible +
       // favorable; only ever set for a boss hand), fire both orbs via the same
       // server handler a human's `selectDoubleAttack` reaches. Otherwise the normal
       // single-attack path. The server re-validates eligibility and re-clamps gapMs.
-      if (decision.double) {
+      } else if (decision.double) {
         this.room.handleSelectDoubleAttack(this.aiId, decision.double);
       } else {
         this.room.handleSelectAttack(this.aiId, { slot: decision.slot });

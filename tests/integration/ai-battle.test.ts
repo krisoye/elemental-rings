@@ -65,12 +65,14 @@ describe('vsAI: AI is seated and drives the duel', () => {
   });
 
   test('AI attacks unprompted: human idles, phase advances to DEFEND_WINDOW', async () => {
-    const { room } = await joinVsAI('AGGRESSIVE', 999);
+    // RESILIENT has chargeAttemptProb=0.0 and thinkDelayMax=800ms — always taps
+    // so DEFEND_WINDOW is reached reliably without a charge-miss stall.
+    const { room } = await joinVsAI('RESILIENT', 999);
     expect(room.state.currentAttackerId).toBe('AI');
 
-    // Human does nothing. The AI's think-delay (300–600ms) then fires
-    // handleSelectAttack, opening a DEFEND_WINDOW with the AI's chosen ring.
-    await sleep(800);
+    // Poll until the AI opens a DEFEND_WINDOW (think-delay + tap dispatch).
+    // Budget 60×20ms=1200ms covers RESILIENT's thinkDelayMax (800ms) + dispatch.
+    for (let i = 0; i < 60 && room.state.phase !== 'DEFEND_WINDOW'; i++) await sleep(20);
     expect(room.state.phase).toBe('DEFEND_WINDOW');
     expect(room.state.currentAttackerId).toBe('AI');
     // The AI must pick a real attack slot (a1 or a2), never a defense slot.
@@ -135,16 +137,43 @@ describe('vsAI: duels reach completion deterministically', () => {
   }, 25000);
 
   test('determinism: same aiSeed reproduces the same opening attack slot', async () => {
-    const a = await joinVsAI('STATUS_HUNTER', 77);
-    await sleep(1300); // past think-delay → first attack thrown
+    // DEFENSIVE has chargeAttemptProb=0.0 — always taps so attackerSlot is set
+    // immediately on DEFEND_WINDOW without a charge-miss clearing it to null.
+    const a = await joinVsAI('DEFENSIVE', 77);
+    for (let i = 0; i < 20 && a.room.state.phase !== 'DEFEND_WINDOW'; i++) await sleep(100);
     const slotA = a.room.state.attackerSlot;
 
-    const b = await joinVsAI('STATUS_HUNTER', 77);
-    await sleep(1300);
+    const b = await joinVsAI('DEFENSIVE', 77);
+    for (let i = 0; i < 20 && b.room.state.phase !== 'DEFEND_WINDOW'; i++) await sleep(100);
     const slotB = b.room.state.attackerSlot;
 
     expect(['a1', 'a2']).toContain(slotA);
     expect(slotA).toBe(slotB);
+  });
+});
+
+describe('vsAI: E2E_FAST charge fallback (#493)', () => {
+  test('AGGRESSIVE AI under E2E_FAST=1 uses tap path (reaches DEFEND_WINDOW without stalling)', async () => {
+    // #493 adversarial: when E2E_FAST=1, the AI must fall back from chargeStart
+    // to handleSelectAttack (tap). If chargeStart were dispatched under E2E_FAST,
+    // the AI would wait for wall-clock time to elapse before releasing — exceeding
+    // the vsAI duel timeout and causing flaky test failures.
+    // AGGRESSIVE always charges (chargeAttemptProb=1.0), so it is the ideal
+    // persona to verify the E2E_FAST fallback fires a tap instead of holding.
+    const origFast = process.env.E2E_FAST;
+    process.env.E2E_FAST = '1';
+    try {
+      const { room } = await joinVsAI('AGGRESSIVE', 5678);
+      // Under E2E_FAST, think delay is 20–50ms. Allow 30×20ms = 600ms for the tap.
+      for (let i = 0; i < 30 && room.state.phase !== 'DEFEND_WINDOW'; i++) await sleep(20);
+      // The room must enter DEFEND_WINDOW — a charge stall would leave it in ATTACK_SELECT.
+      expect(room.state.phase).toBe('DEFEND_WINDOW');
+      // The attacker slot must be a1 or a2 (tap dispatch sets attackerSlot).
+      expect(['a1', 'a2']).toContain(room.state.attackerSlot);
+    } finally {
+      if (origFast === undefined) delete process.env.E2E_FAST;
+      else process.env.E2E_FAST = origFast;
+    }
   });
 });
 
