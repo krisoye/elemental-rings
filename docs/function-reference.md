@@ -152,7 +152,7 @@ Charge attack constants shared between client and server (#491, GDD §6.3). The 
 
 | Constant | Type | Value | Description |
 |----------|------|-------|-------------|
-| `CHARGE_THRESHOLD_MS` | `number` | 150 | Hold below this duration is classified as an instant tap (no arc swing, always horizontal, always hits). Used as the deferred-threshold timer duration on the client. |
+| `CHARGE_THRESHOLD_MS` | `number` | 450 | Hold below this duration is classified as an instant tap (no arc swing, always horizontal, always hits). Used as the deferred-threshold timer duration on the client. Raised from 150 ms (#506) to absorb the guaranteed-miss dead zone below the first hit-cone entry (~467 ms). |
 | `MAX_CHARGE_MS` | `number` | 3000 | Maximum hold duration tracked by the server (clamped). Beyond this the sweep speed/sharpness stay at max. |
 | `CHARGE_TELEGRAPH_MIN_MS_PROD` | `number` | 500 | Production telegraph duration at maximum sharpness. Server re-exports as `CHARGE_TELEGRAPH_MIN_MS`; E2E_FAST shortens this to 80 ms server-side only. |
 | `SWEEP_RANGE_DEG` | `number` | 45 | Half-sweep angle: orb swings from −45° to +45° (90° total arc). |
