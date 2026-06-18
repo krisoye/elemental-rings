@@ -6,14 +6,22 @@
 // must be reflected here as well.
 //
 // NOTE: CHARGE_TELEGRAPH_MIN_MS is NOT here because the server's value is
-// environment-dependent (shortened under E2E_FAST). The client always uses the
-// PRODUCTION value (500 ms) — the server's compressed window is authoritative for
-// timing; the client just renders the orb fly animation at the standard telegraph.
-// The server broadcasts impact timing via its own window, so the client animation
-// only needs the production value for a realistic display.
+// environment-dependent (shortened under E2E_FAST). The client receives the real
+// telegraph duration via state.telegraphMs (broadcast by the server); the client
+// animation only needs this production value for display when no server value is
+// available yet.
 
-/** Hold below this threshold → instant tap (no arc swing, always horizontal). */
-export const CHARGE_THRESHOLD_MS = 150;
+/**
+ * Hold below this threshold → instant tap (no arc swing, always horizontal).
+ *
+ * Raised from 150 ms → 450 ms (#506) to eliminate the guaranteed-miss dead zone.
+ * The arc's hit cone first becomes reachable at ~467 ms into the sweep
+ * (BASE_SWEEP_MS × (SWEEP_RANGE_DEG − HIT_CONE_DEG) / (2 × SWEEP_RANGE_DEG) ≈ 467 ms).
+ * At 150 ms any hold of 150–467 ms was a guaranteed miss — well within a natural
+ * firm-press range. At 450 ms the tap window absorbs that dead zone and charge
+ * holds immediately offer a real hit opportunity (450 < 467 ✓).
+ */
+export const CHARGE_THRESHOLD_MS = 450;
 /** Hold duration at which sharpness clamps to 1.0 (3 s full charge). */
 export const MAX_CHARGE_MS = 3000;
 /** Production telegraph minimum (500 ms at max charge). */
