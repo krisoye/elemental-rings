@@ -1026,9 +1026,9 @@ test('#495 arc-direction: player chargeOrbRenderX is always < 708 (pivot) across
 
   await waitForMyAttackTurn(attacker);
 
-  // Hold past threshold so beginCharge runs and the arc orb spawns.
+  // Hold past threshold (450ms) so beginCharge runs and the arc orb spawns.
   await attacker.keyboard.down('1');
-  await attacker.waitForTimeout(400);
+  await attacker.waitForTimeout(550);
 
   // Gate: wait until chargeOrbRenderX is non-null (orb alive).
   await attacker.waitForFunction(
@@ -1076,7 +1076,7 @@ test('#495 arc-direction: opponentChargeOrbRenderX is always > 316 (pivot) on de
   await collectMessages(defender, 'chargeOrbStart');
 
   await attacker.keyboard.down('1');
-  await attacker.waitForTimeout(400);
+  await attacker.waitForTimeout(550);
 
   // Gate: chargeOrbStart received by defender (orb spawned on opponent side).
   await defender.waitForFunction(() => ((window as any).__msgs?.chargeOrbStart?.length ?? 0) >= 1, {
@@ -1127,7 +1127,7 @@ test('#495 arc-direction: at same |angle|, player leftward displacement equals o
   await collectMessages(defender, 'chargeOrbStart');
 
   await attacker.keyboard.down('1');
-  await attacker.waitForTimeout(400);
+  await attacker.waitForTimeout(550);
 
   await defender.waitForFunction(() => ((window as any).__msgs?.chargeOrbStart?.length ?? 0) >= 1, {
     timeout: 8000,
@@ -1176,20 +1176,30 @@ test('#495 arc-direction: at same |angle|, player leftward displacement equals o
 
 // ── Arc-direction Scenario 4: sweet spot (0°) is MAXIMAL extent toward opponent ──
 
-test('#495 arc-direction: at 0° sweet spot (~600ms), player renderX is more extreme (farther left) than at ±45° extremes', async ({
+test('#495 arc-direction: at 0° sweet spot (~600ms from keydown), player renderX is more extreme (farther left) than at +30° (~1000ms from keydown)', async ({
   browser,
 }) => {
   // #495 adversarial: the facing-sign inversion must make the orb reach its
-  // LEFTMOST position at 0° (cos(0)=1, max displacement), not be at rest
-  // at the player X. At ±45°, cos(45°)≈0.707 so renderX≈665.6 — LESS extreme.
+  // LEFTMOST position at 0° (cos(0°)=1, max displacement ≈ 648px), not at rest
+  // at the player X. At +30°, cos(30°)≈0.866 so renderX≈656 — LESS extreme.
+  //
+  // After #506, chargeHoldStart is back-dated by CHARGE_THRESHOLD_MS (450ms), so
+  // the orb animation is referenced from keydown (T0). The early sweep angles
+  // (−45°..−11.25°) happen before the orb spawns and are not observable. The first
+  // observable angle is ≈ −11.25° at the moment the orb appears (~450ms from keydown).
+  // We sample from two post-spawn positions:
+  //   sweet spot: holdMs ≈ 600ms from keydown → angle ≈  0°   → renderX ≈ 648
+  //   late point: holdMs ≈ 1000ms from keydown → angle ≈ +30° → renderX ≈ 656
+  // The sweet-spot renderX must be at least 5px farther left (smaller) than the
+  // late-point renderX.
   const h = await setupBattle(browser);
   const { attacker } = await attackerDefender(h.p1, h.p2);
 
   await waitForMyAttackTurn(attacker);
 
-  // Hold past threshold so orb spawns.
+  // Hold past threshold (450ms) so beginCharge fires and orb spawns.
   await attacker.keyboard.down('1');
-  await attacker.waitForTimeout(300);
+  await attacker.waitForTimeout(550); // ~550ms from keydown — orb is now alive
 
   await attacker.waitForFunction(
     () => (window as any).__scene?.chargeOrbRenderX !== null &&
@@ -1197,27 +1207,29 @@ test('#495 arc-direction: at 0° sweet spot (~600ms), player renderX is more ext
     { timeout: 8000 },
   );
 
-  // Sample renderX near start of sweep (angle ≈ -30° to -10°, cos ≈ 0.87–0.97).
-  const earlyRx: number | null = await attacker.evaluate(
-    () => (window as any).__scene?.chargeOrbRenderX ?? null,
-  );
-
-  // Continue hold to ~600ms total (sweet-spot, angle ≈ 0°, cos≈1, renderX≈648).
-  await attacker.waitForTimeout(300); // 600ms total from key down
+  // Advance to sweet-spot: need ~600ms total from keydown; already at ~550ms.
+  // Wait another 50ms to land near 0° (±30ms jitter tolerance is fine — the
+  // cone is ±10° ≈ ±133ms wide, so 600ms ± a few frames is solidly in-cone).
+  await attacker.waitForTimeout(50); // ≈ 600ms total from keydown
 
   const sweetSpotRx: number | null = await attacker.evaluate(
     () => (window as any).__scene?.chargeOrbRenderX ?? null,
   );
 
+  // Advance to late sweep point: ~1000ms from keydown = +400ms more.
+  // angle = −45 + (1000/1200)*90 ≈ +30° → renderX ≈ 708 − 60*cos(30°) ≈ 656.
+  await attacker.waitForTimeout(400);
+
+  const lateRx: number | null = await attacker.evaluate(
+    () => (window as any).__scene?.chargeOrbRenderX ?? null,
+  );
+
   await attacker.keyboard.up('1');
 
-  // At sweet spot, renderX should be ~648 (furthest left = minimum x).
-  // This must be less than renderX near the extremes (which is closer to 708).
-  if (earlyRx !== null && sweetSpotRx !== null) {
-    // 0° → renderX ≈ 648; ±30°–45° → renderX ≈ 656–666.
-    // Sweet spot must be at least 1px farther left than early-sweep reading.
-    expect(sweetSpotRx).toBeLessThanOrEqual(earlyRx);
-    // Confirm approximate value: 648 ± 12px (tolerance for timing jitter).
+  // Sweet spot (0°) must be at least 5px farther left (smaller x) than late (+30°).
+  if (sweetSpotRx !== null && lateRx !== null) {
+    expect(sweetSpotRx).toBeLessThanOrEqual(lateRx - 5);
+    // Confirm approximate value for sweet spot: renderX ≈ 648 ± 12px.
     expect(sweetSpotRx).toBeLessThan(662);
     expect(sweetSpotRx).toBeGreaterThan(636);
   }
