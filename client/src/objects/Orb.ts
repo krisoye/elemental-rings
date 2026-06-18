@@ -41,9 +41,9 @@ export interface IdleOrbHandle {
 
 /**
  * Visual-only orb telegraph. Launches one or more colored orbs from `from` to
- * `to` over TELEGRAPH_MS, then flashes an impact pulse over BLOCK_WINDOW_MS. The
- * timing mirrors the server's authoritative window purely so the animation lines
- * up — the server, not this animation, decides the block outcome.
+ * `to` over `durationMs` (defaults to TELEGRAPH_MS), then flashes an impact pulse
+ * over BLOCK_WINDOW_MS. The timing mirrors the server's authoritative window purely
+ * so the animation lines up — the server, not this animation, decides the block outcome.
  */
 export class Orb {
   /**
@@ -125,8 +125,10 @@ export class Orb {
     elements: number[],
     from: { x: number; y: number },
     to: { x: number; y: number },
+    durationMs: number = TELEGRAPH_MS,
   ): OrbHandle {
     window.__orbLaunchCount = (window.__orbLaunchCount ?? 0) + 1;
+    window.__lastOrbDurationMs = durationMs;
     // Track this launch's circles + travel tweens so the orb can be dispersed
     // mid-flight (parry-disperse). Once an orb impacts, its entry is cleared.
     const circles: Phaser.GameObjects.Arc[] = [];
@@ -141,7 +143,7 @@ export class Orb {
         targets: orb,
         x: to.x,
         y: to.y + offset,
-        duration: TELEGRAPH_MS,
+        duration: durationMs,
         ease: 'Linear',
         onComplete: () => {
           orb.destroy();
