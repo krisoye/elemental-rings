@@ -1244,15 +1244,18 @@ test('#495 arc-direction: minimum chargeOrbRenderX across a full sweep ≈ 648 a
   expect(samples.length).toBeGreaterThanOrEqual(5);
 
   const minRx = Math.min(...samples);
-  const lastRx = samples[samples.length - 1];
+  const maxRx = Math.max(...samples);
 
   // (a) Min renderX ≈ 648 ± 10px: confirms orb reaches cos(0°)=1 peak leftward.
   expect(minRx).toBeGreaterThan(638); // 648 − 10
   expect(minRx).toBeLessThan(658);    // 648 + 10
 
-  // (b) Min is at least 6px farther left than the last sample (a later, larger angle).
-  // At ~+22.5° the last sample is ≈ 654; min ≈ 648 → margin ≈ 6px.
-  expect(minRx).toBeLessThanOrEqual(lastRx - 6);
+  // (b) The sweet-spot minimum is meaningfully farther left than the orb's rightmost
+  // sampled extent — proves the orb actually sweeps (not stuck at 0°) AND that the
+  // 0° peak is the leftmost point. Using max (not last) is deterministic regardless
+  // of which angle the final sample lands on; the orb always reaches a large-angle
+  // extreme during the sweep (max renderX ≈ 656–666 at ±22.5°–±45°).
+  expect(minRx).toBeLessThanOrEqual(maxRx - 6);
 });
 
 // ── Arc-direction Scenario 5: null before charge starts and after orb disperses ──
