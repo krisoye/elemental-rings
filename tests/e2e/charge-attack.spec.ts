@@ -336,14 +336,15 @@ test('chargeMiss on a miss-zone hold: broadcast reaches DEFENDER (not just attac
 
 // ── Scenario 6: HIT path — sweep-0 sweet spot, defend phase opens ─────────────────
 
-test('hold A1 at sweet spot (~BASE_SWEEP_MS/2 = 600ms): no chargeMiss, defend phase opens, defender heart lost on no-block', async ({
+test('hold A1 at sweet spot (~CHARGE_ARM_MS + BASE_SWEEP_MS/2 = 850ms): no chargeMiss, defend phase opens, defender heart lost on no-block', async ({
   browser,
 }) => {
   const h = await setupBattle(browser);
   const { attacker, defender } = await attackerDefender(h.p1, h.p2);
 
-  // #491: 600ms hold → angle ≈ 0° (sweep-0 midpoint) = sweet spot = guaranteed hit.
-  // Hit cone ±10°/90° × 600ms = ±133ms jitter tolerance; 600ms is well-centered.
+  // #499: 850ms hold = CHARGE_ARM_MS(250) + BASE_SWEEP_MS/2(600) → angle ≈ 0° (first post-arm 0°-crossing).
+  // Old 600ms is now mid-arm-leg/early-sweep (~18.75° → outside ±10° cone → miss).
+  // Hit cone ±10°/90° × 1200ms = ±133ms jitter tolerance; 850ms is well-centered.
   await setState(defender, { hearts: 3 });
   await waitForMyAttackTurn(attacker);
   await collectMessages(attacker, 'chargeMiss');
@@ -359,7 +360,7 @@ test('hold A1 at sweet spot (~BASE_SWEEP_MS/2 = 600ms): no chargeMiss, defend ph
   );
 
   await attacker.keyboard.down('1');
-  await attacker.waitForTimeout(600);
+  await attacker.waitForTimeout(850);
   await attacker.keyboard.up('1');
 
   await waitForPhase(defender, 'DEFEND_WINDOW', 5000);
@@ -582,7 +583,7 @@ test('fusion A1 at post-arm MISS angle (~1100ms) + tap A2: chargeMiss for A1, A2
 
 // ── Scenario 10: fusion HIT on A1 + tap A2 → doubleAttackStart broadcast ─────────────
 
-test('fusion A1 at sweet spot (600ms) + tap A2: both orbs fire, doubleAttackStart broadcast', async ({
+test('fusion A1 at sweet spot (850ms) + tap A2: both orbs fire, doubleAttackStart broadcast', async ({
   browser,
 }) => {
   const h = await setupBattle(browser);
@@ -601,9 +602,10 @@ test('fusion A1 at sweet spot (600ms) + tap A2: both orbs fire, doubleAttackStar
   const a2Before = await myUses(attacker, 'a2');
   const thumbBefore = await myUses(attacker, 'thumb');
 
-  // Hold A1 600ms (sweet spot, ~0°) then tap A2 while held.
+  // Hold A1 850ms (sweet spot, ~0° — CHARGE_ARM_MS(250) + BASE_SWEEP_MS/2(600)) then tap A2.
+  // #499: 600ms is now outside the hit cone (~18.75°); 850ms is the first post-arm 0°-crossing.
   await attacker.keyboard.down('1');
-  await attacker.waitForTimeout(600);
+  await attacker.waitForTimeout(850);
   await attacker.keyboard.press('2');
   await attacker.keyboard.up('1');
 
