@@ -1523,6 +1523,7 @@ test('#505 charge-miss: player miss offTargetX < PLAYER_X (orb heads toward oppo
   const { attacker } = await attackerDefender(h.p1, h.p2);
 
   await waitForMyAttackTurn(attacker);
+  await collectMessages(attacker, 'chargeMiss');
 
   // Hold 200ms → miss zone (angle ≈ -30°, outside ±10° hit cone).
   await attacker.keyboard.down('1');
@@ -1679,6 +1680,7 @@ test('#505 impl: player miss offTargetX is exactly PLAYER_X + facing*300 (magnit
   const { attacker } = await attackerDefender(h.p1, h.p2);
 
   await waitForMyAttackTurn(attacker);
+  await collectMessages(attacker, 'chargeMiss');
 
   // Hold 200ms → miss zone.
   await attacker.keyboard.down('1');
@@ -1688,7 +1690,6 @@ test('#505 impl: player miss offTargetX is exactly PLAYER_X + facing*300 (magnit
   await attacker.waitForFunction(() => ((window as any).__msgs?.chargeMiss?.length ?? 0) >= 1, {
     timeout: 5000,
   });
-  await collectMessages(attacker, 'chargeMiss');
 
   await attacker.waitForFunction(
     () => (window as any).__lastChargeMiss?.offTargetX !== undefined,
