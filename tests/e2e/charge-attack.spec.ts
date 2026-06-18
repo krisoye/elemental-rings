@@ -1540,26 +1540,25 @@ test('#506 regression: ~300ms hold (formerly dead-zone miss) now routes as tap �
   await closeBattle(h);
 });
 
-// ── #506 Regression 2: 449ms hold (one ms below threshold) is still a tap ───────
+// ── #506 Regression 2: 350ms hold (former dead-zone) classifies as tap ───────────
 
-test('#506 boundary: 449ms hold (1ms below threshold) classifies as tap — no chargeMiss, DEFEND_WINDOW opens', async ({
+test('#506 boundary: 350ms hold (formerly dead-zone) classifies as tap — no chargeMiss, DEFEND_WINDOW opens', async ({
   browser,
 }) => {
-  // #506 adversarial: 449ms is just below CHARGE_THRESHOLD_MS=450ms. The server
-  // comparison is `holdMs < CHARGE_THRESHOLD_MS` (strict less-than). If the boundary
-  // were inclusive (≤) or off-by-one, this hold would incorrectly enter the charge
-  // arc path and likely produce a chargeMiss (orb at ≈−0.75°, inside cone but intent
-  // is tap). Lock in strict < semantics at the boundary.
+  // #506 adversarial: 350ms is well inside the old dead zone (150–467ms) and
+  // 100ms below CHARGE_THRESHOLD_MS=450ms — a comfortable margin against event-loop
+  // jitter. The 1ms-boundary assertion (449ms) is covered deterministically by the
+  // unit test `computeSweepIndex(449)`. Here we prove the dead-zone closes: a hold
+  // that previously guaranteed a miss now routes as a tap and always hits.
   const h = await setupBattle(browser);
   const { attacker, defender } = await attackerDefender(h.p1, h.p2);
 
   await waitForMyAttackTurn(attacker);
   await collectMessages(attacker, 'chargeMiss');
 
-  // 449ms: just below threshold — wall-clock jitter on CI may land this at 450ms,
-  // so this test exercises the boundary but is not a microsecond-precision assertion.
+  // 350ms: solidly below 450ms threshold and inside the old dead zone (150–467ms).
   await attacker.keyboard.down('1');
-  await attacker.waitForTimeout(449);
+  await attacker.waitForTimeout(350);
   await attacker.keyboard.up('1');
 
   // The hold is sub-threshold: tap path, no miss.
