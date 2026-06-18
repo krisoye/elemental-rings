@@ -1806,8 +1806,11 @@ test('#504 impl: combo orb-2 (fusion double-attack) launches at tap-speed TELEGR
     () => (window as any).__lastOrbDurationMs ?? null,
   );
 
-  // __lastOrbDurationMs must be TELEGRAPH_MS: orb-2 launched at tap-speed default.
-  const expectedTelegraphMs = (process.env.E2E_FAST !== '0') ? 150 : 900;
+  // __lastOrbDurationMs must be 900 (client TELEGRAPH_MS, unconditionally production):
+  // orb-2 launches via handleDoubleAttackStart's Orb.launch with no durationMs arg →
+  // uses the client-side default (client/src/Constants.ts TELEGRAPH_MS = 900, NOT
+  // E2E_FAST-shortened). Only taps read the shortened value via state.telegraphMs.
+  const expectedTelegraphMs = 900;
   expect(lastOrbDurationMs).toBe(expectedTelegraphMs);
 
   await closeBattle(h);
