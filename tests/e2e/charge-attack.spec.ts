@@ -648,9 +648,10 @@ test('fusion charge with ineligible hand (non-fusion thumb): fusionSecondSlot ig
   const thumbBefore = await myUses(attacker, 'thumb');
   const a2Before = await myUses(attacker, 'a2');
 
-  // Hold A1 200ms (miss angle) then tap A2 (ineligible fusion attempt).
+  // Hold A1 1100ms (post-arm miss zone — ≥ CHARGE_ARM_MS=250ms) then tap A2 (ineligible fusion attempt).
+  // #499: 200ms would now be inside the grace window (tap path, no chargeMiss).
   await attacker.keyboard.down('1');
-  await attacker.waitForTimeout(200);
+  await attacker.waitForTimeout(1100);
   await attacker.keyboard.press('2');
   await attacker.keyboard.up('1');
 
