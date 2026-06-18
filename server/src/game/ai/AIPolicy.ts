@@ -175,12 +175,14 @@ function weakDefenseSlot(
  */
 export function decideAttack(view: BoardView, profile: AIProfile, rng: Rng): AttackDecision {
   // #493 — charge branch: outermost gate, skips double-attack path entirely.
-  // Guard on > 0 avoids consuming an RNG draw for non-charging personas.
+  // Guard on > 0 avoids consuming an RNG draw for non-charging personas (prob=0).
+  // Fast path on >= 1.0 avoids an unnecessary draw for always-charging personas
+  // (e.g. AGGRESSIVE) so the RNG stream stays consistent regardless of prob value.
   const low = isLowHearts(profile, view.hearts);
   const chargeProb = low && profile.lowHeartChargeAttemptProb !== undefined
     ? profile.lowHeartChargeAttemptProb
     : profile.chargeAttemptProb;
-  if (chargeProb > 0 && rng.next() < chargeProb) {
+  if (chargeProb > 0 && (chargeProb >= 1.0 || rng.next() < chargeProb)) {
     const single = singleAttackDecision(view, profile, rng);
     const targetSweep = low && profile.lowHeartTargetSweep !== undefined
       ? profile.lowHeartTargetSweep
