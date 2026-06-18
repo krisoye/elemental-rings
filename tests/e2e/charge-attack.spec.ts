@@ -1665,9 +1665,9 @@ test('#505 charge-miss: player miss offTargetX < PLAYER_X (orb heads toward oppo
   await waitForMyAttackTurn(attacker);
   await collectMessages(attacker, 'chargeMiss');
 
-  // Hold 200ms → miss zone (angle ≈ -30°, outside ±10° hit cone).
+  // Hold 900ms → miss zone (angle ≈ +22.5°, outside ±10° hit cone; ≥450ms threshold).
   await attacker.keyboard.down('1');
-  await attacker.waitForTimeout(200);
+  await attacker.waitForTimeout(900);
   await attacker.keyboard.up('1');
 
   // Wait for chargeMiss to confirm the miss path executed.
@@ -1727,10 +1727,10 @@ test('#505 charge-miss: opponent miss offTargetX > OPPONENT_X (orb heads toward 
     { timeout: 15000 },
   );
 
-  // Collect chargeMiss on p2 side; hold 200ms → miss zone.
+  // Collect chargeMiss on p2 side; hold 900ms → miss zone (≥450ms threshold, angle ≈ +22.5°).
   await collectMessages(p2, 'chargeMiss');
   await p2.keyboard.down('1');
-  await p2.waitForTimeout(200);
+  await p2.waitForTimeout(900);
   await p2.keyboard.up('1');
 
   await p2.waitForFunction(() => ((window as any).__msgs?.chargeMiss?.length ?? 0) >= 1, {
@@ -1774,9 +1774,9 @@ test('#505 charge-miss: fusion-miss on A1 (200ms) — off-target orb still heads
   await waitForMyAttackTurn(attacker);
   await collectMessages(attacker, 'chargeMiss');
 
-  // Drive fusion miss: hold A1 200ms (miss angle), tap A2 while holding.
+  // Drive fusion miss: hold A1 900ms (miss angle, ≥450ms threshold, angle ≈ +22.5°), tap A2 while holding.
   await attacker.keyboard.down('1');
-  await attacker.waitForTimeout(200);
+  await attacker.waitForTimeout(900);
   await attacker.keyboard.press('2');
   await attacker.keyboard.up('1');
 
@@ -1822,9 +1822,9 @@ test('#505 impl: player miss offTargetX is exactly PLAYER_X + facing*300 (magnit
   await waitForMyAttackTurn(attacker);
   await collectMessages(attacker, 'chargeMiss');
 
-  // Hold 200ms → miss zone.
+  // Hold 900ms → miss zone (≥450ms threshold, angle ≈ +22.5°, outside ±10° hit cone).
   await attacker.keyboard.down('1');
-  await attacker.waitForTimeout(200);
+  await attacker.waitForTimeout(900);
   await attacker.keyboard.up('1');
 
   await attacker.waitForFunction(() => ((window as any).__msgs?.chargeMiss?.length ?? 0) >= 1, {
