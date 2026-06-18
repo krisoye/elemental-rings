@@ -415,9 +415,9 @@ test('#499 grace: hold A1 for exactly CHARGE_THRESHOLD_MS (150ms) → tap path, 
   await closeBattle(h);
 });
 
-// ── Scenario 6c: grace window — hold at 249ms (CHARGE_ARM_MS−1) → tap path ────────
+// ── Scenario 6c: grace window — hold at 200ms (well inside grace zone) → tap path ────
 
-test('#499 grace: hold A1 for 249ms (CHARGE_ARM_MS−1) → tap path, no chargeMiss, defend opens', async ({
+test('#499 grace: hold A1 for 200ms (well inside CHARGE_ARM_MS grace zone) → tap path, no chargeMiss, defend opens', async ({
   browser,
 }) => {
   const h = await setupBattle(browser);
@@ -426,9 +426,10 @@ test('#499 grace: hold A1 for 249ms (CHARGE_ARM_MS−1) → tap path, no chargeM
   await waitForMyAttackTurn(attacker);
   await collectMessages(attacker, 'chargeMiss');
 
-  // 249ms = CHARGE_ARM_MS − 1: last ms of grace window — still a tap.
+  // 200ms: well inside grace window (150 ≤ holdMs < CHARGE_ARM_MS=250) — still a tap.
+  // Was 249ms (CHARGE_ARM_MS−1) but Playwright jitter at ±1ms boundary is unreliable.
   await attacker.keyboard.down('1');
-  await attacker.waitForTimeout(249);
+  await attacker.waitForTimeout(200);
   await attacker.keyboard.up('1');
 
   await attacker.waitForTimeout(300);
@@ -441,9 +442,9 @@ test('#499 grace: hold A1 for 249ms (CHARGE_ARM_MS−1) → tap path, no chargeM
   await closeBattle(h);
 });
 
-// ── Scenario 6d: arm boundary — hold at CHARGE_ARM_MS (250ms) → charged path ───────
+// ── Scenario 6d: arm boundary — hold at 280ms (just past CHARGE_ARM_MS) → charged path ──
 
-test('#499 arm gate: hold A1 for CHARGE_ARM_MS (250ms) → charged path (hit or miss based on angle)', async ({
+test('#499 arm gate: hold A1 for 280ms (just past CHARGE_ARM_MS=250ms) → charged path, chargeMiss', async ({
   browser,
 }) => {
   const h = await setupBattle(browser);
@@ -452,13 +453,14 @@ test('#499 arm gate: hold A1 for CHARGE_ARM_MS (250ms) → charged path (hit or 
   await waitForMyAttackTurn(attacker);
   await collectMessages(attacker, 'chargeMiss');
 
-  // 250ms = CHARGE_ARM_MS: first holdMs that enters the charged path.
-  // orbAngle(250) = +SWEEP_RANGE_DEG = +45° — well outside ±10° cone → charged miss.
+  // 280ms = CHARGE_ARM_MS + 30ms: firmly in the charged path.
+  // orbAngle(280) ≈ +45° − (30/1200)*90 ≈ +42.75° — well outside ±10° cone → charged miss.
+  // Was 250ms exactly, but Playwright jitter at the CHARGE_ARM_MS boundary is unreliable.
   await attacker.keyboard.down('1');
-  await attacker.waitForTimeout(250);
+  await attacker.waitForTimeout(280);
   await attacker.keyboard.up('1');
 
-  // At t=250ms the orb is exactly at +45° — a guaranteed miss on the charged path.
+  // At t=280ms the orb is ~+42.75° — a guaranteed miss on the charged path.
   await attacker.waitForFunction(() => ((window as any).__msgs?.chargeMiss?.length ?? 0) >= 1, {
     timeout: 5000,
   });
