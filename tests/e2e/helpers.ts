@@ -18,9 +18,12 @@ const API_URL = 'http://localhost:2568';
 export const E2E_FAST = process.env.E2E_FAST !== '0';
 
 // Server timing (mirrors server/src/game/constants.ts): the defend window opens,
-// impact lands TELEGRAPH_MS later (900ms normal / 150ms fast), and a defense
-// press is classified by |arrival − impact| (≤175 PARRY, ≤200 BLOCK). The waits
-// below are derived so presses arrive just before impact in either mode.
+// impact lands state.telegraphMs later (which equals TELEGRAPH_MS for taps/rallies and
+// compressedTelegraphMs for charged HIT entries — 900ms/150ms tap-normal/fast, and as
+// low as 500ms/80ms at max charge). A defense press is classified by |arrival − impact|
+// (≤175 PARRY, ≤200 BLOCK). The waits below are derived so presses arrive just before
+// impact in either mode — they are tuned for tap/rally timing; charged-HIT timing uses
+// a shorter orb travel duration conveyed via state.telegraphMs (#504).
 
 /**
  * How long to wait after the DEFEND_WINDOW opens before pressing a defense so the
@@ -30,6 +33,9 @@ export const E2E_FAST = process.env.E2E_FAST !== '0';
  * which lands well inside the ±175ms PARRY band in both normal and fast mode.
  * Normal mode ≈ 760ms (the historic 700ms calibration, unchanged); fast mode ≈
  * 30ms (impact at 150ms, latency carries arrival to ~90ms → offset ~−60ms).
+ * NOTE (#504): these waits are calibrated for TAP/RALLY travel duration (TELEGRAPH_MS).
+ * For charged-HIT tests, the travel duration is state.telegraphMs (compressed) — those
+ * tests must compute their own press timing based on the actual compressed value.
  */
 export const DEFEND_BLOCK_WAIT_MS = E2E_FAST ? 30 : 700;
 

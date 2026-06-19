@@ -27,6 +27,7 @@ import {
   PLAYER_Y,
   OPPONENT_X,
   OPPONENT_Y,
+  TELEGRAPH_MS,
   SlotKey,
   ringComponents,
 } from '../Constants';
@@ -898,7 +899,15 @@ export class BattleScene extends Phaser.Scene {
     this.cancelChargeOrb();
 
     this.chargeSlot = slot;
-    this.chargeHoldStart = now;
+    // Back-date by CHARGE_THRESHOLD_MS so the attacker's visual orb animates from
+    // keydown (T0), matching the server's authoritative hit calculation which also
+    // back-dates its chargeStart timestamp by CHARGE_THRESHOLD_MS (BattleRoom.ts:1120).
+    // Without this, the orb would start from T0+CHARGE_THRESHOLD_MS, lagging the
+    // server's angle by ~33.75° at the new 450ms threshold — enough to put the gold
+    // hit-zone glow permanently out of phase with the actual hit window. This also
+    // makes the attacker and defender views consistent: the defender already drives the
+    // opponent orb from the server's back-dated startTime (update() at :1449).
+    this.chargeHoldStart = now - CHARGE_THRESHOLD_MS;
     window.__room!.send('chargeStart', { slot });
 
     // Spawn the oscillating orb in front of the player (toward the opponent, x − IDLE_ORB_RADIUS).
@@ -1494,7 +1503,7 @@ export class BattleScene extends Phaser.Scene {
       const attackerRing = state.attackerSlot ? attackerState?.[state.attackerSlot as SlotKey] : null;
       // Fusion rings show both component colors; base rings show one.
       const elements = attackerRing ? ringComponents(attackerRing) : [0];
-      Orb.launch(this, elements, from, to);
+      Orb.launch(this, elements, from, to, state.telegraphMs || TELEGRAPH_MS);
     }
   }
 }

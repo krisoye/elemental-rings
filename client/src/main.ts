@@ -100,6 +100,10 @@ declare global {
     __encounterRematchBoss?: (bossId: string) => void;
     __slotPositions: { x: number; y: number }[];
     __orbLaunchCount: number;
+    // #504 — travel duration (ms) used for the most recent Orb.launch call. Equals
+    // state.telegraphMs (or TELEGRAPH_MS when telegraphMs === 0). Read by E2E to
+    // assert that charged hits produce a compressed orb travel and taps do not.
+    __lastOrbDurationMs?: number;
     // EPIC #264 / #267 — dual-orb telegraph E2E hooks. __lastOrbOutcome records the
     // most recent per-orb combo result (which orb a press answered + its label),
     // null outside a combo. __orbDispersed counts parry-disperse VFX plays (orb 2

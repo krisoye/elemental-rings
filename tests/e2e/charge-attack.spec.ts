@@ -158,7 +158,7 @@ test('tap A1 (< threshold): client sends ONE selectAttack; no chargeStart, no re
   await waitForMyAttackTurn(attacker);
   await spyOnAllSends(attacker);
 
-  // keyboard.press() (~10–40ms) is well below CHARGE_THRESHOLD_CLIENT_MS=150ms.
+  // keyboard.press() (~10–40ms) is well below CHARGE_THRESHOLD_CLIENT_MS=450ms.
   await attacker.keyboard.press('1');
 
   await attacker.waitForFunction(() => ((window as any).__allSends?.selectAttack ?? 0) >= 1, {
@@ -189,9 +189,9 @@ test('chargeOrbStart is broadcast to the DEFENDER (defender visibility contract)
   await collectMessages(defender, 'chargeOrbStart');
   await collectMessages(defender, 'chargeOrbEnd');
 
-  // Hold long enough to arm chargeStart (> 150ms threshold).
+  // Hold long enough to arm chargeStart (> 450ms threshold).
   await attacker.keyboard.down('1');
-  await attacker.waitForTimeout(300);
+  await attacker.waitForTimeout(550);
 
   // chargeOrbStart must arrive at the DEFENDER.
   await defender.waitForFunction(() => ((window as any).__msgs?.chargeOrbStart?.length ?? 0) >= 1, {
@@ -232,9 +232,9 @@ test('chargeOrbStart is broadcast to the ATTACKER too (room.broadcast, not clien
   await waitForMyAttackTurn(attacker);
   await collectMessages(attacker, 'chargeOrbStart');
 
-  // Hold past the 150ms threshold so chargeStart fires.
+  // Hold past the 450ms threshold so chargeStart fires.
   await attacker.keyboard.down('1');
-  await attacker.waitForTimeout(300);
+  await attacker.waitForTimeout(550);
 
   await attacker.waitForFunction(() => ((window as any).__msgs?.chargeOrbStart?.length ?? 0) >= 1, {
     timeout: 5000,
@@ -251,13 +251,15 @@ test('chargeOrbStart is broadcast to the ATTACKER too (room.broadcast, not clien
 
 // ── Scenario 4: MISS path — hold in miss zone, ring −1 use, no defend phase ──────
 
-test('hold A1 at MISS angle (early sweep 0, ~200ms): chargeMiss broadcast, attacker ring −1 use, phase → ATTACK_SELECT', async ({
+test('hold A1 at MISS angle (late sweep 0, ~900ms): chargeMiss broadcast, attacker ring −1 use, phase → ATTACK_SELECT', async ({
   browser,
 }) => {
   const h = await setupBattle(browser);
   const { attacker, defender } = await attackerDefender(h.p1, h.p2);
 
-  // #491: 200ms hold → angle ≈ −30° (outside ±10° cone) = guaranteed miss.
+  // #506: miss zone holds must be ≥ CHARGE_THRESHOLD_MS (450ms) AND outside the hit
+  // cone (±10°). Hit-cone in sweep 0: ~467–733ms. Late miss zone: 733–1200ms.
+  // 900ms → angle = −45 + (900/1200)*90 = +22.5° (well outside ±10° cone).
   await setState(attacker, { uses: { a1: 3 } });
   await setState(defender, { hearts: 3 });
   await waitForMyAttackTurn(attacker);
@@ -266,9 +268,9 @@ test('hold A1 at MISS angle (early sweep 0, ~200ms): chargeMiss broadcast, attac
 
   const usesBeforeA = await myUses(attacker, 'a1');
 
-  // Hold 200ms — well into sweep 0 miss zone (angle ≈ −30°).
+  // Hold 900ms — late sweep-0 miss zone (angle ≈ +22.5°, outside ±10° cone).
   await attacker.keyboard.down('1');
-  await attacker.waitForTimeout(200);
+  await attacker.waitForTimeout(900);
   await attacker.keyboard.up('1');
 
   await attacker.waitForFunction(() => ((window as any).__msgs?.chargeMiss?.length ?? 0) >= 1, {
@@ -314,9 +316,9 @@ test('chargeMiss on a miss-zone hold: broadcast reaches DEFENDER (not just attac
   await waitForMyAttackTurn(attacker);
   await collectMessages(defender, 'chargeMiss');
 
-  // Hold 200ms → miss zone.
+  // Hold 900ms → late sweep-0 miss zone (angle ≈ +22.5°, > threshold, outside cone).
   await attacker.keyboard.down('1');
-  await attacker.waitForTimeout(200);
+  await attacker.waitForTimeout(900);
   await attacker.keyboard.up('1');
 
   await defender.waitForFunction(() => ((window as any).__msgs?.chargeMiss?.length ?? 0) >= 1, {
@@ -421,9 +423,9 @@ test('chargeOrbEnd is broadcast on a MISS release (not only on hit)', async ({
   await waitForMyAttackTurn(attacker);
   await collectMessages(defender, 'chargeOrbEnd');
 
-  // Hold 200ms → miss zone.
+  // Hold 900ms → late sweep-0 miss zone (angle ≈ +22.5°, > threshold, outside cone).
   await attacker.keyboard.down('1');
-  await attacker.waitForTimeout(200);
+  await attacker.waitForTimeout(900);
   await attacker.keyboard.up('1');
 
   await defender.waitForFunction(() => ((window as any).__msgs?.chargeOrbEnd?.length ?? 0) >= 1, {
@@ -438,7 +440,7 @@ test('chargeOrbEnd is broadcast on a MISS release (not only on hit)', async ({
 
 // ── Scenario 9: fusion off-center miss — A1 misses, A2 always hits ─────────────────
 
-test('fusion A1 at MISS angle (200ms) + tap A2: chargeMiss for A1, A2 orb hits, defend phase opens', async ({
+test('fusion A1 at MISS angle (900ms) + tap A2: chargeMiss for A1, A2 orb hits, defend phase opens', async ({
   browser,
 }) => {
   const h = await setupBattle(browser);
@@ -458,9 +460,9 @@ test('fusion A1 at MISS angle (200ms) + tap A2: chargeMiss for A1, A2 orb hits, 
   const a2Before = await myUses(attacker, 'a2');
   const thumbBefore = await myUses(attacker, 'thumb');
 
-  // Drive fusion miss: hold A1 200ms (miss angle), tap A2 while holding.
+  // Drive fusion miss: hold A1 900ms (late miss zone, angle ≈ +22.5°), tap A2 while holding.
   await attacker.keyboard.down('1'); // begin hold on A1
-  await attacker.waitForTimeout(200); // hold past threshold, into miss zone
+  await attacker.waitForTimeout(900); // past threshold (450ms), into late miss zone
   // Tap A2 while A1 is still held (fusion chord).
   await attacker.keyboard.press('2');
   await attacker.keyboard.up('1'); // release A1
@@ -564,9 +566,9 @@ test('fusion charge with ineligible hand (non-fusion thumb): fusionSecondSlot ig
   const thumbBefore = await myUses(attacker, 'thumb');
   const a2Before = await myUses(attacker, 'a2');
 
-  // Hold A1 200ms (miss angle) then tap A2 (ineligible fusion attempt).
+  // Hold A1 900ms (late miss zone, angle ≈ +22.5°) then tap A2 (ineligible fusion attempt).
   await attacker.keyboard.down('1');
-  await attacker.waitForTimeout(200);
+  await attacker.waitForTimeout(900);
   await attacker.keyboard.press('2');
   await attacker.keyboard.up('1');
 
@@ -618,7 +620,7 @@ test('real keyboard tap A1: exactly ONE selectAttack emitted; no releaseAttack, 
 
 // ── Scenario 13: real hold+release — keyboard hold emits chargeStart then ONE releaseAttack ──
 
-test('real keyboard hold A1 (~400ms) then release: one chargeStart, one chargeOrbEnd, one releaseAttack(holdDuration>0)', async ({
+test('real keyboard hold A1 (~550ms) then release: one chargeStart, one chargeOrbEnd, one releaseAttack(holdDuration>0)', async ({
   browser,
 }) => {
   const h = await setupBattle(browser);
@@ -632,7 +634,7 @@ test('real keyboard hold A1 (~400ms) then release: one chargeStart, one chargeOr
   await waitForMyAttackTurn(attacker);
 
   await attacker.keyboard.down('1');
-  await attacker.waitForTimeout(400);
+  await attacker.waitForTimeout(550);
   await attacker.keyboard.up('1');
 
   await attacker.waitForFunction(() => ((window as any).__releaseAttacks?.length ?? 0) >= 1, {
@@ -684,7 +686,7 @@ test('#487 charge orb spawns at PLAYER_X - 60 (in front of player, toward oppone
   await waitForMyAttackTurn(attacker);
 
   await attacker.keyboard.down('1');
-  await attacker.waitForTimeout(300);
+  await attacker.waitForTimeout(550);
 
   await attacker.waitForFunction(
     () => (window as any).__scene?.chargeOrbX !== null && (window as any).__scene?.chargeOrbX !== undefined,
@@ -710,9 +712,9 @@ test('#487 defender-view charge orb spawns at OPPONENT_X + 60 (in front of oppon
   await waitForMyAttackTurn(attacker);
   await collectMessages(defender, 'chargeOrbStart');
 
-  // Hold past threshold so chargeStart fires and defender receives chargeOrbStart.
+  // Hold past threshold (450ms) so chargeStart fires and defender receives chargeOrbStart.
   await attacker.keyboard.down('1');
-  await attacker.waitForTimeout(300);
+  await attacker.waitForTimeout(550);
 
   await defender.waitForFunction(() => ((window as any).__msgs?.chargeOrbStart?.length ?? 0) >= 1, {
     timeout: 8000,
@@ -743,7 +745,7 @@ test('#487 R key during ATTACK_SELECT (when recharge cancelled before hold) does
   await attacker.waitForTimeout(50);
 
   await attacker.keyboard.down('1');
-  await attacker.waitForTimeout(400);
+  await attacker.waitForTimeout(550);
   await attacker.keyboard.up('1');
 
   await attacker.waitForFunction(() => ((window as any).__allSends?.releaseAttack ?? 0) >= 1, {
@@ -771,9 +773,14 @@ test('#487 R key during ATTACK_SELECT (when recharge cancelled before hold) does
 // ── Arc-swing scenarios (#491): 7 new scenarios ─────────────────────────────────
 // These test the new constant-angular-velocity arc model.
 
-// ── Arc Scenario 1: tap (< 150ms) — always hits ───────────────────────────────
+// ── Arc Scenario 1: tap (< 450ms) — always hits ───────────────────────────────
+// #504: tap path sets state.telegraphMs = TELEGRAPH_MS and Orb.launch receives
+// that value → __lastOrbDurationMs === TELEGRAPH_MS (150ms under E2E_FAST).
+// This is a regression lock: if telegraphMs compression bled into the tap path,
+// __lastOrbDurationMs would be < 150 and the orb would arrive before the server
+// expects, breaking defender timing.
 
-test('#491 arc: tap (hold < 150ms) fires instantly horizontal and always hits (no chargeMiss)', async ({
+test('#491 arc: tap (hold < 450ms) fires instantly horizontal and always hits (no chargeMiss)', async ({
   browser,
 }) => {
   const h = await setupBattle(browser);
@@ -782,7 +789,7 @@ test('#491 arc: tap (hold < 150ms) fires instantly horizontal and always hits (n
   await waitForMyAttackTurn(attacker);
   await collectMessages(attacker, 'chargeMiss');
 
-  // keyboard.press() is ~10–40ms — well below 150ms threshold = tap path.
+  // keyboard.press() is ~10–40ms — well below 450ms threshold = tap path.
   await attacker.keyboard.press('1');
 
   // No chargeMiss — tap always hits.
@@ -792,6 +799,17 @@ test('#491 arc: tap (hold < 150ms) fires instantly horizontal and always hits (n
 
   // Defend phase opens (hit).
   await waitForPhase(defender, 'DEFEND_WINDOW', 5000);
+
+  // #504 regression lock: tap orb must travel TELEGRAPH_MS (150ms E2E_FAST).
+  // __lastOrbDurationMs is populated by Orb.launch — proves the tap path passes
+  // the uncompressed duration and state.telegraphMs is not leaking a charged value.
+  const lastDurationMs: number | null = await defender.evaluate(
+    () => (window as any).__lastOrbDurationMs ?? null,
+  );
+  expect(lastDurationMs).not.toBeNull();
+  // In E2E_FAST: TELEGRAPH_MS = 150ms; production: 900ms.
+  const expectedTelegraphMs = (process.env.E2E_FAST !== '0') ? 150 : 900;
+  expect(lastDurationMs).toBe(expectedTelegraphMs);
 
   await closeBattle(h);
 });
@@ -822,9 +840,9 @@ test('#491 arc: hold through sweep-0 midpoint (~600ms) → angle≈0° (sweet sp
   await closeBattle(h);
 });
 
-// ── Arc Scenario 3: early sweep-0 hold → miss position ──────────────────────────
+// ── Arc Scenario 3: late sweep-0 hold → miss position ───────────────────────────
 
-test('#491 arc: hold ~200ms → angle≈−30° (outside ±10° cone) → chargeMiss', async ({
+test('#506 arc: hold ~900ms → angle≈+22.5° (outside ±10° cone) → chargeMiss', async ({
   browser,
 }) => {
   const h = await setupBattle(browser);
@@ -833,9 +851,10 @@ test('#491 arc: hold ~200ms → angle≈−30° (outside ±10° cone) → charge
   await waitForMyAttackTurn(attacker);
   await collectMessages(attacker, 'chargeMiss');
 
-  // 200ms: angle = −45 + (200/1200)*90 ≈ −30° >> HIT_CONE_DEG=10° → miss.
+  // 900ms: angle = −45 + (900/1200)*90 = +22.5° >> HIT_CONE_DEG=10° → miss.
+  // (Must be ≥ 450ms CHARGE_THRESHOLD_MS so server classifies as charge, not tap.)
   await attacker.keyboard.down('1');
-  await attacker.waitForTimeout(200);
+  await attacker.waitForTimeout(900);
   await attacker.keyboard.up('1');
 
   await attacker.waitForFunction(() => ((window as any).__msgs?.chargeMiss?.length ?? 0) >= 1, {
@@ -932,7 +951,7 @@ test('#491 arc: chargeOrbAngle getter returns a value in [−45, 45] during an a
 
   // Hold past threshold so beginCharge runs and the arc orb is spawned.
   await attacker.keyboard.down('1');
-  await attacker.waitForTimeout(400); // well past 150ms threshold
+  await attacker.waitForTimeout(550); // well past 450ms threshold
 
   // Gate: wait until chargeOrbAngle is non-null (beginCharge has run).
   await attacker.waitForFunction(
@@ -1023,9 +1042,9 @@ test('#495 arc-direction: player chargeOrbRenderX is always < 708 (pivot) across
 
   await waitForMyAttackTurn(attacker);
 
-  // Hold past threshold so beginCharge runs and the arc orb spawns.
+  // Hold past threshold (450ms) so beginCharge runs and the arc orb spawns.
   await attacker.keyboard.down('1');
-  await attacker.waitForTimeout(400);
+  await attacker.waitForTimeout(550);
 
   // Gate: wait until chargeOrbRenderX is non-null (orb alive).
   await attacker.waitForFunction(
@@ -1073,7 +1092,7 @@ test('#495 arc-direction: opponentChargeOrbRenderX is always > 316 (pivot) on de
   await collectMessages(defender, 'chargeOrbStart');
 
   await attacker.keyboard.down('1');
-  await attacker.waitForTimeout(400);
+  await attacker.waitForTimeout(550);
 
   // Gate: chargeOrbStart received by defender (orb spawned on opponent side).
   await defender.waitForFunction(() => ((window as any).__msgs?.chargeOrbStart?.length ?? 0) >= 1, {
@@ -1112,11 +1131,25 @@ test('#495 arc-direction: opponentChargeOrbRenderX is always > 316 (pivot) on de
   await closeBattle(h);
 });
 
-// ── Arc-direction Scenario 3: symmetry — same |angle|, equal displacement from pivot ─
+// ── Arc-direction Scenario 3: geometry — renderX matches pivot + facing*radius*cos(angle) ─
 
-test('#495 arc-direction: at same |angle|, player leftward displacement equals opponent rightward displacement (mirror symmetry)', async ({
+test('#495 arc-direction: renderX matches pivot+facing*radius*cos(angle) on both attacker and defender views (formula invariant)', async ({
   browser,
 }) => {
+  // #495 adversarial: detects radius/sign/formula divergence between the player-orb
+  // and opponent-orb rendering paths without any cross-page timing dependency.
+  //
+  // Strategy: on each page independently, read (renderX, angle) at the same instant
+  // and verify renderX ≈ pivot + facing*IDLE_ORB_RADIUS*cos(angle_deg * π/180) within ±2px.
+  // A copy-paste error (wrong radius, wrong sign, wrong trig) breaks this on that page.
+  //
+  // Attacker page: pivot=708, facing=−1  → renderX = 708 − 60*cos(angleDeg*π/180)
+  // Defender page: pivot=316, facing=+1  → renderX = 316 + 60*cos(angleDeg*π/180)
+  const PIVOT_PLAYER = 708;
+  const PIVOT_OPPONENT = 316;
+  const IDLE_ORB_RADIUS = 60;
+  const TOLERANCE = 2; // px — floating-point only, no cross-page sync needed
+
   const h = await setupBattle(browser);
   const { attacker, defender } = await attackerDefender(h.p1, h.p2);
 
@@ -1124,46 +1157,49 @@ test('#495 arc-direction: at same |angle|, player leftward displacement equals o
   await collectMessages(defender, 'chargeOrbStart');
 
   await attacker.keyboard.down('1');
-  await attacker.waitForTimeout(400);
+  await attacker.waitForTimeout(550);
 
   await defender.waitForFunction(() => ((window as any).__msgs?.chargeOrbStart?.length ?? 0) >= 1, {
     timeout: 8000,
   });
 
-  // Gate: both getters are non-null simultaneously.
+  // Gate: both orb handles are alive and angle getters are non-null.
   await attacker.waitForFunction(
-    () => (window as any).__scene?.chargeOrbRenderX !== null &&
-          (window as any).__scene?.chargeOrbRenderX !== undefined,
+    () => (window as any).__scene?.chargeOrbAngle !== null &&
+          (window as any).__scene?.chargeOrbAngle !== undefined,
     { timeout: 8000 },
   );
   await defender.waitForFunction(
-    () => (window as any).__scene?.opponentChargeOrbRenderX !== null &&
-          (window as any).__scene?.opponentChargeOrbRenderX !== undefined,
+    () => (window as any).__scene?.opponentChargeOrbAngle !== null &&
+          (window as any).__scene?.opponentChargeOrbAngle !== undefined,
     { timeout: 5000 },
   );
 
-  // Sample both orb positions at 3 different moments. Because the two clients
-  // are driven by the same deterministic formula with the same startTime, their
-  // angles should be near-equal — meaning displacements from their respective
-  // pivots should match within ±2px (floating-point + frame-timing jitter).
-  //
-  // #495 adversarial: if the radius or trig formula differs between player and
-  // opponent paths, displacement equality would break, exposing a copy-paste error.
-  const TOLERANCE = 2; // px
-  for (let i = 0; i < 3; i++) {
-    await attacker.waitForTimeout(100);
+  // Sample each page independently. Read (renderX, angle) in a single evaluate call
+  // per page so there is no intra-page skew between the two values.
+  for (let i = 0; i < 5; i++) {
+    await attacker.waitForTimeout(80);
 
-    const playerRx: number | null = await attacker.evaluate(
-      () => (window as any).__scene?.chargeOrbRenderX ?? null,
-    );
-    const oppRx: number | null = await defender.evaluate(
-      () => (window as any).__scene?.opponentChargeOrbRenderX ?? null,
-    );
+    // Attacker page: verify player-orb geometry.
+    const playerSample: { rx: number | null; angle: number | null } = await attacker.evaluate(() => ({
+      rx: (window as any).__scene?.chargeOrbRenderX ?? null,
+      angle: (window as any).__scene?.chargeOrbAngle ?? null,
+    }));
+    if (playerSample.rx !== null && playerSample.angle !== null) {
+      const rad = (playerSample.angle * Math.PI) / 180;
+      const expected = PIVOT_PLAYER - IDLE_ORB_RADIUS * Math.cos(rad); // facing = −1
+      expect(Math.abs(playerSample.rx - expected)).toBeLessThanOrEqual(TOLERANCE);
+    }
 
-    if (playerRx !== null && oppRx !== null) {
-      const playerDisplacement = 708 - playerRx;     // leftward from player pivot
-      const opponentDisplacement = oppRx - 316;       // rightward from opponent pivot
-      expect(Math.abs(playerDisplacement - opponentDisplacement)).toBeLessThanOrEqual(TOLERANCE);
+    // Defender page: verify opponent-orb geometry.
+    const oppSample: { rx: number | null; angle: number | null } = await defender.evaluate(() => ({
+      rx: (window as any).__scene?.opponentChargeOrbRenderX ?? null,
+      angle: (window as any).__scene?.opponentChargeOrbAngle ?? null,
+    }));
+    if (oppSample.rx !== null && oppSample.angle !== null) {
+      const rad = (oppSample.angle * Math.PI) / 180;
+      const expected = PIVOT_OPPONENT + IDLE_ORB_RADIUS * Math.cos(rad); // facing = +1
+      expect(Math.abs(oppSample.rx - expected)).toBeLessThanOrEqual(TOLERANCE);
     }
   }
 
@@ -1173,53 +1209,69 @@ test('#495 arc-direction: at same |angle|, player leftward displacement equals o
 
 // ── Arc-direction Scenario 4: sweet spot (0°) is MAXIMAL extent toward opponent ──
 
-test('#495 arc-direction: at 0° sweet spot (~600ms), player renderX is more extreme (farther left) than at ±45° extremes', async ({
+test('#495 arc-direction: minimum chargeOrbRenderX across a full sweep ≈ 648 and is at least 6px less than the last sample', async ({
   browser,
 }) => {
-  // #495 adversarial: the facing-sign inversion must make the orb reach its
-  // LEFTMOST position at 0° (cos(0)=1, max displacement), not be at rest
-  // at the player X. At ±45°, cos(45°)≈0.707 so renderX≈665.6 — LESS extreme.
+  // #495 adversarial: the facing-sign inversion makes the orb reach its LEFTMOST
+  // position at 0° (cos(0°)=1, max displacement). Without the fix the orb would be
+  // at its RIGHTMOST at 0° (wrong sign), and renderX would never dip to ~648.
+  //
+  // Strategy: hold through the full sweep (orb spawns at ~450ms, 0° at ~600ms,
+  // ~+22.5° at ~900ms). Collect ~10 samples every ~80ms starting from orb-alive.
+  // Assert:
+  //   (a) minRx ≈ 648 ± 10px  — orb reaches the correct max-left extent at 0°
+  //   (b) minRx ≤ lastRx − 6  — the sweet spot is meaningfully farther left than
+  //       a later, larger-angle sample (last sample is at ~+22.5°, renderX ≈ 654)
+  // No target-angle targeting — we just sweep past the cos peak naturally.
   const h = await setupBattle(browser);
   const { attacker } = await attackerDefender(h.p1, h.p2);
 
   await waitForMyAttackTurn(attacker);
 
-  // Hold past threshold so orb spawns.
+  // Hold past threshold (450ms) so beginCharge fires and the orb spawns.
   await attacker.keyboard.down('1');
-  await attacker.waitForTimeout(300);
+  await attacker.waitForTimeout(550); // past 450ms threshold — orb is alive
 
+  // Gate: wait until chargeOrbRenderX is non-null (orb handle is set).
   await attacker.waitForFunction(
     () => (window as any).__scene?.chargeOrbRenderX !== null &&
           (window as any).__scene?.chargeOrbRenderX !== undefined,
     { timeout: 8000 },
   );
 
-  // Sample renderX near start of sweep (angle ≈ -30° to -10°, cos ≈ 0.87–0.97).
-  const earlyRx: number | null = await attacker.evaluate(
-    () => (window as any).__scene?.chargeOrbRenderX ?? null,
-  );
-
-  // Continue hold to ~600ms total (sweet-spot, angle ≈ 0°, cos≈1, renderX≈648).
-  await attacker.waitForTimeout(300); // 600ms total from key down
-
-  const sweetSpotRx: number | null = await attacker.evaluate(
-    () => (window as any).__scene?.chargeOrbRenderX ?? null,
-  );
-
-  await attacker.keyboard.up('1');
-
-  // At sweet spot, renderX should be ~648 (furthest left = minimum x).
-  // This must be less than renderX near the extremes (which is closer to 708).
-  if (earlyRx !== null && sweetSpotRx !== null) {
-    // 0° → renderX ≈ 648; ±30°–45° → renderX ≈ 656–666.
-    // Sweet spot must be at least 1px farther left than early-sweep reading.
-    expect(sweetSpotRx).toBeLessThanOrEqual(earlyRx);
-    // Confirm approximate value: 648 ± 12px (tolerance for timing jitter).
-    expect(sweetSpotRx).toBeLessThan(662);
-    expect(sweetSpotRx).toBeGreaterThan(636);
+  // Collect samples across the remainder of sweep 0. At spawn the orb is at
+  // ~−11.25°; it passes through 0° (~600ms from keydown, ~150ms after spawn)
+  // and reaches ~+22.5° at ~900ms from keydown (~350ms after spawn). Ten samples
+  // at ~80ms intervals cover ~800ms — enough to capture the 0° peak and several
+  // post-peak angles.
+  const samples: number[] = [];
+  for (let i = 0; i < 10; i++) {
+    await attacker.waitForTimeout(80);
+    const rx: number | null = await attacker.evaluate(
+      () => (window as any).__scene?.chargeOrbRenderX ?? null,
+    );
+    if (rx !== null) samples.push(rx);
   }
 
+  await attacker.keyboard.up('1');
   await closeBattle(h);
+
+  // Need at least a few samples to make a meaningful assertion.
+  expect(samples.length).toBeGreaterThanOrEqual(5);
+
+  const minRx = Math.min(...samples);
+  const maxRx = Math.max(...samples);
+
+  // (a) Min renderX ≈ 648 ± 10px: confirms orb reaches cos(0°)=1 peak leftward.
+  expect(minRx).toBeGreaterThan(638); // 648 − 10
+  expect(minRx).toBeLessThan(658);    // 648 + 10
+
+  // (b) The sweet-spot minimum is meaningfully farther left than the orb's rightmost
+  // sampled extent — proves the orb actually sweeps (not stuck at 0°) AND that the
+  // 0° peak is the leftmost point. Using max (not last) is deterministic regardless
+  // of which angle the final sample lands on; the orb always reaches a large-angle
+  // extreme during the sweep (max renderX ≈ 656–666 at ±22.5°–±45°).
+  expect(minRx).toBeLessThanOrEqual(maxRx - 6);
 });
 
 // ── Arc-direction Scenario 5: null before charge starts and after orb disperses ──
@@ -1245,10 +1297,11 @@ test('#495 arc-direction: chargeOrbRenderX and opponentChargeOrbRenderX return n
   expect(preChargePlayer == null).toBe(true);  // null or undefined
   expect(preChargeOpp == null).toBe(true);
 
-  // Hold past threshold, wait for orb, then release (miss zone → orb disperses).
+  // Hold past threshold (450ms), wait for orb, then release (miss zone → orb disperses).
+  // #506: was 200ms (> old 150ms threshold). Raised to 900ms so it remains above 450ms.
   await collectMessages(defender, 'chargeOrbEnd');
   await attacker.keyboard.down('1');
-  await attacker.waitForTimeout(200); // miss zone — orb will disperse on release
+  await attacker.waitForTimeout(900); // miss zone — late sweep-0 (≥ 450ms, angle ≈ +22.5°)
   await attacker.keyboard.up('1');
 
   // Wait for chargeOrbEnd to confirm the orb lifecycle has ended.
@@ -1467,9 +1520,10 @@ test('#495 impl: chargeOrbRenderX null guard — returns null when handle is nul
 
   await waitForMyAttackTurn(attacker);
 
-  // Hold and release (miss zone).
+  // Hold and release (miss zone — must be ≥ 450ms CHARGE_THRESHOLD_MS to arm charge lifecycle).
+  // #506: was 200ms (> old 150ms threshold). Raised to 900ms so hold remains above 450ms.
   await attacker.keyboard.down('1');
-  await attacker.waitForTimeout(200);
+  await attacker.waitForTimeout(900);
   await attacker.keyboard.up('1');
 
   // After release, chargeOrbHandle and chargeOrbSpawnX are both cleared.
@@ -1490,6 +1544,168 @@ test('#495 impl: chargeOrbRenderX null guard — returns null when handle is nul
 
   expect(pivotAfter == null).toBe(true);
   expect(renderXAfter == null).toBe(true);
+
+  await closeBattle(h);
+});
+
+// ── #506 regression-lock: formerly-dead-zone holds now route as taps ────────────
+// Pre-fix (threshold=150ms): holds of 150–466ms were charged but outside the hit
+// cone — guaranteed misses. Post-fix (threshold=450ms): those holds are taps
+// (always hit). The central regression test uses ~300ms — the heart of the old dead
+// zone — and asserts the tap path: no chargeMiss, DEFEND_WINDOW opens.
+
+// ── #506 Regression 1: ~300ms hold (old dead zone) is now a tap — no miss ───────
+
+test('#506 regression: ~300ms hold (formerly dead-zone miss) now routes as tap — no chargeMiss, DEFEND_WINDOW opens', async ({
+  browser,
+}) => {
+  // #506 adversarial: before the fix a 300ms hold was above the 150ms threshold
+  // (charged) but the orb was at ≈ −22.5° — well outside the ±10° hit cone.
+  // Any regression of CHARGE_THRESHOLD_MS back toward 150 would make this test
+  // produce a chargeMiss (300ms charged-but-miss) instead of opening DEFEND_WINDOW.
+  const h = await setupBattle(browser);
+  const { attacker, defender } = await attackerDefender(h.p1, h.p2);
+
+  await waitForMyAttackTurn(attacker);
+  await collectMessages(attacker, 'chargeMiss');
+  await spyOnAllSends(attacker);
+
+  // 300ms: well into the old dead zone (150–466ms). New threshold = 450ms → tap.
+  await attacker.keyboard.down('1');
+  await attacker.waitForTimeout(300);
+  await attacker.keyboard.up('1');
+
+  // No chargeMiss must be broadcast — 300ms < 450ms = tap path.
+  await attacker.waitForTimeout(300);
+  expect((await getMessages(attacker, 'chargeMiss')).length).toBe(0);
+
+  // DEFEND_WINDOW must open on the defender (tap always hits).
+  await waitForPhase(defender, 'DEFEND_WINDOW', 5000);
+
+  // Belt-and-suspenders: confirm selectAttack was sent, not releaseAttack.
+  expect(await getSentCount(attacker, 'selectAttack')).toBe(1);
+  expect(await getSentCount(attacker, 'releaseAttack')).toBe(0);
+
+  await closeBattle(h);
+});
+
+// ── #506 Regression 2: 350ms hold (former dead-zone) classifies as tap ───────────
+
+test('#506 boundary: 350ms hold (formerly dead-zone) classifies as tap — no chargeMiss, DEFEND_WINDOW opens', async ({
+  browser,
+}) => {
+  // #506 adversarial: 350ms is well inside the old dead zone (150–467ms) and
+  // 100ms below CHARGE_THRESHOLD_MS=450ms — a comfortable margin against event-loop
+  // jitter. The 1ms-boundary assertion (449ms) is covered deterministically by the
+  // unit test `computeSweepIndex(449)`. Here we prove the dead-zone closes: a hold
+  // that previously guaranteed a miss now routes as a tap and always hits.
+  const h = await setupBattle(browser);
+  const { attacker, defender } = await attackerDefender(h.p1, h.p2);
+
+  await waitForMyAttackTurn(attacker);
+  await collectMessages(attacker, 'chargeMiss');
+
+  // 350ms: solidly below 450ms threshold and inside the old dead zone (150–467ms).
+  await attacker.keyboard.down('1');
+  await attacker.waitForTimeout(350);
+  await attacker.keyboard.up('1');
+
+  // The hold is sub-threshold: tap path, no miss.
+  await attacker.waitForTimeout(300);
+  expect((await getMessages(attacker, 'chargeMiss')).length).toBe(0);
+
+  // DEFEND_WINDOW opens (tap always hits).
+  await waitForPhase(defender, 'DEFEND_WINDOW', 5000);
+
+  await closeBattle(h);
+});
+
+// ── #506 Regression 3: deliberate charge ≥450ms still reaches hit cone ───────────
+
+test('#506 regression: 550ms charge (above threshold) enters arc path; 600ms (sweet spot) is a hit', async ({
+  browser,
+}) => {
+  // #506 adversarial: raising the threshold must not silently absorb the entire
+  // charge path. A hold of 600ms (sweep-0 midpoint, ≈0°) must still reach the hit
+  // cone and open DEFEND_WINDOW, not route as a tap. Regression: if CHARGE_THRESHOLD_MS
+  // were raised to ≥ 467ms (first cone-entry time), all charges would miss immediately.
+  const h = await setupBattle(browser);
+  const { attacker, defender } = await attackerDefender(h.p1, h.p2);
+
+  await waitForMyAttackTurn(attacker);
+  await collectMessages(attacker, 'chargeMiss');
+
+  // 600ms = sweep-0 midpoint (≈0° → inside ±10° hit cone) = deliberate charge hit.
+  await attacker.keyboard.down('1');
+  await attacker.waitForTimeout(600);
+  await attacker.keyboard.up('1');
+
+  // No chargeMiss — sweet spot is a hit via the charge arc path.
+  await attacker.waitForTimeout(300);
+  expect((await getMessages(attacker, 'chargeMiss')).length).toBe(0);
+
+  // DEFEND_WINDOW opens from the charge hit.
+  await waitForPhase(defender, 'DEFEND_WINDOW', 5000);
+
+  await closeBattle(h);
+});
+
+// ── #504 Phase 1: telegraph desync fix — spec-driven (E2E scenario + acceptance) ────
+// These tests lock in the core fix: charged HIT compresses state.telegraphMs, the
+// client reads it via __lastOrbDurationMs, and a defender pressing block timed to
+// the compressed visual landing never receives MISTIME.
+
+// ── #504 Scenario A: charged HIT → __lastOrbDurationMs < TELEGRAPH_MS ────────────
+
+test('#504 charged HIT (~600ms hold): __lastOrbDurationMs is compressed (< TELEGRAPH_MS) and equals state.telegraphMs', async ({
+  browser,
+}) => {
+  // #504 adversarial: before the fix Orb.launch always used the hardcoded
+  // TELEGRAPH_MS constant. __lastOrbDurationMs would equal TELEGRAPH_MS (150ms
+  // fast) even on a charged HIT — the orb visually arrived at 150ms while the
+  // server resolved impact at ~80ms (compressedTelegraphMs). Defenders pressing
+  // block at the visual landing (~150ms) pressed AFTER the window had closed.
+  // After the fix __lastOrbDurationMs must equal state.telegraphMs (compressed).
+  const h = await setupBattle(browser);
+  const { attacker, defender } = await attackerDefender(h.p1, h.p2);
+
+  await waitForMyAttackTurn(attacker);
+  // Register collectMessages BEFORE the gesture that produces the DEFEND_WINDOW
+  // transition — a known footgun: messages sent before onMessage is registered are lost.
+  await collectMessages(defender, 'exchangeResult');
+
+  // Hold ~600ms — sweet spot (angle ≈ 0°) → guaranteed HIT with high sharpness.
+  // At 600ms sharpness > 0, so compressedTelegraphMs < TELEGRAPH_MS.
+  await attacker.keyboard.down('1');
+  await attacker.waitForTimeout(600);
+  await attacker.keyboard.up('1');
+
+  // Wait for DEFEND_WINDOW on the defender.
+  await waitForPhase(defender, 'DEFEND_WINDOW', 5000);
+
+  // Read state.telegraphMs from the defender's authoritative BattleState broadcast.
+  const stateTelegraphMs: number = await defender.evaluate(
+    () => (window as any).__room?.state?.telegraphMs ?? -1,
+  );
+  // Read the orb duration the client actually used.
+  const lastOrbDurationMs: number | null = await defender.evaluate(
+    () => (window as any).__lastOrbDurationMs ?? null,
+  );
+
+  // Acceptance criterion 1 + 3: charged HIT must produce compressed telegraphMs.
+  // computeTelegraphDuration lerps from shared/timing.ts TELEGRAPH_MS (900ms — the
+  // production base, NOT shortened by E2E_FAST) down to CHARGE_TELEGRAPH_MIN_MS (80ms
+  // under E2E_FAST). So under E2E_FAST a 600ms sweet-spot hold yields ~627ms —
+  // compressed vs 900 but NOT compressed vs the tap server value of 150ms.
+  // The invariant that matters: any compressed charge is < 900 (compression occurred)
+  // and > 0 (not the fallback sentinel). Never compare to 150 — a charged HIT in
+  // E2E_FAST has telegraphMs ≈ 627, not below 150.
+  expect(stateTelegraphMs).toBeGreaterThan(0); // must not be 0 (fallback sentinel)
+  expect(stateTelegraphMs).toBeLessThan(900);  // compressed vs the 900ms charge base
+
+  // Acceptance criterion 2: __lastOrbDurationMs must equal state.telegraphMs.
+  expect(lastOrbDurationMs).not.toBeNull();
+  expect(lastOrbDurationMs).toBe(stateTelegraphMs);
 
   await closeBattle(h);
 });
@@ -1525,9 +1741,9 @@ test('#505 charge-miss: player miss offTargetX < PLAYER_X (orb heads toward oppo
   await waitForMyAttackTurn(attacker);
   await collectMessages(attacker, 'chargeMiss');
 
-  // Hold 200ms → miss zone (angle ≈ -30°, outside ±10° hit cone).
+  // Hold 900ms → miss zone (angle ≈ +22.5°, outside ±10° hit cone; ≥450ms threshold).
   await attacker.keyboard.down('1');
-  await attacker.waitForTimeout(200);
+  await attacker.waitForTimeout(900);
   await attacker.keyboard.up('1');
 
   // Wait for chargeMiss to confirm the miss path executed.
@@ -1549,6 +1765,44 @@ test('#505 charge-miss: player miss offTargetX < PLAYER_X (orb heads toward oppo
   expect(offTargetX).toBeLessThan(PLAYER_X);
   // Confirm it is not the pre-fix value (1068) — belt-and-suspenders.
   expect(offTargetX).toBeLessThan(1000);
+
+  await closeBattle(h);
+});
+
+// ── #504 Scenario B: tap → __lastOrbDurationMs === TELEGRAPH_MS (no compression) ──
+
+test('#504 tap (keyboard.press): state.telegraphMs === TELEGRAPH_MS; __lastOrbDurationMs matches (no compression on tap)', async ({
+  browser,
+}) => {
+  // #504 adversarial: the fix must NOT compress the tap path. All six DEFEND_WINDOW
+  // entries other than the charged-HIT row set state.telegraphMs = TELEGRAPH_MS.
+  // If a prior charged exchange left a stale compressed value in state.telegraphMs
+  // and the next DEFEND_WINDOW entry failed to reset it, a tap would inherit the
+  // compressed value and the orb would travel too fast for the server timing.
+  const h = await setupBattle(browser);
+  const { attacker, defender } = await attackerDefender(h.p1, h.p2);
+
+  await waitForMyAttackTurn(attacker);
+
+  // keyboard.press() is ~10–40ms — tap path, no compression.
+  await attacker.keyboard.press('1');
+
+  await waitForPhase(defender, 'DEFEND_WINDOW', 5000);
+
+  const stateTelegraphMs: number = await defender.evaluate(
+    () => (window as any).__room?.state?.telegraphMs ?? -1,
+  );
+  const lastOrbDurationMs: number | null = await defender.evaluate(
+    () => (window as any).__lastOrbDurationMs ?? null,
+  );
+
+  // Tap: state.telegraphMs must equal TELEGRAPH_MS (150ms E2E_FAST / 900ms prod).
+  const expectedMs = (process.env.E2E_FAST !== '0') ? 150 : 900;
+  expect(stateTelegraphMs).toBe(expectedMs);
+
+  // __lastOrbDurationMs must match (client read state.telegraphMs, not the fallback 0 path).
+  expect(lastOrbDurationMs).not.toBeNull();
+  expect(lastOrbDurationMs).toBe(stateTelegraphMs);
 
   await closeBattle(h);
 });
@@ -1587,10 +1841,10 @@ test('#505 charge-miss: opponent miss offTargetX > OPPONENT_X (orb heads toward 
     { timeout: 15000 },
   );
 
-  // Collect chargeMiss on p2 side; hold 200ms → miss zone.
+  // Collect chargeMiss on p2 side; hold 900ms → miss zone (≥450ms threshold, angle ≈ +22.5°).
   await collectMessages(p2, 'chargeMiss');
   await p2.keyboard.down('1');
-  await p2.waitForTimeout(200);
+  await p2.waitForTimeout(900);
   await p2.keyboard.up('1');
 
   await p2.waitForFunction(() => ((window as any).__msgs?.chargeMiss?.length ?? 0) >= 1, {
@@ -1608,6 +1862,214 @@ test('#505 charge-miss: opponent miss offTargetX > OPPONENT_X (orb heads toward 
 
   // Opponent orb must travel rightward (toward player) — preserved, not regressed.
   expect(offTargetX).toBeGreaterThan(OPPONENT_X);
+
+  await closeBattle(h);
+});
+
+// ── #504 Scenario C: charged HIT defender block at compressed landing → BLOCK/PARRY ─
+
+test('#504 acceptance criterion 4: defender blocking at compressedTelegraphMs landing registers BLOCK or PARRY, never MISTIME', async ({
+  browser,
+}) => {
+  // #504 root-cause regression test: this is the exact bug. Before the fix:
+  // server resolved impact at ~80ms (compressed), but the client orb traveled 150ms.
+  // A defender pressing at the visual landing (~150ms) was already past the window.
+  // After the fix the client orb travels state.telegraphMs (e.g. ~80ms) so the visual
+  // landing matches the server impact → a timely press cannot be MISTIME.
+  const h = await setupBattle(browser);
+  const { attacker, defender } = await attackerDefender(h.p1, h.p2);
+
+  await waitForMyAttackTurn(attacker);
+  // Register BEFORE the charge gesture — messages sent before registration are lost.
+  await collectMessages(defender, 'exchangeResult');
+
+  // Hold ~600ms → sweet spot HIT with compressed telegraph.
+  await attacker.keyboard.down('1');
+  await attacker.waitForTimeout(600);
+  await attacker.keyboard.up('1');
+
+  await waitForPhase(defender, 'DEFEND_WINDOW', 8000);
+
+  // Read the compressed travel duration from the state — telegraphMs ≈ 627ms under
+  // E2E_FAST (computeTelegraphDuration lerps from 900ms base, not from 150ms tap value).
+  const compressedMs: number = await defender.evaluate(
+    () => (window as any).__room?.state?.telegraphMs ?? 627,
+  );
+
+  // Press defense at compressedMs - 50ms after DEFEND_WINDOW opened.
+  // This press arrives just before the compressed visual landing → must be inside
+  // the block window (±200ms BLOCK / ±175ms PARRY around impact). With compressedMs ≈
+  // 627ms, pressDelay ≈ 577ms — well inside the PARRY band with margin to spare.
+  const pressDelay = Math.max(0, compressedMs - 50);
+  await defender.waitForTimeout(pressDelay);
+  await defender.keyboard.press('3');
+
+  await defender.waitForFunction(
+    () => ((window as any).__msgs?.exchangeResult?.length ?? 0) >= 1,
+    { timeout: 8000 },
+  );
+
+  const results: any[] = await getMessages(defender, 'exchangeResult');
+  expect(results.length).toBeGreaterThan(0);
+  // ExchangeResultPayload.timing: 'PARRY' | 'BLOCK' | 'MISTIME' | 'NO_BLOCK' (shared/types.ts:252).
+  // The defense must register as BLOCK or PARRY — never MISTIME.
+  // MISTIME is the observable symptom of the desync bug (defender pressed at the
+  // compressed visual landing but the server window had already closed).
+  const outcome: string = results[0].timing ?? '';
+  expect(outcome).not.toBe('MISTIME');
+  expect(['BLOCK', 'PARRY']).toContain(outcome);
+
+  await closeBattle(h);
+});
+
+// ── #504 Phase 2: implementation-aware tests ────────────────────────────────────
+// These test server-state invariants only visible after reading the implementation:
+//   - stale-value invariant: compressed telegraphMs from a charged exchange must
+//     NOT persist into the next tap/rally exchange
+//   - combo orb-2 default: orb-2 is launched by handleDoubleAttackStart's client-side
+//     timer BEFORE _resolveCombo fires, so it uses Orb.launch's DEFAULT durationMs
+//     (= TELEGRAPH_MS) — __lastOrbDurationMs must equal TELEGRAPH_MS, never 0
+
+// ── #504 Impl Scenario 1: stale compressed value cleared on the next tap exchange ──
+
+test('#504 impl: after a charged HIT, the next tap exchange has state.telegraphMs === TELEGRAPH_MS (no stale leak)', async ({
+  browser,
+}) => {
+  // #504 adversarial: the implementation sets state.telegraphMs at each of the six
+  // DEFEND_WINDOW entries (grep-verified exhaustive). The stale-value invariant
+  // requires every tap/rally entry to reset to TELEGRAPH_MS — if even one entry
+  // was missed, a compressed value could carry forward into the next exchange.
+  // This test proves behaviorally that the reset happens: after a charged HIT
+  // resolves, the subsequent exchange (driven via the block press) enters
+  // ATTACK_SELECT and the following tap shows state.telegraphMs === TELEGRAPH_MS.
+  const h = await setupBattle(browser);
+  const { attacker, defender } = await attackerDefender(h.p1, h.p2);
+
+  await waitForMyAttackTurn(attacker);
+  await collectMessages(defender, 'exchangeResult');
+
+  // Exchange 1: charged HIT (~600ms → compressed telegraphMs).
+  await attacker.keyboard.down('1');
+  await attacker.waitForTimeout(600);
+  await attacker.keyboard.up('1');
+
+  await waitForPhase(defender, 'DEFEND_WINDOW', 8000);
+
+  // Verify exchange 1 has a compressed telegraphMs (< 900, the shared/timing base;
+  // under E2E_FAST a 600ms sweet-spot hold yields ~627ms — below 900, not below 150).
+  const compressedMs: number = await defender.evaluate(
+    () => (window as any).__room?.state?.telegraphMs ?? -1,
+  );
+  expect(compressedMs).toBeGreaterThan(0);
+  expect(compressedMs).toBeLessThan(900);
+
+  // Let the first DEFEND_WINDOW lapse (no block press) so exchange resolves naturally.
+  await waitForPhase(attacker, 'ATTACK_SELECT', 8000);
+
+  // Now it's the defender's turn as attacker. Identify new attacker/defender.
+  const { attacker: attacker2, defender: defender2 } = await attackerDefender(h.p1, h.p2);
+
+  await waitForMyAttackTurn(attacker2);
+
+  // Exchange 2: tap (no charge) on the new attacker.
+  await attacker2.keyboard.press('1');
+
+  await waitForPhase(defender2, 'DEFEND_WINDOW', 5000);
+
+  // #504 stale-value invariant: state.telegraphMs must equal TELEGRAPH_MS again.
+  const tapTelegraphMs: number = await defender2.evaluate(
+    () => (window as any).__room?.state?.telegraphMs ?? -1,
+  );
+  const expectedTelegraphMs = (process.env.E2E_FAST !== '0') ? 150 : 900;
+  expect(tapTelegraphMs).toBe(expectedTelegraphMs);
+
+  // __lastOrbDurationMs on the defender must also track the reset value.
+  const lastOrbDurationMs: number | null = await defender2.evaluate(
+    () => (window as any).__lastOrbDurationMs ?? null,
+  );
+  expect(lastOrbDurationMs).toBe(expectedTelegraphMs);
+
+  await closeBattle(h);
+});
+
+// ── #504 Impl Scenario 2: combo orb-2 uses tap-speed default, never 0 ───────────
+
+test('#504 impl: combo orb-2 (fusion double-attack) launches at tap-speed TELEGRAPH_MS — __lastOrbDurationMs === TELEGRAPH_MS', async ({
+  browser,
+}) => {
+  // #504 adversarial: orb-2 in a fusion combo is launched client-side by
+  // handleDoubleAttackStart's gapMs timer (~200ms after orb-1), calling
+  // Orb.launch with no explicit durationMs → defaults to TELEGRAPH_MS.
+  // _resolveCombo only sets state.telegraphMs=0 when orb-1's defend window
+  // closes (~827ms later) — long after orb-2 has already launched. So the
+  // assertion is: __lastOrbDurationMs === TELEGRAPH_MS after orb-2 launches,
+  // proving orb-2 used the tap-speed default and was never 0 (which would make
+  // it an invisible instant-impact tween, unblockable by the defender).
+  const h = await setupBattle(browser);
+  const { attacker, defender } = await attackerDefender(h.p1, h.p2);
+
+  await setState(attacker, {
+    elements: { thumb: MUD, a1: WATER, a2: EARTH },
+    uses: { thumb: 3, a1: 3, a2: 3 },
+  });
+
+  await waitForMyAttackTurn(attacker);
+  // Register BEFORE the fusion gesture.
+  await collectMessages(defender, 'exchangeResult');
+  await collectMessages(defender, 'doubleAttackStart');
+
+  // Snapshot orbLaunchCount BEFORE the gesture so we can detect orb-2 launch
+  // without racing against doubleAttackStart processing (which triggers orb-1).
+  const orbCountBefore: number = await defender.evaluate(
+    () => (window as any).__orbLaunchCount ?? 0,
+  );
+
+  // Fusion HIT: hold A1 600ms (sweet spot), tap A2 while held.
+  await attacker.keyboard.down('1');
+  await attacker.waitForTimeout(600);
+  await attacker.keyboard.press('2');
+  await attacker.keyboard.up('1');
+
+  // Wait for doubleAttackStart to confirm fusion path fired (both orbs in flight).
+  await defender.waitForFunction(
+    () => ((window as any).__msgs?.doubleAttackStart?.length ?? 0) >= 1,
+    { timeout: 8000 },
+  );
+
+  // Orb 1 enters DEFEND_WINDOW with telegraphMs = TELEGRAPH_MS (the initial
+  // handleSelectDoubleAttack entry); when orb 1 resolves (non-parry) _resolveCombo
+  // sets telegraphMs=0 and stays in DEFEND_WINDOW for orb 2. At that point
+  // checkPhaseTransition fires with state.telegraphMs=0 → the `|| TELEGRAPH_MS`
+  // guard on the client must make the orb-2 launch use TELEGRAPH_MS, not 0.
+  // We assert __lastOrbDurationMs after orb 2 launches equals TELEGRAPH_MS.
+  //
+  // orbCountBefore was captured before the gesture; orbLaunchCount must reach
+  // orbCountBefore+2 (orb-1 from doubleAttackStart, orb-2 from _resolveCombo).
+  await defender.waitForFunction(
+    (count) => ((window as any).__orbLaunchCount ?? 0) >= count + 2,
+    orbCountBefore,
+    { timeout: 8000 },
+  );
+
+  // At this point __lastOrbDurationMs is the orb-2 duration.
+  // Orb-2 is launched client-side by handleDoubleAttackStart's timer (~gapMs ≈ 200ms
+  // after orb-1), which calls Orb.launch with the DEFAULT durationMs = TELEGRAPH_MS.
+  // _resolveCombo (which sets state.telegraphMs = 0) only fires when orb-1's defend
+  // window closes (~827ms after orb-1 launch) — well AFTER orb-2 has already launched.
+  // So the invariant is NOT that state.telegraphMs === 0 at this moment (it will still
+  // be orb-1's charged value ≈ 627ms); the invariant is that __lastOrbDurationMs
+  // equals TELEGRAPH_MS, proving orb-2 used the tap-speed default (not a stale
+  // compressed value and never 0).
+  const lastOrbDurationMs: number | null = await defender.evaluate(
+    () => (window as any).__lastOrbDurationMs ?? null,
+  );
+
+  // __lastOrbDurationMs must be 900 (client TELEGRAPH_MS, unconditionally production):
+  // orb-2 launches via handleDoubleAttackStart's Orb.launch with no durationMs arg →
+  // uses the client-side default (client/src/Constants.ts TELEGRAPH_MS = 900, NOT
+  // E2E_FAST-shortened). Only taps read the shortened value via state.telegraphMs.
+  const expectedTelegraphMs = 900;
+  expect(lastOrbDurationMs).toBe(expectedTelegraphMs);
 
   await closeBattle(h);
 });
@@ -1634,9 +2096,9 @@ test('#505 charge-miss: fusion-miss on A1 (200ms) — off-target orb still heads
   await waitForMyAttackTurn(attacker);
   await collectMessages(attacker, 'chargeMiss');
 
-  // Drive fusion miss: hold A1 200ms (miss angle), tap A2 while holding.
+  // Drive fusion miss: hold A1 900ms (miss angle, ≥450ms threshold, angle ≈ +22.5°), tap A2 while holding.
   await attacker.keyboard.down('1');
-  await attacker.waitForTimeout(200);
+  await attacker.waitForTimeout(900);
   await attacker.keyboard.press('2');
   await attacker.keyboard.up('1');
 
@@ -1682,9 +2144,9 @@ test('#505 impl: player miss offTargetX is exactly PLAYER_X + facing*300 (magnit
   await waitForMyAttackTurn(attacker);
   await collectMessages(attacker, 'chargeMiss');
 
-  // Hold 200ms → miss zone.
+  // Hold 900ms → miss zone (≥450ms threshold, angle ≈ +22.5°, outside ±10° hit cone).
   await attacker.keyboard.down('1');
-  await attacker.waitForTimeout(200);
+  await attacker.waitForTimeout(900);
   await attacker.keyboard.up('1');
 
   await attacker.waitForFunction(() => ((window as any).__msgs?.chargeMiss?.length ?? 0) >= 1, {
