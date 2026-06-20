@@ -3,6 +3,7 @@ import { BaseBiomeScene } from './BaseBiomeScene';
 import { FOREST_SCREENS } from '../../../shared/world/forest';
 import { ElementEnum } from '../../../shared/types';
 import { ShrineZone } from '../objects/world/ShrineZone';
+import { applyDeathsDoorForest } from '../render/AtmospherePipeline';
 
 /**
  * The Forest hub (`forest_anchorage`) composes several tilesets and a second
@@ -214,6 +215,8 @@ export class ForestScene extends BaseBiomeScene {
    * enough to trigger the exit.
    */
   onEnterScreen(): void {
+    // Death's Door visual proof — Forest only. Toggle with ?atmos=0.
+    applyDeathsDoorForest(this);
     // #231 — the Thornado Fusion Shrine screen places a sealed altar the player
     // unseals with a Thornado ring-key won from the Shrine Guardian sub-boss.
     if (this.screenId === 'forest_thornado_shrine') {
