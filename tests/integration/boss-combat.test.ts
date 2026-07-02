@@ -899,15 +899,42 @@ describe('#513 adversarial — heart-loss decrement loop bound (count=0 vs count
     // BLOCK (<=200ms) — resolveBlock's NEUTRAL branch does not distinguish timing
     // at all. Targeting offset≈0 leaves ~175-200ms of slack against real
     // scheduler/message-dispatch jitter in a live Colyseus room on either side,
-    // instead of the ~15ms of slack a BLOCK_WINDOW_MS-15 target leaves against the
-    // 200ms MISTIME ceiling — the original flaky failure showed relationship still
-    // NEUTRAL (the static EARTH matchup) but defenderHeartsLost=1, i.e. the press
-    // arrived a few ms late and crossed into MISTIME under real jitter.
+    // instead of the ~15ms of slack a BLOCK_WINDOW_MS-15 target left against the
+    // 200ms MISTIME ceiling.
     for (let i = 0; i < 60 && room.state.phase !== 'DEFEND_WINDOW'; i++) await sleep(50);
     expect(room.state.phase).toBe('DEFEND_WINDOW');
+    // #513 adversarial (impl-aware, root-caused via a second debugging pass):
+    // forest_bogwood_warden's MUD thumb is seated double-attack-eligible BY
+    // DESIGN (server/src/game/ai/AILoadout.ts FUSED_THUMB_TEMPLATES — a1=WATER,
+    // a2=EARTH exactly match componentsOf(MUD), per EPIC #268), so the boss's
+    // opening attack can be a genuine two-orb combo instead of a single throw.
+    // A NEUTRAL (non-rally) orb 1 does NOT cancel orb 2 (see
+    // tests/integration/double-attack.test.ts "block one, parry two"), so if
+    // this test only ever caught orb 1, an uncontested orb 2 could still cost a
+    // heart — which is exactly what the first fix attempt's failure showed:
+    // the captured message (orb 1) was legitimately NEUTRAL/0, yet total hearts
+    // still dropped by 1 from an orb 2 this test never pressed for. Detect the
+    // combo via the room's public `comboInFlight` getter (set synchronously
+    // with the DEFEND_WINDOW phase transition, so it is safe to read here) and
+    // catch orb 2 too — EARTH is NEUTRAL-safe against either orb, and the
+    // count=0 invariant must hold across BOTH orbs of a combo, not just a lone
+    // throw.
+    const isCombo: boolean = room.comboInFlight === true;
     const impact: number = room.impactTime;
     await sleep(Math.max(0, impact - Date.now()));
     human.send('submitDefense', { slot: 'd2', pressTime: Date.now() });
+
+    if (isCombo) {
+      // Orb 2 launches within MAX_COMBO_GAP_MS (600ms, clamped) of orb 1;
+      // poll for its impact timestamp, then press d2 again at offset ≈ 0.
+      for (let i = 0; i < 40 && room.impact2 <= 0; i++) await sleep(20);
+      if (room.impact2 > 0) {
+        const impact2: number = room.impact2;
+        await sleep(Math.max(0, impact2 - Date.now()));
+        human.send('submitDefense', { slot: 'd2', pressTime: Date.now() });
+      }
+    }
+
     await sleep(BLOCK_WINDOW_MS + 400);
 
     expect(captured).not.toBeNull();
@@ -915,7 +942,8 @@ describe('#513 adversarial — heart-loss decrement loop bound (count=0 vs count
     expect(captured.defenderHeartsLost).toBe(0);
     // The tell: if the `for (i < result.defenderHeartsLost)` loop had an
     // off-by-one (e.g. `<=` instead of `<`), a 0-count exchange would still
-    // decrement once even though the resolver said 0.
+    // decrement once even though the resolver said 0. This must hold whether
+    // the boss threw one orb or two.
     expect(hps.hearts).toBe(heartsBefore);
   }, 15000);
 
@@ -925,7 +953,20 @@ describe('#513 adversarial — heart-loss decrement loop bound (count=0 vs count
     });
     const hps = room.state.players.get(human.sessionId);
     const heartsBefore = hps.hearts;
-    const aiHeartsBefore = room.state.players.get('AI').hearts;
+    const aiPs = room.state.players.get('AI');
+    const aiHeartsBefore = aiPs.hearts;
+    // #513 adversarial (impl-aware): forest_bogwood_warden's MUD thumb is seated
+    // double-attack-eligible by design (a1=WATER/a2=EARTH exactly match
+    // componentsOf(MUD) — see AILoadout.ts FUSED_THUMB_TEMPLATES, EPIC #268), so
+    // the boss's opening attack could otherwise be a genuine two-orb combo. Since
+    // this test never defends at all, an undetected combo would land BOTH orbs
+    // uncontested (−2 hearts total from two separate 1-count exchanges), which
+    // would make the "exactly 1, not 0, not 2" assertion below mean something
+    // different than intended — it must measure a single deterministic exchange.
+    // Extinguish a2 so canDoubleAttack() is false and the boss can only ever
+    // throw a single orb (via a1); a1 stays lit, so the boss still attacks.
+    aiPs.a2.currentUses = 0;
+    aiPs.a2.isExtinguished = true;
 
     let captured: any = null;
     human.onMessage('exchangeResult', (m: any) => {
