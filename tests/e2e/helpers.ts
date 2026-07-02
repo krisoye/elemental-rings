@@ -297,7 +297,10 @@ export async function closeBattle(handles: BattleHandles): Promise<void> {
  * Uses the BattleRoomOptions AI-strength overrides (via the
  * __encounterSelectWithOverrides hook) so the result is a property of setup, not
  * combat timing:
- *   aiHearts: 1  → AI dies almost immediately → guaranteed protagonist WIN
+ *   aiHearts: 1  → guaranteed protagonist WIN, provided the personality has
+ *              noBlockProb > 0 (e.g. DEFENSIVE, STATUS_HUNTER, RESILIENT). AGGRESSIVE
+ *              (noBlockProb: 0) blocks nearly every human attack, so the protagonist
+ *              exhausts rings and forfeits instead.
  *   aiHearts: 99 → AI unkillable; protagonist attacks until A1+A2 are
  *                  extinguished and forfeits (§6.6) → guaranteed protagonist LOSS
  *

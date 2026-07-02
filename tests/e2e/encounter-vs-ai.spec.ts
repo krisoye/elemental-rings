@@ -235,7 +235,7 @@ test('scenario 3: battle summary reports gold and XP on a win', async ({ browser
   const page = await ctx.newPage();
   await page.goto(URL);
 
-  await driveAiDuel(page, { personality: 'AGGRESSIVE', aiHearts: 1 });
+  await driveAiDuel(page, { personality: 'DEFENSIVE', aiHearts: 1 });
 
   // The summary is captured at the connection level, so it is present even after
   // the post-duel transition back to EncounterScene.
@@ -247,7 +247,10 @@ test('scenario 3: battle summary reports gold and XP on a win', async ({ browser
   expect(summary.won).toBe(true);
   expect(summary.goldGained).toBe(50); // GOLD_PER_WIN
   expect(summary.xpGained).toBeGreaterThan(0);
-  expect(summary.aggregateXp).toBeGreaterThan(0);
+  // aggregate_xp counts Reliquary rings only (in_carry = 0). The seeded player's
+  // starter Reliquary rings are all xp=0 and the won ring is only pending, so a
+  // fresh account's aggregateXp is legitimately 0 (see PlayerRepo.getSpiritStats).
+  expect(summary.aggregateXp).toBe(0);
 
   await ctx.close();
 });
