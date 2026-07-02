@@ -683,3 +683,115 @@ test('#532 adversarial: with AI defense forcibly disabled, AGGRESSIVE + aiHearts
 
   await ctx.close();
 });
+
+// ── #532 QA Phase 2 — implementation-aware tests targeting private paths now
+//    visible in the reviewed code: the poll-driver's `a1Dead && a2Dead` forfeit
+//    branch in driveAiDuel (helpers.ts), and seatPlayer's `overrides?.uses` /
+//    `overrides?.hearts` handling in BattleRoom.ts (the aiHearts/aiUses
+//    override plumbing __encounterSelectWithOverrides forwards verbatim).
+
+// #532 adversarial (implementation-aware): driveAiDuel's poll-driver only sends
+// 'forfeit' once BOTH a1Dead AND a2Dead are true (helpers.ts ~L353). Scenario 4
+// and the Phase-1 XOR test only assert the duel eventually reaches ENDED; this
+// test locks in the numeric postcondition the branch guard implies — BOTH
+// attack rings extinguished (not just one, which would mean the a2-fallback
+// branch never engaged or forfeit fired early) — and that the unkillable AI's
+// hearts are untouched, proving the loss is a forfeit, not a stray KO.
+test('#532 adversarial: driveAiDuel forfeit branch only fires once BOTH a1 and a2 are extinguished, and the unkillable AI is untouched', async ({ browser }) => {
+  const ctx = await browser.newContext();
+  await seedAuthToken(ctx);
+  const page = await ctx.newPage();
+  await page.goto(URL);
+
+  await driveAiDuel(page, { personality: 'AGGRESSIVE', aiHearts: 99 });
+
+  const { winnerId, mySessionId, a1, a2, aiHearts } = await page.evaluate(() => {
+    const room = (window as any).__room;
+    const me = room?.state?.players?.get(room?.sessionId);
+    return {
+      winnerId: room?.state?.winnerId,
+      mySessionId: room?.sessionId,
+      a1: { currentUses: me?.a1?.currentUses, isExtinguished: me?.a1?.isExtinguished },
+      a2: { currentUses: me?.a2?.currentUses, isExtinguished: me?.a2?.isExtinguished },
+      aiHearts: room?.state?.players?.get('AI')?.hearts,
+    };
+  });
+
+  expect(winnerId).toBe('AI');
+  expect(winnerId).not.toBe(mySessionId); // human forfeited, did not lose to a KO
+  expect(a1.isExtinguished).toBe(true);
+  expect(a2.isExtinguished).toBe(true); // proves the a2-fallback branch actually engaged
+  expect(a1.currentUses).toBe(0);
+  expect(a2.currentUses).toBe(0);
+  expect(aiHearts).toBe(99); // unkillable — the human never landed a scratch
+
+  await ctx.close();
+});
+
+// #532 adversarial (implementation-aware): seatPlayer's `overrides?.uses`
+// (BattleRoom.ts ~L586) applies uniformly to EVERY combat slot key, not just
+// the defense pair a caller reaching for "aiUses" to weaken defense-only might
+// expect. This is a private path neither scenario 3/4 nor driveAiDuel's
+// docstring exercises. Checked at seat time (no duel driven) so a genuinely
+// unattack-capable AI can't hang the test.
+test('#532 adversarial: aiUses:0 zeroes ALL of the AIs combat rings at seat time (attack AND defense), not just defense', async ({ browser }) => {
+  const ctx = await browser.newContext();
+  await seedAuthToken(ctx);
+  const page = await ctx.newPage();
+  await page.goto(URL);
+  await campToEncounter(page);
+  await waitForEncounter(page);
+  await page.evaluate(() =>
+    (window as any).__encounterSelectWithOverrides('DEFENSIVE', { aiUses: 0 }),
+  );
+  await page.waitForFunction(() => (window as any).__room !== null, { timeout: 8000 });
+  await page.waitForFunction(
+    () => (window as any).__scene?.constructor.name === 'BattleScene',
+    { timeout: 5000 },
+  );
+
+  const ai = await page.evaluate(() => {
+    const room = (window as any).__room;
+    const opp = room.state.players.get('AI');
+    const slot = (k: string) => ({
+      currentUses: opp[k].currentUses,
+      isExtinguished: opp[k].isExtinguished,
+    });
+    return { a1: slot('a1'), a2: slot('a2'), d1: slot('d1'), d2: slot('d2') };
+  });
+
+  for (const [name, s] of Object.entries(ai)) {
+    expect(s.currentUses, `${name}.currentUses`).toBe(0);
+    expect(s.isExtinguished, `${name}.isExtinguished`).toBe(true);
+  }
+
+  await ctx.close();
+});
+
+// #532 adversarial (implementation-aware) boundary case: aiHearts:0 is a
+// falsy-but-defined value. Both `options.aiHearts ?? bossHearts`
+// (BattleRoom.ts ~L390) and `overrides?.hearts ?? STARTING_HEARTS`
+// (seatPlayer ~L574) use `??`, not `||` — so 0 must be honored as a literal
+// zero-heart seat, not silently replaced by the STARTING_HEARTS default the
+// way `||` would coerce it. Guards against a future refactor swapping `??`
+// for `||` (a one-character regression that `aiHearts:1`-only coverage would
+// never catch, since 1 is truthy either way).
+test('#532 adversarial: aiHearts:0 is honored via ?? — not coerced up to the STARTING_HEARTS default', async ({ browser }) => {
+  const ctx = await browser.newContext();
+  await seedAuthToken(ctx);
+  const page = await ctx.newPage();
+  await page.goto(URL);
+  await campToEncounter(page);
+  await waitForEncounter(page);
+  await page.evaluate(() =>
+    (window as any).__encounterSelectWithOverrides('DEFENSIVE', { aiHearts: 0 }),
+  );
+  await page.waitForFunction(() => (window as any).__room !== null, { timeout: 8000 });
+
+  const aiHearts = await page.evaluate(
+    () => (window as any).__room?.state?.players?.get('AI')?.hearts,
+  );
+  expect(aiHearts).toBe(0);
+
+  await ctx.close();
+});
