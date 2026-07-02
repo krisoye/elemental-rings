@@ -301,9 +301,12 @@ export function seedStarterInventory(playerId: string): void {
  * hand), a default loadout, and the heart_ring_id pointer. Runs in a single
  * transaction so a partial registration can never persist.
  *
- * The Reliquary starts empty (no resting rings) and the heart ring is excluded
- * from the spirit sum, so a fresh player has spirit_max = 0 — earned only by
- * winning rings and retiring them to the Reliquary.
+ * seedStarterInventory seeds 5 Tier-1 Reliquary rings (EPIC #378), so a fresh
+ * player does not start at spirit_max = 0 — the schema's DEFAULT 50 is only a
+ * transient placeholder. refreshSpiritMax persists the live-computed spirit_max
+ * (60 for the standard 5×Tier-1 starter Reliquary on seeker) and restoreSpirit
+ * tops spirit_current off to match, so a brand-new player starts full
+ * (spirit_current == spirit_max == 60). Mirrors resetPlayer.
  *
  * @param username unique handle (uniqueness enforced by the DB).
  * @param passwordHash bcrypt hash of the player's password.
@@ -314,6 +317,10 @@ export const createPlayer = db.transaction(
     const playerId = uuidv4();
     insertPlayer.run(playerId, username, passwordHash, RELIQUARY_BASE_CAP);
     seedStarterInventory(playerId);
+    // Persist spirit_max from the freshly-seeded Reliquary and top the gauge off —
+    // a brand-new player starts full (spirit_current == spirit_max). Mirrors resetPlayer.
+    refreshSpiritMax(playerId);
+    restoreSpirit(playerId);
     return playerId;
   },
 );
@@ -379,13 +386,13 @@ export const resetPlayer = db.transaction((playerId: string): void => {
   resetUpdatePlayers.run(playerId);
   // 4. Seed the fresh 11-ring starter inventory + attunement + talisman loadout.
   seedStarterInventory(playerId);
-  // 5. Recompute spirit_max from the freshly-seeded Reliquary composition and clamp
-  //    the gauge to it — mirrors setHeartRing / packLoadout / PUT /api/difficulty.
-  //    BattleRoom reads players.spirit_max directly to seed the vsAI gauge and NPC
-  //    spirit pool, so the stored column must reflect the seeded inventory, not the
-  //    50 floor written in step 3.
-  const spiritMax = refreshSpiritMax(playerId);
-  clampSpiritCurrent(playerId, spiritMax);
+  // 5. Recompute spirit_max from the freshly-seeded Reliquary composition and top
+  //    the gauge off to it — a reset player starts full, same contract as
+  //    createPlayer. BattleRoom reads players.spirit_max directly to seed the
+  //    vsAI gauge and NPC spirit pool, so the stored column must reflect the
+  //    seeded inventory, not the 50 floor written in step 3.
+  refreshSpiritMax(playerId); // persist spirit_max from the re-seeded Reliquary
+  restoreSpirit(playerId); // a reset player starts full — raise the gauge to the fresh max
 });
 
 /** Full player row including password_hash — used by the login flow only. */
