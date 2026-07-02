@@ -141,17 +141,33 @@ db.exec(
   `UPDATE players SET reliquary_cap = ${RELIQUARY_BASE_CAP} WHERE reliquary_cap > ${RELIQUARY_BASE_CAP}`,
 );
 
-// EPIC #279 — recompute spirit_max on every boot from the new formula:
-// SUM(max_uses) across the player's Reliquary rings (in_carry = 0) × their
-// difficulty multiplier (wanderer ×5, ascendant ×3, ascetic ×2, void ×1, else
-// seeker ×4). This must match getSpiritStats() in PlayerRepo. The difficulty
-// column migration above has already run, so the CASE is safe. An empty
-// Reliquary yields 0 — intended; there is no floor. Then cap spirit_current to
-// the (possibly lower) new max.
+// EPIC #279 / #511 Contract F (#520) — recompute spirit_max on every boot from
+// the FORCE-WEIGHTED formula: SUM(max_uses × force) across the player's
+// Reliquary rings (in_carry = 0, heart_slot = 0) × their difficulty multiplier
+// (wanderer ×5, ascendant ×3, ascetic ×2, void ×1, else seeker ×4). This must
+// match getSpiritStats() in PlayerRepo.ts. The difficulty column migration
+// above has already run, so the CASE is safe. An empty Reliquary yields 0 —
+// intended; there is no floor. Then cap spirit_current to the (possibly lower)
+// new max.
+//
+// force is `r.max_uses * ((r.tier + 3) / 2)` — a raw-SQL restatement of
+// shared/tiers.ts:forceFromTier1(r.tier + 1), which is
+// `Math.floor((tier1 + 2) / 2)` with tier1 = r.tier + 1, i.e.
+// `Math.floor((r.tier + 3) / 2)`. This UPDATE runs as a raw db.exec() SQL
+// statement across every player and cannot call into TypeScript, so the
+// formula is duplicated here — the SAME allowance already taken for the
+// difficulty-multiplier CASE above. SQLite integer-column (`/`) division
+// truncates toward zero for non-negative operands, so `(r.tier + 3) / 2` is
+// exactly `floor((r.tier + 3) / 2)`; `r.tier` and `r.max_uses` are both
+// INTEGER columns (schema.sql), so the division is integer, not float. This
+// duplication is guarded by the drift-guard test in
+// tests/unit/spirit-formula.test.ts, which asserts this SQL and
+// getSpiritStats() agree across every DifficultyTier and the acceptance-table
+// ring compositions — keep both in sync on any change to the force formula.
 db.exec(
   `UPDATE players
      SET spirit_max = (
-       SELECT COALESCE(SUM(r.max_uses), 0)
+       SELECT COALESCE(SUM(r.max_uses * ((r.tier + 3) / 2)), 0)
        FROM rings r
        WHERE r.owner_id = players.id AND r.in_carry = 0 AND r.heart_slot = 0
      ) * CASE players.difficulty
