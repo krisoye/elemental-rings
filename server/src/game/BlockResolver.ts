@@ -82,8 +82,8 @@ export function resolveBlock(
   const r: BlockResult = {
     timing,
     relationship: summaryRel,
-    defenderHeartLost: false,
-    attackerHeartLost: false,
+    defenderHeartsLost: 0,
+    attackerHeartsLost: 0,
     rallyContinues: false,
     volleyedElement: 0,
     hitGaugeElements: [],
@@ -95,7 +95,7 @@ export function resolveBlock(
   if (timing === 'NO_BLOCK' || timing === 'MISTIME' || !defenderRing) {
     // Uncontested hit (or a caught-timing classification with no defense ring):
     // one heart, +1 per tracked attacker component (§7.1 case 1).
-    r.defenderHeartLost = true;
+    r.defenderHeartsLost = 1;
     r.hitGaugeElements = trackedComponentsOf(attackerRing.element);
     // MISTIME burns 1 defender use; NO_BLOCK never committed a ring.
     if (timing === 'MISTIME' && defenderRing) consumeUse(defenderRing);
@@ -110,7 +110,7 @@ export function resolveBlock(
 
   if (rel === 'WEAK') {
     // A weak catch — wrong element. Costs a heart, moves no gauge (§7.1).
-    r.defenderHeartLost = true;
+    r.defenderHeartsLost = 1;
   } else if (rel === 'NEUTRAL') {
     // Case 2 — block gauge: full force-reduced rate per tracked parent.
     const delta = 1 / force(defenderRing.xp);
