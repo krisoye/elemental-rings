@@ -134,6 +134,21 @@ function aiHearts(page: Page): Promise<number> {
   return page.evaluate(() => (window as any).__room.state.players.get('AI').hearts);
 }
 
+/**
+ * Wait until the AI seat's hearts settle to `expected` in CLIENT state. Colyseus
+ * delivers the `exchangeResult` MESSAGE and the schema STATE patch on separate
+ * channels, so the patch can lag the message — never read hearts once immediately
+ * after the message arrives; poll the authoritative state until it reflects the
+ * change (or time out, failing loudly if the decrement never lands).
+ */
+async function waitAiHearts(page: Page, expected: number, timeout = 8000): Promise<void> {
+  await page.waitForFunction(
+    (exp) => (window as any).__room.state.players.get('AI').hearts === exp,
+    expected,
+    { timeout },
+  );
+}
+
 // ── Scenario 1: a single uncontested exchange costs the AI MULTIPLE hearts ────
 test('scenario 1: a higher-force human attack loses the AI multiple hearts in one exchange', async ({ browser }) => {
   const ctx = await browser.newContext();
@@ -146,7 +161,10 @@ test('scenario 1: a higher-force human attack loses the AI multiple hearts in on
 
   // atkForce=3, AI hpForce=1 (interim), NO_BLOCK → ceilDiv(3,1)=3 hearts in ONE
   // exchange — the payload reports > 1 and the AI's hearts drop by exactly that.
+  // Wait for the state patch to land (separate channel from the message) rather
+  // than reading hearts the instant the exchangeResult message arrives.
   expect(exchange.defenderHeartsLost).toBeGreaterThan(1);
+  await waitAiHearts(page, before - exchange.defenderHeartsLost);
   expect(await aiHearts(page)).toBe(before - exchange.defenderHeartsLost);
 
   await ctx.close();
@@ -165,6 +183,9 @@ test('scenario 2: a large force gap ends the duel in one overflow exchange', asy
 
   // Uncapped overflow: hearts floored at 0, duel ENDED with the human as winner,
   // all in the single exchange just fired (no clamp, no second exchange needed).
+  // phase=ENDED and hearts=0 are set in the same resolveOrb tick → one atomic
+  // patch, so waiting on the phase already implies hearts settled; the explicit
+  // hearts wait keeps the read race-free without relying on that coupling.
   await page.waitForFunction(
     () => {
       const room = (window as any).__room;
@@ -172,6 +193,7 @@ test('scenario 2: a large force gap ends the duel in one overflow exchange', asy
     },
     { timeout: 8000 },
   );
+  await waitAiHearts(page, 0);
   expect(await aiHearts(page)).toBe(0);
 
   await ctx.close();
@@ -187,14 +209,20 @@ test('scenario 3: one Heartwood charge absorbs an entire multi-heart exchange, t
   const startHearts = await aiHearts(page);
 
   // First multi-heart exchange: absorbed as ONE whole event — zero hearts lost
-  // despite the payload reporting N ≥ 2, one charge spent.
+  // despite the payload reporting N ≥ 2, one charge spent. An absorbed exchange
+  // applies NO heart patch, so reading here is inherently race-free (there is no
+  // pending decrement that could lag the message); a regression that let it land
+  // is still caught by the exact-value wait on the second exchange below.
   const first = await attackAI(page, 'a1');
   expect(first.defenderHeartsLost).toBeGreaterThanOrEqual(2);
   expect(await aiHearts(page)).toBe(startHearts);
 
   // Next multi-heart exchange: the single charge is spent, so it lands in full.
+  // Wait for the hearts state patch to settle to exactly one exchange's worth of
+  // loss (proving the first was absorbed whole, the second landed uncapped).
   const second = await attackAI(page, 'a2');
   expect(second.defenderHeartsLost).toBeGreaterThanOrEqual(2);
+  await waitAiHearts(page, startHearts - second.defenderHeartsLost);
   expect(await aiHearts(page)).toBe(startHearts - second.defenderHeartsLost);
 
   await ctx.close();
