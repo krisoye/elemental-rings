@@ -882,3 +882,184 @@ describe('createPlayer regression: starter inventory unchanged after refactor (#
     );
   });
 });
+
+// ---------------------------------------------------------------------------
+// #525 — QA regression: createPlayer/resetPlayer spirit_current top-off.
+//
+// Fix: createPlayer and resetPlayer both now call `refreshSpiritMax(playerId);
+// restoreSpirit(playerId);` (instead of leaving spirit_current at the 50 schema
+// floor, or — for resetPlayer — the lower-only `clampSpiritCurrent`). Every
+// existing test for these two call sites (including this file's own
+// "implementation-aware branch coverage" block above) only ever exercises the
+// FIXED standard starter package (5×Tier-1 rings, seeker difficulty), which
+// always computes to spirit_max=60. A hard-coded `restoreSpirit` that always
+// wrote 60 would pass every one of those tests. The tests below exercise the
+// underlying refreshSpiritMax/restoreSpirit primitive pair — the exact pair
+// createPlayer/resetPlayer call — against non-starter compositions/difficulties
+// and adversarial pre-states to prove the mechanism generalizes and is not a
+// coincidental hard-coded 60.
+// ---------------------------------------------------------------------------
+
+/** Insert a bare Reliquary-counted ring (in_carry=0, heart_slot=0 — both column
+ *  defaults) directly, bypassing insertStarterRing's fixed tier/max_uses. Lets
+ *  a test construct an arbitrary (e.g. fused-tier) Reliquary composition. */
+function insertReliquaryRing(playerId: string, tier: number, maxUses: number): void {
+  dbInstance
+    .prepare(
+      `INSERT INTO rings (id, owner_id, element, tier, max_uses, current_uses)
+       VALUES (?, ?, 0, ?, ?, ?)`,
+    )
+    .run(`ring_${Math.random().toString(36).slice(2)}`, playerId, tier, maxUses, maxUses);
+}
+
+describe('createPlayer / resetPlayer spirit top-off — spec-driven adversarial (#525)', () => {
+  test('createPlayer: stored spirit_current equals spirit_max immediately after registration (60/60)', () => {
+    // #525 adversarial: AC #1 requires this exact invariant, but no prior test in
+    // this file asserted createPlayer's own DB row directly — only resetPlayer's
+    // was checked (L243-255, L597-627). Before the fix, spirit_current stayed at
+    // the schema's 50 floor while spirit_max was correctly persisted at 60.
+    const playerId = repo.createPlayer(
+      `cp_spirit_${Date.now()}_${Math.random().toString(36).slice(2)}`,
+      'hash',
+    );
+
+    const row = dbInstance
+      .prepare('SELECT spirit_max, spirit_current FROM players WHERE id = ?')
+      .get(playerId) as { spirit_max: number; spirit_current: number };
+    expect(row.spirit_max).toBe(60);
+    expect(row.spirit_current).toBe(60);
+  });
+
+  test('resetPlayer sets (not just raises) spirit_current down to the fresh spirit_max when the player entered reset with an artificially inflated gauge', () => {
+    // #525 adversarial: if restoreSpirit were reimplemented as a raise-only op
+    // (e.g. `spirit_current = MAX(spirit_current, newMax)`, mirroring the
+    // lower-only clampSpiritCurrent it replaced), this test would catch the
+    // regression — a raise-only clamp leaves 999 untouched since 999 > 60.
+    // restoreSpirit does an unconditional SET, so the gauge must land exactly
+    // at the freshly-seeded max, not stay pinned above it.
+    const { playerId } = makePlayer();
+    dbInstance.prepare('UPDATE players SET spirit_current = 999 WHERE id = ?').run(playerId);
+
+    repo.resetPlayer(playerId);
+
+    const row = dbInstance
+      .prepare('SELECT spirit_max, spirit_current FROM players WHERE id = ?')
+      .get(playerId) as { spirit_max: number; spirit_current: number };
+    expect(row.spirit_max).toBe(60);
+    expect(row.spirit_current).toBe(60); // exact — not left at 999, not merely <= max
+  });
+
+  test('the refreshSpiritMax+restoreSpirit top-off pair tops off correctly for a non-starter (fused-tier) Reliquary composition at a non-default difficulty', () => {
+    // #525 adversarial: createPlayer/resetPlayer always reseed the identical
+    // 5×Tier-1/seeker package, so the two tests above (and every pre-existing
+    // test) can only ever observe spirit_max=spirit_current=60 — a coincidence
+    // that would hide a hard-coded `restoreSpirit(): void { spirit_current = 60 }`.
+    // This exercises the SAME two-call sequence against a fused-tier composition
+    // (reusing the highTier shape from tests/unit/spirit-formula.test.ts) at
+    // 'ascendant' (×3) instead of seeker (×4), proving the mechanism is a real
+    // live computation, not a constant.
+    const playerId = repo.createPlayer(
+      `cp_fused_${Date.now()}_${Math.random().toString(36).slice(2)}`,
+      'hash',
+    );
+    // Replace the standard starter Reliquary with a fused-tier composition:
+    // 3×Tier-10 (stored tier=9, max_uses=12, force=6) + 2×Tier-9 (tier=8, max_uses=11, force=5).
+    dbInstance
+      .prepare('DELETE FROM rings WHERE owner_id = ? AND in_carry = 0 AND heart_slot = 0')
+      .run(playerId);
+    insertReliquaryRing(playerId, 9, 12);
+    insertReliquaryRing(playerId, 9, 12);
+    insertReliquaryRing(playerId, 9, 12);
+    insertReliquaryRing(playerId, 8, 11);
+    insertReliquaryRing(playerId, 8, 11);
+    dbInstance.prepare('UPDATE players SET difficulty = ? WHERE id = ?').run('ascendant', playerId);
+
+    // Mirror the exact call pair createPlayer/resetPlayer use.
+    repo.refreshSpiritMax(playerId);
+    repo.restoreSpirit(playerId);
+
+    // (3×12×6 + 2×11×5) × ascendant(3) = (216 + 110) × 3 = 978.
+    const row = dbInstance
+      .prepare('SELECT spirit_max, spirit_current FROM players WHERE id = ?')
+      .get(playerId) as { spirit_max: number; spirit_current: number };
+    expect(row.spirit_max).toBe(978);
+    expect(row.spirit_current).toBe(978);
+  });
+
+  test('the top-off pair does not crash and yields spirit_max=spirit_current=0 for a player with zero Reliquary rings', () => {
+    // #525 adversarial boundary: an emptied Reliquary (every remaining ring is
+    // carried or heart-slotted, hence excluded from the spirit sum — same
+    // shape as the FK-safe path resetPlayer itself uses) must not throw and
+    // must top off to a sane floor (0), not NaN/undefined/a stale nonzero
+    // value. Only the Reliquary-counted rows are deleted (heart + carried
+    // battle-hand rings stay, avoiding an FK violation on heart_ring_id/loadout).
+    const playerId = repo.createPlayer(
+      `cp_empty_${Date.now()}_${Math.random().toString(36).slice(2)}`,
+      'hash',
+    );
+    dbInstance
+      .prepare('DELETE FROM rings WHERE owner_id = ? AND in_carry = 0 AND heart_slot = 0')
+      .run(playerId);
+
+    expect(() => {
+      repo.refreshSpiritMax(playerId);
+      repo.restoreSpirit(playerId);
+    }).not.toThrow();
+
+    const row = dbInstance
+      .prepare('SELECT spirit_max, spirit_current FROM players WHERE id = ?')
+      .get(playerId) as { spirit_max: number; spirit_current: number };
+    expect(row.spirit_max).toBe(0);
+    expect(row.spirit_current).toBe(0);
+  });
+});
+
+describe('restoreSpirit / refreshSpiritMax call-order independence — implementation-aware (#525 Phase 2)', () => {
+  test('restoreSpirit derives spirit_current from the live computeSpiritMax, not the persisted spirit_max column', () => {
+    // #525 Phase 2 (reviewer finding): restoreSpirit calls computeSpiritMax(playerId)
+    // directly rather than reading players.spirit_max off the row. This test would
+    // catch a regression where restoreSpirit is "optimized" to read the stored
+    // column instead — corrupt the column to a wrong value WITHOUT calling
+    // refreshSpiritMax first, then verify restoreSpirit still lands on the
+    // correct LIVE value (60), not the corrupted stored one (999).
+    const playerId = repo.createPlayer(
+      `cp_nodep_${Date.now()}_${Math.random().toString(36).slice(2)}`,
+      'hash',
+    );
+    dbInstance.prepare('UPDATE players SET spirit_max = 999 WHERE id = ?').run(playerId);
+
+    repo.restoreSpirit(playerId); // deliberately skip refreshSpiritMax
+
+    const row = dbInstance
+      .prepare('SELECT spirit_current FROM players WHERE id = ?')
+      .get(playerId) as { spirit_current: number };
+    expect(row.spirit_current).toBe(60); // the live Reliquary total, not the corrupted 999 column
+  });
+
+  test('calling restoreSpirit BEFORE refreshSpiritMax — reversed from createPlayer/resetPlayer\'s call order — still converges to spirit_current == spirit_max', () => {
+    // #525 Phase 2: production code always calls refreshSpiritMax then
+    // restoreSpirit. This test proves the pair is genuinely order-independent
+    // (both derive live from computeSpiritMax) so a future reordering — or a
+    // reviewer worried about call order — has a concrete regression guard:
+    // if restoreSpirit ever regresses to depend on refreshSpiritMax having run
+    // first (e.g. by reading the stored column), this reversed-order call would
+    // desync spirit_current from the true live max.
+    const playerId = repo.createPlayer(
+      `cp_revorder_${Date.now()}_${Math.random().toString(36).slice(2)}`,
+      'hash',
+    );
+    // Change difficulty only (composition untouched) so the live spirit_max
+    // (75 at wanderer ×5) diverges from the still-stale stored column (60).
+    dbInstance.prepare('UPDATE players SET difficulty = ? WHERE id = ?').run('wanderer', playerId);
+
+    repo.restoreSpirit(playerId); // reversed: restore before refresh
+    repo.refreshSpiritMax(playerId);
+
+    // 5 starter rings × 3 max_uses × force(Tier-1)=1 × wanderer(5) = 75.
+    const row = dbInstance
+      .prepare('SELECT spirit_max, spirit_current FROM players WHERE id = ?')
+      .get(playerId) as { spirit_max: number; spirit_current: number };
+    expect(row.spirit_max).toBe(75);
+    expect(row.spirit_current).toBe(75);
+  });
+});
