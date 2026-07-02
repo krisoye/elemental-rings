@@ -250,9 +250,9 @@ describe('POST /api/me/reset (#476)', () => {
       .prepare('SELECT spirit_max, spirit_current FROM players WHERE id = ?')
       .get(playerId) as { spirit_max: number; spirit_current: number };
     expect(row.spirit_max).toBe(60);
-    // spirit_current is clamped to spirit_max (60); the 50 floor is below the cap,
-    // so it remains 50 per the issue's starter-default contract.
-    expect(row.spirit_current).toBe(50);
+    // resetPlayer now tops the gauge off to the fresh spirit_max via restoreSpirit,
+    // so spirit_current == spirit_max == 60.
+    expect(row.spirit_current).toBe(60);
   });
 
   test('after reset: talisman_loadout has exactly one row (empty necklace)', async () => {
@@ -609,11 +609,11 @@ describe('POST /api/me/reset — implementation-aware branch coverage (#476)', (
     expect(row.spirit_max).toBe(60);
   });
 
-  // ── spirit_current clamped by clampSpiritCurrent ──────────────────────────
-  test('spirit_current is clamped to MIN(50, spirit_max) after reset — never exceeds spirit_max', () => {
-    // #476 impl: step 3 writes spirit_current=50, step 5 calls clampSpiritCurrent(60).
-    // Since 50 < 60 the clamp is a no-op; spirit_current stays at 50. Verify the
-    // clamp logic did not accidentally raise spirit_current above 50 or drop it to 0.
+  // ── spirit_current topped off by restoreSpirit ─────────────────────────────
+  test('spirit_current is topped off to spirit_max after reset — never exceeds spirit_max', () => {
+    // #525 fix: step 3 writes spirit_current=50 (floor), step 5 now calls
+    // refreshSpiritMax + restoreSpirit(60), which raises spirit_current to match
+    // the freshly-seeded spirit_max instead of leaving it at the 50 floor.
     const { playerId } = makePlayer();
 
     repo.resetPlayer(playerId);
@@ -621,9 +621,9 @@ describe('POST /api/me/reset — implementation-aware branch coverage (#476)', (
     const row = dbInstance
       .prepare('SELECT spirit_max, spirit_current FROM players WHERE id = ?')
       .get(playerId) as { spirit_max: number; spirit_current: number };
-    // spirit_max should be 60 (seeker × 5 rings × 3 uses); spirit_current 50 (floor).
+    // spirit_max should be 60 (seeker × 5 rings × 3 uses); spirit_current topped off to 60.
     expect(row.spirit_max).toBe(60);
-    expect(row.spirit_current).toBe(50);
+    expect(row.spirit_current).toBe(60);
     expect(row.spirit_current).toBeLessThanOrEqual(row.spirit_max);
   });
 
