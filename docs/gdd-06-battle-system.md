@@ -156,36 +156,38 @@ The attacker always pays **1 use to throw**. The defender's response — its **t
 - **Wind attacking:** always **Neutral** — no element can counter Wind offensively.
 - **Wind defending:** always **Weak** — Wind defense costs a use and still loses the heart.
 - **Earth attacking:** always **Weak** — Earth attacks never carry elemental advantage.
-- **Earth defending:** always **Neutral** — Earth defense is never elementally punished.
+- **Earth defending:** always **Neutral** — Earth defense is never elementally punished, but a Neutral catch still bleeds via force overflow when outmatched (§3.3, §6.4 table below).
 - **Fusion rings:** resolved via auto-align (§3.4). Gauge contributions come from triangle components only.
 
 ### Block Resolution Table
 
-| Timing | Relationship | Defender ♥ | Defender Uses | Gauge (+1 for attacker's element) | Rally |
-|--------|-------------|:-----------:|:-------------:|:---------------------------------:|:-----:|
-| **No-block** | — | −1 | 0 | ✓ | — |
-| **Mistime** | — | −1 | −1 | ✓ | — |
-| **Block** | Neutral | 0 | −1 | — | — |
-| **Block** | Strong | 0 | −1 | — | — |
-| **Block** | Weak | −1 | −1 | — | — |
-| **Parry** | Neutral | 0 | −1 | — | — |
-| **Parry** | Strong | 0 | −1 | — | ✓ |
-| **Parry** | Weak | −1 | −1 | — | — |
+Heart loss is no longer a flat 1-or-0 per matchup — every row resolves through each ring's tier-derived **force** stat (§4.2, Contract A). `atk_force` is the attacking ring's force; `def_force` is the defending ring's force (credited only on a Neutral or Strong catch — zero on a Weak catch); `hp_force` is the equipped heart ring's force, which always mitigates the leftover. Every heart count is a non-negative integer via `ceil`, and the result is uncapped — a large enough force gap can cost several hearts in one exchange.
 
-*Attacker always pays −1 use on throw. Gauge rules: see §7.1.*
+| Timing | Relationship | Defender ♥ | Defender Uses | Gauge | Rally |
+|--------|-------------|:-----------:|:-------------:|:---------------------------------:|:-----:|
+| **No-block** | — | `max(1, ceil(atk_force / hp_force))` | 0 | ✓ attacker's element (case 1) | — |
+| **Mistime** | — | `max(1, ceil(atk_force / hp_force))` | −1 | ✓ attacker's element (case 1) | — |
+| **Block** | Neutral | `max(0, ceil((atk_force − def_force) / hp_force))` | −1 | ✓ defender's own (case 2) | — |
+| **Block** | Strong | `max(0, ceil((atk_force − def_force) / hp_force))` | −1 | ✓ defender's own (case 2 + 3) | — |
+| **Block** | Weak | `max(1, ceil(atk_force / hp_force))` | −1 | ✓ defender's own (case 2 rate) | — |
+| **Parry** | Neutral | `max(0, ceil((atk_force − def_force) / hp_force))` | −1 | ✓ defender's own (case 2) | — |
+| **Parry** | Strong | **0** (flat-safe) | −1 | cleared (case 4) | ✓ |
+| **Parry** | Weak | `max(1, ceil(atk_force / hp_force))` | −1 | ✓ defender's own (case 2 rate) | — |
+
+*Attacker always pays −1 use on throw. Gauge rules and the `1 / def_force` dampening rate: see §7.1.*
 
 **Compact form (original):**
 
 | Timing ↓ / Element → | Strong | Neutral | Weak |
 |---|---|---|---|
-| **No-block** | −1 heart; defender ring spends **0** uses; **+gauge** | same | same |
-| **Mistime** | −1 heart; attempted ring spends **1** use; **+gauge** | same | same |
-| **Block** | safe; ring −1 use; no rally | safe; ring −1 use | ring −1 use; **−1 heart**; no gauge |
-| **Parry** | safe; ring −1 use; **rally** (below) | safe; ring −1 use | ring −1 use; **−1 heart**; no gauge |
+| **No-block** | `max(1, ceil(atk_force/hp_force))` hearts; defender ring spends **0** uses; **+gauge** | same | same |
+| **Mistime** | `max(1, ceil(atk_force/hp_force))` hearts; attempted ring spends **1** use; **+gauge** | same | same |
+| **Block** | `max(0, ceil((atk_force−def_force)/hp_force))` hearts; ring −1 use; own gauge fills; no rally | same as Strong | `max(1, ceil(atk_force/hp_force))` hearts (**zero** `def_force` credit); ring −1 use; own gauge fills |
+| **Parry** | **0** hearts (flat-safe); ring −1 use; gauges clear; **rally** (below) | `max(0, ceil((atk_force−def_force)/hp_force))` hearts; ring −1 use; own gauge fills; no rally | `max(1, ceil(atk_force/hp_force))` hearts (**zero** `def_force` credit); ring −1 use; own gauge fills |
 
-**A caught attack always costs exactly 1 use.** Whether you press block or parry, and whatever your element, committing a ring to a successful catch spends one use — no more. The element relationship then decides the consequence: a **strong** or **neutral** catch is fully safe, while a **weak** catch means your ring absorbed the blow but couldn't deflect it — you keep the ring (minus its one use) but still take **1 heart**. Weak is not an overflow mechanic; it is a flat heart cost for catching with the wrong element.
+**A caught attack always costs exactly 1 use — that invariant is unchanged.** Whether you press block or parry, and whatever your element, committing a ring to a successful catch spends one use — no more. The element relationship then decides how much of the attack's raw force gets through: **Parry+Strong** is the only flat-safe outcome (0 hearts, always — a rally triggers instead of a heart check, case 4 §7.1). Every other catch — Block-Neutral, Block-Strong, and Parry-Neutral — subtracts the defending ring's `def_force` from the attack's `atk_force` and mitigates whatever is left by `hp_force`, so a sufficiently high-force attack can still bleed hearts through a real elemental advantage. A **weak** catch (Block-Weak or Parry-Weak) gets **zero** `def_force` credit — the ring absorbed the blow but couldn't deflect any of its force, so the full `atk_force` passes to `hp_force` mitigation. Weak is no longer a flat heart cost; it now scales uncapped with the attacker's force, just without the subtractive shield a matching or superior element would give.
 
-On the two failure rows (**no-block**, **mistime**) the element axis is irrelevant — timing failed and the attack lands uncontested. **No-block** is a deliberate sacrifice (save the ring use, take a heart); **mistime** is the punished attempt (lose a heart AND burn the attempted ring's use; a ring drained to exactly 0 this way is extinguished, no extra heart).
+On the two failure rows (**no-block**, **mistime**) the element axis is irrelevant — timing failed and the attack lands uncontested, at the same `max(1, ceil(atk_force / hp_force))` cost. **No-block** is a deliberate sacrifice (save the ring use, take the force-scaled heart cost); **mistime** is the punished attempt (take the same force-scaled heart cost AND burn the attempted ring's use; a ring drained to exactly 0 this way is extinguished, no extra heart).
 
 **Gauge movement** is governed by §7.1. Heart loss and gauge movement are fully independent.
 
@@ -198,10 +200,10 @@ On the two failure rows (**no-block**, **mistime**) the element axis is irreleva
 3. A new 0.9 s telegraph plays for the volleyed element and the rally-defender must respond exactly as in a normal defend window (no-block / block / parry-strong).
 4. If the rally-defender **parries-strong** they become the rally-attacker and the chain continues. The volleyed element is the rally-defender's parrying ring's element. Only triangle elements (Fire, Water, Wood) can produce a PARRY+STRONG; Wind defense is always Weak and Earth defense is always Neutral, so neither can extend a rally.
 5. Any other response ends the chain and resolves normally under the standard outcome table:
-   - **No-block** → rally-defender loses 1 heart (+gauge); chain ends.
-   - **Block/parry (neutral)** → safe; ring −1 use; chain ends.
-   - **Block/parry (weak)** → ring −1 use; −1 heart (no gauge); chain ends.
-   - **Mistime** → rally-defender loses 1 heart + 1 ring use (+gauge); chain ends.
+   - **No-block** → rally-defender takes `max(1, ceil(atk_force / hp_force))` hearts (+gauge); chain ends.
+   - **Block/parry (neutral)** → rally-defender bleeds `max(0, ceil((atk_force − def_force) / hp_force))` hearts (0 when `def_force ≥ atk_force`); ring −1 use; own gauge fills; chain ends.
+   - **Block/parry (weak)** → ring −1 use; `max(1, ceil(atk_force / hp_force))` hearts (zero `def_force` credit); own gauge fills; chain ends.
+   - **Mistime** → rally-defender takes `max(1, ceil(atk_force / hp_force))` hearts + 1 ring use (+gauge); chain ends.
 
 **After the chain ends, initiative passes to the non-initiative-holder** — the player who did not start the chain. This is true regardless of rally depth or who scored the final hit. A rally counter does not transfer initiative; it extends the current initiative phase and forces the holder to defend.
 
@@ -224,16 +226,17 @@ A strong element with only **Block** timing is a safe block but forfeits the ral
 | **GOOD** | Weak | `ABSORBED` | Red | — heart lost despite good timing |
 | **MISTIME / NO_BLOCK** | any | `MISS` | Grey | — |
 
-`COUNTER!` is the only label that signals a rally — the only outcome where Parry timing and a Strong element combine (§6.4 Rally). `PERFECT!` teaches players what the inner timing window feels like even when their element isn't strong enough to counter. `ABSORBED` explains why a heart was lost despite pressing a key on time — a weak-element catch costs a heart regardless of timing.
+`COUNTER!` is the only label that signals a rally — the only outcome where Parry timing and a Strong element combine (§6.4 Rally). `PERFECT!` teaches players what the inner timing window feels like even when their element isn't strong enough to counter. `ABSORBED` explains why a heart (or more, force-scaled) was lost despite pressing a key on time — a weak-element catch costs at least a heart regardless of timing.
 
 ### 6.5 Neutral Block Rules
 A neutral block occurs when the defender blocks (timing = block or parry) with an element that has no relationship to the attack.
 
 - The defender's ring spends 1 use; the attacker's thrown ring already spent its 1 use
-- No heart damage
-- Gauge movement follows §7.1 — a standard block (not a strong block) applies case 2 only
+- **Heart damage is no longer flatly zero.** A neutral **block and a neutral parry now resolve identically**: both bleed `max(0, ceil((atk_force − def_force) / hp_force))` hearts — the defending ring's `def_force` is a real subtractive shield, not an absolute wall. It stays heart-safe only when `def_force ≥ atk_force`. The **only** flat-safe (always-0-heart) outcome anywhere in the resolution table is **Parry+Strong** (case 4, §7.1) — the sole case where the elemental advantage fully absorbs the attack, and it triggers a rally instead of a heart check.
+- Gauge movement follows §7.1 — a standard block or parry (not a strong block) applies case 2 only, at the defending ring's own `1 / def_force` rate
+- The use-cost invariant is unchanged: a catch — block or parry, any relationship — always costs exactly **1** use
 
-Neutrals are pure attrition exchanges — safe on hearts, with the gauge and use cost as the only tradeoff.
+Neutrals remain attrition exchanges, but are no longer unconditionally safe on hearts against a higher-force attacker: the gauge and use cost are the guaranteed tradeoff, while heart safety now depends on `def_force` keeping pace with `atk_force`.
 
 ### 6.6 Extinguished Rings
 - A ring is **extinguished** whenever its `current_uses` reaches 0 during a battle, regardless of which outcome drained it (throw, block cost, or weak-catch cost)
