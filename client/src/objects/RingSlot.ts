@@ -1,6 +1,6 @@
 import Phaser from 'phaser';
 import { RingCard } from './ui/RingCard';
-import { force } from '../../shared/tiers';
+import { force } from '../../../shared/tiers';
 
 // Card dimensions. Height raised to 90px to fit five rows (slot label /
 // element name / tier / xp / use pips) without overlap.
