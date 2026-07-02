@@ -168,6 +168,13 @@ db.exec(
 // Exported (mirroring recomputeRingTiers below) so the drift-guard test can
 // invoke the EXACT production SQL directly against a seeded scratch DB,
 // instead of pasting a second copy of this UPDATE into the test file.
+//
+// ORDERING (#520): this MUST run AFTER recomputeRingTiers() below, because the
+// force weighting reads the rings.tier column. recomputeRingTiers() corrects
+// any stale tier value from XP first; running spirit_max before it would
+// compute the weighting from a pre-correction tier and leave spirit_max wrong
+// until the next boot. The call site is placed after recomputeRingTiers()
+// accordingly.
 export function recomputeSpiritMax(): void {
   db.exec(
     `UPDATE players
@@ -185,7 +192,6 @@ export function recomputeSpiritMax(): void {
   );
   db.exec('UPDATE players SET spirit_current = MIN(spirit_current, spirit_max)');
 }
-recomputeSpiritMax();
 
 // EPIC #173 C8 — recompute every existing ring's tier and max_uses from XP, so a
 // DB created under the old hard-cap model (tier stored independently, starter
@@ -200,6 +206,10 @@ recomputeSpiritMax();
 // is exact for every ring, not a compromise: an old-rule fused ring self-corrects
 // to 3 + tierForXp(xp) on boot with no special handling.
 recomputeRingTiers();
+
+// #520 — recompute spirit_max AFTER recomputeRingTiers() so the force weighting
+// reads corrected tier values (see the ORDERING note on recomputeSpiritMax).
+recomputeSpiritMax();
 
 // #180 — retire the Sanctum Stone. Re-anchoring is now a natural ability
 // (POST /api/sanctum/summon). Null out any equipped Stone so no player row
