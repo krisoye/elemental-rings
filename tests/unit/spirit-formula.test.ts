@@ -231,8 +231,21 @@ describe('db.ts recomputeSpiritMax() vs PlayerRepo.getSpiritStats() — drift gu
         const p = makePlayer(difficulty);
         for (const r of rings) makeRing(p, r);
 
+        // expectedSpiritMax() sums every ring it is given with no awareness of
+        // inCarry/heartSlot — it assumes the caller already passed only
+        // counted rings (true for tier1Only/midTier/highTier/veryHighTier,
+        // which have no excluded flags set). onlyExcluded's whole point is
+        // rings that must NOT count, so filter to the same in_carry=0 AND
+        // heart_slot=0 condition the production WHERE clause applies before
+        // handing rings to the generic helper — this keeps the helper
+        // reusable as "sum of already-included rings" while still producing
+        // the correct 0 expectation for onlyExcluded (a no-op filter for
+        // every other composition, since none of them set either flag).
+        const countedRings = rings.filter((r) => !r.inCarry && !r.heartSlot);
         const tsValue = repo.getSpiritStats(p).spiritMax;
-        expect(tsValue, `TS path (${name}, ${difficulty})`).toBe(expectedSpiritMax(rings, difficulty));
+        expect(tsValue, `TS path (${name}, ${difficulty})`).toBe(
+          expectedSpiritMax(countedRings, difficulty),
+        );
 
         dbMod.recomputeSpiritMax();
         const sqlValue = getPersistedSpiritMax(p);
