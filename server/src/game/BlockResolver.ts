@@ -80,7 +80,11 @@ function ceilDiv(a: number, b: number): number {
  *   attacker fills the defender's matching gauge +1 (§7.1 case 1, tier-
  *   independent). Defender pays 0 uses (NO_BLOCK) or 1 use (MISTIME).
  * - BLOCK / PARRY: the defender pays exactly 1 use.
- *     WEAK   → no gauge movement (a weak catch moves no gauge).
+ *     WEAK   → the defender still committed that ring, so its own gauge still
+ *              fills: each tracked parent of the DEFENDER fills its gauge by
+ *              `delta = 1 / force(defender.xp)` — same rate as the NEUTRAL
+ *              case below. The attacker's-element gauge (`hitGaugeElements`)
+ *              never fills on a catch.
  *     NEUTRAL→ case 2 block gauge: each tracked parent of the DEFENDER fills its
  *              gauge by `delta = 1 / force(defender.xp)` — full rate per
  *              tracked parent (Tier-2 Steam → Fire +0.500 AND Water +0.500).
@@ -137,9 +141,13 @@ export function resolveBlock(
 
   if (rel === 'WEAK') {
     // A weak catch — elementally overmatched. The defending ring's own force
-    // gives ZERO credit (no def_force subtraction); only hp_force mitigates, and
-    // any landed hit still costs a heart (§7.1). Moves no gauge.
+    // gives ZERO credit toward heart mitigation (no def_force subtraction);
+    // only hp_force mitigates, and any landed hit still costs a heart (§7.1).
+    // The defender still committed that ring, though, so its own gauge still
+    // fills at the same rate as a neutral catch (§7.1 reversal, EPIC #511).
     r.defenderHeartsLost = Math.max(1, ceilDiv(atkForce, hpForce));
+    const delta = 1 / defForce;
+    for (const el of defenderTracked) r.blockGaugeDeltas.push({ element: el, delta });
   } else if (rel === 'NEUTRAL') {
     // Case 2 — block gauge: full force-reduced rate per tracked parent. def_force
     // is a real subtractive shield against heart loss (Contract B).
