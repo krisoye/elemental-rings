@@ -1163,3 +1163,100 @@ describe('#521 adversarial — pacNew ≥ mult invariant at extreme (well beyond
     }
   });
 });
+
+// ---------------------------------------------------------------------------
+// 9. IMPL-AWARE (#521 Phase 2) — computeNpcSpirit branch-shape guards. The
+//    whole #521 "no constant change" decision assumes computeNpcSpirit's
+//    CURRENT branch shapes stay exactly as they are: boss = ADDITIVE
+//    (base + floor), roamer = MAX (max(base, floor)) — see AILoadout.ts
+//    L158-169. Code review flagged that Sections 3/5's grid assertions above
+//    are largely algebraic consequences of the formula shape THEY THEMSELVES
+//    ENCODE (roamerRef/bossRef mirror the same additive/max split, and the
+//    parity test in Section 2 compares against those same mirrors) — a
+//    "fix" that flipped one branch's shape and its test-local mirror
+//    together would stay internally consistent and could slip through.
+//    These tests instead hard-code literal expected integers computed BY
+//    HAND directly from the raw formula (not via roamerRef/bossRef, and not
+//    via any test-local mirror), at input values deliberately chosen so
+//    additive and max() diverge — the only way to pin the branch SHAPE
+//    itself, independent of whatever the test's own reference helpers do.
+// ---------------------------------------------------------------------------
+describe('#521 impl-aware — computeNpcSpirit branch-shape guards (additive boss / max roamer must not be swapped)', () => {
+  test('boss path is ADDITIVE (base + floor), not max(base, floor): volcano/major spiritMax=100 -> 240, not 140', () => {
+    // #521 adversarial: base=floor(100x1.0)=100, floor=140 (base < floor). A
+    // "fix" that changed the boss branch to max(base, floor) — mirroring the
+    // roamer branch, which is the exact kind of "simplification" a future PR
+    // might make without realizing the shapes are intentionally different —
+    // would silently return 140 here instead of 240. Hand-computed, not via
+    // bossRef (which would move together with such a regression).
+    const result = computeNpcSpirit(100, 'DEFENSIVE', 'volcano', 'major');
+    expect(result).toBe(240);
+    expect(result).not.toBe(Math.max(100, 140)); // the max()-branch regression value
+  });
+
+  test('boss path is ADDITIVE even when the floor exceeds the base term: forest/major spiritMax=10 -> 50, not 40', () => {
+    // #521 adversarial: base=floor(10x1.0)=10 < floor=40. Both a max()-shape
+    // regression AND a "silently drop the floor" regression would coincide at
+    // 40 here (max(10,40)=40, and a bug that only kept the floor would also
+    // read 40) — additive is the only shape that produces 50. Complements the
+    // previous test (there base > floor; here floor > base), pinning both
+    // orderings of the additive terms.
+    const result = computeNpcSpirit(10, 'DEFENSIVE', 'forest', 'major');
+    expect(result).toBe(50);
+    expect(result).not.toBe(40);
+  });
+
+  test('boss path is ADDITIVE even when the base term exceeds the floor: forest/gate spiritMax=1000 -> 765, not 750', () => {
+    // #521 adversarial: base=floor(1000x0.75)=750, floor=15. A regression that
+    // dropped the "+ floor" term entirely (returning base alone — e.g. an
+    // accidental `return base;` early-return "cleanup") would give 750;
+    // additive gives 765. The complementary base>floor case to the previous
+    // test.
+    const result = computeNpcSpirit(1000, 'DEFENSIVE', 'forest', 'gate');
+    expect(result).toBe(765);
+    expect(result).not.toBe(750);
+  });
+
+  test('roamer path is MAX (max(base, floor)), not additive: volcano/AGGRESSIVE spiritMax=1000 -> 250, not 350', () => {
+    // #521 adversarial: base=floor(1000x0.25)=250 > floor=100. A "fix" that
+    // changed the roamer branch to additive (mirroring the boss branch) would
+    // silently return 350 here. The entire Section 3 ratio-grid's "drift ~
+    // 1.00 once mult-dominated" claim depends on the roamer branch staying
+    // max()-shaped so the mult term ALONE determines pacNew once it exceeds
+    // the floor — additive would instead keep adding the floor forever and
+    // that claim would be false without this test noticing via a shape flip
+    // (as opposed to a value retune, which the ratio-grid tests DO catch).
+    const result = computeNpcSpirit(1000, 'AGGRESSIVE', 'volcano');
+    expect(result).toBe(250);
+    expect(result).not.toBe(350); // the additive-branch regression value
+  });
+
+  test('roamer path is MAX even when the floor exceeds the base term: volcano/AGGRESSIVE spiritMax=200 -> 100, not 150', () => {
+    // #521 adversarial: base=floor(200x0.25)=50 < floor=100. Additive would
+    // silently give 150 — the value the "Mid/volcano/AGGRESSIVE is the ONLY
+    // floor-dominated roamer cell" test elsewhere in this file implicitly
+    // assumes is IMPOSSIBLE under the current max()-shape (a floor-dominated
+    // cell under max() returns exactly the floor, 100, never floor+base).
+    // Complements the previous test (there base > floor; here floor > base).
+    const result = computeNpcSpirit(200, 'AGGRESSIVE', 'volcano');
+    expect(result).toBe(100);
+    expect(result).not.toBe(150);
+  });
+
+  test('the issue worked example (232->372, 1304->1444 for volcano/major) is re-derived straight from BOSS_MODIFIERS/CLASS_OFFSET/REGION_STEP, not through bossRef', () => {
+    // #521 adversarial: closes the reviewer's specific gap — bossRef (used by
+    // the parity/anchor tests in Sections 2 and 5) encodes the same additive
+    // shape as production, so a shape regression in BOTH places at once could
+    // theoretically stay self-consistent there. This test reads the raw
+    // exported constants directly with no shared helper function at all,
+    // giving an independent, hand-assembled oracle for the issue's own
+    // headline numbers.
+    const majorMult = BOSS_MODIFIERS.major.spiritMult;
+    const volcanoMajorFloor = CLASS_OFFSET.major + REGION_STEP * BIOME_ORDER.indexOf('volcano');
+    expect(volcanoMajorFloor).toBe(140);
+    expect(Math.floor(232 * majorMult) + volcanoMajorFloor).toBe(372);
+    expect(Math.floor(1304 * majorMult) + volcanoMajorFloor).toBe(1444);
+    expect(computeNpcSpirit(232, 'DEFENSIVE', 'volcano', 'major')).toBe(372);
+    expect(computeNpcSpirit(1304, 'DEFENSIVE', 'volcano', 'major')).toBe(1444);
+  });
+});
