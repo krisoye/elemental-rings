@@ -23,6 +23,7 @@ import {
 
 const FIRE = 0;
 const WATER = 1;
+const WOOD = 4;
 
 /** Seed exact state on a player via the test-only server hook. */
 async function setState(
@@ -344,14 +345,18 @@ test('Block gauge: a WEAK WOOD-vs-FIRE catch fills the defender woodGauge at 1/d
   const h = await setupBattle(browser);
   const { attacker, defender } = await attackerDefender(h.p1, h.p2);
 
-  // Default loadout already gives us the matchup we need: attacker a1=FIRE,
-  // defender d1=WOOD. FIRE beats WOOD in the triangle, so catching a FIRE
-  // attack with D1 is a WEAK catch. Pre-#515 this moved no gauge at all; the
-  // §7.1 reversal (#515) makes the defender's own committed ring still fill
-  // its gauge at 1/def_force (Tier 0 → delta 1.0) even though the catch gives
-  // zero credit toward heart mitigation (#514's WEAK heart formula, unchanged).
+  // Seat the exact matchup we need: attacker a1=FIRE, defender d1=WOOD. FIRE
+  // beats WOOD in the triangle, so catching a FIRE attack with D1 is a WEAK
+  // catch. Both elements are set explicitly via __testSetState — the seated
+  // starter hand (STARTER_BATTLE_HAND) is all Wind/Earth, so a WOOD defender
+  // must be seeded rather than relied on as a default (an EARTH d1 would resolve
+  // NEUTRAL, an always-safe catch, and never exercise the WEAK path). Pre-#515 a
+  // weak catch moved no gauge at all; the §7.1 reversal (#515) makes the
+  // defender's own committed ring still fill its gauge at 1/def_force (Tier 0 →
+  // delta 1.0) even though the catch gives zero credit toward heart mitigation
+  // (#514's WEAK heart formula, unchanged).
   await setState(attacker, { elements: { a1: FIRE } });
-  await setState(defender, { hearts: 3, fireGauge: 0, woodGauge: 0 });
+  await setState(defender, { elements: { d1: WOOD }, hearts: 3, fireGauge: 0, woodGauge: 0 });
 
   await attacker.keyboard.press('1'); // A1 FIRE
   await waitForPhase(defender, 'DEFEND_WINDOW');
