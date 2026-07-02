@@ -9,10 +9,20 @@ import { campToEncounter, waitForEncounter } from './helpers';
 //     (ceil-rounded Contract A). The tier column is not recomputed, but the
 //     resolver reads force(ring.xp), so atkForce=3 the moment the room seats.
 //   • __testSetState (E2E_TEST_ROUTES) zeroes the AI's d1/d2 uses so it can never
-//     catch — every human attack resolves as an uncontested NO_BLOCK hit. The AI
-//     defender's interim hpForce is 1 (TODO(#517)), so NO_BLOCK loss is exactly
-//     max(1, ceilDiv(atkForce, 1)) = atkForce = 3 — a true multi-heart event that
-//     is independent of the AI's own (force-coupled, not-yet-wired) tier.
+//     catch — every human attack resolves as an uncontested NO_BLOCK hit.
+//   • #517 — the AI defender's hpForce is now the WIRED, indexing-normalized
+//     value (forceFromTier1(effectiveTier1Indexed(biome, personality, playerXp)),
+//     no longer the #514 interim 1), but it STILL evaluates to 1 for the exact
+//     setup below: only a1/a2 are boosted (to ATTACK_XP=3000), so the player's
+//     battle-hand weighted average (getBattleHandAvgXp — thumb 0.35 + atkAvg 0.15
+//     + defAvg 0.15 + heart 0.35, with thumb/def/heart all still 0) is 450, and
+//     AGGRESSIVE's 0.8 multiplier scales that to npcXp=360 — below the T1=500
+//     threshold, so tierForXp=0 and effTier1=max(floorTier('forest')=1, 0+1)=1
+//     → aiHpForce=forceFromTier1(1)=1. This is a genuine coincidence of THIS
+//     scenario's XP setup (see encounter-vs-ai.spec.ts for a scenario where the
+//     AI's normalized hpForce is > 1 and demonstrably mitigates), not evidence
+//     the wiring is a no-op. NO_BLOCK loss below is therefore still exactly
+//     max(1, ceilDiv(atkForce, 1)) = atkForce = 3 — a true multi-heart event.
 //   • aiHeartwoodCharges flows through the client's `...aiOverrides` spread into
 //     the room options, so the generic AI seat gets exactly one absorb charge.
 
@@ -159,7 +169,8 @@ test('scenario 1: a higher-force human attack loses the AI multiple hearts in on
   const before = await aiHearts(page);
   const exchange = await attackAI(page, 'a1');
 
-  // atkForce=3, AI hpForce=1 (interim), NO_BLOCK → ceilDiv(3,1)=3 hearts in ONE
+  // atkForce=3, AI hpForce=1 (#517-wired, coincidentally still 1 for this XP
+  // setup — see the file docstring), NO_BLOCK → ceilDiv(3,1)=3 hearts in ONE
   // exchange — the payload reports > 1 and the AI's hearts drop by exactly that.
   // Wait for the state patch to land (separate channel from the message) rather
   // than reading hearts the instant the exchangeResult message arrives.
