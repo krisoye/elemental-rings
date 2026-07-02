@@ -35,6 +35,7 @@ const PVP_SPECS = [
   'double-attack-render.spec.ts', // #267 — dual-orb telegraph + parry-disperse VFX
   'charge-attack.spec.ts', // #485 — oscillating-orb charge + fusion ring integration
   'force-heart-loss.spec.ts', // #514 — force-scaled multi-heart loss + OQ-4 whole-exchange absorb
+  'rally-force.spec.ts', // #516 — Contract D: rally recursion through force
 ];
 const SOLO_SPECS = [
   'auth.spec.ts',
