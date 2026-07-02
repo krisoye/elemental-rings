@@ -29,7 +29,7 @@ function ring(element: number, currentUses = 3, xp = 0) {
 
 describe('#260 — BlockResolver stays unscaled (base gauge math)', () => {
   test('an uncontested WOOD hit emits exactly [WOOD] in hitGaugeElements (base +1)', () => {
-    const r = resolveBlock(ring(ElementEnum.WOOD), null, 'NO_BLOCK');
+    const r = resolveBlock(ring(ElementEnum.WOOD), null, 'NO_BLOCK', 1);
     expect(r.hitGaugeElements).toEqual([ElementEnum.WOOD]);
   });
 
@@ -39,7 +39,7 @@ describe('#260 — BlockResolver stays unscaled (base gauge math)', () => {
       ...ring(ElementEnum.THORNADO),
       isFusion: true,
     } as any;
-    const r = resolveBlock(thornado, null, 'NO_BLOCK');
+    const r = resolveBlock(thornado, null, 'NO_BLOCK', 1);
     // Only the triangle component (WOOD) is gauge-bearing; WIND contributes nothing.
     expect(r.hitGaugeElements).toEqual([ElementEnum.WOOD]);
   });
