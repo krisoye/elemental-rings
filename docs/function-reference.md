@@ -436,7 +436,7 @@ Resolves a single exchange and returns a `BlockResult` (defined in `shared/types
 |--------|-------------|--------|
 | NO_BLOCK / MISTIME | any | −1 defender heart; each tracked attacker component fills its gauge +1 (MISTIME burns 1 defender use). |
 | BLOCK / PARRY | WEAK | −1 defender heart; no gauge movement. |
-| BLOCK / PARRY | NEUTRAL | Defender pays 1 use; block gauge deltas: `1 / 2^tierForXp(defender.xp)` per tracked defender component. |
+| BLOCK / PARRY | NEUTRAL | Defender pays 1 use; block gauge deltas: `1 / force(defender.xp)` per tracked defender component. |
 | BLOCK | STRONG | Neutral deltas PLUS case-3 decrements on the beaten gauge(s). |
 | PARRY | STRONG | Rally continues; all tracked gauges clear (`clearAllGauges = true`). |
 
@@ -444,10 +444,11 @@ Resolves a single exchange and returns a `BlockResult` (defined in `shared/types
 
 ### `Tiers.ts`
 
-Ring tier logic. Pure: no DB or side effects.
+Ring tier logic. Pure: no DB or side effects. The implementation lives in `shared/tiers.ts` (EPIC #511/#512) so the Phaser client can import `force`/`forceFromTier1` without depending on server-only code; `server/src/game/Tiers.ts` is a thin re-export so every existing server import path resolves unchanged.
 
 ```ts
-import { tierStartXp, tierForXp, naturalMaxUses } from 'server/src/game/Tiers';
+import { tierStartXp, tierForXp, naturalMaxUses, force, forceFromTier1 } from 'server/src/game/Tiers';
+// or, from client code: import { force, forceFromTier1 } from 'shared/tiers';
 ```
 
 #### `tierStartXp`
@@ -473,6 +474,22 @@ export function naturalMaxUses(tier: number): number
 ```
 
 Natural ring max uses at a given tier: `3 + tier`. "Natural" means the ring earned its tier through battle XP; fusion rings set `max_uses` explicitly rather than via this formula.
+
+#### `forceFromTier1`
+
+```ts
+export function forceFromTier1(tier1: number): number
+```
+
+Force scalar as a function of the **1-indexed** tier (Contract A, EPIC #511): `Math.floor((tier1 + 2) / 2)`. This is the single load-bearing arithmetic — both the player path (`force`) and the AI path normalize their own tier indexing to 1-indexed before calling this, so there is exactly one place the Contract A formula lives.
+
+#### `force`
+
+```ts
+export function force(xp: number): number
+```
+
+Force scalar for a ring of the given XP (Contract A): `forceFromTier1(tierForXp(xp) + 1)`. `tierForXp` is 0-indexed; `+1` normalizes to the 1-indexed convention `forceFromTier1` is defined on. Always ≥ 1. Consumed by `BlockResolver.ts`'s case-2 gauge dampening (`1 / force(defender.xp)`).
 
 ---
 
