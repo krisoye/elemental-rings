@@ -328,6 +328,76 @@ describe('#513 adversarial — attackerHeartsLost forward-compat placeholder nev
   });
 });
 
+describe('#513 Phase 2 impl-aware — awardExchangeXp `isHit = defenderHeartsLost > 0` and the `=== 0` defense branch stay logical complements', () => {
+  // BattleRoom.ts's awardExchangeXp reads defenderHeartsLost with TWO separate
+  // idioms for what is logically the same question: `isHit = result.defenderHeartsLost > 0`
+  // (used to pick the attacker's XP) and `result.defenderHeartsLost === 0 ? XP_DEF_BLOCK : XP_DEF_WEAK`
+  // (used to pick the defender's XP). Since BlockResolver only ever produces
+  // {0,1} today, these two idioms are guaranteed complements — but that
+  // guarantee lives in a DIFFERENT file (BlockResolver.ts) than the code that
+  // relies on it (BattleRoom.ts). A future edit to either idiom in isolation
+  // (e.g. hand-tuning one XP branch) would desync them without any
+  // single-branch test catching it. These tests exercise BOTH idioms at their
+  // real call site with real XP amounts, not just the resolver's raw output.
+  test('WEAK catch (heart lost) → isHit(`>0`) branch fires: attacker XP_ATK_HIT, defender falls through the `===0` branch to XP_DEF_WEAK', async () => {
+    const { room, c1, c2 } = await joinBattle();
+    const attacker = attackerClient(room, c1, c2);
+    const defender = defenderClient(room, c1, c2);
+    const aps = room.state.players.get(attacker.sessionId);
+    const dps = room.state.players.get(defender.sessionId);
+    // FIRE attack vs WOOD defense → WEAK (Wood loses to Fire in the v4 triangle).
+    setRing(aps, 'a1', ElementEnum.FIRE, 3);
+    setRing(dps, 'd1', WOOD, 3);
+    const results = collect(defender, 'exchangeResult');
+
+    attacker.send('selectAttack', { slot: 'a1' });
+    await room.waitForNextPatch();
+    const impact1: number = room.impactTime;
+    await sleep(impact1 + (BLOCK_WINDOW_MS - 15) - Date.now()); // BLOCK band
+    defender.send('submitDefense', { slot: 'd1', pressTime: Date.now() });
+    await sleep(BLOCK_WINDOW_MS + 400);
+
+    expect(results.length).toBe(1);
+    expect(results[0].relationship).toBe('WEAK');
+    expect(results[0].defenderHeartsLost).toBe(1);
+
+    const { XP_ATK_HIT, XP_DEF_WEAK } = await import('../../server/src/game/constants');
+    const atkXp = (room as any).xpAccumulator?.get(attacker.sessionId)?.get('a1') ?? 0;
+    const defXp = (room as any).xpAccumulator?.get(defender.sessionId)?.get('d1') ?? 0;
+    expect(atkXp).toBe(XP_ATK_HIT);
+    expect(defXp).toBe(XP_DEF_WEAK);
+  });
+
+  test('STRONG block (no heart lost) → isHit(`>0`) is false: attacker XP_ATK_BLOCK, defender takes the `===0` branch to XP_DEF_BLOCK', async () => {
+    const { room, c1, c2 } = await joinBattle();
+    const attacker = attackerClient(room, c1, c2);
+    const defender = defenderClient(room, c1, c2);
+    const aps = room.state.players.get(attacker.sessionId);
+    const dps = room.state.players.get(defender.sessionId);
+    // WATER attack vs WOOD defense → STRONG (Wood beats Water in the v4 triangle).
+    setRing(aps, 'a1', WATER, 3);
+    setRing(dps, 'd1', WOOD, 3);
+    const results = collect(defender, 'exchangeResult');
+
+    attacker.send('selectAttack', { slot: 'a1' });
+    await room.waitForNextPatch();
+    const impact1: number = room.impactTime;
+    await sleep(impact1 + (BLOCK_WINDOW_MS - 15) - Date.now()); // BLOCK band
+    defender.send('submitDefense', { slot: 'd1', pressTime: Date.now() });
+    await sleep(BLOCK_WINDOW_MS + 400);
+
+    expect(results.length).toBe(1);
+    expect(results[0].relationship).toBe('STRONG');
+    expect(results[0].defenderHeartsLost).toBe(0);
+
+    const { XP_ATK_BLOCK, XP_DEF_BLOCK } = await import('../../server/src/game/constants');
+    const atkXp = (room as any).xpAccumulator?.get(attacker.sessionId)?.get('a1') ?? 0;
+    const defXp = (room as any).xpAccumulator?.get(defender.sessionId)?.get('d1') ?? 0;
+    expect(atkXp).toBe(XP_ATK_BLOCK);
+    expect(defXp).toBe(XP_DEF_BLOCK);
+  });
+});
+
 describe('Double attack: AI defends both orbs', () => {
   test('a human double attack vs an AI defender → the AI submits a defense for both orbs', async () => {
     // Seat a vsAI room, then deterministically put the duel in the state we want:
