@@ -1,9 +1,11 @@
 import { describe, test, expect } from 'vitest';
+import fs from 'fs';
+import path from 'path';
 import { classifyTiming, resolveBlock } from '../../server/src/game/BlockResolver';
 import { Ring } from '../../server/src/schemas/Ring';
 import { ElementEnum } from '../../shared/types';
 import { fusionParents } from '../../server/src/game/ElementSystem';
-import { tierStartXp } from '../../server/src/game/Tiers';
+import { tierStartXp, force } from '../../server/src/game/Tiers';
 
 const { FIRE, WATER, EARTH, WIND, WOOD, TIDAL, STEAM } = ElementEnum;
 
@@ -300,6 +302,99 @@ describe('resolveBlock — fractional force deltas (C5/C6 regression, re-derived
     ]);
     expect(r.blockedGaugeElement.sort()).toEqual([ElementEnum.WOOD, ElementEnum.SHADOW].sort());
     expect(r.defenderHeartLost).toBe(false);
+  });
+});
+
+describe('resolveBlock — 1/force gauge dampening: old vs new formula divergence (#512 adversarial)', () => {
+  // #512: the case-2 (NEUTRAL) and case-2-within-STRONG+BLOCK gauge delta
+  // changed from `1/2^tierForXp(xp)` to `1/force(xp)`. The two formulas
+  // coincide at tierForXp 0 and 1 (force(T0)=1=2^0, force(T1)=2=2^1) but
+  // provably diverge from tierForXp 2 onward. These tests lock in BOTH halves
+  // of that claim: the "unchanged" floor (regression-proofing against a future
+  // "cleanup" that reverts to the exponential formula without any test
+  // failing) and the "changed" ceiling (proving the new formula actually took
+  // effect, not just that some fraction was returned).
+
+  test('tierForXp 0 delta is UNCHANGED (1.0) — force(0)=1 coincides with the old 2^0', () => {
+    const def = makeRing(WATER, 3, tierStartXp(0));
+    const r = resolveBlock(makeRing(WIND, 3), def, 'BLOCK');
+    const oldFormulaDelta = 1 / Math.pow(2, 0);
+    expect(r.blockGaugeDeltas).toEqual([{ element: WATER, delta: 1 / force(tierStartXp(0)) }]);
+    expect(r.blockGaugeDeltas[0].delta).toBe(oldFormulaDelta); // still 1.0 under both formulas
+  });
+
+  test('tierForXp 1 delta is UNCHANGED (0.5) — force(T1)=2 coincides with the old 2^1', () => {
+    const def = makeRing(WATER, 3, tierStartXp(1));
+    const r = resolveBlock(makeRing(WIND, 3), def, 'BLOCK');
+    const oldFormulaDelta = 1 / Math.pow(2, 1);
+    expect(r.blockGaugeDeltas).toEqual([{ element: WATER, delta: 1 / force(tierStartXp(1)) }]);
+    expect(r.blockGaugeDeltas[0].delta).toBe(oldFormulaDelta); // still 0.5 under both formulas
+  });
+
+  test('tierForXp 2 defender fills at 0.50 (new 1/force), NOT the old 0.25 (1/2^tier) — the exact bite point the spec calls out', () => {
+    // adversarial #512: if BlockResolver regressed to 1/Math.pow(2, tier) this
+    // assertion fails at 0.25, proving the formula switch actually happened.
+    const def = makeRing(WATER, 3, tierStartXp(2));
+    const r = resolveBlock(makeRing(WIND, 3), def, 'BLOCK');
+    const oldFormulaDelta = 1 / Math.pow(2, 2); // 0.25 — must NOT be what we observe
+    expect(r.blockGaugeDeltas).toEqual([{ element: WATER, delta: 0.5 }]);
+    expect(r.blockGaugeDeltas[0].delta).not.toBe(oldFormulaDelta);
+  });
+
+  test('tierForXp 3 defender fills at 1/3 (force 3), the old formula would have given 1/8 = 0.125', () => {
+    const def = makeRing(WATER, 3, tierStartXp(3));
+    const r = resolveBlock(makeRing(WIND, 3), def, 'BLOCK');
+    const oldFormulaDelta = 1 / Math.pow(2, 3);
+    expect(r.blockGaugeDeltas[0].delta).toBeCloseTo(1 / 3, 10);
+    expect(r.blockGaugeDeltas[0].delta).not.toBe(oldFormulaDelta);
+  });
+
+  test('tierForXp 5 defender fills at 0.25 (force 4), the old formula would have given 1/32 = 0.03125', () => {
+    const def = makeRing(WATER, 3, tierStartXp(5));
+    const r = resolveBlock(makeRing(WIND, 3), def, 'BLOCK');
+    const oldFormulaDelta = 1 / Math.pow(2, 5);
+    expect(r.blockGaugeDeltas).toEqual([{ element: WATER, delta: 0.25 }]);
+    expect(r.blockGaugeDeltas[0].delta).not.toBe(oldFormulaDelta);
+  });
+
+  test('STRONG+BLOCK at tierForXp 2 applies the SAME 1/force divisor as NEUTRAL — the divisor change must land on BOTH branches', () => {
+    // adversarial #512: NEUTRAL and STRONG+BLOCK are two separate code
+    // branches in BlockResolver.ts, each with its own `const delta = ...`
+    // line. This test would still pass if only the NEUTRAL branch were fixed
+    // and STRONG+BLOCK were accidentally left on the old formula, UNLESS we
+    // assert the observed value is not what the old formula would produce.
+    const def = makeRing(FIRE, 3, tierStartXp(2)); // WOOD attacks FIRE → FIRE is STRONG
+    const r = resolveBlock(makeRing(WOOD, 3), def, 'BLOCK');
+    const oldFormulaDelta = 1 / Math.pow(2, 2); // 0.25
+    expect(r.relationship).toBe('STRONG');
+    expect(r.blockGaugeDeltas).toEqual([{ element: FIRE, delta: 0.5 }]);
+    expect(r.blockGaugeDeltas[0].delta).not.toBe(oldFormulaDelta);
+    expect(r.blockedGaugeElement.sort()).toEqual([ElementEnum.WOOD, ElementEnum.SHADOW].sort());
+  });
+
+  test('divide-by-zero guard: a brand-new (xp=0) defender ring never produces an Infinity or NaN gauge delta on its very first block', () => {
+    // adversarial #512: xp=0 is the game's actual floor, not a theoretical
+    // edge — every ring starts here and can be blocked before earning any XP.
+    const def = makeRing(WATER, 3, 0);
+    const r = resolveBlock(makeRing(WIND, 3), def, 'BLOCK');
+    expect(Number.isFinite(r.blockGaugeDeltas[0].delta)).toBe(true);
+    expect(r.blockGaugeDeltas[0].delta).toBeGreaterThan(0);
+  });
+});
+
+describe('BlockResolver.ts — no HEART_LOSS_CAP or clamp introduced alongside the force divisor (#512 adversarial)', () => {
+  test('source contains no HEART_LOSS_CAP constant, and the gauge delta is never clamped via Math.min', () => {
+    // adversarial #512: EPIC decision 1 explicitly forbids adding any
+    // heart-loss cap or clamp in this change. A well-intentioned "safety
+    // clamp" added later on the new, larger 1/force deltas would silently
+    // violate that EPIC contract without any behavioral test catching it,
+    // since a clamp would only ever narrow the range of values observed.
+    const src = fs.readFileSync(
+      path.join(__dirname, '../../server/src/game/BlockResolver.ts'),
+      'utf8',
+    );
+    expect(src).not.toMatch(/HEART_LOSS_CAP/);
+    expect(src).not.toMatch(/Math\.min\(\s*delta/);
   });
 });
 
