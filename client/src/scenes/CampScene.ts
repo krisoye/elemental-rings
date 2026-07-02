@@ -57,17 +57,6 @@ const COL_RELIQUARY_X = CONTENT_LEFT; // 152
 // COMBAT cluster left edge, right-aligned to CONTENT_RIGHT (2-col width=148).
 const BATTLEHAND_RING_X = CONTENT_RIGHT - 148; // 724 — COMBAT column left edge
 
-// #347 — Heart slot card now lives in its own HEALTH column between SPARES and
-// COMBAT (it no longer sits above A1). Origin x is in the gap between the SPARES
-// grid right edge (≈600) and the A1 left edge (724): the card body (centered at
-// +35) renders at ≈659, spanning ≈624–694 — clear of both neighbours.
-const HEART_CARD_X = 624; // HEALTH column origin
-const HEART_CARD_Y = 148;
-// The ♥ heart card body matches the COMBAT cell geometry (70×90, card center
-// at +35 horizontally).
-const HEART_CARD_W = 70;
-const HEART_CARD_H = 90;
-
 // #389 — COMBAT cluster (STATUS thumb left-aligned above the 2×2 A1/A2 · D1/D2).
 // The 2×2 grid: card width 70, 78px column pitch → A1/D1 left col center 759,
 // A2/D2 right col center 837; rows at y=291 (A1/A2) and y=389 (D1/D2). STATUS is
@@ -167,12 +156,6 @@ export class CampScene extends DualCameraScene {
   private reliquaryHeaderCenter: Phaser.GameObjects.Text | null = null;
   private reliquaryHeaderRight: Phaser.GameObjects.Text | null = null;
   /**
-   * EPIC #302 / #347 — the Heart-slot card (in the HEALTH column). A {@link RingCard}
-   * that participates in the click-then-click selection system as the `'heart'`
-   * source and target. Overlay-container-scoped: created on open, dropped on close.
-   */
-  private heartCard: RingCard | null = null;
-  /**
    * EPIC #302 — the detach handle for the Thumb passive hover tooltip. Replaces
    * the permanent passive strip; called in the overlay's onClose callback.
    */
@@ -206,6 +189,12 @@ export class CampScene extends DualCameraScene {
   private swapManager: SlotSwapManager | null = null;
   /** #395 — the unified overlay class instance while the ringwall overlay is open. */
   private sanctumOverlay: RingManagementOverlay | null = null;
+  /** #523 — live Heart card from the active sanctum overlay's BenchHealthCombat
+   *  (replaces the dead CampScene-owned field orphaned by #395). Null when no
+   *  reliquary overlay is open. */
+  get heartCard(): RingCard | null {
+    return this.sanctumOverlay?.getHeartCard() ?? null;
+  }
   /** #423 — shared discard-confirm dialog for the sanctum DISCARD slot. */
   private sanctumDiscard_: DiscardConfirm | null = null;
   /** #477 — the reset-confirm overlay container while it is open. */
@@ -985,7 +974,6 @@ export class CampScene extends DualCameraScene {
       this.reliquaryHeaderLeft = null;
       this.reliquaryHeaderCenter = null;
       this.reliquaryHeaderRight = null;
-      this.heartCard = null;
       this.spiritHeader = null; // #426 — already destroyed in onBeforeDestroy; null the ref
       this.combatCards.clear();
       this.statusLockLabel = null;
@@ -1051,76 +1039,6 @@ export class CampScene extends DualCameraScene {
       ringId: string,
       target: 'reliquary' | 'spare' | 'thumb' | 'heart' | LoadoutSlot,
     ): Promise<void> => { await this.reliquaryMove(ringId, target); };
-  }
-
-  /**
-   * EPIC #302 / #347 — build the Heart slot card in the HEALTH column. A standalone {@link RingCard}
-   * (not a parked reusable panel) created fresh per overlay and added to the
-   * overlay container `c`, so the container destroy on close reclaims it. Its bg is
-   * made interactive and routes clicks through the universal-swap state machine as
-   * the `'heart'` source/target. An `HP` title sits above the card. The card is
-   * painted from `window.__campState.heart_ring`.
-   */
-  private buildHeartCard(c: Phaser.GameObjects.Container): void {
-    const cx = HEART_CARD_W / 2; // 35 — card body centred within its column
-    const cy = HEART_CARD_H / 2;
-    const card = new RingCard(this, HEART_CARD_X, HEART_CARD_Y, {
-      width: HEART_CARD_W,
-      height: HEART_CARD_H,
-      cx,
-      cy,
-      scrollFactor: 0,
-      strokeColor: 0xcc4466,
-      textColor: '#000000',
-      fontSize: '9px',
-      elementY: -22,
-      pipsY: -5,
-      xpY: 12,
-      xpPrefix: 'XP:',
-    });
-    // #347 — HP title above the card (was a bare ♥ glyph). The three-part header's
-    // centre `♥ cur/max` HP readout is a separate object and is unchanged.
-    // #382 — HP title is a child of card (a Container) → crispCanvasText.
-    const title = crispCanvasText(
-      this.add
-        .text(HEART_CARD_X + cx, HEART_CARD_Y + cy - 36, 'HP', { fontSize: '12px', color: '#ff6688' })
-        .setOrigin(0.5)
-        .setScrollFactor(0),
-    );
-    card.add(title);
-    // Click the heart card → enter the universal-swap state machine as 'heart'.
-    card.bg
-      .setInteractive({ useHandCursor: true })
-      .on('pointerdown', () => void this.onHeartCardClicked());
-    c.add(card);
-    this.heartCard = card;
-    this.renderHeartCard();
-  }
-
-  /**
-   * EPIC #302 — paint the Heart card from the authoritative heart ring (in
-   * `window.__campState.heart_ring`). Empty slot → the dim em-dash look. Also
-   * re-applies the selection stroke when the heart is the active swap selection.
-   */
-  private renderHeartCard(): void {
-    if (!this.heartCard) return;
-    const heart = window.__campState?.heart_ring as RingData | null | undefined;
-    if (heart) {
-      this.heartCard.setRing({
-        element: heart.element,
-        tier: heart.tier,
-        xp: heart.xp,
-        currentUses: heart.current_uses,
-        maxUses: heart.max_uses,
-        fusionParents: heart.fusionParents,
-      });
-      this.heartCard.setTextColor('#000000');
-    } else {
-      this.heartCard.clear();
-      this.heartCard.setElementText('—', '#888888');
-    }
-    const selected = this.swapManager?.selection?.source === 'heart';
-    this.heartCard.setStroke(selected ? 3 : 2, selected ? 0xffff00 : 0xcc4466);
   }
 
   /**
@@ -1258,7 +1176,6 @@ export class CampScene extends DualCameraScene {
     if (this.sanctumOverlay) {
       this.sanctumOverlay.refreshBhc(this.makeSanctumData());
     } else {
-      this.renderHeartCard();
       this.renderCombatCluster();
     }
     // #426 — update the DOM SPIRIT header text + color; publish the structure reporter.
@@ -1451,7 +1368,6 @@ export class CampScene extends DualCameraScene {
     if (this.sanctumOverlay) {
       this.sanctumOverlay.refreshBhc(this.makeSanctumData());
     } else {
-      this.renderHeartCard();
       this.renderCombatCluster();
     }
   }
@@ -1781,7 +1697,6 @@ export class CampScene extends DualCameraScene {
     if (this.sanctumOverlay) {
       this.sanctumOverlay.refreshBhc(this.makeSanctumData());
     } else {
-      this.renderHeartCard();
       this.renderCombatCluster();
     }
   }
