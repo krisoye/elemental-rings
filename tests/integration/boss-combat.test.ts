@@ -1074,6 +1074,60 @@ describe('#514 — multi-heart pipeline + OQ-4 whole-exchange Heartwood absorb',
     expect(room.state.players.get('AI').hearts).toBe(startHearts - landedRest);
   }, 30000);
 
+  test('OQ-4 continuity at the N=1 boundary — a single-heart exchange is still fully absorbed by one Heartwood charge, exactly like the pre-#514 per-heart absorb (N≥2 case covered above)', async () => {
+    // #514 QA Phase 1 adversarial: the N≥2 test above proves OQ-4's whole-exchange
+    // absorb for the NEW multi-heart case, but never exercises N=1 — the boundary
+    // where Contract B's behavior must be IDENTICAL to the pre-#514 boolean-era
+    // absorb (one charge negates one heart). A regression that special-cased
+    // "N≥2 absorbs whole, N=1 absorbs per-heart" (a plausible mis-implementation
+    // of OQ-4 that would still pass the N≥2 test above) is exactly what this closes.
+    const START_HEARTS = 10;
+    const { room, human } = await joinBoss('forest_thornwood_warden', 'RESILIENT', 5142, {
+      aiHearts: START_HEARTS,
+      aiHeartwoodCharges: 1,
+    });
+    const aiPs = room.state.players.get('AI');
+    // Extinguish the boss's defense rings so every human hit is an uncontested
+    // NO_BLOCK — with default (xp=0, force 1) rings on both sides and the AI's
+    // interim hpForce=1, this guarantees defenderHeartsLost = max(1, ceilDiv(1,1))
+    // = 1 EXACTLY on every exchange (never accidentally N≥2).
+    for (const key of ['d1', 'd2'] as const) {
+      const ring = aiPs.getSlot(key);
+      ring.currentUses = 0;
+      ring.isExtinguished = true;
+    }
+
+    const hits: number[] = [];
+    human.onMessage('exchangeResult', (m: any) => {
+      if (m.defenderId === 'AI' && m.defenderHeartsLost > 0) hits.push(m.defenderHeartsLost);
+    });
+
+    const SLOTS = ['a1', 'a2'] as const;
+    let slotIdx = 0;
+    for (let i = 0; i < 90 && room.state.phase !== 'ENDED' && hits.length < 2; i++) {
+      if (room.state.phase === 'ATTACK_SELECT' && room.state.currentAttackerId === human.sessionId) {
+        const hps = room.state.players.get(human.sessionId);
+        if (hps.getSlot(SLOTS[slotIdx]).isExtinguished) slotIdx = (slotIdx + 1) % SLOTS.length;
+        human.send('selectAttack', { slot: SLOTS[slotIdx] });
+      }
+      await sleep(150);
+    }
+    await sleep(150);
+
+    // Both observed exchanges were genuinely N=1 (the whole point of this setup).
+    expect(hits.length).toBeGreaterThanOrEqual(2);
+    expect(hits.every((n) => n === 1)).toBe(true);
+
+    // A per-heart-absorb bug and a whole-exchange-absorb bug are mathematically
+    // IDENTICAL at N=1 (both consume "1 charge, 0 hearts lost" for a 1-heart
+    // exchange) — this test's purpose is continuity, not discrimination: proving
+    // the OQ-4 code path (the `!absorbBossHeartLoss(defenderId)` gate in
+    // resolveOrb) still behaves correctly at the N=1 boundary the pre-#514
+    // boolean-era code was built for. First exchange absorbed (charge spent,
+    // hearts unchanged); second exchange lands in full (−1, charge already gone).
+    expect(room.state.players.get('AI').hearts).toBe(START_HEARTS - 1);
+  }, 30000);
+
   test('a multi-heart exchange that jumps hearts from above to below the enrage threshold sets enraged exactly once', async () => {
     // Thornwood (major) enrageThreshold = 2. Seat at 5 hearts — comfortably above.
     const { room, human } = await joinBoss('forest_thornwood_warden', 'RESILIENT', 5140, {
