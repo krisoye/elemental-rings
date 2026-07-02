@@ -288,6 +288,11 @@ export class RingManagementOverlay {
     return this.bhc?.getBenchGrid() ?? null;
   }
 
+  /** E2E bridge — exposes the BenchHealthCombat's live heart RingCard (all modes). */
+  getHeartCard(): RingCard | null {
+    return this.bhc?.getHeartCard() ?? null;
+  }
+
   /**
    * Rebuild only the BenchHealthCombat right half with new data, without re-running
    * `renderLeft`. Used by CampScene's `renderReliquaryHeader` to keep BENCH / HEALTH
