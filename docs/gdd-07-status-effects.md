@@ -10,7 +10,7 @@ Each player maintains **four status gauges: Fire, Water, Wood, Shadow**. All gau
 
 **1. Uncontested hit (no-block or mistime):** +1 per tracked-element component of the attacking ring, added to the defender's matching gauges. Wind and Earth components contribute nothing.
 
-**2. Block with ring X:** The defender's X gauge increases, regardless of the attacker's element. Channelling an element as a shield concentrates its force inward rather than deflecting it outward. The amount added depends on the defending ring's tier (see **Tier-based gauge reduction** below). A base Tier 0 ring adds +1; higher tiers add less.
+**2. Block or parry with ring X:** The defender's X gauge increases, regardless of the attacker's element. Channelling an element as a shield concentrates its force inward rather than deflecting it outward. The amount added depends on the defending ring's tier-derived **force** stat (§4.2, Contract A) — see **Force-based gauge reduction** below. A force-1 ring adds +1; higher-force rings add less.
 
 **3. Strong block:** When the defender blocks with ring X and the incoming attack's primary element is one that X is strong against, **all gauges that X is strong against** each decrease by 1 (in addition to the +1 blocking cost on X). The strong-block relationships:
 
@@ -26,15 +26,15 @@ Blocks against non-matching attacks (e.g. Water ring blocking a Wood attack) sti
 
 **4. Parry (STRONG timing):** All four gauges reset to 0. A flawlessly timed deflection disperses all accumulated elemental energy at once.
 
-A **weak catch** loses a heart but moves **no gauge** — heart loss and gauge gain are independent (see §6.4). Intermediate rally volleys follow the same block/parry rules as regular exchanges. A rally terminating in an uncontested hit emits one gauge delta on the terminating volley; a rally terminating in a weak catch emits none.
+**A weak catch now fills the defending ring's own gauge** (if gauge-bearing) at the same `1 / def_force` rate as a neutral catch (case 2, above) — reversed from the original design, which moved no gauge on a weak catch. The defender still committed that ring to the catch, so it charges just as it would on a neutral catch. A weak catch **still never** fills the attacker's-element gauge; only an uncontested hit (case 1) fills the attacker's element directly. Heart loss (now force-scaled, §6.4) and gauge gain remain independent effects of the same exchange. Intermediate rally volleys follow the same block/parry rules as regular exchanges. A rally terminating in an uncontested hit emits one gauge delta (case 1) on the terminating volley; a rally terminating in a caught volley — neutral, strong, or weak — emits the defender's own case-2 gauge delta.
 
 **Server implementation:** Gauge deltas are computed by the Colyseus BattleRoom after each exchange. The `resolveBlock` result carries:
-- `hitGaugeElements: number[]` — tracked element indices to increment on an uncontested hit (+1 each, full rate regardless of tier)
-- `blockGaugeDeltas: Array<{ element: number, delta: number }>` — gauge increments for the defending ring on a block; one entry per tracked-element parent, each at the full tier-reduced rate `delta = 1 / 2^tier`; empty on no-block
+- `hitGaugeElements: number[]` — tracked element indices to increment on an uncontested hit (+1 each, full rate regardless of force)
+- `blockGaugeDeltas: Array<{ element: number, delta: number }>` — gauge increments for the defending ring on any Block or Parry catch — Neutral, Strong, and **Weak** (the reversal above); one entry per tracked-element parent, each at the full force-reduced rate `delta = 1 / def_force`; empty on no-block/mistime
 - `blockedGaugeElement: number[]` — gauge index(es) to decrement (−1) when a strong block fires; empty otherwise
 - `clearAllGauges: boolean` — true on a STRONG parry (case 4); server sets all four gauges to 0
 
-Attack gauge increments are always +1 per tracked component (tier-reduction applies only to defense). Gauges are stored as floats server-side and broadcast to both clients as part of the state update.
+Attack gauge increments are always +1 per tracked component (force-reduction applies only to defense). Gauges are stored as floats server-side and broadcast to both clients as part of the state update.
 
 **Fusion ring decomposition:**
 A fusion ring contributes to gauges based only on its **tracked-element** components. Wind and Earth components contribute nothing.
@@ -54,37 +54,39 @@ A fusion ring contributes to gauges based only on its **tracked-element** compon
 
 The decomposition above applies only to uncontested hits. Blocking a fusion attack still costs the defending ring's gauge as per case 2; the attacker's compound element does not drive `blockGaugeElement`.
 
-**Tier-based gauge reduction on defense:**
+**Force-based gauge reduction on defense:**
 
-A ring's tier (§4.2) determines how much its gauge fills when used to block. The gauge cost halves at each tier — experienced rings are less of a liability to use defensively.
+A ring's tier-derived **force** stat (§4.2, Contract A) determines how much its gauge fills when used to block or parry. Case-2 dampening is `1 / def_force` — higher-force rings are less of a liability to use defensively.
 
-| Ring tier | Gauge added per block |
+| Ring force | Gauge added per block/parry |
 |---|---|
-| 0 | 1.000 |
-| 1 | 0.500 |
-| 2 | 0.250 |
-| 3 | 0.125 |
-| n | `1 / 2^n` |
+| 1 | 1.00 |
+| 2 | 0.50 |
+| 3 | 0.33 |
+| 4 | 0.25 |
+| 5 | 0.20 |
+| 6 | 0.167 |
+| `f` | `1 / f` |
 
 Gauge values are accumulated as fractions server-side; the HUD displays the integer floor. A status triggers when the accumulated value reaches or exceeds the threshold.
 
 **Fusion ring defense gauge:**
 
-When a fusion ring is used to block, each tracked-element parent fills its own gauge at the **full tier-reduced rate** (`delta = 1 / 2^tier`) — the deltas are independent, not split. Wind and Earth components contribute nothing to gauges.
+When a fusion ring is used to block or parry, each tracked-element parent fills its own gauge at the **full force-reduced rate** (`delta = 1 / def_force`) — the deltas are independent, not split. Wind and Earth components contribute nothing to gauges.
 
-| Defense ring (Tier 2) | Gauge per block |
+| Defense ring (Tier-3, force 2) | Gauge per block/parry |
 |---|---|
-| Steam (Fire + Water) | Fire +0.250, Water +0.250 |
-| Wildfire (Fire + Wood) | Fire +0.250, Wood +0.250 |
-| Tidal (Water + Wood) | Water +0.250, Wood +0.250 |
-| Inferno (Fire + Wind) | Fire +0.250 (Wind: nothing) |
+| Steam (Fire + Water) | Fire +0.50, Water +0.50 |
+| Wildfire (Fire + Wood) | Fire +0.50, Wood +0.50 |
+| Tidal (Water + Wood) | Water +0.50, Wood +0.50 |
+| Inferno (Fire + Wind) | Fire +0.50 (Wind: nothing) |
 | Dust (Wind + Earth) | No gauge (both non-tracked) |
 
-Each tracked parent receives the **full tier-reduced rate** per block — there is no halving for fusion rings. At Tier 2 a Steam ring fills Fire +0.250 **and** Water +0.250 as two separate, independent entries.
+Each tracked parent receives the **full force-reduced rate** per block or parry — there is no halving for fusion rings. At force 2 a Steam ring fills Fire +0.50 **and** Water +0.50 as two separate, independent entries.
 
-**Implementation note:** `resolveBlock` emits `blockGaugeDeltas: Array<{element, delta}>` with one entry per tracked-element parent of the defending ring, each `delta = 1 / 2^tier`. A base ring emits a single entry; a Tier-2 Steam ring emits `[{fire, 0.250}, {water, 0.250}]`.
+**Implementation note:** `resolveBlock` emits `blockGaugeDeltas: Array<{element, delta}>` with one entry per tracked-element parent of the defending ring on any Block or Parry catch (Neutral, Strong, or Weak — see the reversal above), each `delta = 1 / def_force`. A force-1 ring emits a single entry; a force-2 Steam ring emits `[{fire, 0.50}, {water, 0.50}]`.
 
-> **Example:** a Tier 2 Steam ring blocking receives Fire +0.250 and Water +0.250 as two independent entries. A Tier 2 Fire ring blocking receives Fire +0.250. The fusion ring applies the full rate to each of its two gauge pools, making either individual status harder to trigger.
+> **Example:** a force-2 Steam ring blocking or parrying receives Fire +0.50 and Water +0.50 as two independent entries. A force-2 Fire ring blocking receives Fire +0.50. The fusion ring applies the full rate to each of its two gauge pools, making either individual status harder to trigger.
 
 **Status threshold:** Default **4** for Fire, Water, and Wood. Shadow gauge triggers its status at each stack (see §7.2). Thresholds scale upward with player experience and augmentations in late-game progression (formula TBD).
 
