@@ -16,6 +16,8 @@
  *  #261 — unique passives (Heartwood / Bulwark).
  */
 import { describe, test, expect, beforeAll, afterAll } from 'vitest';
+import fs from 'fs';
+import path from 'path';
 import { ColyseusTestServer, boot } from '@colyseus/testing';
 import { Server } from 'colyseus';
 import { BattleRoom } from '../../server/src/rooms/BattleRoom';
@@ -1508,4 +1510,59 @@ describe('#517 QA Phase 1 adversarial — the difficulty floor guarantees ≥1 h
     // landing hit is NEVER free, no matter how large the AI's hp_force grows.
     expect(captured.defenderHeartsLost).toBe(1);
   }, 20000);
+});
+
+describe('#517 QA Phase 2 structural regression guard — the #514 interim AI hpForce and its TODO marker are genuinely gone', () => {
+  // #517 Phase 2 (impl-aware): the acceptance criteria require the interim
+  // `hpForce = 1` for the AI defender AND its `TODO(#517)` marker to be REMOVED,
+  // not merely superseded by dead code sitting alongside the real fix. This walks
+  // the actual source tree so a leftover TODO comment or an orphaned interim
+  // branch anywhere fails loudly, rather than trusting a single diff hunk.
+  const TODO_MARKER = ['TODO', '(#517)'].join('');
+  const SELF_FILE = path.resolve(__filename);
+
+  function walkFiles(dir: string, exts: string[], out: string[] = []): string[] {
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+      if (entry.name === 'node_modules' || entry.name === 'dist' || entry.name.startsWith('.')) continue;
+      const full = path.join(dir, entry.name);
+      if (entry.isDirectory()) walkFiles(full, exts, out);
+      else if (exts.some((e) => entry.name.endsWith(e))) out.push(full);
+    }
+    return out;
+  }
+
+  test('the TODO(#517) marker appears in zero files under server/, client/, shared/', () => {
+    // Deliberately excludes tests/ — this very file's comments legitimately discuss
+    // "#517" and "the old interim" in prose; the marker string itself is built via
+    // concatenation above so this guard cannot self-match its own source either way.
+    const root = path.join(__dirname, '../..');
+    const offenders: string[] = [];
+    for (const d of ['server', 'client', 'shared']) {
+      const full = path.join(root, d);
+      if (!fs.existsSync(full)) continue;
+      for (const file of walkFiles(full, ['.ts', '.tsx'])) {
+        if (path.resolve(file) === SELF_FILE) continue;
+        const content = fs.readFileSync(file, 'utf8');
+        if (content.includes(TODO_MARKER)) offenders.push(path.relative(root, file));
+      }
+    }
+    expect(offenders).toEqual([]);
+  });
+
+  test('BattleRoom.ts sets the AI sessionToHpForce via forceFromTier1(effectiveTier1Indexed(...)), never a hardcoded 1', () => {
+    // #517 Phase 2 (impl-aware): a regression that reverted the AI seat's hpForce
+    // line to a literal `1` (the #514 interim) would still pass every numeric
+    // assertion above at the zero-XP/forest-floor boundary (they coincide there —
+    // see the '#514/#517 — AI-defender hpForce at zero player XP' describe block).
+    // This structural check pins the SOURCE LINE ITSELF, not just its output at one
+    // coincidental input, so a silent revert is caught even at that boundary.
+    const root = path.join(__dirname, '../..');
+    const battleRoomSrc = fs.readFileSync(path.join(root, 'server/src/rooms/BattleRoom.ts'), 'utf8');
+    const AI_HP_FORCE_LINE = /sessionToHpForce\.set\(\s*AI_ID\s*,\s*forceFromTier1\(/;
+    expect(AI_HP_FORCE_LINE.test(battleRoomSrc)).toBe(true);
+
+    // The specific interim literal this issue replaces: a bare `, 1)` set for AI_ID.
+    const OLD_INTERIM_LINE = /sessionToHpForce\.set\(\s*AI_ID\s*,\s*1\s*\)/;
+    expect(OLD_INTERIM_LINE.test(battleRoomSrc)).toBe(false);
+  });
 });
