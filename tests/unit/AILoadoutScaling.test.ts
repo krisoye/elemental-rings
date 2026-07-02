@@ -890,6 +890,35 @@ describe('#521 — "3-5 roamers before resting" invariance (forest, floor=0)', (
       expect(fights).toBeCloseTo(1 / SPIRIT_MULT[p], 1);
     }
   });
+
+  test('docstring "3-5 roamers before resting" is a rough claim, not exact: RESILIENT computes 2.5, below the stated floor of 3 (pre-existing #478 mismatch, locked here so it cannot silently widen further)', () => {
+    // #521 adversarial: the computeNpcSpirit docstring (AILoadout.ts ~L152) says
+    // "Calibrated so the player can fight 3-5 roamers before needing to rest."
+    // The actual computed proxy above (fights ≈ 1/mult) is 2.5-4.0, not 3-5 — the
+    // reviewer flagged this as a minor mismatch that PRE-DATES #521 (not
+    // introduced here, and out of scope to retune under this issue). This test
+    // does not fix it — it locks the CURRENT numeric gap so a future PR that
+    // widens the mismatch further (e.g. retunes PERSONALITY_SPIRIT_MULT without
+    // updating the docstring, or vice versa) fails loudly instead of drifting
+    // silently past this analysis's stated invariance claim.
+    const fightsByPersonality: Record<AIPersonality, number> = {
+      AGGRESSIVE: 1 / SPIRIT_MULT.AGGRESSIVE, // 4.0
+      DEFENSIVE: 1 / SPIRIT_MULT.DEFENSIVE, // 3.33
+      STATUS_HUNTER: 1 / SPIRIT_MULT.STATUS_HUNTER, // 2.86
+      RESILIENT: 1 / SPIRIT_MULT.RESILIENT, // 2.5
+    };
+    expect(fightsByPersonality.AGGRESSIVE).toBeCloseTo(4.0, 1);
+    expect(fightsByPersonality.DEFENSIVE).toBeCloseTo(3.33, 1);
+    expect(fightsByPersonality.STATUS_HUNTER).toBeCloseTo(2.86, 1);
+    expect(fightsByPersonality.RESILIENT).toBeCloseTo(2.5, 1);
+    // The docstring's literal "3" and "5" bounds do NOT tightly contain the whole
+    // range: RESILIENT (2.5) sits below the docstring's stated floor of 3.
+    expect(fightsByPersonality.RESILIENT).toBeLessThan(3);
+    // AGGRESSIVE (4.0) DOES sit within [3,5] — the mismatch is partial, not total,
+    // which is exactly why it is easy to miss without an explicit test.
+    expect(fightsByPersonality.AGGRESSIVE).toBeGreaterThanOrEqual(3);
+    expect(fightsByPersonality.AGGRESSIVE).toBeLessThanOrEqual(5);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -998,5 +1027,139 @@ describe('#521 — void (×1) worst-case floor-weight bound', () => {
     expect(pacOld).toBeCloseTo(3.414, 2); // boss pool was 3.4× the player's — oppressive
     expect(pacNew).toBeCloseTo(1.429, 2); // corrected toward the mult=1.0 intent
     expect(pacNew).toBeLessThan(pacOld);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 7. ADVERSARIAL — Early-tier floor-domination sweep. Section 3's "the ONLY
+//    floor-dominated roamer cell" test scopes its sweep to Mid/Late only
+//    (Early is skipped there because R=1.00 makes the *ratio* trivial). That
+//    skip could hide floor-dominated cells at Early going unexamined entirely
+//    — Early has the smallest spiritMax of any band (60 @ seeker), so it is
+//    where the biome floors are MOST likely to pin the roamer. Sweep it
+//    explicitly rather than assume "ratio=1.00 ⇒ nothing to check".
+// ---------------------------------------------------------------------------
+describe('#521 adversarial — Early-tier floor-domination sweep (not assumed safe just because R=1.00)', () => {
+  test('every non-forest biome is floor-dominated at every personality at Early — only forest is mult-dominated', () => {
+    // #521 adversarial: contrasts sharply with the Mid/Late grid (only ONE
+    // floor-dominated cell total: Mid/volcano/AGGRESSIVE). At Early, 16 of the
+    // 20 (biome × personality) roamer cells are floor-dominated — the floor
+    // safety net, not the personality mult, decides the NPC's spirit almost
+    // everywhere outside forest. This is expected biome-gating behavior (not a
+    // #520/#521 regression, see the next test), but it must be an asserted fact,
+    // not an assumption inherited from the Mid/Late-only sweep.
+    const S = newSpiritMax('Early', RATIO_DIFFICULTY);
+    expect(S).toBe(oldSpiritMax('Early', RATIO_DIFFICULTY)); // R=1.00 at Early
+    const floorDominated: string[] = [];
+    const multDominated: string[] = [];
+    for (const biome of BIOME_ORDER) {
+      for (const p of SPIRIT_P) {
+        const base = Math.floor(S * SPIRIT_MULT[p]);
+        const floor = spiritFloorRef(biome, 'roamer');
+        (base >= floor ? multDominated : floorDominated).push(`${biome}/${p}`);
+      }
+    }
+    expect(multDominated.sort()).toEqual(SPIRIT_P.map((p) => `forest/${p}`).sort());
+    expect(floorDominated).toHaveLength(BIOME_ORDER.length * SPIRIT_P.length - SPIRIT_P.length);
+  });
+
+  test('Early-band npc spirit is EXACTLY unchanged old vs new for every biome/personality/bossTier (R=1.00, no floor()-rounding wobble hiding a drift)', () => {
+    // #521 adversarial: at Early, oldSpiritMax === newSpiritMax (Tier-1 rings
+    // carry force=1, so #520's force-weighting is a no-op at this tier). Any
+    // drift here — even sub-1-unit floor() wobble — would mean the "R is
+    // difficulty/band invariant" claim asserted earlier in this file is wrong
+    // for the smallest band, which is exactly where a rounding edge case would
+    // first surface. Checked across the FULL grid, not just the anchor cells.
+    const oldS = oldSpiritMax('Early', RATIO_DIFFICULTY);
+    const newS = newSpiritMax('Early', RATIO_DIFFICULTY);
+    expect(newS).toBe(oldS);
+    for (const biome of BIOME_ORDER) {
+      for (const p of SPIRIT_P) {
+        expect(computeNpcSpirit(newS, p, biome)).toBe(computeNpcSpirit(oldS, p, biome));
+      }
+      for (const tier of SPIRIT_BOSS_TIERS) {
+        expect(computeNpcSpirit(newS, 'DEFENSIVE', biome, tier)).toBe(
+          computeNpcSpirit(oldS, 'DEFENSIVE', biome, tier),
+        );
+      }
+    }
+  });
+
+  test(`floor-dominated Early roamers can exceed the player's OWN spirit pool (volcano/RESILIENT: pac≈1.67x) — a pre-existing biome-gating fact, unaffected by #520/#521`, () => {
+    // #521 adversarial: in isolation this looks alarming (an NPC roamer with
+    // MORE spirit than the player has at all). It is NOT a #520/#521
+    // regression — it is bit-for-bit identical old vs new (R=1.00 at Early), so
+    // it predates the spirit_max formula change entirely and is a property of
+    // the pre-existing biome-gating floors alone. Locking it in as a named,
+    // asserted fact prevents a future reader from "fixing" it under this
+    // issue's banner (out of scope — this issue only evaluates the #520 delta).
+    const S = newSpiritMax('Early', RATIO_DIFFICULTY); // 60
+    const npc = computeNpcSpirit(S, 'RESILIENT', 'volcano'); // max(100, floor(60×0.4)=24) = 100
+    expect(npc).toBe(100);
+    expect(npc / S).toBeCloseTo(1.667, 2);
+    expect(computeNpcSpirit(S, 'RESILIENT', 'volcano')).toBe(
+      computeNpcSpirit(oldSpiritMax('Early', RATIO_DIFFICULTY), 'RESILIENT', 'volcano'),
+    );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 8. ADVERSARIAL — `pacNew ≥ mult` asymptotic stress test. The boss invariant
+//    "a boss never drops below its own designed multiplier-length fight" is
+//    asserted only at the three sampled Early/Mid/Late bands elsewhere in this
+//    file (largest realistic spiritMax ≈ 1304 @ seeker Late). Because the boss
+//    formula is `floor(S×mult) + floor`, the invariant is easy to STATE as
+//    "true asymptotically" but that needs checking well past the sampled
+//    range, not assumed. computeNpcSpirit takes a raw number — no DB needed to
+//    probe synthetic S values far beyond any realistic composition.
+// ---------------------------------------------------------------------------
+describe('#521 adversarial — pacNew ≥ mult invariant at extreme (well beyond "Late") tiers', () => {
+  const EXTREME_S = [10_000, 100_000, 1_000_000, 1_000_000_000];
+
+  test.each(EXTREME_S)(
+    'S=%i: every boss matches the exact additive formula, and pacNew never drops below mult',
+    (S) => {
+      for (const biome of BIOME_ORDER) {
+        for (const tier of SPIRIT_BOSS_TIERS) {
+          const mult = BOSS_SPIRIT_MULT[tier];
+          const floorAddend = BOSS_BONUS[biome][tier];
+          const expectedNpc = Math.floor(S * mult) + floorAddend;
+          const npc = computeNpcSpirit(S, 'DEFENSIVE', biome, tier);
+          expect(npc).toBe(expectedNpc);
+          const pac = npc / S;
+          expect(pac).toBeGreaterThanOrEqual(mult - 1e-9);
+          // Upper bound: floor() can only shave the multiplicative term DOWN,
+          // never up, so pac never exceeds mult + floorAddend/S.
+          expect(pac).toBeLessThanOrEqual(mult + floorAddend / S + 1e-9);
+        }
+      }
+    },
+  );
+
+  test('the gap (pacNew − mult) is monotonically non-increasing as S grows, for every (biome, bossTier) — a genuine asymptotic check, not two endpoints that happen to satisfy the bound', () => {
+    // #521 adversarial: confirms "converges asymptotically" holds across the
+    // whole extreme range, not just at isolated sampled points. The fixed
+    // floorAddend's SHARE of the total pool must shrink monotonically as the
+    // player's own pool grows without bound — that IS the "corrective, not
+    // destructive" claim this whole issue's decision rests on.
+    for (const biome of BIOME_ORDER) {
+      for (const tier of SPIRIT_BOSS_TIERS) {
+        const mult = BOSS_SPIRIT_MULT[tier];
+        const gaps = EXTREME_S.map((S) => computeNpcSpirit(S, 'DEFENSIVE', biome, tier) / S - mult);
+        for (let i = 1; i < gaps.length; i++) {
+          expect(gaps[i]).toBeLessThanOrEqual(gaps[i - 1] + 1e-9);
+        }
+      }
+    }
+  });
+
+  test('at S=1e9 every boss pac is within 1e-6 of its designed mult (practically converged, not just bounded)', () => {
+    const S = 1_000_000_000;
+    for (const biome of BIOME_ORDER) {
+      for (const tier of SPIRIT_BOSS_TIERS) {
+        const pac = computeNpcSpirit(S, 'DEFENSIVE', biome, tier) / S;
+        expect(pac).toBeCloseTo(BOSS_SPIRIT_MULT[tier], 6);
+      }
+    }
   });
 });
