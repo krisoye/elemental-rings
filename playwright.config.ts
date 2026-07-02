@@ -34,6 +34,7 @@ const PVP_SPECS = [
   'double-attack-input.spec.ts', // #266 — hold-cross-tap gesture + forfeit relocation
   'double-attack-render.spec.ts', // #267 — dual-orb telegraph + parry-disperse VFX
   'charge-attack.spec.ts', // #485 — oscillating-orb charge + fusion ring integration
+  'force-heart-loss.spec.ts', // #514 — force-scaled multi-heart loss + OQ-4 whole-exchange absorb
 ];
 const SOLO_SPECS = [
   'auth.spec.ts',
