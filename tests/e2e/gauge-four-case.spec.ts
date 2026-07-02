@@ -293,7 +293,7 @@ test('Block gauge: Tier-1 D2 ring produces fractional delta ≈ 0.5 on NEUTRAL c
   }, { timeout: 4000 });
 
   const me = await readMe(defender);
-  // Tier-1 ring → delta = 1/2^1 = 0.5. The gauge is broadcast as float32, so
+  // Tier-1 ring → force = 2 → delta = 1/force = 0.5. The gauge is broadcast as float32, so
   // toBeCloseTo(0.5, 5) tolerates any float32 rounding at the 5th decimal place.
   expect(me.fireGauge).toBeCloseTo(0.5, 5);
   expect(me.hearts).toBe(3); // NEUTRAL catch loses no heart
