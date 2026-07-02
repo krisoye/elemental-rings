@@ -1073,4 +1073,105 @@ describe('#514 — multi-heart pipeline + OQ-4 whole-exchange Heartwood absorb',
     expect(absorbedFirst).toBeGreaterThanOrEqual(2);
     expect(room.state.players.get('AI').hearts).toBe(startHearts - landedRest);
   }, 30000);
+
+  test('a multi-heart exchange that jumps hearts from above to below the enrage threshold sets enraged exactly once', async () => {
+    // Thornwood (major) enrageThreshold = 2. Seat at 5 hearts — comfortably above.
+    const { room, human } = await joinBoss('forest_thornwood_warden', 'RESILIENT', 5140, {
+      aiHearts: 5,
+      aiHeartwoodCharges: 0, // no absorb — the heart loss must land
+    });
+    const aiPs = room.state.players.get('AI');
+    expect(aiPs.enraged).toBe(false);
+    expect(aiPs.hearts).toBe(5);
+
+    const hps = room.state.players.get(human.sessionId);
+    hps.hearts = 200;
+    // Force-4 WIND attackers (always NEUTRAL — no weak/strong-parry noise).
+    for (const key of ['a1', 'a2'] as const) {
+      const ring = hps.getSlot(key);
+      ring.element = ElementEnum.WIND;
+      ring.isFusion = false;
+      ring.fusionParents.clear();
+      ring.xp = tierStartXp(5); // force(tierStartXp(5)) = 4
+      ring.maxUses = 30;
+      ring.currentUses = 30;
+      ring.isExtinguished = false;
+    }
+    // Extinguish the boss's defence rings so every human attack is an uncontested
+    // NO_BLOCK hit (handleSubmitDefense rejects a 0-use catch). The loss is then the
+    // full atkForce = 4: ONE exchange drops 5 → 1, jumping clean over threshold 2
+    // (hearts never sit at 2, 3, or 4).
+    for (const key of ['d1', 'd2'] as const) {
+      const ring = aiPs.getSlot(key);
+      ring.currentUses = 0;
+      ring.isExtinguished = true;
+    }
+
+    const hits: number[] = [];
+    human.onMessage('exchangeResult', (m: any) => {
+      if (m.defenderId === 'AI' && m.defenderHeartsLost > 0) hits.push(m.defenderHeartsLost);
+    });
+
+    // Fire exactly ONE boss-defender exchange, then stop (the turn gate prevents a
+    // second human attack until this one resolves and the boss takes its turn).
+    for (let i = 0; i < 90 && room.state.phase !== 'ENDED' && hits.length < 1; i++) {
+      if (room.state.phase === 'ATTACK_SELECT' && room.state.currentAttackerId === human.sessionId) {
+        human.send('selectAttack', { slot: 'a1' });
+      }
+      await sleep(150);
+    }
+    await sleep(150);
+
+    // The single exchange bled 4 hearts (5 → 1), skipping past the threshold, and
+    // enraged flipped true on that one crossing. updateBossEnrage is idempotent
+    // (early-returns once enraged), so a jumped-over threshold enrages exactly once.
+    // hearts === 1 (not 0) proves precisely one exchange landed — a second would
+    // have KO'd to 0.
+    expect(hits.length).toBe(1);
+    expect(hits[0]).toBe(4);
+    expect(aiPs.hearts).toBe(1);
+    expect(aiPs.enraged).toBe(true);
+  }, 30000);
+
+  test('a multi-heart exchange that drops the boss straight to 0 (KO) does NOT enrage', async () => {
+    // Seat at 3 hearts; a force-4 uncontested hit overflows to 0 in one exchange.
+    // updateBossEnrage requires hearts > 0, so a one-shot KO never sets enraged —
+    // the boss dies before the enrage band (0 < hearts ≤ threshold) can ever hold.
+    const { room, human } = await joinBoss('forest_thornwood_warden', 'RESILIENT', 5141, {
+      aiHearts: 3,
+      aiHeartwoodCharges: 0,
+    });
+    const aiPs = room.state.players.get('AI');
+    expect(aiPs.enraged).toBe(false);
+
+    const hps = room.state.players.get(human.sessionId);
+    hps.hearts = 200;
+    for (const key of ['a1', 'a2'] as const) {
+      const ring = hps.getSlot(key);
+      ring.element = ElementEnum.WIND;
+      ring.isFusion = false;
+      ring.fusionParents.clear();
+      ring.xp = tierStartXp(5); // force 4 > 3 hearts → one-shot KO overflow
+      ring.maxUses = 30;
+      ring.currentUses = 30;
+      ring.isExtinguished = false;
+    }
+    for (const key of ['d1', 'd2'] as const) {
+      const ring = aiPs.getSlot(key);
+      ring.currentUses = 0;
+      ring.isExtinguished = true;
+    }
+
+    for (let i = 0; i < 90 && room.state.phase !== 'ENDED'; i++) {
+      if (room.state.phase === 'ATTACK_SELECT' && room.state.currentAttackerId === human.sessionId) {
+        human.send('selectAttack', { slot: 'a1' });
+      }
+      await sleep(150);
+    }
+    await sleep(150);
+
+    expect(room.state.players.get('AI').hearts).toBe(0);
+    expect(room.state.winnerId).toBe(human.sessionId);
+    expect(room.state.players.get('AI').enraged).toBe(false);
+  }, 30000);
 });
