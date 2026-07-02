@@ -4,6 +4,7 @@ import { PlayerState } from '../schemas/PlayerState';
 import { classifyTiming, resolveBlock } from '../game/BlockResolver';
 import { componentsOf, fusionParents, isFusion } from '../game/ElementSystem';
 import { canDoubleAttack } from '../game/DoubleAttack';
+import { force } from '../game/Tiers';
 import * as StatusEffects from '../game/StatusEffects';
 import { AIController, type EnrageConfig } from '../game/ai/AIController';
 import { makeRng, AI_PROFILES, type AIProfile } from '../game/ai/AIProfiles';
@@ -227,6 +228,16 @@ export class BattleRoom extends Room<{ state: BattleState }> {
    * re-querying the DB. Only present for token-authenticated human seats.
    */
   private sessionToHeartRingId = new Map<string, string | null>();
+  /**
+   * EPIC #511 Contract B — maps Colyseus sessionId → the human's heart-ring force
+   * (`force(heartRing.xp)`), the mitigation divisor in the force-scaled heart-loss
+   * formulas. Cached at seat time alongside `sessionToHeartRingId` so `resolveOrb`
+   * can pass the defender's `hpForce` into `resolveBlock` without re-deriving it.
+   * A seated human always has a heart ring (empty slot is rejected pre-duel), so a
+   * value is always present for human seats. The AI seat is NOT cached here — its
+   * interim `hpForce = 1` is applied at the resolveOrb lookup (TODO(#517)).
+   */
+  private sessionToHpForce = new Map<string, number>();
   /**
    * Outcome-based XP accrued during the duel: sessionId → slotKey → xp delta.
    * Only humans are tracked (a key exists per human session). Persisted in
@@ -642,6 +653,10 @@ export class BattleRoom extends Room<{ state: BattleState }> {
       // ring id is cached so persistBattleResult can write surviving HP back.
       const heartRing = PlayerRepo.getHeartRing(playerId);
       this.sessionToHeartRingId.set(sessionId, heartRing ? heartRing.id : null);
+      // EPIC #511 Contract B — cache the heart ring's force as the human's HP
+      // mitigation divisor. A seated human always has a heart ring (the empty-slot
+      // guard below rejects the seat), so the null branch is a defensive 1.
+      this.sessionToHpForce.set(sessionId, heartRing ? force(heartRing.xp) : 1);
       const seatPs = this.state.players.get(sessionId);
       if (seatPs) {
         seatPs.hearts = heartRing ? Math.min(heartRing.current_uses, heartRing.max_uses) : 0;
@@ -657,6 +672,7 @@ export class BattleRoom extends Room<{ state: BattleState }> {
         this.sessionToPlayerId.delete(sessionId);
         this.sessionToRingIds.delete(sessionId);
         this.sessionToHeartRingId.delete(sessionId);
+        this.sessionToHpForce.delete(sessionId);
         this.xpAccumulator.delete(sessionId);
         throw new ServerError(4000, 'No HP: equip and recharge your heart ring first');
       }
@@ -669,6 +685,7 @@ export class BattleRoom extends Room<{ state: BattleState }> {
         this.sessionToPlayerId.delete(sessionId);
         this.sessionToRingIds.delete(sessionId);
         this.sessionToHeartRingId.delete(sessionId);
+        this.sessionToHpForce.delete(sessionId);
         this.xpAccumulator.delete(sessionId);
         throw new ServerError(4001, 'No staked ring: stake a ring before battling');
       }
@@ -1628,23 +1645,30 @@ export class BattleRoom extends Room<{ state: BattleState }> {
     this.chargeParryWindowMs = null;
     const timing = classifyTiming(offsetMs, capture.submitted, parryMs, BLOCK_WINDOW_MS);
 
-    const result = resolveBlock(attackerRing, defenderRing, timing);
+    // EPIC #511 Contract B — the DEFENDER's heart-ring force mitigates heart loss.
+    // Human → the value cached at seat time; AI → interim 1 (no mitigation).
+    // TODO(#517): AI force wiring (Contract E) — replace the interim 1 with
+    // force(effectiveTier), including the tier-indexing normalization + difficulty
+    // re-check owned by that sub-issue. Do not treat this 1 as final.
+    const hpForce = defenderId === AI_ID ? 1 : (this.sessionToHpForce.get(defenderId) ?? 1);
+
+    const result = resolveBlock(attackerRing, defenderRing, timing, hpForce);
 
     // Award outcome-based XP for the engaged attack/defense rings.
     this.awardExchangeXp(attackerId, attackerSlot, defenderId, capture.slotKey, result);
 
-    // Heart-loss resolution. Each lost heart is a plain decrement (floored at 0),
-    // driven by the resolver's count (0 or 1 today; force scaling may raise N in
-    // a future sub-issue). #261 — Thornwood "Heartwood" absorbs the boss's first
-    // N heart-losses (the hit is redirected to the Thumb) before the decrement
-    // applies; one absorb check fires per lost-heart point, preserving the
-    // existing single-charge semantics for N ≤ 1.
+    // Heart-loss resolution (EPIC #511 Contract B, multi-heart). The resolver's
+    // force-scaled `defenderHeartsLost` can now be N ≥ 1; it is applied as ONE
+    // exchange, not per-heart. #261/OQ-4 — Thornwood "Heartwood" absorbs the WHOLE
+    // exchange: one charge negates the entire N-heart delta (zero hearts lost, one
+    // charge + one thumb-use spent), never one-heart-per-charge. Otherwise the full
+    // N-heart decrement lands at once, floored at 0. Uncapped by design — a large
+    // enough force gap drives hearts → 0 in a single exchange (one-shot KO); the
+    // heart ring is destroyed on loss-by-depletion in persistBattleResult.
     let aiHeartActuallyLost = false;
-    for (let i = 0; i < result.defenderHeartsLost; i++) {
-      if (!this.absorbBossHeartLoss(defenderId)) {
-        defenderPlayer.hearts = Math.max(0, defenderPlayer.hearts - 1);
-        if (defenderId === AI_ID) aiHeartActuallyLost = true;
-      }
+    if (result.defenderHeartsLost > 0 && !this.absorbBossHeartLoss(defenderId)) {
+      defenderPlayer.hearts = Math.max(0, defenderPlayer.hearts - result.defenderHeartsLost);
+      if (defenderId === AI_ID) aiHeartActuallyLost = true;
     }
     // attackerHeartsLost is always 0 in the current BlockResolver (forward compat
     // for future rally counter-damage); the absorb wrapper is preserved in case it
