@@ -121,6 +121,22 @@ const COMPOSITIONS: Record<string, RingSpec[]> = {
     { tier: 8, maxUses: 11 }, // Tier-9
     { tier: 8, maxUses: 11 },
   ],
+  // #520 adversarial: every ring is excluded (carried-only, heart-slot-only, AND
+  // a ring with BOTH flags set) — the sum must be exactly 0, not just "small".
+  // Distinct from `empty` (no rings at all): this proves the WHERE filter, not
+  // just an empty table, drives the zero.
+  onlyExcluded: [
+    { tier: 9, maxUses: 12, inCarry: 1 }, // carried — excluded
+    { tier: 9, maxUses: 12, heartSlot: 1 }, // heart slot — excluded
+    { tier: 9, maxUses: 12, inCarry: 1, heartSlot: 1 }, // both flags — still excluded
+  ],
+  // #520 adversarial: far beyond the acceptance table's Tier-10 ceiling — proves
+  // the uncapped linear scaling (no HEART_LOSS_CAP-style ceiling) and SQL/TS
+  // integer-division parity hold at Tier-50 and Tier-100, not just near tier 0-9.
+  veryHighTier: [
+    { tier: 49, maxUses: 52 }, // Tier-50
+    { tier: 99, maxUses: 102 }, // Tier-100
+  ],
 };
 
 const ALL_DIFFICULTIES: DifficultyTier[] = ['wanderer', 'seeker', 'ascendant', 'ascetic', 'void'];
@@ -180,6 +196,27 @@ describe('getSpiritStats — force-weighted formula (#520, EPIC #511 Contract F)
     // asserts the inflation is intentional and nothing silently clamps it.
     expect(repo.getSpiritStats(p).spiritMax).toBe(1440);
   });
+
+  // #520 adversarial: a Reliquary composed ENTIRELY of carried/heart-slot rings
+  // (including one ring with BOTH flags set) must yield 0, not just "excludes
+  // some rings" — proves the WHERE filter zeroes the sum, distinct from the
+  // `empty` case which has no rings to filter at all.
+  test('a Reliquary with only carried/heart-slot rings (including a dual-flagged ring) contributes 0', () => {
+    const p = makePlayer('void');
+    for (const r of COMPOSITIONS.onlyExcluded) makeRing(p, r);
+    expect(repo.getSpiritStats(p).spiritMax).toBe(0);
+  });
+
+  // #520 adversarial: acceptance table tops out at Tier-10; nothing in the spec
+  // bounds tier, so a stale/buggy cap could silently reappear at higher tiers
+  // without any test catching it. Tier-50/Tier-100 exercise floor((tier1+2)/2)
+  // and SQLite integer division well past the tested range.
+  test('force scaling stays correct and uncapped at very high tiers (Tier-50, Tier-100)', () => {
+    const p = makePlayer('void'); // ×1 isolates the raw per-ring math
+    for (const r of COMPOSITIONS.veryHighTier) makeRing(p, r);
+    // Tier-50: 52 × forceFromTier1(50)=26 = 1352. Tier-100: 102 × forceFromTier1(100)=51 = 5202.
+    expect(repo.getSpiritStats(p).spiritMax).toBe(1352 + 5202);
+  });
 });
 
 // ===========================================================================
@@ -222,5 +259,58 @@ describe('db.ts recomputeSpiritMax() vs PlayerRepo.getSpiritStats() — drift gu
 
     expect(getPersistedSpiritMax(p3)).toBe(repo.getSpiritStats(p3).spiritMax);
     expect(getPersistedSpiritMax(p3)).toBe(1304);
+  });
+});
+
+// ===========================================================================
+// Boot-recompute ORDERING regression (#520 P2 fix)
+// ===========================================================================
+//
+// db.ts calls recomputeRingTiers() then recomputeSpiritMax(), in that order
+// (see the ORDERING comment above recomputeSpiritMax() in db.ts). Getting this
+// backwards was exactly the P2 defect fixed in this issue's code review: if
+// spirit_max were recomputed BEFORE a stale rings.tier column is corrected from
+// xp, spirit_max would silently bake in the wrong tier until the next boot.
+//
+// IMPORTANT — this describe block MUST stay the LAST thing in this file.
+// recomputeRingTiers() is table-wide (no player filter): it recomputes
+// tier/max_uses for EVERY ring in the shared scratch DB from `xp`. makeRing()
+// always inserts xp=0, so any ring created by an earlier test in this file
+// (almost all of them use tier > 0 with xp=0, e.g. the Tier-10 fixtures above)
+// would get its tier collapsed to 0 the moment recomputeRingTiers() runs. That
+// is harmless for tests that already ran and asserted (their expectations are
+// already checked), but would corrupt fixtures for any test placed AFTER this
+// one. Vitest's default sequencer runs tests in file declaration order
+// (server/vitest.config.ts sets no `sequence.shuffle` and `fileParallelism:
+// false`), so "last in the file" is a safe, deterministic guarantee here — do
+// not insert new tests below this block.
+describe('recomputeSpiritMax() boot-recompute ordering (#520 P2 fix — must stay last in this file)', () => {
+  // #520 adversarial (regresses the exact P2 defect): simulate a pre-correction
+  // DB row — xp=0 (the true, current tier is 0) but the stored tier/max_uses
+  // columns are stuck at stale Tier-10 values, exactly the drift
+  // recomputeRingTiers() exists to repair. Calling recomputeSpiritMax() BEFORE
+  // the tier correction reproduces the pre-fix bug (wrong, stale spirit_max);
+  // calling it AFTER (the production order in db.ts) yields the corrected value.
+  test('spirit_max reflects the corrected tier only when recomputeRingTiers() runs first — reversing the order reproduces the P2 bug', () => {
+    const p = makePlayer('void'); // ×1 isolates the raw per-ring math
+    // Stale fixture: xp=0 (correct tier=0) but tier/max_uses left at Tier-10.
+    makeRing(p, { tier: 9, maxUses: 12 });
+
+    // Wrong order (the pre-fix bug): spirit recompute runs against the stale
+    // tier=9 column because no tier correction has happened yet.
+    dbMod.recomputeSpiritMax();
+    expect(getPersistedSpiritMax(p), 'wrong-order recompute reflects the stale Tier-10 data').toBe(
+      72, // 12 × forceFromTier1(10) = 12 × 6
+    );
+
+    // Correct order (db.ts L208-212): tier correction THEN spirit recompute.
+    dbMod.recomputeRingTiers();
+    dbMod.recomputeSpiritMax();
+    expect(
+      getPersistedSpiritMax(p),
+      'correct-order recompute reflects the corrected Tier-1 data (xp=0 → tier=0, max_uses=3)',
+    ).toBe(
+      3, // 3 × forceFromTier1(1) = 3 × 1
+    );
   });
 });
