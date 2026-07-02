@@ -712,6 +712,16 @@ export function effectiveTier(biome: string, personality: AIPersonality, playerB
 
 Effective encounter tier used by `scaleProfileByTier`. Returns `max(floorTier(biome), tierForXp(playerXp))` so the biome always sets a minimum tier floor.
 
+#### `effectiveTier1Indexed`
+
+```ts
+export function effectiveTier1Indexed(biome: string, personality: AIPersonality, playerBattleHandAvgXp: number): number
+```
+
+#517 (EPIC #511 Contract E) — indexing-normalized twin of `effectiveTier`, used ONLY to derive the AI seat's synthetic `hp_force` (the AI has no HP-slot heart ring). `effectiveTier` mixes indexing conventions: `floorTier` is 1-indexed (forest=1…volcano=5) but `tierForXp` is 0-indexed, so feeding that raw max straight into `forceFromTier1` (which expects 1-indexed input, Contract A) would silently under-power the result by one force step whenever the `tierForXp` branch wins. This helper normalizes BOTH operands to 1-indexed BEFORE the max: `max(floorTier(biome), tierForXp(npcXp) + 1)` — the same convention the player path already uses (`force(xp) = forceFromTier1(tierForXp(xp) + 1)`, `shared/tiers.ts`). `BattleRoom.onCreate` computes the AI seat's `sessionToHpForce` entry as `forceFromTier1(effectiveTier1Indexed(biome, personality, playerBattleHandAvgXp))`, so `forceFromTier1(effectiveTier1Indexed(...))` can never drift from `force(xp)` at matched XP.
+
+Deliberately independent of `effectiveTier` — do not refactor either in terms of the other. `effectiveTier`'s mixed-indexing VALUE is load-bearing for the σ / mistake-probability transfer functions in `scaleProfileByTier` and must not change.
+
 #### `skillRoll`
 
 ```ts
