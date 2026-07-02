@@ -1022,3 +1022,126 @@ describe('resolveBlock — WEAK-catch gauge fill reversal (#515)', () => {
     expect(r.blockGaugeDeltas[0].delta).toBe(1.0);
   });
 });
+
+// ---------------------------------------------------------------------------
+// #515 — QA Phase 2 (implementation-aware): targets the actual finished
+// BlockResolver.ts structure. `defForce` and `defenderTracked` are each
+// computed ONCE, above the WEAK/NEUTRAL/STRONG if-else dispatch (shared by all
+// three branches, not recomputed per branch), and the WEAK branch's push loop
+// (`const delta = 1 / defForce; for (const el of defenderTracked) ...`) is the
+// literal NEUTRAL-branch loop copied verbatim, per the code review / reuse
+// directive — not a parallel implementation that merely produces the same
+// numbers today but could drift independently tomorrow.
+// ---------------------------------------------------------------------------
+describe('resolveBlock — WEAK branch reuses the SAME shared defForce/defenderTracked as NEUTRAL/STRONG+BLOCK, not an independent recompute (#515 Phase 2 impl-aware)', () => {
+  test('source declares `defForce` and `defenderTracked` exactly once each — computed before the branch dispatch, not duplicated inside WEAK', () => {
+    const src = fs.readFileSync(
+      path.join(__dirname, '../../server/src/game/BlockResolver.ts'),
+      'utf8',
+    );
+    const defForceDecls = src.match(/const defForce = force\(/g) ?? [];
+    const trackedDecls = src.match(/const defenderTracked = trackedComponentsOf\(/g) ?? [];
+    expect(defForceDecls.length).toBe(1);
+    expect(trackedDecls.length).toBe(1);
+  });
+
+  test("the WEAK branch's own source reads the shared `defForce`/`defenderTracked` variables — it does not re-call force(defenderRing.xp) or trackedComponentsOf(...) independently", () => {
+    const src = fs.readFileSync(
+      path.join(__dirname, '../../server/src/game/BlockResolver.ts'),
+      'utf8',
+    );
+    const match = src.match(/if \(rel === 'WEAK'\) \{([\s\S]*?)\} else if \(rel === 'NEUTRAL'\)/);
+    expect(match).not.toBeNull();
+    const weakBranchSrc = match![1];
+    // Sanity: this is actually the WEAK gauge-fill code, not an empty/stale capture.
+    expect(weakBranchSrc).toMatch(/const delta = 1 \/ defForce;/);
+    expect(weakBranchSrc).toMatch(/for \(const el of defenderTracked\) r\.blockGaugeDeltas\.push/);
+    // The load-bearing negative: no independent force()/trackedComponentsOf() call inside WEAK.
+    expect(weakBranchSrc).not.toMatch(/force\(defenderRing\.xp\)/);
+    expect(weakBranchSrc).not.toMatch(/trackedComponentsOf\(/);
+  });
+
+  test('consumeUse(defenderRing) is called exactly once inside the committed BLOCK/PARRY dispatch region — the WEAK branch does not duplicate the catch-use spend the way it now duplicates the gauge fill', () => {
+    // The source has TWO consumeUse(defenderRing) call sites total: the
+    // MISTIME sub-case of the uncontested-hit early-return (above the
+    // "committed defense ring" comment), and the single shared call that
+    // gates entry into the WEAK/NEUTRAL/STRONG dispatch. Slicing the source
+    // from that comment onward isolates the dispatch region and everything
+    // inside it (including the new WEAK gauge-fill code) — it must contain
+    // exactly the one call that opens the region, not a second one hiding
+    // inside the WEAK branch specifically.
+    const src = fs.readFileSync(
+      path.join(__dirname, '../../server/src/game/BlockResolver.ts'),
+      'utf8',
+    );
+    const anchor = '// BLOCK / PARRY with a committed defense ring';
+    const anchorIdx = src.indexOf(anchor);
+    expect(anchorIdx).toBeGreaterThan(-1);
+    const dispatchSrc = src.slice(anchorIdx);
+    const dispatchCalls = dispatchSrc.match(/consumeUse\(defenderRing\)/g) ?? [];
+    expect(dispatchCalls.length).toBe(1);
+    // Whole-function total is exactly 2 (the MISTIME early-return call, plus
+    // the one shared call above) — locks in the known-good count so a future
+    // third call site anywhere in the function fails loudly.
+    const allCalls = src.match(/consumeUse\(defenderRing\)/g) ?? [];
+    expect(allCalls.length).toBe(2);
+  });
+
+  describe('behavioral corollary: WEAK, NEUTRAL, and STRONG+BLOCK yield the IDENTICAL delta for the SAME defender element+xp (extends the #512 NEUTRAL/STRONG sync guard to include WEAK)', () => {
+    // WOOD is WEAK vs FIRE (Fire beats Wood), NEUTRAL vs WIND (no triangle
+    // threat), and STRONG vs WATER (Wood beats Water) — one fixed defender
+    // element reaches all three branches just by swapping the attacker, so
+    // defForce/defenderTracked are identical across all three calls below and
+    // any per-branch drift (e.g. a future hand-tune of just one branch) shows
+    // up as a direct inequality, not a coincidental match.
+    test.each([0, tierStartXp(1), tierStartXp(2), tierStartXp(3), tierStartXp(5)])(
+      'WOOD defender at xp=%i: WEAK(vs FIRE), NEUTRAL(vs WIND), and STRONG(vs WATER) all produce the same delta',
+      (xp) => {
+        const weak = resolveBlock(makeRing(FIRE, 3), makeRing(WOOD, 3, xp), 'BLOCK', 1);
+        const neutral = resolveBlock(makeRing(WIND, 3), makeRing(WOOD, 3, xp), 'BLOCK', 1);
+        const strong = resolveBlock(makeRing(WATER, 3), makeRing(WOOD, 3, xp), 'BLOCK', 1);
+        expect(weak.relationship).toBe('WEAK');
+        expect(neutral.relationship).toBe('NEUTRAL');
+        expect(strong.relationship).toBe('STRONG');
+        expect(weak.blockGaugeDeltas).toEqual([{ element: WOOD, delta: neutral.blockGaugeDeltas[0].delta }]);
+        expect(weak.blockGaugeDeltas[0].delta).toBe(strong.blockGaugeDeltas[0].delta);
+      },
+    );
+
+    // Same three-branch sweep via SHADOW's independent shadowRelationship code
+    // path (WEAK vs FIRE, NEUTRAL vs WATER, STRONG vs WOOD) — proves the shared
+    // defForce/defenderTracked reuse holds for the Shadow matchup branch too,
+    // not just the triangle branch exercised by WOOD above.
+    test.each([0, tierStartXp(2), tierStartXp(4)])(
+      'SHADOW defender at xp=%i: WEAK(vs FIRE), NEUTRAL(vs WATER), and STRONG(vs WOOD) all produce the same delta',
+      (xp) => {
+        const weak = resolveBlock(makeRing(FIRE, 3), makeRing(SHADOW, 3, xp), 'BLOCK', 1);
+        const neutral = resolveBlock(makeRing(WATER, 3), makeRing(SHADOW, 3, xp), 'BLOCK', 1);
+        const strong = resolveBlock(makeRing(WOOD, 3), makeRing(SHADOW, 3, xp), 'BLOCK', 1);
+        expect(weak.relationship).toBe('WEAK');
+        expect(neutral.relationship).toBe('NEUTRAL');
+        expect(strong.relationship).toBe('STRONG');
+        expect(weak.blockGaugeDeltas).toEqual([{ element: SHADOW, delta: neutral.blockGaugeDeltas[0].delta }]);
+        expect(weak.blockGaugeDeltas[0].delta).toBe(strong.blockGaugeDeltas[0].delta);
+      },
+    );
+  });
+
+  test('a WEAK catch where the ATTACKER is much higher force than the defender still fills gauge at 1/defForce, never 1/atkForce — the two variables are easy to transpose in the "overmatched" branch', () => {
+    // adversarial #515 (impl-aware): the WEAK branch's own comment calls the
+    // defender "elementally overmatched," which makes `atkForce` the more
+    // narratively salient variable in that branch's context — a plausible
+    // copy-paste slip is `const delta = 1 / atkForce` instead of `1 / defForce`.
+    // Pick atkForce and defForce far apart (T10 attacker, force 6; T1 defender,
+    // force 1) so the two candidate deltas (1.0 vs ~0.167) are unmistakably
+    // different, not coincidentally equal.
+    const tierRing = (el: number, tier1: number) => makeRing(el, 3, tierStartXp(tier1 - 1));
+    const atk = tierRing(FIRE, 10); // force 6
+    const def = tierRing(WOOD, 1); // force 1 — WOOD is WEAK vs FIRE
+    const r = resolveBlock(atk, def, 'BLOCK', 1);
+    expect(r.relationship).toBe('WEAK');
+    expect(force(atk.xp)).toBe(6);
+    expect(force(def.xp)).toBe(1);
+    expect(r.blockGaugeDeltas).toEqual([{ element: WOOD, delta: 1.0 }]); // 1/defForce, NOT 1/atkForce (~0.167)
+  });
+});
