@@ -541,3 +541,145 @@ test('scenario 8: two NPCs on the same effective tier via different dominant bra
   expect(exchangeB.defenderHeartsLost).toBe(3);
   expect(exchangeA.defenderHeartsLost).toBe(exchangeB.defenderHeartsLost);
 });
+
+// ── #532 QA Phase 1 — driveAiDuel(aiHearts:1) "guaranteed win" is personality-
+//    dependent, not universal. Root cause: the aiHearts:1 handicap only pays
+//    off if the AI's single heart is actually struck, which requires the AI to
+//    let at least one hit through. AGGRESSIVE (noBlockProb=0) always commits an
+//    optimal-timed, near-optimal-element block, so its 1 heart can survive an
+//    entire duel while the human's own attack rings run dry and it forfeits
+//    (§6.6). DEFENSIVE (noBlockProb=0.3) reliably leaks a hit, so aiHearts:1 is
+//    a real guarantee there. These tests lock in that asymmetry independently
+//    of scenario 3/4's own assertions, so a future edit can't silently regress
+//    back to "aiHearts:1 always wins" (or quietly drop the DEFENSIVE fix).
+
+// #532 adversarial positive control: prove the DEFENSIVE + aiHearts:1 premise
+// scenario 3 now relies on actually holds at the room-state level (winnerId is
+// the human's own sessionId, not 'AI'; the AI's heart is fully KOd to 0) —
+// independent of the battleSummary-level assertions scenario 3 makes.
+test('#532 adversarial: DEFENSIVE + aiHearts:1 is a true positive control (winnerId is the human, AI heart hits 0)', async ({ browser }) => {
+  const ctx = await browser.newContext();
+  await seedAuthToken(ctx);
+  const page = await ctx.newPage();
+  await page.goto(URL);
+
+  await driveAiDuel(page, { personality: 'DEFENSIVE', aiHearts: 1 });
+
+  const { winnerId, mySessionId, aiHearts } = await page.evaluate(() => {
+    const room = (window as any).__room;
+    return {
+      winnerId: room?.state?.winnerId,
+      mySessionId: room?.sessionId,
+      aiHearts: room?.state?.players?.get('AI')?.hearts,
+    };
+  });
+
+  expect(winnerId).toBe(mySessionId); // the human won — not a forfeit to 'AI'
+  expect(aiHearts).toBe(0); // KOd outright, not surviving at its 1-heart handicap
+
+  await ctx.close();
+});
+
+// #532 adversarial Layer-2 guard: aggregateXp = SUM(xp) WHERE in_carry = 0
+// (Reliquary rings only — PlayerRepo.getSpiritStats). A fresh seeded account's
+// starter Reliquary rings are all xp=0 and the ring just won is only `pending`
+// (in_carry=1), so aggregateXp is legitimately 0 even on a clean win. Locks
+// this in via an independent DEFENSIVE win so a future "fix" can't silently
+// reintroduce `toBeGreaterThan(0)` — which only ever accidentally passed
+// before #532 because scenario 3's `won` assertion failed first (AGGRESSIVE
+// forfeited) and short-circuited the test before reaching aggregateXp.
+test('#532 adversarial: aggregateXp stays 0 after a clean win because only Reliquary (in_carry=0) rings accrue XP', async ({ browser }) => {
+  const ctx = await browser.newContext();
+  await seedAuthToken(ctx);
+  const page = await ctx.newPage();
+  await page.goto(URL);
+
+  await driveAiDuel(page, { personality: 'DEFENSIVE', aiHearts: 1 });
+
+  await page.waitForFunction(() => (window as any).__lastBattleSummary !== null, { timeout: 8000 });
+  const summary = (await page.evaluate(
+    () => (window as any).__lastBattleSummary,
+  )) as BattleSummary;
+
+  expect(summary.won).toBe(true);
+  expect(summary.xpGained).toBeGreaterThan(0); // the real per-duel signal lives here
+  expect(summary.aggregateXp).toBe(0); // Reliquary-only; 0 is CORRECT for a fresh account, not a bug
+  // #532 regression guard — do NOT "fix" the line above back to
+  // `toBeGreaterThan(0)`: that reads account-lifetime Reliquary spirit, not
+  // this duel's outcome, and is 0 by design until a ring is retired.
+
+  await ctx.close();
+});
+
+// #532 adversarial: run AGGRESSIVE + aiHearts:1 to its NATURAL (RNG-driven)
+// conclusion and assert the terminal AI-heart state is explicit about WHICH
+// path occurred, rather than a flaky pass/fail on `won`. Per the issue's
+// probe (3 runs), this is majority-loss (~2/3 forfeit) with an occasional win
+// when AGGRESSIVE's ~5% element-mistake / mistiming slip lets a hit through.
+// Both outcomes are legitimate; what must NEVER happen is a partial heart
+// state (e.g. some accidental heart bleed while still not KOd) — that would
+// mean the handicap and the terminal winner disagreed, a genuine bug. This
+// test tolerates the coin flip but locks in the {KO=0} XOR {survives=1}
+// invariant, making the personality-dependence explicit either way.
+test('#532 adversarial: AGGRESSIVE + aiHearts:1 resolves to exactly KO (win, heart=0) XOR fully-intact survival (forfeit-loss, heart=1) — never a partial heart', async ({ browser }) => {
+  const ctx = await browser.newContext();
+  await seedAuthToken(ctx);
+  const page = await ctx.newPage();
+  await page.goto(URL);
+
+  await driveAiDuel(page, { personality: 'AGGRESSIVE', aiHearts: 1 });
+
+  const { winnerId, mySessionId, aiHearts } = await page.evaluate(() => {
+    const room = (window as any).__room;
+    return {
+      winnerId: room?.state?.winnerId,
+      mySessionId: room?.sessionId,
+      aiHearts: room?.state?.players?.get('AI')?.hearts,
+    };
+  });
+
+  if (winnerId === mySessionId) {
+    // The rare element-mistake/mistiming slip let a hit through — genuine KO.
+    expect(aiHearts).toBe(0);
+  } else {
+    // AGGRESSIVE blocked every attack; the AI's handicap heart never fell and
+    // the human forfeited on attack-ring exhaustion instead (§6.6).
+    expect(winnerId).toBe('AI');
+    expect(aiHearts).toBe(1); // survived fully intact — proves this is a forfeit, not a KO
+  }
+
+  await ctx.close();
+});
+
+// #532 adversarial root-cause isolation: strip AGGRESSIVE's ability to block
+// at all (reusing the #517 disableAiDefence/armorHuman/startForceWiringDuel
+// helpers already in this file) and show the aiHearts:1 guarantee returns
+// even under the AGGRESSIVE label. This proves the causal variable is
+// noBlockProb (whether the AI ever lets a hit through), not "AGGRESSIVE" as a
+// special-cased identity — guarding against a future "fix" that special-cases
+// personality strings instead of respecting noBlockProb.
+test('#532 adversarial: with AI defense forcibly disabled, AGGRESSIVE + aiHearts:1 also wins — isolates noBlockProb (not personality identity) as the cause', async ({ browser }) => {
+  const ctx = await browser.newContext();
+  const page = await startForceWiringDuel(ctx, 'AGGRESSIVE', { aiHearts: 1 });
+  await armorHuman(page);
+  await disableAiDefence(page);
+
+  const exchange = await attackAI(page, 'a1');
+  expect(exchange.defenderHeartsLost).toBeGreaterThanOrEqual(1); // any landed hit KOs a 1-heart AI
+
+  await page.waitForFunction(() => (window as any).__room?.state?.phase === 'ENDED', {
+    timeout: 8000,
+  });
+  const { winnerId, mySessionId, aiHearts } = await page.evaluate(() => {
+    const room = (window as any).__room;
+    return {
+      winnerId: room?.state?.winnerId,
+      mySessionId: room?.sessionId,
+      aiHearts: room?.state?.players?.get('AI')?.hearts,
+    };
+  });
+  expect(winnerId).toBe(mySessionId); // human wins even under the AGGRESSIVE label
+  expect(aiHearts).toBe(0);
+
+  await ctx.close();
+});
