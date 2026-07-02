@@ -1,5 +1,6 @@
 import Phaser from 'phaser';
 import { RingCard, usePips } from './ui/RingCard';
+import { force } from '../../shared/tiers';
 
 // Card dimensions. Height raised to 90px to fit five rows (slot label /
 // element name / tier / xp / use pips) without overlap.
@@ -28,7 +29,7 @@ export class RingSlot extends Phaser.GameObjects.Container {
   // #135 Blinded — when true, the use-count row renders `?` instead of pips (the
   // local Blinded player can no longer read this ring's remaining uses).
   private _usesHidden = false;
-  private _lastRing: { currentUses: number; maxUses: number } | null = null;
+  private _lastRing: { currentUses: number; maxUses: number; xp: number } | null = null;
   // EPIC #264 / #266 — double-attack eligibility cue. A soft glow outline shown on
   // A1/A2 when the local hand satisfies canDoubleAttack, signalling the hold-cross
   // -tap combo is available. Presentational only; the server is authoritative.
@@ -69,7 +70,7 @@ export class RingSlot extends Phaser.GameObjects.Container {
   updateFromRing(ring: any): void {
     this._element = ring.element;
     this._isExtinguished = ring.isExtinguished;
-    this._lastRing = { currentUses: ring.currentUses, maxUses: ring.maxUses };
+    this._lastRing = { currentUses: ring.currentUses, maxUses: ring.maxUses, xp: ring.xp };
     // #263 — two-tone fill from the ring's dominant-first fusionParents (the
     // server's broadcast ArraySchema, index 0 = top/left). A base ring renders a
     // single fill; a fusion with no broadcast order falls back to static order.
@@ -107,7 +108,9 @@ export class RingSlot extends Phaser.GameObjects.Container {
     }
     const r = this._lastRing;
     if (!r) return;
-    this.card.setPipsText(usePips(r.currentUses, r.maxUses));
+    // #511 — render use-fraction + force badge in the pips label
+    const forceValue = force(r.xp);
+    this.card.setPipsText(`${r.currentUses}/${r.maxUses} ⚡${forceValue}`);
   }
 
   /** Highlight (or dim) this slot depending on whether its group is active. */

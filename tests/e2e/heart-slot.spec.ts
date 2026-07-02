@@ -204,13 +204,25 @@ test('heart: a Heart card renders in the HEALTH column with the equipped ring HP
   await openReliquary(page);
 
   // The heart card is a RingCard added to the overlay container; its pips row shows
-  // the equipped ring's current/max uses. Read the heartCard.pipsText getter.
+  // the equipped ring's current/max uses + force badge. Read the heartCard.pipsText getter.
+  // #511 — pips format is now fraction+force: "${current}/${max} ⚡${force}"
   const pips = await page.evaluate(() => {
     const scene = (window as any).__scene as any;
     return scene.heartCard ? scene.heartCard.pipsText : null;
   });
   const heart = me.player.heart_ring;
-  const expected = '●'.repeat(heart.current_uses) + '○'.repeat(heart.max_uses - heart.current_uses);
+  // Compute force from XP using the same logic as the shared force() helper
+  // force(xp) = forceFromTier1(tierForXp(xp) + 1) = floor((tier1 + 2) / 2)
+  const tierForXp = (xp: number): number => {
+    if (xp < 0) return 0;
+    let n = Math.floor((-1 + Math.sqrt(1 + xp / 62.5)) / 2);
+    const tierStartXp = (tier: number) => 250 * tier * (tier + 1);
+    while (tierStartXp(n + 1) <= xp) n++;
+    while (n > 0 && tierStartXp(n) > xp) n--;
+    return n;
+  };
+  const forceValue = Math.floor((tierForXp(heart.xp) + 1 + 2) / 2);
+  const expected = `${heart.current_uses}/${heart.max_uses} ⚡${forceValue}`;
   expect(pips).toBe(expected);
 
   // #347 — the card x-origin is the HEALTH column origin (between SPARES and COMBAT).
