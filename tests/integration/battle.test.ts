@@ -22,6 +22,7 @@ import { Server } from 'colyseus';
 import { BattleRoom } from '../../server/src/rooms/BattleRoom';
 import { TELEGRAPH_MS, BLOCK_WINDOW_MS } from '../../server/src/game/constants';
 import { ElementEnum } from '../../shared/types';
+import { tierStartXp } from '../../shared/tiers';
 
 const { FIRE, WATER, WOOD, SHADOW, WIND, EARTH } = ElementEnum;
 
@@ -811,4 +812,218 @@ describe('Scenario 18 (#469): Fire all-in setup fires at seat but thumb earns no
       expect(slotXp(room, attackerId, 'a1')).toBeGreaterThan(0);
     },
   );
+});
+
+// ---------------------------------------------------------------------------
+// #516 — QA Phase 1 (spec-driven): rally recursion through force (EPIC #511
+// Contract D). By construction (#514/#517), `_resolveExchange` re-derives
+// `attackerId`/`defenderId` fresh from `state.currentAttackerId` on every call
+// — including rally volleys — so there is no obvious place for a stale
+// attacker/defender binding to hide. These tests exist to PROVE that at the
+// integration level, not just trust the construction argument: every ring's
+// force (attacker AND defender) and every hp_force lookup must be resolved
+// fresh, for the CURRENT roles, at EVERY depth of a live rally chain — not
+// cached from the original attack or an earlier volley in the same chain.
+// ---------------------------------------------------------------------------
+describe('#516 — rally recursion through force (Contract D)', () => {
+  // Overrides one slot's element + xp on an already-seated player so a rally
+  // can be driven through controlled STRONG-parry volleys with independently
+  // chosen attack/defense force at each depth. Uses count is set generously
+  // high so depletion never interferes unless a test deliberately zeroes it.
+  function setRing(
+    room: any,
+    sessionId: string,
+    slot: 'a1' | 'a2' | 'd1' | 'd2',
+    element: number,
+    tier1: number,
+  ) {
+    const ring = room.state.players.get(sessionId).getSlot(slot);
+    ring.element = element;
+    ring.isFusion = false;
+    ring.fusionParents.clear();
+    ring.xp = tierStartXp(tier1 - 1); // force(xp) === forceFromTier1(tier1)
+    ring.currentUses = 6;
+    ring.maxUses = 6;
+    ring.isExtinguished = false;
+  }
+
+  test('rally volley heart loss uses the PARRYING ring\'s force (not the original attacker\'s), and hp_force resolves to the CURRENT defender (not a stale original-defender binding)', async () => {
+    const { room, c1, c2 } = await joinBattle();
+    const p1 = attackerClient(room, c1, c2); // original attacker
+    const p2 = defenderClient(room, c1, c2); // original defender → becomes the rally attacker
+
+    // p2's WOOD(d1) is the ring that both parries the opening attack AND fires
+    // the rally volley. Give it a force (4) far from p1's untouched WATER(a2)
+    // force (1, default xp=0) — if atk_force were wrongly bound to the ORIGINAL
+    // attacker's ring instead of the volleying ring, the heart count changes.
+    setRing(room, p2.sessionId, 'd1', WOOD, 6); // volleying ring: force 4
+    // p1's EARTH(d2) is the volley's defense ring (always NEUTRAL — deterministic
+    // end-of-rally). Force 1 makes it a real, but small, subtractive shield.
+    setRing(room, p1.sessionId, 'd2', EARTH, 1); // volley's defense ring: force 1
+
+    // hp_force: p1 is the CURRENT defender of the volley; p2 was the ORIGINAL
+    // defender of the opening attack. Giving them different values means a
+    // stale-to-original-defender lookup produces a DIFFERENT, detectable count.
+    room.sessionToHpForce.set(p1.sessionId, 3); // correct divisor for this volley
+    room.sessionToHpForce.set(p2.sessionId, 1); // wrong divisor if mis-bound
+
+    p1.send('selectAttack', { slot: 'a2' }); // WATER — opens the rally (case 4, 0 hearts)
+    await room.waitForNextPatch();
+    await pressDefenseAt(room, p2, 'd1', 0); // WOOD STRONG parry → rally, volley = WOOD
+
+    expect(room.state.rallyActive).toBe(true);
+    expect(room.state.currentAttackerId).toBe(p2.sessionId);
+    expect(room.state.attackerSlot).toBe('d1');
+    for (const p of room.state.players.values()) expect((p as any).hearts).toBe(3); // strong parry itself never bleeds a heart
+
+    await pressDefenseAt(room, p1, 'd2', 0); // EARTH — always NEUTRAL, ends the rally here
+
+    expect(room.state.rallyActive).toBe(false);
+    // atk_force = force(WOOD d1 @ T6) = 4; def_force = force(EARTH @ T1) = 1;
+    // hp_force = p1's (current defender's) 3 → ceilDiv(4−1, 3) = 1.
+    // A stale-atk_force bug (using p1's original WATER a2, force 1) would give
+    // ceilDiv(0,3)=0; a stale-hp_force bug (using p2's 1) would give
+    // ceilDiv(3,1)=3; a dropped-def_force bug would give ceilDiv(4,3)=2 — every
+    // plausible mis-binding lands on a DIFFERENT number than the correct 1.
+    expect(room.state.players.get(p1.sessionId).hearts).toBe(2); // 3 − 1
+  });
+
+  test('def_force ≥ atk_force on a rally volley still bleeds exactly 0 hearts — the subtractive shield holds recursively, not just on the first exchange', async () => {
+    const { room, c1, c2 } = await joinBattle();
+    const p1 = attackerClient(room, c1, c2);
+    const p2 = defenderClient(room, c1, c2);
+
+    setRing(room, p2.sessionId, 'd1', WOOD, 1); // volleying ring: force 1
+    setRing(room, p1.sessionId, 'd2', EARTH, 10); // volley's defense ring: force 6 ≥ atk_force
+
+    p1.send('selectAttack', { slot: 'a2' }); // WATER — opens the rally
+    await room.waitForNextPatch();
+    await pressDefenseAt(room, p2, 'd1', 0); // WOOD STRONG parry → rally
+    expect(room.state.rallyActive).toBe(true);
+
+    await pressDefenseAt(room, p1, 'd2', 0); // EARTH NEUTRAL, def_force(6) ≥ atk_force(1)
+
+    expect(room.state.rallyActive).toBe(false);
+    // max(0, ceilDiv(max(0, 1 − 6), hpForce)) = max(0, ceilDiv(0, hpForce)) = 0 —
+    // never negative, never floored up to 1 (that floor only applies to the
+    // WEAK/no-block branches, not this subtractive NEUTRAL/STRONG-block branch).
+    expect(room.state.players.get(p1.sessionId).hearts).toBe(3);
+  });
+
+  test('the parrying ring is charged exactly 1 use total — firing the rally volley does NOT add a second charge', async () => {
+    // #516 adversarial: continueAfterOrb reuses the parry's single consumeUse
+    // (BlockResolver.ts) rather than spending a fresh use when the same ring
+    // fires as the volley's attacker. A regression that ran the normal
+    // attack-select use-spend path on the volleyed ring would double-charge it.
+    const { room, c1, c2 } = await joinBattle();
+    const p1 = attackerClient(room, c1, c2);
+    const p2 = defenderClient(room, c1, c2);
+
+    p1.send('selectAttack', { slot: 'a2' }); // WATER
+    await room.waitForNextPatch();
+    await pressDefenseAt(room, p2, 'd1', 0); // WOOD STRONG parry → rally; d1 pays its ONE use
+
+    expect(room.state.players.get(p2.sessionId).d1.currentUses).toBe(2); // 3 → 2, the parry's cost
+    expect(room.state.currentAttackerId).toBe(p2.sessionId);
+    expect(room.state.attackerSlot).toBe('d1');
+
+    await pressDefenseAt(room, p1, 'd2', 0); // EARTH NEUTRAL — resolves the volley, ends the rally
+
+    // d1 must still read 2 — firing AS the rally volley's attack charged nothing.
+    expect(room.state.players.get(p2.sessionId).d1.currentUses).toBe(2);
+  });
+
+  test('a defense ring at 0 uses cannot parry — the rally is bounded by the EXISTING depletion cap, not a new loop guard', async () => {
+    // #516 adversarial: the spec explicitly calls out that no new anti-infinite-
+    // loop logic exists — recursion depth is bounded ONLY by a ring at 0 uses
+    // being unable to catch. Exhaust the would-be parry ring BEFORE the attack
+    // and confirm the rally never opens; the exchange resolves as an uncontested
+    // hit instead of silently hanging or looping.
+    const { room, c1, c2 } = await joinBattle();
+    const p1 = attackerClient(room, c1, c2);
+    const p2 = defenderClient(room, c1, c2);
+
+    const p2d1 = room.state.players.get(p2.sessionId).d1;
+    p2d1.currentUses = 0;
+    p2d1.isExtinguished = true;
+
+    p1.send('selectAttack', { slot: 'a2' }); // WATER — would STRONG-parry a healthy WOOD(d1)
+    await room.waitForNextPatch();
+
+    // The extinguished-ring guard in handleSubmitDefense silently drops this
+    // press (phase-lock convention) — the window closes with no defense
+    // captured, so it resolves NO_BLOCK, never a parry.
+    p2.send('submitDefense', { slot: 'd1', pressTime: Date.now() });
+    await waitForResolve();
+
+    expect(room.state.rallyActive).toBe(false); // no rally ever opened
+    expect(room.state.players.get(p2.sessionId).hearts).toBe(2); // uncontested hit landed
+    expect(room.state.phase).toBe('ATTACK_SELECT');
+  });
+
+  test('a 3-volley rally recomputes atk_force AND def_force fresh at EVERY depth — no caching from an earlier volley in the same chain', async () => {
+    // #516 adversarial (multi-depth): chains four STRONG-parry/volley legs
+    // through the Fire→Wood→Water→Fire triangle (each defense ring is the next
+    // element in the cycle, so it strong-parries the incoming volley and
+    // becomes the next attacker), then ends on a NEUTRAL EARTH catch whose
+    // magnitude is asserted. Every ring used earlier in the chain is given a
+    // DIFFERENTLY-valued force than the ring that actually determines the final
+    // count, so a bug that reuses/caches an earlier depth's atk_force, def_force,
+    // or hp_force lands on a distinct, wrong number instead of coincidentally
+    // matching the correct one.
+    const { room, c1, c2 } = await joinBattle();
+    const p1 = attackerClient(room, c1, c2); // A
+    const p2 = defenderClient(room, c1, c2); // B
+
+    setRing(room, p2.sessionId, 'd1', WOOD, 10); // depth-1 volleying ring: force 6 (irrelevant magnitude — case 4 is always 0 — but must NOT leak into depth 3)
+    setRing(room, p1.sessionId, 'd1', FIRE, 4); // depth-1 defense / depth-2 volleying ring: force 3 (must NOT leak into depth 3 as def_force)
+    setRing(room, p2.sessionId, 'd2', WATER, 8); // depth-2 defense / depth-3 volleying ring: force 5 — the CORRECT atk_force for the final count
+    setRing(room, p1.sessionId, 'd2', EARTH, 1); // depth-3 defense ring: force 1 — the CORRECT def_force for the final count
+
+    // Current defender at depth 3 is A (p1); give A and B distinct hp_force so a
+    // stale-to-B lookup at depth 3 is also distinguishable.
+    room.sessionToHpForce.set(p1.sessionId, 2); // correct
+    room.sessionToHpForce.set(p2.sessionId, 1); // wrong if mis-bound
+
+    // Depth 0: A attacks WATER(a2, default) → B STRONG-parries WOOD(d1). Case 4,
+    // 0 hearts regardless of force.
+    p1.send('selectAttack', { slot: 'a2' });
+    await room.waitForNextPatch();
+    await pressDefenseAt(room, p2, 'd1', 0);
+    expect(room.state.rallyActive).toBe(true);
+    expect(room.state.currentAttackerId).toBe(p2.sessionId);
+    expect(room.state.attackerSlot).toBe('d1');
+
+    // Depth 1: B attacks WOOD(d1) → A STRONG-parries with FIRE(d1) (Fire beats
+    // Wood). Case 4 again, 0 hearts regardless of force.
+    await pressDefenseAt(room, p1, 'd1', 0);
+    expect(room.state.rallyActive).toBe(true);
+    expect(room.state.currentAttackerId).toBe(p1.sessionId);
+    expect(room.state.attackerSlot).toBe('d1');
+    for (const p of room.state.players.values()) expect((p as any).hearts).toBe(3);
+
+    // Depth 2: A attacks FIRE(d1) → B STRONG-parries with WATER(d2) (Water beats
+    // Fire). Case 4 again, 0 hearts regardless of force.
+    await pressDefenseAt(room, p2, 'd2', 0);
+    expect(room.state.rallyActive).toBe(true);
+    expect(room.state.currentAttackerId).toBe(p2.sessionId);
+    expect(room.state.attackerSlot).toBe('d2');
+    for (const p of room.state.players.values()) expect((p as any).hearts).toBe(3);
+
+    // Depth 3: B attacks WATER(d2) → A defends with EARTH(d2) (always NEUTRAL —
+    // ends the chain here). This is the ONLY leg whose heart magnitude is
+    // asserted.
+    await pressDefenseAt(room, p1, 'd2', 0);
+    expect(room.state.rallyActive).toBe(false);
+    expect(room.state.phase).toBe('ATTACK_SELECT');
+
+    // Correct: atk_force=force(WATER d2 @T8)=5, def_force=force(EARTH d2 @T1)=1,
+    // hp_force=A's 2 → ceilDiv(5−1, 2) = 2 → A: 3 → 1.
+    // A caching bug reusing depth-1's atk_force (WOOD @T10, force 6) would give
+    // ceilDiv(6−1,2)=3 (not 2). A caching bug reusing depth-1's def_force (FIRE
+    // @T4, force 3) would give ceilDiv(5−3,2)=1 (not 2). A stale-hp_force bug
+    // (B's 1) would give ceilDiv(4,1)=4 (not 2). All three plausible regressions
+    // land on a number DIFFERENT from the correct 2.
+    expect(room.state.players.get(p1.sessionId).hearts).toBe(1); // 3 − 2
+  });
 });
