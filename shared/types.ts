@@ -251,11 +251,11 @@ export interface ExchangeResultPayload {
   attackerElements: number[];
   timing: 'PARRY' | 'BLOCK' | 'MISTIME' | 'NO_BLOCK';
   relationship: 'STRONG' | 'NEUTRAL' | 'WEAK';
-  // Pre-absorption verdict from BlockResolver — true if the resolver judged the
-  // defender's hearts should decrease. May not match the actual heart delta when
-  // a boss passive (e.g. Heartwood) absorbs the hit server-side; use state patches
-  // for the authoritative hearts value.
-  defenderHeartLost: boolean;
+  // Pre-absorption heart-loss count from BlockResolver (0 or 1 today; may exceed
+  // 1 once force scaling lands). May not match the actual heart delta when a boss
+  // passive (e.g. Heartwood) absorbs the hit server-side; use state patches for
+  // the authoritative hearts value.
+  defenderHeartsLost: number;
   rallyContinues: boolean;
   volleyedElement: number;
 }
@@ -306,8 +306,8 @@ export interface MeState {
 export interface BlockResult {
   timing: 'PARRY' | 'BLOCK' | 'MISTIME' | 'NO_BLOCK';
   relationship: 'STRONG' | 'NEUTRAL' | 'WEAK';
-  defenderHeartLost: boolean;
-  attackerHeartLost: boolean;
+  defenderHeartsLost: number;
+  attackerHeartsLost: number;
   rallyContinues: boolean;
   volleyedElement: number;
   // Four-case gauge model (GDD §7.1). The defender's gauges move as follows:
