@@ -336,3 +336,43 @@ test('Entangled: woodGauge>=4 drains the highest-capacity defense ring (d1/d2) a
 
   await closeBattle(h);
 });
+
+// ── Scenario 7: WEAK catch still fills the defender's own gauge (§7.1 reversal, #515)
+test('Block gauge: a WEAK WOOD-vs-FIRE catch fills the defender woodGauge at 1/def_force, fireGauge untouched', async ({
+  browser,
+}) => {
+  const h = await setupBattle(browser);
+  const { attacker, defender } = await attackerDefender(h.p1, h.p2);
+
+  // Default loadout already gives us the matchup we need: attacker a1=FIRE,
+  // defender d1=WOOD. FIRE beats WOOD in the triangle, so catching a FIRE
+  // attack with D1 is a WEAK catch. Pre-#515 this moved no gauge at all; the
+  // §7.1 reversal (#515) makes the defender's own committed ring still fill
+  // its gauge at 1/def_force (Tier 0 → delta 1.0) even though the catch gives
+  // zero credit toward heart mitigation (#514's WEAK heart formula, unchanged).
+  await setState(attacker, { elements: { a1: FIRE } });
+  await setState(defender, { hearts: 3, fireGauge: 0, woodGauge: 0 });
+
+  await attacker.keyboard.press('1'); // A1 FIRE
+  await waitForPhase(defender, 'DEFEND_WINDOW');
+  await defender.waitForTimeout(DEFEND_BLOCK_WAIT_MS);
+  await defender.keyboard.press('3'); // D1 = WOOD → WEAK catch vs FIRE
+
+  await waitForExchangeResult(defender);
+  const result = await defender.evaluate(() => (window as any).__lastExchangeResult);
+  expect(CAUGHT).toContain(result.timing);
+  expect(result.relationship).toBe('WEAK');
+
+  await defender.waitForFunction(() => {
+    const room = (window as any).__room;
+    const me = room.state.players.get(room.sessionId);
+    return me.woodGauge === 1;
+  }, { timeout: 4000 });
+
+  const me = await readMe(defender);
+  expect(me.woodGauge).toBe(1); // defending ring's own gauge fills despite the WEAK catch (§7.1 reversal)
+  expect(me.fireGauge).toBe(0); // attacker's-element gauge never fills on a catch
+  expect(me.hearts).toBe(2); // WEAK catch still costs the full uncredited heart (#514, unchanged)
+
+  await closeBattle(h);
+});
