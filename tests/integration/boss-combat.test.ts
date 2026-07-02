@@ -19,11 +19,17 @@ import { describe, test, expect, beforeAll, afterAll } from 'vitest';
 import { ColyseusTestServer, boot } from '@colyseus/testing';
 import { Server } from 'colyseus';
 import { BattleRoom } from '../../server/src/rooms/BattleRoom';
-import { createPlayer, getRingsByOwner, getSpiritAndFood } from '../../server/src/persistence/PlayerRepo';
+import {
+  createPlayer,
+  getRingsByOwner,
+  getSpiritAndFood,
+  getHeartRing,
+  setRingXP,
+} from '../../server/src/persistence/PlayerRepo';
 import { signToken } from '../../server/src/auth/auth';
 import { ElementEnum, type WonRingPayload } from '../../shared/types';
 import { TELEGRAPH_MS, BLOCK_WINDOW_MS, STARTING_HEARTS, BOSS_FOOD_DROP, MINI_BOSS_FOOD_DROP } from '../../server/src/game/constants';
-import { tierStartXp } from '../../shared/tiers';
+import { tierStartXp, force } from '../../shared/tiers';
 
 let colyseus: ColyseusTestServer<any>;
 
@@ -1227,5 +1233,148 @@ describe('#514 — multi-heart pipeline + OQ-4 whole-exchange Heartwood absorb',
     expect(room.state.players.get('AI').hearts).toBe(0);
     expect(room.state.winnerId).toBe(human.sessionId);
     expect(room.state.players.get('AI').enraged).toBe(false);
+  }, 30000);
+});
+
+// ---------------------------------------------------------------------------
+// #514 — QA Phase 2 (implementation-aware): targets the actual call-site
+// structure now visible in the finished BattleRoom.ts — `resolveOrb`'s
+// `hpForce = defenderId === AI_ID ? 1 : (this.sessionToHpForce.get(defenderId)
+// ?? 1)` ternary (~L1653), and the `sessionToHpForce` cache populated from
+// `PlayerRepo.getHeartRing(playerId)` at seat time (~L659).
+// ---------------------------------------------------------------------------
+
+describe('#514 Phase 2 impl-aware — AI-defender hpForce=1 interim baseline (documented TODO(#517) "before" snapshot)', () => {
+  test('a T4 (force 3) human attack against a non-boss AI defender costs exactly 3 hearts today, because BattleRoom hardcodes the AI hpForce to 1 (resolveOrb ternary) — this number MUST change the day #517 lands', async () => {
+    // #514 adversarial (impl-aware): the AI branch of the hpForce ternary is an
+    // interim value, not yet backed by any real force computation. This test
+    // pins the CURRENT observable consequence of that interim value through a
+    // plain (non-boss) vsAI duel, so #517's implementation can diff its own new
+    // behavior against a concrete, executable "before" — a comment alone ("TODO
+    // #517") cannot be diffed; a failing assertion can.
+    const room = await colyseus.createRoom<any>('battle-ai', {
+      vsAI: true,
+      personality: 'AGGRESSIVE',
+      aiSeed: 999,
+      aiHearts: 99,
+    });
+    const human = await colyseus.connectTo(room);
+    await room.waitForNextPatch();
+    await sleep(20);
+
+    const aiPs = room.state.players.get('AI');
+    // Extinguish the AI's defense rings so the human's attack always lands
+    // uncontested (NO_BLOCK) — isolates hpForce as the only variable in play.
+    for (const key of ['d1', 'd2'] as const) {
+      const ring = aiPs.getSlot(key);
+      ring.currentUses = 0;
+      ring.isExtinguished = true;
+    }
+
+    const hps = room.state.players.get(human.sessionId);
+    hps.a1.element = ElementEnum.FIRE;
+    hps.a1.isFusion = false;
+    hps.a1.fusionParents.clear();
+    hps.a1.xp = tierStartXp(3); // force(T4) = 3
+    hps.a1.currentUses = 5;
+    hps.a1.maxUses = 5;
+    hps.a1.isExtinguished = false;
+
+    let captured: any = null;
+    human.onMessage('exchangeResult', (m: any) => {
+      if (!captured && m.defenderId === 'AI') captured = m;
+    });
+
+    // Let the AI's own opening throw resolve first (uncontested against the
+    // human's default rings — irrelevant to this assertion), then wait for the
+    // human's turn and fire the fixed-force a1.
+    for (let i = 0; i < 90 && captured === null; i++) {
+      if (room.state.phase === 'ATTACK_SELECT' && room.state.currentAttackerId === human.sessionId) {
+        human.send('selectAttack', { slot: 'a1' });
+      }
+      await sleep(100);
+    }
+
+    expect(captured).not.toBeNull();
+    expect(captured.timing).toBe('NO_BLOCK');
+    // max(1, ceilDiv(3, 1)) = 3 — the entire uncredited atkForce lands because
+    // hpForce is hardcoded to 1. When #517 wires the real AI hpForce, this
+    // number will legitimately change; a diff against THIS test is the intended
+    // signal that the TODO was actually addressed, not silently left in place.
+    expect(captured.defenderHeartsLost).toBe(3);
+  }, 20000);
+});
+
+describe('#514 Phase 2 impl-aware — sessionToHpForce cache lifecycle: each fresh seat re-reads the CURRENT heart ring, never a stale/memoized value', () => {
+  test('the same player, upgraded heart-ring force between two separate duels, gets the NEW hpForce in the second duel — not the first duel\'s cached value', async () => {
+    // #514 adversarial (impl-aware): sessionToHpForce is populated once per seat
+    // (BattleRoom.ts ~L659) from a fresh PlayerRepo.getHeartRing(playerId) read.
+    // A regression that memoized this by playerId OUTSIDE the per-room Map (e.g.
+    // a module-level cache "to avoid a repeated DB read") would let a stale
+    // hpForce from an earlier duel silently leak into a later one for the same
+    // player. Two fully separate rooms/seats for the SAME player, with the heart
+    // ring's force upgraded in between via a direct DB write, is the sharpest
+    // test of "does every seat truly re-derive its own value."
+    const username = `hpforce_reseat_${Math.random().toString(36).slice(2)}`;
+    const playerId = createPlayer(username, 'x');
+    const token = signToken({ playerId, username });
+    const heartRing = getHeartRing(playerId);
+    expect(heartRing).not.toBeNull();
+    expect(force(heartRing!.xp)).toBe(1); // starter heart ring: xp=0 → force 1
+
+    // Fixed atkForce=2 attacker (FIRE, T2, force 2) used identically in both
+    // duels — the ONLY thing that changes between them is the defender's hpForce.
+    async function driveOneExchange(): Promise<{ room: any; human: any; defenderHeartsLost: number }> {
+      const room = await colyseus.createRoom<any>('battle-ai', {
+        vsAI: true,
+        personality: 'AGGRESSIVE',
+        aiSeed: 321,
+      });
+      const human = await colyseus.connectTo(room, { token });
+      await room.waitForNextPatch();
+      await sleep(20);
+
+      const aiPs = room.state.players.get('AI');
+      aiPs.a1.element = ElementEnum.FIRE;
+      aiPs.a1.isFusion = false;
+      aiPs.a1.fusionParents.clear();
+      aiPs.a1.xp = tierStartXp(1); // force(T2) = 2
+      aiPs.a1.currentUses = 5;
+      aiPs.a1.maxUses = 5;
+      aiPs.a1.isExtinguished = false;
+      // Disable a2 so the AI's opening throw can only ever be the fixed-force a1
+      // (no double-attack combo noise).
+      aiPs.a2.currentUses = 0;
+      aiPs.a2.isExtinguished = true;
+
+      let captured: any = null;
+      human.onMessage('exchangeResult', (m: any) => {
+        if (!captured && m.defenderId === human.sessionId) captured = m;
+      });
+
+      // The AI opens (ids[0] === 'AI' in every vsAI room); the human never
+      // defends, so the AI's fixed-force a1 resolves as an uncontested NO_BLOCK.
+      for (let i = 0; i < 60 && captured === null; i++) await sleep(100);
+
+      expect(captured).not.toBeNull();
+      expect(captured.timing).toBe('NO_BLOCK');
+      return { room, human, defenderHeartsLost: captured.defenderHeartsLost };
+    }
+
+    // Duel 1: heart ring still at force 1 → max(1, ceilDiv(2,1)) = 2.
+    const duel1 = await driveOneExchange();
+    expect(duel1.defenderHeartsLost).toBe(2);
+    // Deliberately leave duel 1's room un-ended (no persistBattleResult call, so
+    // the heart ring's DB row is untouched by this duel) and upgrade the SAME
+    // heart ring directly.
+    setRingXP(playerId, heartRing!.id, tierStartXp(5)); // force(T6) = 4
+    expect(force(getHeartRing(playerId)!.xp)).toBe(4);
+
+    // Duel 2: a BRAND NEW room/seat for the same player. If sessionToHpForce (or
+    // anything upstream of it) held onto duel 1's force-1 snapshot, this would
+    // still compute max(1, ceilDiv(2,1)) = 2. The correct, freshly-read value is
+    // max(1, ceilDiv(2,4)) = 1.
+    const duel2 = await driveOneExchange();
+    expect(duel2.defenderHeartsLost).toBe(1);
   }, 30000);
 });
