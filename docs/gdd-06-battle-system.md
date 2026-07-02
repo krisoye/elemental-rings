@@ -161,7 +161,7 @@ The attacker always pays **1 use to throw**. The defender's response — its **t
 
 ### Block Resolution Table
 
-Heart loss is no longer a flat 1-or-0 per matchup — every row resolves through each ring's tier-derived **force** stat (§4.2, Contract A). `atk_force` is the attacking ring's force; `def_force` is the defending ring's force (credited only on a Neutral or Strong catch — zero on a Weak catch); `hp_force` is the equipped heart ring's force, which always mitigates the leftover. Every heart count is a non-negative integer via `ceil`, and the result is uncapped — a large enough force gap can cost several hearts in one exchange.
+Heart loss is no longer a flat 1-or-0 per matchup — every row resolves through each ring's tier-derived **force** stat. `atk_force` is the attacking ring's force; `def_force` is the defending ring's force (credited only on a Neutral or Strong catch — zero on a Weak catch); `hp_force` is the equipped heart ring's force, which always mitigates the leftover. Every heart count is a non-negative integer via `ceil`, and the result is uncapped — a large enough force gap can cost several hearts in one exchange.
 
 | Timing | Relationship | Defender ♥ | Defender Uses | Gauge | Rally |
 |--------|-------------|:-----------:|:-------------:|:---------------------------------:|:-----:|

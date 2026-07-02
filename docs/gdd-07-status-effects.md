@@ -10,7 +10,7 @@ Each player maintains **four status gauges: Fire, Water, Wood, Shadow**. All gau
 
 **1. Uncontested hit (no-block or mistime):** +1 per tracked-element component of the attacking ring, added to the defender's matching gauges. Wind and Earth components contribute nothing.
 
-**2. Block or parry with ring X:** The defender's X gauge increases, regardless of the attacker's element. Channelling an element as a shield concentrates its force inward rather than deflecting it outward. The amount added depends on the defending ring's tier-derived **force** stat (§4.2, Contract A) — see **Force-based gauge reduction** below. A force-1 ring adds +1; higher-force rings add less.
+**2. Block or parry with ring X:** The defender's X gauge increases, regardless of the attacker's element. Channelling an element as a shield concentrates its force inward rather than deflecting it outward. The amount added depends on the defending ring's tier-derived **force** stat — see **Force-based gauge reduction** below. A force-1 ring adds +1; higher-force rings add less.
 
 **3. Strong block:** When the defender blocks with ring X and the incoming attack's primary element is one that X is strong against, **all gauges that X is strong against** each decrease by 1 (in addition to the +1 blocking cost on X). The strong-block relationships:
 
@@ -56,7 +56,7 @@ The decomposition above applies only to uncontested hits. Blocking a fusion atta
 
 **Force-based gauge reduction on defense:**
 
-A ring's tier-derived **force** stat (§4.2, Contract A) determines how much its gauge fills when used to block or parry. Case-2 dampening is `1 / def_force` — higher-force rings are less of a liability to use defensively.
+A ring's tier-derived **force** stat determines how much its gauge fills when used to block or parry. Case-2 dampening is `1 / def_force` — higher-force rings are less of a liability to use defensively.
 
 | Ring force | Gauge added per block/parry |
 |---|---|
