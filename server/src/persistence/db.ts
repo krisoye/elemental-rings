@@ -164,21 +164,28 @@ db.exec(
 // tests/unit/spirit-formula.test.ts, which asserts this SQL and
 // getSpiritStats() agree across every DifficultyTier and the acceptance-table
 // ring compositions — keep both in sync on any change to the force formula.
-db.exec(
-  `UPDATE players
-     SET spirit_max = (
-       SELECT COALESCE(SUM(r.max_uses * ((r.tier + 3) / 2)), 0)
-       FROM rings r
-       WHERE r.owner_id = players.id AND r.in_carry = 0 AND r.heart_slot = 0
-     ) * CASE players.difficulty
-         WHEN 'wanderer'  THEN 5
-         WHEN 'ascendant' THEN 3
-         WHEN 'ascetic'   THEN 2
-         WHEN 'void'      THEN 1
-         ELSE 4
-       END`,
-);
-db.exec('UPDATE players SET spirit_current = MIN(spirit_current, spirit_max)');
+//
+// Exported (mirroring recomputeRingTiers below) so the drift-guard test can
+// invoke the EXACT production SQL directly against a seeded scratch DB,
+// instead of pasting a second copy of this UPDATE into the test file.
+export function recomputeSpiritMax(): void {
+  db.exec(
+    `UPDATE players
+       SET spirit_max = (
+         SELECT COALESCE(SUM(r.max_uses * ((r.tier + 3) / 2)), 0)
+         FROM rings r
+         WHERE r.owner_id = players.id AND r.in_carry = 0 AND r.heart_slot = 0
+       ) * CASE players.difficulty
+           WHEN 'wanderer'  THEN 5
+           WHEN 'ascendant' THEN 3
+           WHEN 'ascetic'   THEN 2
+           WHEN 'void'      THEN 1
+           ELSE 4
+         END`,
+  );
+  db.exec('UPDATE players SET spirit_current = MIN(spirit_current, spirit_max)');
+}
+recomputeSpiritMax();
 
 // EPIC #173 C8 — recompute every existing ring's tier and max_uses from XP, so a
 // DB created under the old hard-cap model (tier stored independently, starter
