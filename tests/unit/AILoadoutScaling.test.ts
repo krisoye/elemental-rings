@@ -1430,3 +1430,97 @@ describe('effectiveTier (pre-existing) — NOT repurposed or renumbered by #517'
     );
   });
 });
+
+// ============================================================================
+// #517 QA Phase 1 (spec-driven adversarial) — floor-dominated hp_force is
+// GENUINELY higher than the player-parity value; effectiveTier vs
+// effectiveTier1Indexed diverge by exactly the predicted amount at several
+// tier boundaries (not just "different" — the exact invariant is pinned).
+// ============================================================================
+
+describe('effectiveTier1Indexed — floor-dominated hp_force is genuinely HIGHER than force(npcXp), not equal (#517 adversarial)', () => {
+  // #517 adversarial: the reviewer-confirmed parity claim
+  // (forceFromTier1(effectiveTier1Indexed(...)) === force(npcXp)) holds ONLY when the
+  // tierForXp branch wins or ties the max. When the biome floor strictly dominates
+  // (a low-XP NPC placed in a high-tier biome, e.g. volcano), the AI legitimately
+  // gets MORE hp_force than a player of identical XP would — this locks in that the
+  // divergence is intentional (tougher biome ⇒ tankier defender regardless of
+  // player level), not a parity bug a future refactor could silently reintroduce.
+  test('a zero-XP AI in volcano (floorTier=5 strictly dominates tierForXp(0)+1=1) is genuinely tankier than a same-XP player, not equal', () => {
+    const biome = 'volcano';
+    const personality: AIPersonality = 'AGGRESSIVE';
+    const avgXp = 0;
+    const npcXp = npcEffectiveXp(personality, avgXp);
+    expect(npcXp).toBe(0);
+    expect(floorTier(biome)).toBe(5); // strictly dominates tierForXp(0)+1=1
+
+    const effTier1 = effectiveTier1Indexed(biome, personality, avgXp);
+    expect(effTier1).toBe(5); // max(5, 0+1=1) = 5 — floor wins outright
+
+    const aiHpForce = forceFromTier1(effTier1);
+    expect(aiHpForce).toBe(3); // forceFromTier1(5) = floor((5+2)/2) = 3
+
+    const playerForceAtSameXp = force(npcXp);
+    expect(playerForceAtSameXp).toBe(1); // force(0) = forceFromTier1(tierForXp(0)+1=1) = 1
+
+    // GENUINELY higher, not coincidentally equal — this is the intended design.
+    expect(aiHpForce).toBeGreaterThan(playerForceAtSameXp);
+    expect(aiHpForce).not.toBe(playerForceAtSameXp);
+  });
+
+  test('a mid-XP AI in desert (floorTier=4 dominates tierForXp(300)+1=1) is still genuinely tankier than the same-XP player', () => {
+    // A second floor-dominated instance at a different biome/XP pairing, so the
+    // "genuinely higher" claim isn't pinned to a single coincidental value.
+    const biome = 'desert';
+    const personality: AIPersonality = 'DEFENSIVE';
+    const avgXp = 300; // npcXp=300 (DEFENSIVE mult=1.0), well below tierStartXp(1)=500
+    const npcXp = npcEffectiveXp(personality, avgXp);
+    expect(npcXp).toBe(300);
+    expect(tierForXp(npcXp)).toBe(0);
+    expect(floorTier(biome)).toBe(4);
+
+    const effTier1 = effectiveTier1Indexed(biome, personality, avgXp);
+    expect(effTier1).toBe(4); // max(4, 0+1=1) = 4 — floor wins
+
+    const aiHpForce = forceFromTier1(effTier1);
+    expect(aiHpForce).toBe(3); // forceFromTier1(4) = floor(6/2) = 3
+    const playerForceAtSameXp = force(npcXp);
+    expect(playerForceAtSameXp).toBe(1); // force(300) = forceFromTier1(0+1=1) = 1
+
+    expect(aiHpForce).toBeGreaterThan(playerForceAtSameXp);
+  });
+});
+
+describe('effectiveTier vs effectiveTier1Indexed — divergence is exactly {0,1}, predictable from which operand dominates (#517 adversarial)', () => {
+  // #517 adversarial: this pins the EXACT divergence invariant, not just "the two
+  // helpers differ." Because effectiveTier1Indexed only shifts the tierForXp operand
+  // (+1) before the max:
+  //   - divergence = 0 whenever floorTier(biome) > tierForXp(npcXp)  (floor wins/strictly
+  //     dominates in BOTH formulas — shifting the losing operand by 1 can't flip the max)
+  //   - divergence = 1 whenever floorTier(biome) <= tierForXp(npcXp) (XP branch ties or
+  //     wins in the OLD mixed formula, so shifting it by 1 always adds exactly 1 to the max)
+  // A future refactor that breaks this exact relationship (e.g. an off-by-one in the
+  // shift, or a divergence > 1) is caught here even though a single-point test would miss it.
+  const CASES: Array<{
+    label: string;
+    biome: string;
+    npcXp: number;
+    expectedDivergence: number;
+  }> = [
+    // forest floorTier=1
+    { label: 'forest, npcXp=0 (T0 < floor=1) → floor dominates, diverge 0', biome: 'forest', npcXp: 0, expectedDivergence: 0 },
+    { label: 'forest, npcXp=500 (T1 == floor=1, tie in old formula) → diverge 1', biome: 'forest', npcXp: 500, expectedDivergence: 1 },
+    { label: 'forest, npcXp=1500 (T2 > floor=1) → XP dominates, diverge 1', biome: 'forest', npcXp: 1500, expectedDivergence: 1 },
+    // volcano floorTier=5
+    { label: 'volcano, npcXp=0 (T0 < floor=5) → floor dominates, diverge 0', biome: 'volcano', npcXp: 0, expectedDivergence: 0 },
+    { label: 'volcano, npcXp=5000 (T4=4, floor=5=T4+1 exactly) → floor still wins in BOTH, diverge 0', biome: 'volcano', npcXp: 5000, expectedDivergence: 0 },
+    { label: 'volcano, npcXp=7500 (T5 == floor=5, tie in old formula) → diverge 1', biome: 'volcano', npcXp: 7500, expectedDivergence: 1 },
+  ];
+
+  test.each(CASES)('$label', ({ biome, npcXp, expectedDivergence }) => {
+    const personality: AIPersonality = 'DEFENSIVE'; // multiplier 1.0 → npcEffectiveXp(personality, npcXp) === npcXp
+    const oldMixed = effectiveTier(biome, personality, npcXp);
+    const newNormalized = effectiveTier1Indexed(biome, personality, npcXp);
+    expect(newNormalized - oldMixed).toBe(expectedDivergence);
+  });
+});
