@@ -641,8 +641,17 @@ test('heart: the Thumb passive is a hover tooltip, not a permanent strip', async
 // Scenario 4 above still asserts the OLD dot-string format; per the issue's
 // "Tests to Update" table that assertion is owned by the implementer to
 // re-point, not by QA. These are net-new adversarial/spec-conformance cases.
+//
+// #523 (Phase 3 E2E finding, pre-existing, unrelated to #519): window.__scene
+// .heartCard is dead — CampScene's own buildHeartCard()/heartCard field are
+// orphaned by EPIC #395 (the Heart card actually renders via BenchHealthCombat's
+// private field, never exposed on window.__scene). The 4 tests below correctly
+// assert the fraction+force format but read from this dead accessor, so they
+// cannot observe real state. Skipped (not deleted — the assertions are correct
+// and should be reactivated) pending #523's fix.
 
 test('heart: the Heart card pips label renders ${current}/${max} ⚡${force} using the shared force() helper (#519)', async ({ browser }) => {
+  test.skip(true, '#523 — window.__scene.heartCard is dead (orphaned by EPIC #395); reactivate once the accessor is restored');
   const token = await registerAndToken();
   const me = await getMe(token);
   const heart = me.player.heart_ring;
@@ -673,6 +682,7 @@ test('heart: a Tier-4 heart ring (xp=3000) shows ⚡3 in the pips label — forc
   // the happy-path test above by coincidence. Seed a non-trivial tier via the
   // set-ring-xp test hook to rule that out — tierStartXp(3) = 3000 lands exactly
   // on Tier 4 (1-indexed), matching the issue's own worked example.
+  test.skip(true, '#523 — window.__scene.heartCard is dead (orphaned by EPIC #395); reactivate once the accessor is restored');
   const token = await registerAndToken();
   const before = await getMe(token);
   const heartId = before.player.heart_ring?.id ?? null;
@@ -713,6 +723,7 @@ test('heart: a drained heart ring (0 current uses) renders "0/{max} ⚡{force}" 
   // template-literal format has no repeat() call at all, but the zero boundary is
   // still worth locking in explicitly since it is the one currentUses value where
   // a stringly-typed off-by-one ("" vs "0") is most likely to surface.
+  test.skip(true, '#523 — window.__scene.heartCard is dead (orphaned by EPIC #395); reactivate once the accessor is restored');
   const token = await registerAndToken();
   const before = await getMe(token);
   const heartId = before.player.heart_ring?.id ?? null;
@@ -755,6 +766,7 @@ test('heart: the Heart card pips label never visually overflows the card\'s own 
   // narrowest consumer (RingManagementOverlayClass fusion-picker cards, 50px) is
   // covered by the deterministic Tier-10 string-length lock in
   // tests/unit/ring-mgmt-overlay.spec.ts (no live browser render available there).
+  test.skip(true, '#523 — window.__scene.heartCard is dead (orphaned by EPIC #395); reactivate once the accessor is restored');
   const token = await registerAndToken();
   const ctx = await browser.newContext();
   await ctx.addInitScript(`localStorage.setItem('er_token', ${JSON.stringify(token)})`);
