@@ -1,6 +1,7 @@
 import Phaser from 'phaser';
 import { ELEMENT_NAMES } from '../../../../shared/elements';
 import { isFusionEligibleParent } from '../../../../shared/fusions';
+import { force } from '../../../../shared/tiers';
 import { FusedCardFill } from '../fusedFill';
 import { crispCanvasText } from './DomLabel';
 
@@ -185,7 +186,9 @@ export class RingCard extends Phaser.GameObjects.Container {
       ring.fusionParents && ring.fusionParents.length >= 2 ? ring.fusionParents : undefined;
     const order = this.fusedFill.paint(ring.element, ordered);
     this.elementLabel.setText(ELEMENT_NAMES[ring.element] ?? '?');
-    this.pipsLabel.setText(usePips(ring.currentUses, ring.maxUses));
+    // #511 — render use-fraction + force badge in the pips label
+    const forceValue = force(ring.xp);
+    this.pipsLabel.setText(`${ring.currentUses}/${ring.maxUses} ⚡${forceValue}`);
     this.xpLabel.setText(`${this.o.xpPrefix}${ring.xp}`);
     // #390 — show the fusion-eligible glyph exactly when the shared per-ring gate holds.
     this.fuseGlyph.setVisible(isFusionEligibleParent(ring.element, ring.xp));
