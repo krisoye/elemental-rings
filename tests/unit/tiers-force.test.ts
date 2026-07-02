@@ -167,3 +167,37 @@ describe('shared/tiers.ts architectural boundary — imports nothing under serve
     expect(src).not.toMatch(/require\(\s*['"][^'"]*server\//);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Phase 2 (implementation-aware). server/src/schemas/Ring.ts declares
+// `@type('uint32') xp: number` — the actual runtime ceiling force() will ever
+// see through the real game data path is 2**32-1, not Number.MAX_SAFE_INTEGER
+// (which the Phase-1 pass above probed as a pure-function/module-contract
+// bound). uint32 also means xp can never be negative or NaN when it arrives
+// via the schema — the negative/NaN coverage here documents force() as a
+// standalone shared-module contract (reachable from client code or any future
+// caller), not a path BlockResolver will ever observe in production.
+// ---------------------------------------------------------------------------
+
+describe('force — realistic Ring.xp ceiling: uint32, not MAX_SAFE_INTEGER (#512 Phase 2 impl-aware)', () => {
+  test('force(2**32 - 1) — the actual Colyseus schema ceiling for Ring.xp — stays a finite positive integer', () => {
+    const UINT32_MAX = 2 ** 32 - 1;
+    const f = force(UINT32_MAX);
+    expect(Number.isFinite(f)).toBe(true);
+    expect(Number.isInteger(f)).toBe(true);
+    expect(f).toBeGreaterThan(1);
+  });
+});
+
+describe('force — NaN input documented behavior (#512 Phase 2 impl-aware)', () => {
+  test('force(NaN) returns NaN rather than throwing or silently producing Infinity — a pure-function edge unreachable via Ring.xp (uint32) but reachable through an untrusted shared-module caller', () => {
+    // adversarial #512: unlike negative XP (explicitly clamped to 0 by
+    // tierForXp's `if (xp < 0) return 0` guard), NaN passes straight through
+    // every comparison in tierForXp (all NaN comparisons are false, so both
+    // correction while-loops no-op) and forceFromTier1's Math.floor((NaN+2)/2)
+    // also yields NaN. 1/NaN = NaN, so this does NOT recreate the divide-by-
+    // zero Infinity risk the spec worried about — but it is a silent NaN gauge
+    // delta if a caller ever manages to pass one in, rather than a crash.
+    expect(Number.isNaN(force(NaN))).toBe(true);
+  });
+});

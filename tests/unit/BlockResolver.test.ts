@@ -398,6 +398,81 @@ describe('BlockResolver.ts — no HEART_LOSS_CAP or clamp introduced alongside t
   });
 });
 
+// ---------------------------------------------------------------------------
+// Phase 2 (implementation-aware) — targets the actual branch structure now
+// visible in the finished BlockResolver.ts: `1 / force(defenderRing.xp)` is
+// written as TWO separate literal expressions (one in the `rel === 'NEUTRAL'`
+// branch, one inside the STRONG-but-not-PARRY branch), and is NOT evaluated
+// at all inside the WEAK branch or the STRONG+PARRY (case 4) branch.
+// ---------------------------------------------------------------------------
+
+describe('resolveBlock — NEUTRAL and STRONG+BLOCK branches stay numerically in sync (#512 Phase 2 impl-aware)', () => {
+  test('at every tested defender tier, a NEUTRAL block and a STRONG block produce the identical per-parent delta for identical defender xp', () => {
+    // BlockResolver.ts has TWO independent `const delta = 1 / force(defenderRing.xp);`
+    // lines — one per branch, not a shared helper. A future edit to only one
+    // of them (e.g. hand-tuning the STRONG+BLOCK case for "balance") would
+    // silently desync the two relationship outcomes without any single-branch
+    // test catching it. Compare WATER-vs-WIND (NEUTRAL) against WATER-vs-FIRE
+    // (STRONG, Water beats Fire) at identical defender xp across several tiers.
+    for (const xp of [0, tierStartXp(1), tierStartXp(2), tierStartXp(3), tierStartXp(5)]) {
+      const neutralDef = makeRing(WATER, 3, xp);
+      const neutralResult = resolveBlock(makeRing(WIND, 3), neutralDef, 'BLOCK');
+      expect(neutralResult.relationship).toBe('NEUTRAL');
+
+      const strongDef = makeRing(WATER, 3, xp);
+      const strongResult = resolveBlock(makeRing(FIRE, 3), strongDef, 'BLOCK');
+      expect(strongResult.relationship).toBe('STRONG');
+
+      expect(strongResult.blockGaugeDeltas[0].delta).toBe(neutralResult.blockGaugeDeltas[0].delta);
+    }
+  });
+});
+
+describe('resolveBlock — WEAK and STRONG+PARRY branches never evaluate force(xp) (#512 Phase 2 impl-aware)', () => {
+  test('a WEAK catch with a NaN-xp defender still resolves correctly — force() is unreachable on this code path', () => {
+    // adversarial #512 (impl-aware): the actual control flow in
+    // BlockResolver.ts shows `1 / force(defenderRing.xp)` only inside the
+    // `rel === 'NEUTRAL'` branch and the STRONG-but-not-PARRY branch. The WEAK
+    // branch only sets defenderHeartLost and never reads defenderRing.xp. A
+    // corrupted/NaN xp on a WEAK-catching ring must not derail the result —
+    // if force() were accidentally hoisted above the WEAK check, this NaN
+    // would leak into a NaN gauge delta.
+    const def = makeRing(WOOD, 3, NaN); // WOOD blocking FIRE → WEAK
+    const r = resolveBlock(makeRing(FIRE, 3), def, 'BLOCK');
+    expect(r.relationship).toBe('WEAK');
+    expect(r.defenderHeartLost).toBe(true);
+    expect(r.blockGaugeDeltas).toEqual([]);
+  });
+
+  test('a STRONG parry with a NaN-xp defender still rallies correctly — case 4 never computes a force-based delta', () => {
+    // adversarial #512 (impl-aware): the STRONG+PARRY branch (case 4) takes
+    // the rallyContinues/clearAllGauges path and returns before the
+    // `1 / force(...)` expression that only exists in the STRONG-but-not-PARRY
+    // else-branch. A NaN xp here must not contaminate the rally result.
+    const def = makeRing(WATER, 3, NaN); // WATER parries FIRE → STRONG parry
+    const r = resolveBlock(makeRing(FIRE, 3), def, 'PARRY');
+    expect(r.relationship).toBe('STRONG');
+    expect(r.rallyContinues).toBe(true);
+    expect(r.clearAllGauges).toBe(true);
+    expect(r.blockGaugeDeltas).toEqual([]);
+  });
+});
+
+describe('resolveBlock — realistic Ring.xp ceiling: uint32, not MAX_SAFE_INTEGER (#512 Phase 2 impl-aware)', () => {
+  test('a defender at the maximum representable uint32 xp (2**32 - 1) still resolves a finite, positive gauge delta', () => {
+    // server/src/schemas/Ring.ts declares `@type('uint32') xp: number` — this
+    // is the actual ceiling the Colyseus schema will ever let defenderRing.xp
+    // reach in production, not Number.MAX_SAFE_INTEGER (the pure-function
+    // bound the tiers-force.test.ts Phase-1 pass probed).
+    const UINT32_MAX = 2 ** 32 - 1;
+    const def = makeRing(WATER, 3, UINT32_MAX);
+    const r = resolveBlock(makeRing(WIND, 3), def, 'BLOCK');
+    expect(r.relationship).toBe('NEUTRAL');
+    expect(Number.isFinite(r.blockGaugeDeltas[0].delta)).toBe(true);
+    expect(r.blockGaugeDeltas[0].delta).toBeGreaterThan(0);
+  });
+});
+
 // A fusion ring is a single compound element: 1 heart per use, no per-component
 // heart loss, fused-vs-fused is always NEUTRAL.
 describe('resolveBlock — compound fusion behaviour', () => {

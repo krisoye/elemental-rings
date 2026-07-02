@@ -115,6 +115,19 @@ describe('Tiers.ts re-export shim — referentially identical to shared/tiers.ts
     expect(serverTiers.force).toBe(shared.force);
     expect(serverTiers.forceFromTier1).toBe(shared.forceFromTier1);
   });
+
+  test('the shim exports EXACTLY the 5 documented names — no local addition has snuck into the "thin re-export" file (#512 Phase 2 impl-aware)', async () => {
+    // adversarial #512: reading the actual Tiers.ts source confirms it is a
+    // single `export { ... } from '../../../shared/tiers'` statement today.
+    // If a future change added even one locally-defined function or constant
+    // to Tiers.ts (breaking the "thin shim" contract the move was supposed to
+    // establish), this test catches the surface-area drift even though every
+    // individual re-exported function would still behave correctly.
+    const serverTiers = await import('../../server/src/game/Tiers');
+    expect(Object.keys(serverTiers).sort()).toEqual(
+      ['force', 'forceFromTier1', 'naturalMaxUses', 'tierForXp', 'tierStartXp'].sort(),
+    );
+  });
 });
 
 // ---------------------------------------------------------------------------
