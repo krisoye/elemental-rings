@@ -896,12 +896,12 @@ describe('#519 Tier-10 bounded-width: the documented worst-case fraction+force s
     expect(forceFromTier1(10)).toBe(6);
   });
 
-  it('Tier-10 ring (max_uses=12, force=6) formats to exactly "12/12 ⚡6" — 9 characters', () => {
+  it('Tier-10 ring (max_uses=12, force=6) formats to exactly "12/12 ⚡6" — 8 characters', () => {
     const maxUses = naturalMaxUses(9); // 0-indexed tier 9 == the game's "Tier 10"
     const forceAtT10 = forceFromTier1(10);
     const label = `${maxUses}/${maxUses} ⚡${forceAtT10}`;
     expect(label).toBe('12/12 ⚡6');
-    expect(label.length, 'Tier-10 label character count — a regression here signals real clipping risk at 50px').toBe(9);
+    expect(label.length, 'Tier-10 label character count — a regression here signals real clipping risk at 50px').toBe(8);
   });
 
   it('no natural tier 0..9 (0-indexed) produces a fraction+force label longer than the Tier-10 worst case', () => {
@@ -915,7 +915,7 @@ describe('#519 Tier-10 bounded-width: the documented worst-case fraction+force s
       const label = `${maxUses}/${maxUses} ⚡${f}`;
       maxLen = Math.max(maxLen, label.length);
     }
-    expect(maxLen).toBe(9);
+    expect(maxLen).toBe(8);
   });
 
 });
