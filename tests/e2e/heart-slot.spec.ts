@@ -1,5 +1,10 @@
 import { test, expect } from '@playwright/test';
 import type { Page } from '@playwright/test';
+// #519 — the RingCard pips label now renders `${current}/${max} ⚡${force}`.
+// `force` MUST be imported from the shared module (never hand-rolled in the
+// test), mirroring the client's own "do not reimplement client-side" reuse
+// directive — this is the single source of truth for expected values below.
+import { force } from '../../shared/tiers';
 
 // EPIC #302 (#306) — the Heart-slot restructure of the Reliquary modal. The modal
 // gains a dedicated Heart card above A1, a three-part live header (Spirit | ♥ |
@@ -622,5 +627,154 @@ test('heart: the Thumb passive is a hover tooltip, not a permanent strip', async
     return scene.children.getAll().some((o: any) => o.depth === 5000 && o.visible && o.text);
   });
   expect(tooltipAfter).toBe(false);
+  await ctx.close();
+});
+
+// ── #519 (Phase 1, spec-driven): RingCard fraction use-display + force badge ──
+//
+// RingCard's pips label changed from a dot-string (●●●○○) to a bounded-width
+// fraction with an always-shown force badge: `${current}/${max} ⚡${force}`.
+// force MUST come from the shared `force()` helper (shared/tiers.ts) — these
+// tests import it directly rather than reimplementing the tier/force math, so
+// a drift between the client's arithmetic and the shared contract fails here.
+//
+// Scenario 4 above still asserts the OLD dot-string format; per the issue's
+// "Tests to Update" table that assertion is owned by the implementer to
+// re-point, not by QA. These are net-new adversarial/spec-conformance cases.
+
+test('heart: the Heart card pips label renders ${current}/${max} ⚡${force} using the shared force() helper (#519)', async ({ browser }) => {
+  const token = await registerAndToken();
+  const me = await getMe(token);
+  const heart = me.player.heart_ring;
+  expect(heart, 'test requires a fresh player with an equipped heart ring').toBeTruthy();
+
+  const ctx = await browser.newContext();
+  await ctx.addInitScript(`localStorage.setItem('er_token', ${JSON.stringify(token)})`);
+  const page = await ctx.newPage();
+  await loadSanctum(page);
+  await openReliquary(page);
+
+  const pips = await page.evaluate(() => {
+    const scene = (window as any).__scene as any;
+    return scene.heartCard ? scene.heartCard.pipsText : null;
+  });
+
+  const expectedForce = force(heart.xp);
+  expect(
+    pips,
+    '#519: pips label must be exactly `${current}/${max} ⚡${force}` — computed via the shared force() helper',
+  ).toBe(`${heart.current_uses}/${heart.max_uses} ⚡${expectedForce}`);
+  await ctx.close();
+});
+
+test('heart: a Tier-4 heart ring (xp=3000) shows ⚡3 in the pips label — force scales with tier, not hardcoded (#519)', async ({ browser }) => {
+  // #519 adversarial: a fresh starter ring is xp=0 → force=1 for EVERY ring, so a
+  // naive/stub implementation that hardcodes force=1 (or any constant) would pass
+  // the happy-path test above by coincidence. Seed a non-trivial tier via the
+  // set-ring-xp test hook to rule that out — tierStartXp(3) = 3000 lands exactly
+  // on Tier 4 (1-indexed), matching the issue's own worked example.
+  const token = await registerAndToken();
+  const before = await getMe(token);
+  const heartId = before.player.heart_ring?.id ?? null;
+  expect(heartId, 'test requires an equipped heart ring').toBeTruthy();
+
+  const xpRes = await fetch(`${API_URL}/api/test/set-ring-xp`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+    body: JSON.stringify({ ringId: heartId, xp: 3000 }),
+  });
+  expect(xpRes.ok, 'set-ring-xp test hook must succeed').toBe(true);
+
+  const ctx = await browser.newContext();
+  await ctx.addInitScript(`localStorage.setItem('er_token', ${JSON.stringify(token)})`);
+  const page = await ctx.newPage();
+  await loadSanctum(page);
+  await openReliquary(page);
+
+  const pips = await page.evaluate(() => {
+    const scene = (window as any).__scene as any;
+    return scene.heartCard ? scene.heartCard.pipsText : null;
+  });
+
+  const after = await getMe(token);
+  expect(after.player.heart_ring.xp).toBe(3000);
+  expect(force(3000), 'sanity check on the shared helper itself').toBe(3);
+  expect(
+    pips,
+    '#519 adversarial: force must track the ring\'s actual tier (⚡3 at xp=3000), not a hardcoded constant',
+  ).toBe(`${after.player.heart_ring.current_uses}/${after.player.heart_ring.max_uses} ⚡3`);
+  await ctx.close();
+});
+
+test('heart: a drained heart ring (0 current uses) renders "0/{max} ⚡{force}" without breaking the fraction format (#519)', async ({ browser }) => {
+  // #519 adversarial: the current_uses=0 boundary — e.g. a ring drained mid-battle
+  // and later viewed in the Reliquary. The old dot-string builder needed an
+  // explicit Math.max(0, current) guard against a negative repeat() count; the new
+  // template-literal format has no repeat() call at all, but the zero boundary is
+  // still worth locking in explicitly since it is the one currentUses value where
+  // a stringly-typed off-by-one ("" vs "0") is most likely to surface.
+  const token = await registerAndToken();
+  const before = await getMe(token);
+  const heartId = before.player.heart_ring?.id ?? null;
+  expect(heartId, 'test requires an equipped heart ring').toBeTruthy();
+
+  const drainRes = await fetch(`${API_URL}/api/test/spend-ring-uses`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+    body: JSON.stringify({ ringId: heartId, uses: 0 }),
+  });
+  expect(drainRes.ok, 'spend-ring-uses test hook must succeed').toBe(true);
+
+  const ctx = await browser.newContext();
+  await ctx.addInitScript(`localStorage.setItem('er_token', ${JSON.stringify(token)})`);
+  const page = await ctx.newPage();
+  await loadSanctum(page);
+  await openReliquary(page);
+
+  const pips = await page.evaluate(() => {
+    const scene = (window as any).__scene as any;
+    return scene.heartCard ? scene.heartCard.pipsText : null;
+  });
+
+  const after = await getMe(token);
+  expect(after.player.heart_ring.current_uses).toBe(0);
+  const expectedForce = force(after.player.heart_ring.xp);
+  expect(
+    pips,
+    '#519 adversarial: 0 current uses must render "0/{max} ⚡{force}", not an empty/NaN/malformed fraction',
+  ).toBe(`0/${after.player.heart_ring.max_uses} ⚡${expectedForce}`);
+  await ctx.close();
+});
+
+test('heart: the Heart card pips label never visually overflows the card\'s own width (bounded-width smoke check, #519)', async ({ browser }) => {
+  // #519 adversarial: the issue's whole rationale for switching off the dot-string
+  // was that it overflowed the narrowest RingCard consumers at high tiers. Phaser
+  // Text objects compute REAL canvas-measured pixel width in the browser — this is
+  // a lightweight structural guard that the label never exceeds its own card,
+  // independent of the exact tier this fresh-player fixture happens to reach. The
+  // narrowest consumer (RingManagementOverlayClass fusion-picker cards, 50px) is
+  // covered by the deterministic Tier-10 string-length lock in
+  // tests/unit/ring-mgmt-overlay.spec.ts (no live browser render available there).
+  const token = await registerAndToken();
+  const ctx = await browser.newContext();
+  await ctx.addInitScript(`localStorage.setItem('er_token', ${JSON.stringify(token)})`);
+  const page = await ctx.newPage();
+  await loadSanctum(page);
+  await openReliquary(page);
+
+  const widths = await page.evaluate(() => {
+    const scene = (window as any).__scene as any;
+    const card = scene.heartCard;
+    if (!card) return null;
+    // Reach into the RingCard's private fields — TS privacy is compile-time only;
+    // both are readable at runtime, same pattern as the existing combatCards.get
+    // ('thumb').bg reach-through elsewhere in this file.
+    return { pipsWidth: (card as any).pipsLabel.width, cardWidth: (card as any).o.width };
+  });
+  expect(widths, 'heartCard must exist with a readable pipsLabel/width').not.toBeNull();
+  expect(
+    widths!.pipsWidth,
+    `#519: pips label (${widths!.pipsWidth}px) must not exceed the card width (${widths!.cardWidth}px)`,
+  ).toBeLessThanOrEqual(widths!.cardWidth);
   await ctx.close();
 });
