@@ -17,6 +17,8 @@
  *   - WATER(a2) attack vs WOOD(d1) defense → STRONG (parry → rally); vs EARTH → NEUTRAL
  */
 import { describe, test, expect, beforeAll, afterAll } from 'vitest';
+import fs from 'fs';
+import path from 'path';
 import { ColyseusTestServer, boot } from '@colyseus/testing';
 import { Server } from 'colyseus';
 import { BattleRoom } from '../../server/src/rooms/BattleRoom';
@@ -1025,5 +1027,90 @@ describe('#516 — rally recursion through force (Contract D)', () => {
     // (B's 1) would give ceilDiv(4,1)=4 (not 2). All three plausible regressions
     // land on a number DIFFERENT from the correct 2.
     expect(room.state.players.get(p1.sessionId).hearts).toBe(1); // 3 − 2
+  });
+});
+
+// ---------------------------------------------------------------------------
+// #516 — QA Phase 2 (implementation-aware): now that BattleRoom.ts's rally path
+// has been read in full (`_resolveExchange` / `continueAfterOrb` / `resolveOrb`),
+// lock in the EXACT mechanism the Phase 1 tests above only exercised indirectly:
+//   1. `defenderId` is derived INLINE, every call, via
+//      `this.opponentOf(attackerId).playerId` — there is no persistent
+//      `this.xxxDefenderId` / `this.xxxAttackerId` field a rally volley could
+//      ever read a stale value from (the only persistent role field is the
+//      public `state.currentAttackerId`, which `continueAfterOrb` reassigns
+//      each swap and every derivation re-reads).
+//   2. `sessionToHpForce` is written from exactly ONE call site (onJoin, at
+//      seat time) and read from exactly ONE call site (resolveOrb) — the SAME
+//      read expression serves the opening exchange AND every later rally
+//      volley. There is no "first exchange only" special case to regress, and
+//      the cache is never mutated mid-duel (let alone mid-rally).
+// A future refactor that introduces a cached id field, adds a second
+// sessionToHpForce write/read site, or special-cases hp_force lookup by rally
+// depth would trip one of these guards even before any behavioral test caught
+// a wrong heart count.
+// ---------------------------------------------------------------------------
+describe('#516 Phase 2 impl-aware — structural guards on the rally-derivation mechanism', () => {
+  const battleRoomSrc = fs.readFileSync(
+    path.join(__dirname, '../../server/src/rooms/BattleRoom.ts'),
+    'utf8',
+  );
+
+  test('no persistent this.*DefenderId / this.*AttackerId field exists anywhere in BattleRoom — every attacker/defender id is a LOCAL derived fresh from state.currentAttackerId + opponentOf()', () => {
+    // #516 adversarial (impl-aware): a plausible "convenience" regression would
+    // cache the rally's roles in a private field (e.g. `this.rallyDefenderId`)
+    // set once when the rally opens, then read on later volleys — which would
+    // be correct at depth 1 but silently stale by depth 2 (roles have flipped
+    // again). This class currently has NO such field; `state.currentAttackerId`
+    // (a schema field, matched separately below by the dot after `this.state`)
+    // is the only persistent role pointer.
+    const staleFieldPattern = /this\.\w*(DefenderId|AttackerId)\b/g;
+    expect(battleRoomSrc.match(staleFieldPattern) ?? []).toEqual([]);
+  });
+
+  test('the literal derivation `const defenderId = this.opponentOf(attackerId).playerId;` is present — the mechanism every rally volley re-executes on its own turn', () => {
+    expect(battleRoomSrc).toContain('const defenderId = this.opponentOf(attackerId).playerId;');
+  });
+
+  test('sessionToHpForce.set is called from exactly ONE call site (onJoin, seat time) — never mutated by resolveOrb / continueAfterOrb / _resolveExchange during combat or a rally', () => {
+    const setCalls = battleRoomSrc.match(/sessionToHpForce\.set\(/g) ?? [];
+    expect(setCalls.length).toBe(1);
+  });
+
+  test('sessionToHpForce.get is read from exactly ONE call site (resolveOrb) — the SAME lookup expression resolves both the opening exchange and every later rally volley, with no depth-specific special case', () => {
+    const getCalls = battleRoomSrc.match(/sessionToHpForce\.get\(/g) ?? [];
+    expect(getCalls.length).toBe(1);
+  });
+});
+
+describe('#516 Phase 2 impl-aware — sessionToHpForce is provably read-only across a live rally', () => {
+  test('the cached hp_force values for BOTH sessions are bit-for-bit unchanged after a full rally chain resolves — only resolveOrb\'s READ key (defenderId) changes across depths, never either cached VALUE', async () => {
+    // #516 adversarial (impl-aware): the structural guards above prove there is
+    // only one write call site in the SOURCE; this is the runtime counterpart —
+    // proving it empirically against the live Map, which would also catch a
+    // regression that bypassed simple grep detection (e.g. a write routed
+    // through a renamed alias or bracket/computed-property access).
+    const { room, c1, c2 } = await joinBattle();
+    const p1 = attackerClient(room, c1, c2);
+    const p2 = defenderClient(room, c1, c2);
+
+    room.sessionToHpForce.set(p1.sessionId, 4);
+    room.sessionToHpForce.set(p2.sessionId, 7);
+    expect(room.sessionToHpForce.size).toBe(2);
+
+    p1.send('selectAttack', { slot: 'a2' }); // WATER
+    await room.waitForNextPatch();
+    await pressDefenseAt(room, p2, 'd1', 0); // WOOD STRONG parry → rally
+    expect(room.state.rallyActive).toBe(true);
+
+    await pressDefenseAt(room, p1, 'd2', 0); // EARTH NEUTRAL — resolves the volley, ends the rally
+    expect(room.state.rallyActive).toBe(false);
+
+    // Both cached values read back exactly as seeded — the volley's correct
+    // hp_force came entirely from resolveOrb looking up a DIFFERENT session id
+    // (p1 instead of p2) at depth 1, never from either number being rewritten.
+    expect(room.sessionToHpForce.get(p1.sessionId)).toBe(4);
+    expect(room.sessionToHpForce.get(p2.sessionId)).toBe(7);
+    expect(room.sessionToHpForce.size).toBe(2); // no stray entries added either
   });
 });
