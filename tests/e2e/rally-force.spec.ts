@@ -33,10 +33,27 @@ import {
 //     no extra charge for the volley") holds true post-#514.
 // No server code change was needed — this issue is test-only, per the issue's own
 // framing ("likely already correct").
+//
+// Deterministic setup (two independent levers, mirroring #514's force-heart-loss
+// spec + gauge-four-case's matchup control — the REAL minted loadout is all
+// Wind/Earth: thumb=EARTH, a1/a2=WIND, d1/d2=EARTH, heart=WIND, all Tier 0):
+//   • FORCE — POST /api/test/set-ring-xp boosts a ring's XP BEFORE the room seats,
+//     so `force(ring.xp)` reads the boosted value at seat time. force(3000)=3.
+//   • ELEMENT — `__testSetState { elements }` overrides a ring's element at runtime
+//     (independent of XP/force). Required because NO default D-slot ring can ever
+//     achieve a STRONG catch: d1/d2 are EARTH, and Earth defense is ALWAYS Neutral
+//     (asymmetric-neutral rule). A STRONG parry (the rally trigger) needs WOOD
+//     specifically, since the triangle is Fire>Wood>Water>Fire — WOOD beats WATER.
+//   • hp_force — the original attacker's heart ring is the untouched WIND Tier-0
+//     starter → force 1, so a NO_BLOCK volley loses ceilDiv(atkForce, 1) = atkForce.
 
 const API_URL = 'http://localhost:2568';
 const URL = 'http://localhost:8090';
 const CAUGHT = ['BLOCK', 'PARRY'];
+
+// Element enum (shared/types.ts). WOOD beats WATER in the triangle (Fire>Wood>Water>Fire).
+const WATER = 1;
+const WOOD = 4;
 
 // force(3000) = forceFromTier1(tierForXp(3000)+1) = forceFromTier1(4) = 3
 // (same calibration as #514's force-heart-loss.spec.ts).
@@ -63,6 +80,11 @@ async function setRingXP(token: string, ringId: string, xp: number): Promise<voi
     body: JSON.stringify({ ringId, xp }),
   });
   if (!res.ok) throw new Error(`set-ring-xp failed (${res.status})`);
+}
+
+/** Override in-room elements on a page's own player via the test-only setter. */
+async function setElements(page: Page, elements: Partial<Record<SlotKey, number>>): Promise<void> {
+  await page.evaluate((els) => (window as any).__room.send('__testSetState', { elements: els }), elements);
 }
 
 /**
@@ -138,7 +160,7 @@ async function setupBoostedBattle(
   return { p1, p2, p1ctx, p2ctx };
 }
 
-/** Read a page's own sessionId + current hearts from authoritative room state. */
+/** Read a page's own current hearts from authoritative room state. */
 async function myHearts(page: Page): Promise<number> {
   return page.evaluate(() => {
     const room = (window as any).__room;
@@ -150,14 +172,21 @@ async function myHearts(page: Page): Promise<number> {
 test('scenario 1: rally counter-volley lands force-scaled heart loss on the original attacker', async ({
   browser,
 }) => {
-  // Boost the DEFENDER's D1 (WOOD, default loadout) ring to force 3 — it is this
-  // ring that parries, then volleys as the rally's next "attacker" ring.
+  // Boost the DEFENDER's D1 ring to force 3 — it is this ring that parries, then
+  // volleys as the rally's next "attacker" ring. Element is overridden to WOOD
+  // post-seat (the default D1 is EARTH, which can never STRONG-catch).
   const h = await setupBoostedBattle(browser, { p2: { d1: ATTACK_XP } });
   const { attacker, defender } = await attackerDefender(h.p1, h.p2);
 
-  // Headroom on the original attacker (the eventual volley DEFENDER) so the
-  // force-scaled loss lands cleanly without KO-ing the duel mid-assertion.
-  await attacker.evaluate(() => (window as any).__room.send('__testSetState', { hearts: 20 }));
+  // Attack element = WATER (default A2 is WIND, which never rallies); defender D1
+  // = WOOD (WOOD beats WATER → STRONG parry → rally). Headroom on the original
+  // attacker (the eventual volley DEFENDER) so the force-scaled loss lands
+  // cleanly without KO-ing the duel mid-assertion.
+  await attacker.evaluate(
+    (water) => (window as any).__room.send('__testSetState', { hearts: 20, elements: { a2: water } }),
+    WATER,
+  );
+  await setElements(defender, { d1: WOOD });
 
   await attacker.keyboard.press('2'); // A2 = WATER attack
 
@@ -190,8 +219,8 @@ test('scenario 1: rally counter-volley lands force-scaled heart loss on the orig
   const before = await myHearts(attacker);
 
   // Never defend the volley -> NO_BLOCK. atkForce = force(3000) = 3, hpForce =
-  // the original attacker's own cached heart-ring force (untouched Tier-0 ring
-  // -> 1), so defenderHeartsLost = max(1, ceilDiv(3, 1)) = 3 -- not the flat
+  // the original attacker's own cached heart-ring force (untouched WIND Tier-0
+  // ring -> 1), so defenderHeartsLost = max(1, ceilDiv(3, 1)) = 3 -- not the flat
   // 1-heart a stale/pre-#511 formula (or a mis-bound hpForce lookup) would give.
   await attacker.waitForTimeout(DEFEND_LAPSE_WAIT_MS);
 
@@ -223,14 +252,20 @@ test('scenario 1: rally counter-volley lands force-scaled heart loss on the orig
 test("scenario 2: a rally volley the original attacker's ring out-forces bleeds 0 hearts (subtractive shield holds through the recursion)", async ({
   browser,
 }) => {
-  // Boost BOTH sides' D1 (WOOD) rings to the same force (3): p2's D1 parries and
-  // then volleys as the rally attacker; p1's OWN D1 (also force 3) is what they
-  // catch the volley with, so atk_force === def_force on the volley itself.
+  // Boost BOTH sides' D1 rings to the same force (3): p2's D1 parries and then
+  // volleys as the rally attacker; p1's OWN D1 (also force 3) is what they catch
+  // the volley with, so atk_force === def_force on the volley itself. Both D1
+  // elements are overridden to WOOD post-seat (default D1 is EARTH).
   const h = await setupBoostedBattle(browser, {
     p1: { d1: ATTACK_XP },
     p2: { d1: ATTACK_XP },
   });
   const { attacker, defender } = await attackerDefender(h.p1, h.p2);
+
+  // Attacker: A2 = WATER (attack), D1 = WOOD (its own catch ring for the volley).
+  // Defender: D1 = WOOD (parry ring → STRONG → rally, then volleys as WOOD).
+  await setElements(attacker, { a2: WATER, d1: WOOD });
+  await setElements(defender, { d1: WOOD });
 
   await attacker.keyboard.press('2'); // A2 = WATER attack
 
@@ -257,7 +292,7 @@ test("scenario 2: a rally volley the original attacker's ring out-forces bleeds 
 
   const before = await myHearts(attacker);
 
-  // Catch the WOOD volley with the original attacker's OWN D1 (also force 3).
+  // Catch the WOOD volley with the original attacker's OWN D1 (also WOOD, force 3).
   // Same-element WOOD-vs-WOOD is a NEUTRAL catch (ElementSystem.ts resolve()
   // "same element -> NEUTRAL"), so this exercises the subtractive-shield branch:
   // defenderHeartsLost = max(0, ceilDiv(max(0, atkForce - defForce), hpForce)).
