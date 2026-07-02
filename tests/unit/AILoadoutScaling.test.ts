@@ -1,13 +1,29 @@
+import os from 'os';
+import path from 'path';
+import fs from 'fs';
 import { describe, test, expect, beforeAll } from 'vitest';
 import {
   generateAILoadout,
   npcEffectiveXp,
   previewOpponent,
   skillRoll,
+  PERSONALITY_SPIRIT_MULT,
 } from '../../server/src/game/ai/AILoadout';
 import { makeRng } from '../../server/src/game/ai/AIProfiles';
 import { tierForXp, naturalMaxUses } from '../../server/src/game/Tiers';
-import type { AIPersonality } from '../../shared/types';
+import {
+  BOSS_MODIFIERS,
+  CLASS_OFFSET,
+  REGION_STEP,
+  BIOME_ORDER,
+} from '../../server/src/game/constants';
+import {
+  ElementEnum,
+  DIFFICULTY_MULTIPLIERS,
+  type AIPersonality,
+  type BossTier,
+  type DifficultyTier,
+} from '../../shared/types';
 
 /**
  * #244 — generateAILoadout scales the AI's tier / uses / thumb XP off the player's
@@ -533,5 +549,454 @@ describe('skillRoll — generic spawnId personality fallback (#492 impl-aware)',
     // #492 impl-aware: generic duels must be repeatable — same personality seed
     // produces the same skill on every call (mulberry32 is seeded from hash, no state).
     expect(skillRoll('generic_RESILIENT', 'roamer')).toBe(skillRoll('generic_RESILIENT', 'roamer'));
+  });
+});
+
+// ============================================================================
+// #521 (EPIC #511 Contract F) — NPC/AI spirit re-tune under the inflated
+// spirit_max range.
+// ============================================================================
+//
+// #520 changed the player's spirit_max from `SUM(max_uses) × difficulty` to
+// `SUM(max_uses × force) × difficulty`. A Tier-10 ring now contributes 6× what
+// it did, so late-game spirit_max inflates up to ~5.62×. NPC/AI spirit derives
+// from that value via computeNpcSpirit(), so this section answers the question
+// #521 exists to close: does the inflation break NPC pacing, and if so which
+// constants (PERSONALITY_SPIRIT_MULT / BOSS_MODIFIERS.spiritMult / CLASS_OFFSET
+// / REGION_STEP) must be retuned?
+//
+// DELIVERABLE / DECISION (proven by the assertions below):
+//   NO constant is changed. The drift the additive boss/roamer floors introduce
+//   is CORRECTIVE, not destructive:
+//     - Roamers (forest floor=0, and every mult-dominated non-forest case):
+//       npc/spiritMax == the personality mult EXACTLY (modulo ≤1-unit floor()
+//       rounding), invariant to inflation (drift ratio ≈ 1.00). The "3-5 roamers
+//       before resting" calibration is preserved untouched.
+//     - Non-forest floor-dominated roamers and every boss: the additive floor's
+//       relative weight SHRINKS as spiritMax inflates, so npc/spiritMax converges
+//       DOWN toward the designed multiplier (PERSONALITY_SPIRIT_MULT /
+//       BOSS_MODIFIERS.spiritMult) from above. The pacing metric never drops
+//       BELOW the designed multiplier and never rises ABOVE its pre-#520 value —
+//       the NPC never gets relatively harder, and over-long pre-#520 fights
+//       (several bosses had pools EXCEEDING the player's, pacOld > 1.0) are
+//       corrected toward intent. Retuning the floors UP to hold drift ≈ 1.00
+//       would REINTRODUCE those oppressive fights, so the values are held.
+//
+// TOLERANCE: drift ratio = (npcNew/npcOld) / (spiritMaxNew/spiritMaxOld). 1.00 =
+//   NPC scales exactly with the player. Tolerance band ±15% → [0.85, 1.15]. Boss
+//   cases outside the band are ACCEPTED (not retuned) under the rationale above,
+//   asserted quantitatively per cell (pacNew ∈ [mult, pacOld]).
+//
+// The spirit_max numbers here are the REAL getSpiritStats() output (seeded
+// scratch DB, same harness as spirit-formula.test.ts) — not hand-derived; the
+// getSpiritStats path is the #520 formula under test. The pre-#520 baseline is
+// the documented old formula SUM(max_uses)×difficulty (no code path survives for
+// it), computed inline exactly as spirit-formula.test.ts does for its own
+// old-formula sanity checks. computeNpcSpirit is the existing module-level
+// dynamic-import handle populated in the beforeAll above; SPIRIT_MULT /
+// BOSS_SPIRIT_MULT are the file's existing production mirrors (re-guarded below).
+
+let spiritRepo: typeof import('../../server/src/persistence/PlayerRepo');
+let spiritDb: import('better-sqlite3').Database;
+
+function makeSpiritPlayer(difficulty: DifficultyTier): string {
+  const id = `p_${Math.random().toString(36).slice(2)}`;
+  spiritDb
+    .prepare(`INSERT INTO players (id, username, password_hash, difficulty) VALUES (?, ?, ?, ?)`)
+    .run(id, `u_${id}`, 'x', difficulty);
+  spiritDb
+    .prepare(
+      `INSERT INTO loadout (player_id, thumb, a1, a2, d1, d2) VALUES (?, NULL, NULL, NULL, NULL, NULL)`,
+    )
+    .run(id);
+  return id;
+}
+
+function makeSpiritRing(playerId: string, tier: number, maxUses: number): void {
+  const id = `ring_${Math.random().toString(36).slice(2)}`;
+  spiritDb
+    .prepare(
+      `INSERT INTO rings (id, owner_id, element, tier, max_uses, current_uses, xp, in_carry, escrowed, heart_slot)
+       VALUES (?, ?, ?, ?, ?, ?, 0, 0, 0, 0)`,
+    )
+    .run(id, playerId, ElementEnum.FIRE, tier, maxUses, maxUses);
+}
+
+// The three acceptance-table compositions from #520's spirit-formula.test.ts
+// (stored 0-indexed tier; human "Tier N" = stored tier N-1).
+const SPIRIT_COMPOSITIONS: Record<'Early' | 'Mid' | 'Late', Array<{ tier: number; maxUses: number }>> = {
+  Early: Array.from({ length: 5 }, () => ({ tier: 0, maxUses: 3 })), // 5× Tier-1
+  Mid: [
+    { tier: 3, maxUses: 6 },
+    { tier: 3, maxUses: 6 },
+    { tier: 3, maxUses: 6 },
+    { tier: 4, maxUses: 7 },
+    { tier: 4, maxUses: 7 },
+  ], // 3× Tier-4 + 2× Tier-5
+  Late: [
+    { tier: 9, maxUses: 12 },
+    { tier: 9, maxUses: 12 },
+    { tier: 9, maxUses: 12 },
+    { tier: 8, maxUses: 11 },
+    { tier: 8, maxUses: 11 },
+  ], // 3× Tier-10 + 2× Tier-9
+};
+type SpiritBand = keyof typeof SPIRIT_COMPOSITIONS;
+const SPIRIT_BANDS: SpiritBand[] = ['Early', 'Mid', 'Late'];
+
+/** Pre-#520 spirit_max: SUM(max_uses) × difficulty (no force weighting). */
+function oldSpiritMax(band: SpiritBand, difficulty: DifficultyTier): number {
+  const usesSum = SPIRIT_COMPOSITIONS[band].reduce((s, r) => s + r.maxUses, 0);
+  return usesSum * DIFFICULTY_MULTIPLIERS[difficulty];
+}
+/** Post-#520 spirit_max from the REAL getSpiritStats path (seeded DB). */
+function newSpiritMax(band: SpiritBand, difficulty: DifficultyTier): number {
+  const p = makeSpiritPlayer(difficulty);
+  for (const r of SPIRIT_COMPOSITIONS[band]) makeSpiritRing(p, r.tier, r.maxUses);
+  return spiritRepo.getSpiritStats(p).spiritMax;
+}
+
+// Independent reference reimplementation of computeNpcSpirit's two branches,
+// built off the file's existing production mirrors (SPIRIT_MULT /
+// BOSS_SPIRIT_MULT) plus the imported CLASS_OFFSET / REGION_STEP / BIOME_ORDER.
+// Cross-checks that computeNpcSpirit produces the exact integer, and derives the
+// ratio grid WITHOUT re-deriving through the code under test.
+function spiritFloorRef(biome: string, cls: 'roamer' | BossTier): number {
+  const idx = BIOME_ORDER.indexOf(biome);
+  if (idx < 0) return 0;
+  return CLASS_OFFSET[cls] + REGION_STEP * idx;
+}
+function roamerRef(S: number, p: AIPersonality, biome: string): number {
+  return Math.max(spiritFloorRef(biome, 'roamer'), Math.floor(S * SPIRIT_MULT[p]));
+}
+function bossRef(S: number, tier: BossTier, biome: string): number {
+  return Math.floor(S * BOSS_SPIRIT_MULT[tier]) + spiritFloorRef(biome, tier);
+}
+
+const SPIRIT_P: AIPersonality[] = ['AGGRESSIVE', 'DEFENSIVE', 'STATUS_HUNTER', 'RESILIENT'];
+const SPIRIT_BOSS_TIERS: BossTier[] = ['gate', 'sub', 'major'];
+const SPIRIT_DIFFICULTIES: DifficultyTier[] = ['wanderer', 'seeker', 'ascendant', 'ascetic', 'void'];
+
+// The NPC ratio grid uses seeker (×4) — the difficulty the #520 acceptance table
+// and this issue's worked examples are stated at. Inflation R is difficulty-
+// invariant (asserted below), so seeker is representative; the void (×1)
+// worst-case for floor weight is bounded separately at the end.
+const RATIO_DIFFICULTY: DifficultyTier = 'seeker';
+const SPIRIT_TOLERANCE = 0.15; // drift within [0.85, 1.15] "tracks the player".
+
+beforeAll(async () => {
+  const dbFile = path.join(os.tmpdir(), `er-spirit-retune-test-${process.pid}-${Date.now()}.db`);
+  for (const ext of ['', '-wal', '-shm']) {
+    if (fs.existsSync(dbFile + ext)) fs.unlinkSync(dbFile + ext);
+  }
+  process.env.DB_PATH = dbFile;
+  spiritRepo = await import('../../server/src/persistence/PlayerRepo');
+  const dbMod = await import('../../server/src/persistence/db');
+  spiritDb = dbMod.db;
+});
+
+// ---------------------------------------------------------------------------
+// 1. spirit_max before/after — Early/Mid/Late × all 5 DifficultyTiers, asserted
+//    against REAL getSpiritStats output (AC #1).
+// ---------------------------------------------------------------------------
+describe('#521 — spirit_max before/after (real getSpiritStats, all difficulties)', () => {
+  // Post-#520 force-weighted per-difficulty sums (pre-multiplier): Early 15,
+  // Mid 96, Late 326. Pre-#520 sums: 15, 32, 58.
+  const NEW_SUM: Record<SpiritBand, number> = { Early: 15, Mid: 96, Late: 326 };
+  const OLD_SUM: Record<SpiritBand, number> = { Early: 15, Mid: 32, Late: 58 };
+
+  test.each(SPIRIT_DIFFICULTIES)(
+    'difficulty=%s: getSpiritStats matches SUM(max_uses×force)×mult for every band',
+    (difficulty) => {
+      const mult = DIFFICULTY_MULTIPLIERS[difficulty];
+      for (const band of SPIRIT_BANDS) {
+        expect(newSpiritMax(band, difficulty), `${band} new @${difficulty}`).toBe(
+          NEW_SUM[band] * mult,
+        );
+        expect(oldSpiritMax(band, difficulty), `${band} old @${difficulty}`).toBe(
+          OLD_SUM[band] * mult,
+        );
+      }
+    },
+  );
+
+  test('the seeker worked-examples reproduce the #520 acceptance table exactly', () => {
+    expect(newSpiritMax('Early', 'seeker')).toBe(60);
+    expect(oldSpiritMax('Early', 'seeker')).toBe(60);
+    expect(newSpiritMax('Mid', 'seeker')).toBe(384);
+    expect(oldSpiritMax('Mid', 'seeker')).toBe(128);
+    expect(newSpiritMax('Late', 'seeker')).toBe(1304);
+    expect(oldSpiritMax('Late', 'seeker')).toBe(232);
+  });
+
+  test('player inflation R is difficulty-invariant per band (1.00 / 3.00 / 5.62)', () => {
+    for (const difficulty of SPIRIT_DIFFICULTIES) {
+      expect(newSpiritMax('Early', difficulty) / oldSpiritMax('Early', difficulty)).toBeCloseTo(1.0, 6);
+      expect(newSpiritMax('Mid', difficulty) / oldSpiritMax('Mid', difficulty)).toBeCloseTo(3.0, 6);
+      expect(newSpiritMax('Late', difficulty) / oldSpiritMax('Late', difficulty)).toBeCloseTo(326 / 58, 6);
+    }
+    expect(326 / 58).toBeCloseTo(5.62, 2); // the "5.62x" of the acceptance table.
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 2. computeNpcSpirit parity — must equal the independent reference for BOTH old
+//    and new spiritMax inputs (proves the ratio grid uses the real helper), and
+//    the production constants match the values this analysis assumed.
+// ---------------------------------------------------------------------------
+describe('#521 — computeNpcSpirit matches the independent reference (old & new inputs)', () => {
+  test('roamer & boss parity across the full grid at every band', () => {
+    for (const band of SPIRIT_BANDS) {
+      const oldS = oldSpiritMax(band, RATIO_DIFFICULTY);
+      const newS = newSpiritMax(band, RATIO_DIFFICULTY);
+      for (const biome of BIOME_ORDER) {
+        for (const p of SPIRIT_P) {
+          expect(computeNpcSpirit(oldS, p, biome)).toBe(roamerRef(oldS, p, biome));
+          expect(computeNpcSpirit(newS, p, biome)).toBe(roamerRef(newS, p, biome));
+        }
+        for (const tier of SPIRIT_BOSS_TIERS) {
+          expect(computeNpcSpirit(oldS, 'DEFENSIVE', biome, tier)).toBe(bossRef(oldS, tier, biome));
+          expect(computeNpcSpirit(newS, 'DEFENSIVE', biome, tier)).toBe(bossRef(newS, tier, biome));
+        }
+      }
+    }
+  });
+
+  test('production BOSS_MODIFIERS.spiritMult / CLASS_OFFSET / REGION_STEP / PERSONALITY_SPIRIT_MULT are the values this analysis assumed', () => {
+    // Guards the reference mirrors above from silently drifting from production.
+    expect(BOSS_MODIFIERS.gate.spiritMult).toBe(0.75);
+    expect(BOSS_MODIFIERS.sub.spiritMult).toBe(0.6);
+    expect(BOSS_MODIFIERS.major.spiritMult).toBe(1.0);
+    expect(CLASS_OFFSET).toEqual({ roamer: 0, gate: 15, sub: 25, major: 40 });
+    expect(REGION_STEP).toBe(25);
+    expect(PERSONALITY_SPIRIT_MULT).toEqual({
+      AGGRESSIVE: 0.25,
+      DEFENSIVE: 0.3,
+      STATUS_HUNTER: 0.35,
+      RESILIENT: 0.4,
+    });
+    // The file's local mirrors used to build the reference match production too.
+    expect(SPIRIT_MULT).toEqual(PERSONALITY_SPIRIT_MULT);
+    for (const t of SPIRIT_BOSS_TIERS) expect(BOSS_SPIRIT_MULT[t]).toBe(BOSS_MODIFIERS[t].spiritMult);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 3. ROAMER ratio grid — every personality × every biome × Mid/Late. Forest
+//    (floor=0) and every mult-dominated case: drift ≈ 1.00 (AC #3). Floor-
+//    dominated non-forest cases: drift < 1.00, explicitly called out — the
+//    roamer becomes relatively CHEAPER (converges to mult), never harder.
+// ---------------------------------------------------------------------------
+describe('#521 — roamer NPC-inflation ratio grid', () => {
+  // Early has R=1.00 (Tier-1 rings, force=1, no inflation) → old==new spiritMax,
+  // so every Early ratio is trivially 1.00; Mid/Late carry the real inflation.
+  const grid: Array<{ band: SpiritBand; biome: string; p: AIPersonality }> = [];
+  for (const band of ['Mid', 'Late'] as SpiritBand[])
+    for (const biome of BIOME_ORDER) for (const p of SPIRIT_P) grid.push({ band, biome, p });
+
+  test.each(grid)('$band roamer $biome/$p — ratio computed & no relative hardening', ({ band, biome, p }) => {
+    const oldS = oldSpiritMax(band, RATIO_DIFFICULTY);
+    const newS = newSpiritMax(band, RATIO_DIFFICULTY);
+    const R = newS / oldS;
+    const npcOld = computeNpcSpirit(oldS, p, biome);
+    const npcNew = computeNpcSpirit(newS, p, biome);
+    const drift = npcNew / npcOld / R;
+    const pacNew = npcNew / newS; // npc pool as a fraction of the player's pool
+    const pacOld = npcOld / oldS;
+    const mult = SPIRIT_MULT[p];
+    const floor = spiritFloorRef(biome, 'roamer');
+    const multDominatedNew = Math.floor(newS * mult) >= floor;
+    const multDominatedOld = Math.floor(oldS * mult) >= floor;
+
+    // Universal invariant: a roamer never gets relatively HARDER under inflation
+    // (max-floor can only ADD, so npc inflation ≤ player inflation). Stated to
+    // within integer floor() rounding: floor(S×mult) loses at most 1 spirit unit,
+    // nudging the exact-integer ratios a hair above ideal (max drift ~1.015) —
+    // combat-irrelevant. Drift wobble scales as 1/npcOld, pacing wobble as 1/oldS.
+    const driftSlack = 1 / npcOld;
+    const pacSlack = 1 / oldS;
+    expect(drift).toBeLessThanOrEqual(1.0 + driftSlack);
+    expect(pacNew).toBeLessThanOrEqual(pacOld + pacSlack);
+
+    if (multDominatedNew) {
+      // At the new spiritMax the mult term wins → npc/spiritMax == the personality
+      // mult (modulo floor() rounding). The anchor the "3-5" pacing target uses.
+      expect(Math.abs(pacNew - mult)).toBeLessThan(0.01);
+      if (multDominatedOld) {
+        // Both eras mult-dominated (forest always; all non-forest at the Late
+        // pool) → the ratio tracks the player exactly. The ≈1.00 AC case.
+        expect(Math.abs(drift - 1.0)).toBeLessThanOrEqual(SPIRIT_TOLERANCE);
+      } else {
+        // Old floor-pinned, new mult-dominated → drift < 1 but CORRECTIVE: the
+        // roamer was over-costed for an under-levelled player pre-#520 and now
+        // settles to its designed mult. pacNew < pacOld.
+        expect(pacNew).toBeLessThan(pacOld);
+      }
+    } else {
+      // Still floor-dominated at the new spiritMax (only volcano/AGGRESSIVE at
+      // Mid): the floor pins npcNew, so drift < 1. Accepted — pacNew ≥ mult
+      // (biome floor keeps it non-trivial) and < pacOld (cheaper than pre-#520).
+      expect(pacNew).toBeGreaterThanOrEqual(mult - 1e-9);
+      expect(pacNew).toBeLessThan(pacOld);
+    }
+  });
+
+  test('the ONLY floor-dominated roamer cell in the seeker grid is volcano/AGGRESSIVE at Mid', () => {
+    // Called out explicitly (AC #3): everywhere else the mult term dominates at
+    // the new spiritMax, so those ratios are the ≈1.00 case. Only volcano (floor
+    // 100) with the lowest mult (0.25) at the modest Mid pool (384) is still
+    // floor-pinned: floor(384×0.25)=96 < 100.
+    const floorDominated: string[] = [];
+    for (const band of ['Mid', 'Late'] as SpiritBand[]) {
+      const newS = newSpiritMax(band, RATIO_DIFFICULTY);
+      for (const biome of BIOME_ORDER)
+        for (const p of SPIRIT_P)
+          if (Math.floor(newS * SPIRIT_MULT[p]) < spiritFloorRef(biome, 'roamer'))
+            floorDominated.push(`${band}/${biome}/${p}`);
+    }
+    expect(floorDominated).toEqual(['Mid/volcano/AGGRESSIVE']);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 4. "3-5 roamers before resting" re-verification (AC #5). The target is
+//    preserved because the forest-roamer npc/spiritMax ratio == the personality
+//    mult EXACTLY and is INVARIANT to inflation (identical old vs new).
+// ---------------------------------------------------------------------------
+describe('#521 — "3-5 roamers before resting" invariance (forest, floor=0)', () => {
+  test.each(SPIRIT_P)('forest roamer %s: npc/spiritMax == mult, invariant old vs new', (p) => {
+    for (const band of SPIRIT_BANDS) {
+      const oldS = oldSpiritMax(band, RATIO_DIFFICULTY);
+      const newS = newSpiritMax(band, RATIO_DIFFICULTY);
+      const npcOld = computeNpcSpirit(oldS, p, 'forest');
+      const npcNew = computeNpcSpirit(newS, p, 'forest');
+      expect(Math.abs(npcNew / newS - SPIRIT_MULT[p])).toBeLessThan(0.01);
+      expect(Math.abs(npcOld / oldS - SPIRIT_MULT[p])).toBeLessThan(0.01);
+      // Invariance: the fraction the pre-#520 "3-5" target was calibrated on is
+      // unchanged (both equal the mult modulo ≤1-unit floor()), so the
+      // calibration holds without any constant retune.
+      expect(Math.abs(npcNew / newS - npcOld / oldS)).toBeLessThan(0.01);
+    }
+  });
+
+  test('forest roamer pool-fraction ⇒ the same ~2.5-4.0 rough-fight-count band as pre-#520', () => {
+    // Rough fights-before-rest ≈ spiritMax / npcRoamer = 1/mult, identical old &
+    // new: AGGRESSIVE 4.0, DEFENSIVE 3.33, STATUS_HUNTER 2.86, RESILIENT 2.5. A
+    // property of PERSONALITY_SPIRIT_MULT alone (unchanged by #520), so the
+    // docstring target is preserved by construction.
+    const newS = newSpiritMax('Late', RATIO_DIFFICULTY);
+    for (const p of SPIRIT_P) {
+      const fights = newS / computeNpcSpirit(newS, p, 'forest');
+      expect(fights).toBeCloseTo(1 / SPIRIT_MULT[p], 1);
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 5. BOSS ratio grid — every (biome, bossTier) × Mid/Late. Report every ratio;
+//    accept sub-tolerance cells with the asserted corrective-decay rationale
+//    (AC #4). NO constant is changed.
+// ---------------------------------------------------------------------------
+describe('#521 — boss NPC-inflation ratio grid (additive-floor decay)', () => {
+  const grid: Array<{ band: SpiritBand; biome: string; tier: BossTier }> = [];
+  for (const band of ['Mid', 'Late'] as SpiritBand[])
+    for (const biome of BIOME_ORDER) for (const tier of SPIRIT_BOSS_TIERS) grid.push({ band, biome, tier });
+
+  test.each(grid)('$band boss $biome/$tier — ratio reported; drift accepted as corrective', ({ band, biome, tier }) => {
+    const oldS = oldSpiritMax(band, RATIO_DIFFICULTY);
+    const newS = newSpiritMax(band, RATIO_DIFFICULTY);
+    const R = newS / oldS;
+    const npcOld = computeNpcSpirit(oldS, 'DEFENSIVE', biome, tier);
+    const npcNew = computeNpcSpirit(newS, 'DEFENSIVE', biome, tier);
+    const drift = npcNew / npcOld / R;
+    const pacNew = npcNew / newS;
+    const pacOld = npcOld / oldS;
+    const mult = BOSS_SPIRIT_MULT[tier];
+
+    // Every boss drift ≤ 1 (additive floor can only lag the multiplicative player
+    // scaling) — a boss NEVER inflates faster than the player.
+    expect(drift).toBeLessThanOrEqual(1.0 + 1e-9);
+
+    if (Math.abs(drift - 1.0) <= SPIRIT_TOLERANCE) {
+      // Within ±15% — low-floor biome / high mult; tracks the player. No action.
+      expect(pacNew).toBeGreaterThanOrEqual(mult - 1e-9);
+    } else {
+      // ACCEPTED sub-tolerance drift (NOT retuned). Rationale, asserted:
+      //  (a) pacNew ≥ mult — the boss pool never drops below its designed
+      //      multiplier-length fight; the floor only ever ADDED to it.
+      //  (b) pacNew ≤ pacOld — the pool converges DOWN toward that designed
+      //      multiplier as spiritMax inflates; never grows relatively longer.
+      //  (c) the floor is the shrinking addend: pacNew - mult < pacOld - mult.
+      // Retuning CLASS_OFFSET/REGION_STEP/spiritMult UP to force drift→1.00 would
+      // re-inflate the floor's weight and REINTRODUCE the over-long pre-#520
+      // fights (many had pacOld > 1.0 — boss pool exceeding the player's).
+      expect(drift).toBeLessThan(1.0 - SPIRIT_TOLERANCE);
+      expect(pacNew).toBeGreaterThanOrEqual(mult - 1e-9);
+      expect(pacNew).toBeLessThan(pacOld);
+      expect(pacNew - mult).toBeLessThan(pacOld - mult + 1e-9);
+    }
+  });
+
+  test('anchor: volcano/major at Late reproduces the issue worked example (372 → 1444, drift ≈ 0.69)', () => {
+    const oldS = oldSpiritMax('Late', 'seeker'); // 232
+    const newS = newSpiritMax('Late', 'seeker'); // 1304
+    const npcOld = computeNpcSpirit(oldS, 'DEFENSIVE', 'volcano', 'major');
+    const npcNew = computeNpcSpirit(newS, 'DEFENSIVE', 'volcano', 'major');
+    expect(npcOld).toBe(372); // 232×1.0 + 140
+    expect(npcNew).toBe(1444); // 1304×1.0 + 140
+    expect(npcNew / npcOld / (newS / oldS)).toBeCloseTo(0.69, 2);
+  });
+
+  test('pre-#520 over-long fights (pacOld > 1.0) are corrected toward intent, none newly over-long', () => {
+    // Concretely proves the "corrective" claim: several bosses had a spirit pool
+    // LARGER than the player's before #520 (pacOld > 1.0, up to ~2.09× for
+    // volcano/major at Mid). After #520 every boss pacNew is closer to its mult
+    // and NO boss that was ≤ player pool becomes > player pool.
+    let correctedOverLong = 0;
+    for (const band of ['Mid', 'Late'] as SpiritBand[]) {
+      const oldS = oldSpiritMax(band, 'seeker');
+      const newS = newSpiritMax(band, 'seeker');
+      for (const biome of BIOME_ORDER)
+        for (const tier of SPIRIT_BOSS_TIERS) {
+          const pacOld = computeNpcSpirit(oldS, 'DEFENSIVE', biome, tier) / oldS;
+          const pacNew = computeNpcSpirit(newS, 'DEFENSIVE', biome, tier) / newS;
+          if (pacOld > 1.0) {
+            correctedOverLong++;
+            expect(pacNew).toBeLessThan(pacOld);
+          }
+          expect(pacNew).toBeLessThanOrEqual(pacOld + 1e-9); // none newly over-long
+        }
+    }
+    expect(correctedOverLong).toBeGreaterThan(5); // effect is real & widespread
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 6. Worst-case floor-weight bound (void ×1). At the smallest spirit_max the
+//    additive floor carries its LARGEST relative weight — the harshest test of
+//    the "no retune" decision. The conclusion holds even stronger: every boss
+//    pacNew still converges toward its mult and improves on pacOld.
+// ---------------------------------------------------------------------------
+describe('#521 — void (×1) worst-case floor-weight bound', () => {
+  test('at void, every Late boss still has pacNew ≥ mult and pacNew ≤ pacOld', () => {
+    const oldS = oldSpiritMax('Late', 'void'); // 58 — smallest realistic late pool
+    const newS = newSpiritMax('Late', 'void'); // 326
+    for (const biome of BIOME_ORDER)
+      for (const tier of SPIRIT_BOSS_TIERS) {
+        const pacOld = computeNpcSpirit(oldS, 'DEFENSIVE', biome, tier) / oldS;
+        const pacNew = computeNpcSpirit(newS, 'DEFENSIVE', biome, tier) / newS;
+        expect(pacNew).toBeGreaterThanOrEqual(BOSS_SPIRIT_MULT[tier] - 1e-9);
+        expect(pacNew).toBeLessThanOrEqual(pacOld + 1e-9);
+      }
+  });
+
+  test('void volcano/major: the most floor-heavy boss is corrected from 3.41× to 1.43× the player pool', () => {
+    const oldS = oldSpiritMax('Late', 'void'); // 58
+    const newS = newSpiritMax('Late', 'void'); // 326
+    const pacOld = computeNpcSpirit(oldS, 'DEFENSIVE', 'volcano', 'major') / oldS; // 198/58
+    const pacNew = computeNpcSpirit(newS, 'DEFENSIVE', 'volcano', 'major') / newS; // 466/326
+    expect(pacOld).toBeCloseTo(3.414, 2); // boss pool was 3.4× the player's — oppressive
+    expect(pacNew).toBeCloseTo(1.429, 2); // corrected toward the mult=1.0 intent
+    expect(pacNew).toBeLessThan(pacOld);
   });
 });

@@ -263,6 +263,18 @@ export const BOSS_MODIFIERS: Record<BossTier, BossModifier> = {
 //   spiritFloor('forest','roamer') = 0  + 25*0 = 0   ✓ (locked floor-free)
 //   spiritFloor('desert','roamer') = 0  + 25*3 = 75  ✓
 //   spiritFloor('volcano','roamer')= 0  + 25*4 = 100 ✓
+//
+// #521 (EPIC #511 Contract F) — these floors and BOSS_MODIFIERS[*].spiritMult
+// were re-analysed after #520 inflated the player's spirit_max (up to ~5.62×):
+// NPC spirit derives from spirit_max via computeNpcSpirit(), so the inflation
+// flows through. DECISION: NO value changed. The additive floors are a low-end
+// safety net whose relative weight shrinks as spirit_max inflates, so every NPC
+// pool converges DOWN toward its designed multiplier (never below it) and no NPC
+// gets relatively harder; over-long pre-#520 boss fights are corrected toward
+// intent. Retuning these floors UP to hold the ratio at 1.00 would re-inflate
+// that weight and reintroduce the oppressive fights. Full old-vs-new ratio grid
+// (roamer × personality, boss × biome × tier, all difficulties) is asserted in
+// tests/unit/AILoadoutScaling.test.ts (§"#521 ...").
 
 /** NPC classes eligible for spirit floors (roamer = roaming NPC; others are boss tiers). */
 export type NpcClass = 'roamer' | BossTier;
