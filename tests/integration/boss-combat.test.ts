@@ -29,7 +29,8 @@ import {
 import { signToken } from '../../server/src/auth/auth';
 import { ElementEnum, type WonRingPayload } from '../../shared/types';
 import { TELEGRAPH_MS, BLOCK_WINDOW_MS, STARTING_HEARTS, BOSS_FOOD_DROP, MINI_BOSS_FOOD_DROP } from '../../server/src/game/constants';
-import { tierStartXp, force } from '../../shared/tiers';
+import { tierStartXp, force, forceFromTier1 } from '../../shared/tiers';
+import { effectiveTier1Indexed } from '../../server/src/game/ai/AILoadout';
 
 let colyseus: ColyseusTestServer<any>;
 
@@ -1440,4 +1441,71 @@ describe('#514 Phase 2 impl-aware — sessionToHpForce cache lifecycle: each fre
     const duel2 = await driveOneExchange();
     expect(duel2.defenderHeartsLost).toBe(1);
   }, 30000);
+});
+
+describe('#517 QA Phase 1 adversarial — the difficulty floor guarantees ≥1 heart lost even at an extreme normalized AI hp_force', () => {
+  // #517 adversarial: hp_force is now derived from an UNCAPPED effective tier (a
+  // large enough playerBattleHandAvgXp drives effectiveTier1Indexed arbitrarily
+  // high), so nothing structurally stops a boss's synthetic hp_force from growing
+  // very large. BlockResolver's difficulty floor (`Math.max(1, ceilDiv(atkForce,
+  // hpForce))`, #514) is what keeps a boss from becoming literally unwinnable —
+  // this stress-tests that floor at an extreme hp_force value produced through the
+  // REAL #517 wiring path (not a synthetic BlockResolver unit call), so a
+  // regression in BattleRoom's wiring (not just the pure arithmetic) would be caught.
+  test('an astronomically large playerBattleHandAvgXp drives aiHpForce very high, but the weakest possible landing hit still costs exactly 1 heart', async () => {
+    const EXTREME_AVG_XP = 10_000_000;
+    // Derive the expected hpForce the same way BattleRoom does, so this assertion
+    // stays correct even if constants.ts's floorTier/tierForXp bands are retuned.
+    const expectedEffTier1 = effectiveTier1Indexed('forest', 'DEFENSIVE', EXTREME_AVG_XP);
+    const expectedHpForce = forceFromTier1(expectedEffTier1);
+    expect(expectedHpForce).toBeGreaterThan(50); // sanity: this really is "extreme" for the biome
+
+    const room = await colyseus.createRoom<any>('battle-ai', {
+      vsAI: true,
+      personality: 'DEFENSIVE',
+      aiSeed: 777,
+      aiHearts: 99,
+      playerBattleHandAvgXp: EXTREME_AVG_XP,
+    });
+    const human = await colyseus.connectTo(room);
+    await room.waitForNextPatch();
+    await sleep(20);
+
+    const aiPs = room.state.players.get('AI');
+    // Extinguish the AI's defense rings so the human's attack always lands
+    // uncontested (NO_BLOCK) — isolates hpForce as the only variable in play.
+    for (const key of ['d1', 'd2'] as const) {
+      const ring = aiPs.getSlot(key);
+      ring.currentUses = 0;
+      ring.isExtinguished = true;
+    }
+
+    // The WEAKEST possible landing hit: a T0 (xp=0, force 1) human attacker.
+    const hps = room.state.players.get(human.sessionId);
+    hps.a1.element = ElementEnum.FIRE;
+    hps.a1.isFusion = false;
+    hps.a1.fusionParents.clear();
+    hps.a1.xp = 0; // force(T0) = 1
+    hps.a1.currentUses = 5;
+    hps.a1.maxUses = 5;
+    hps.a1.isExtinguished = false;
+
+    let captured: any = null;
+    human.onMessage('exchangeResult', (m: any) => {
+      if (!captured && m.defenderId === 'AI') captured = m;
+    });
+
+    for (let i = 0; i < 90 && captured === null; i++) {
+      if (room.state.phase === 'ATTACK_SELECT' && room.state.currentAttackerId === human.sessionId) {
+        human.send('selectAttack', { slot: 'a1' });
+      }
+      await sleep(100);
+    }
+
+    expect(captured).not.toBeNull();
+    expect(captured.timing).toBe('NO_BLOCK');
+    // max(1, ceilDiv(1, expectedHpForce)) = 1 — the difficulty floor guarantees a
+    // landing hit is NEVER free, no matter how large the AI's hp_force grows.
+    expect(captured.defenderHeartsLost).toBe(1);
+  }, 20000);
 });
