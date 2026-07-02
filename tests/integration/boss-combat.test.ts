@@ -23,6 +23,7 @@ import { createPlayer, getRingsByOwner, getSpiritAndFood } from '../../server/sr
 import { signToken } from '../../server/src/auth/auth';
 import { ElementEnum, type WonRingPayload } from '../../shared/types';
 import { TELEGRAPH_MS, BLOCK_WINDOW_MS, STARTING_HEARTS, BOSS_FOOD_DROP, MINI_BOSS_FOOD_DROP } from '../../server/src/game/constants';
+import { tierStartXp } from '../../shared/tiers';
 
 let colyseus: ColyseusTestServer<any>;
 
@@ -996,4 +997,80 @@ describe('#513 adversarial — heart-loss decrement loop bound (count=0 vs count
     // attacker-side `for (i < result.attackerHeartsLost)` loop never runs.
     expect(room.state.players.get('AI').hearts).toBe(aiHeartsBefore);
   }, 20000);
+});
+
+// ---------------------------------------------------------------------------
+// #514 — Contract B multi-heart pipeline + OQ-4 whole-exchange Heartwood absorb.
+// resolveOrb's heart-application went from a per-heart loop to a single N-heart
+// event: one Heartwood charge negates the ENTIRE exchange (all N hearts), and a
+// subsequent N-heart exchange lands in full. Driven deterministically: the AI's
+// defence rings default to xp=0 (force 1, the pre-#517 baseline) and its interim
+// hpForce is 1, so a force-3 WIND human attacker (always NEUTRAL — never weak,
+// never lets the boss strong-parry) makes EVERY boss-defender exchange cost
+// ceilDiv(3−1,1)=2 (blocked) or ceilDiv(3,1)=3 (uncontested) — always ≥ 2.
+// ---------------------------------------------------------------------------
+describe('#514 — multi-heart pipeline + OQ-4 whole-exchange Heartwood absorb', () => {
+  test('one Heartwood charge absorbs an entire N≥2 exchange (0 hearts lost), then the next N≥2 exchange lands in full', async () => {
+    const START_HEARTS = 60;
+    const { room, human } = await joinBoss('forest_thornwood_warden', 'RESILIENT', 514, {
+      aiHearts: START_HEARTS,
+      aiHeartwoodCharges: 1, // exactly one charge → exactly one absorbed exchange
+    });
+    const aiPs = room.state.players.get('AI');
+    const startHearts = aiPs.hearts;
+    expect(startHearts).toBe(START_HEARTS);
+
+    // The human survives the boss's counter-attacks for the whole drive.
+    const hps = room.state.players.get(human.sessionId);
+    hps.hearts = 200;
+    // Force-3 WIND attackers with plenty of uses on both attack slots.
+    for (const key of ['a1', 'a2'] as const) {
+      const ring = hps.getSlot(key);
+      ring.element = ElementEnum.WIND;
+      ring.isFusion = false;
+      ring.fusionParents.clear();
+      ring.xp = tierStartXp(3); // force(tierStartXp(3)) = 3
+      ring.maxUses = 30;
+      ring.currentUses = 30;
+      ring.isExtinguished = false;
+    }
+
+    // Record every exchange where the boss was the defender and lost ≥1 heart.
+    // Under the force setup above, every such exchange is ≥ 2 (multi-heart).
+    const hits: number[] = [];
+    human.onMessage('exchangeResult', (m: any) => {
+      if (m.defenderId === 'AI' && m.defenderHeartsLost > 0) hits.push(m.defenderHeartsLost);
+    });
+
+    // Drive the human attacking on its own turns; stop once we have observed at
+    // least three multi-heart exchanges (one absorbed + two landed) or the duel
+    // ends. Alternate a1/a2 so a single slot is never the bottleneck.
+    const SLOTS = ['a1', 'a2'] as const;
+    let slotIdx = 0;
+    for (let i = 0; i < 90 && room.state.phase !== 'ENDED' && hits.length < 3; i++) {
+      if (room.state.phase === 'ATTACK_SELECT' && room.state.currentAttackerId === human.sessionId) {
+        if (hps.getSlot(SLOTS[slotIdx]).isExtinguished) slotIdx = (slotIdx + 1) % SLOTS.length;
+        human.send('selectAttack', { slot: SLOTS[slotIdx] });
+      }
+      await sleep(150);
+    }
+    await sleep(200); // let the final exchange settle into server state
+
+    // At least two multi-heart exchanges observed, and every boss-defender
+    // exchange was genuinely multi-heart (N ≥ 2) — proving force scaling drives
+    // the intended faster resolution, not a per-exchange ≤ 1 cap.
+    expect(hits.length).toBeGreaterThanOrEqual(2);
+    expect(hits.every((n) => n >= 2)).toBe(true);
+
+    // OQ-4: the FIRST multi-heart exchange (N ≥ 2) is absorbed as ONE whole event
+    // — its entire N is negated by the single charge, NOT one heart absorbed with
+    // N−1 landing, NOT N charges burned. Every subsequent multi-heart exchange
+    // lands in full. So the boss's final hearts equal the start minus the sum of
+    // every heart-losing exchange EXCEPT the first (absorbed) one. A per-heart
+    // absorb would instead subtract (sum − 1); this assertion distinguishes them.
+    const absorbedFirst = hits[0];
+    const landedRest = hits.reduce((s, n) => s + n, 0) - absorbedFirst;
+    expect(absorbedFirst).toBeGreaterThanOrEqual(2);
+    expect(room.state.players.get('AI').hearts).toBe(startHearts - landedRest);
+  }, 30000);
 });
