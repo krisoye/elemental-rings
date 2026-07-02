@@ -14,7 +14,7 @@ import {
 } from './ringRows';
 import { ElementEnum, DIFFICULTY_MULTIPLIERS, type DifficultyTier, type SlotKey } from '../../../shared/types';
 import { fusionOf, isFusion, componentsOf } from '../game/Fusions';
-import { tierForXp, naturalMaxUses } from '../game/Tiers';
+import { tierForXp, naturalMaxUses, forceFromTier1 } from '../game/Tiers';
 import { getTalisman } from '../../../shared/talismans';
 import {
   SPIRIT_PER_RING_USE,
@@ -497,11 +497,15 @@ const updateSpiritDeductGuarded = db.prepare(
 const selectAggregateRingXp = db.prepare(
   `SELECT COALESCE(SUM(xp), 0) AS xp_sum FROM rings WHERE owner_id = ? AND in_carry = 0 AND heart_slot = 0`,
 );
-// EPIC #279 — spirit_max is now derived from the SUM of max_uses across the
-// player's Reliquary rings (in_carry = 0), scaled by their difficulty multiplier.
-// Must match the boot-time recompute filter in db.ts. Carried rings are excluded.
-const selectReliquaryMaxUsesSum = db.prepare(
-  `SELECT COALESCE(SUM(max_uses), 0) AS uses_sum FROM rings WHERE owner_id = ? AND in_carry = 0 AND heart_slot = 0`,
+// EPIC #279 / #511 Contract F (#520) — spirit_max is now derived from the
+// FORCE-WEIGHTED sum of max_uses across the player's Reliquary rings (in_carry =
+// 0), scaled by their difficulty multiplier. Returns per-ring {tier, max_uses} —
+// NOT a SQL-side SUM — so the force weighting (shared/tiers.ts:forceFromTier1)
+// can be applied in TS, the single source of the force arithmetic (see
+// getSpiritStats below). Must match the boot-time recompute filter in db.ts.
+// Carried rings are excluded.
+const selectReliquaryTierAndMaxUses = db.prepare(
+  `SELECT tier, max_uses FROM rings WHERE owner_id = ? AND in_carry = 0 AND heart_slot = 0`,
 );
 // #397 — resting rings eligible for Sanctum RECHARGE (in_carry=0, heart_slot=0,
 // escrowed=0). Ordered by deficit DESC (largest deficit → DESC), then stable by id.
@@ -1448,10 +1452,17 @@ export function spendSpiritAtomic(playerId: string, cost: number): boolean {
 
 /**
  * Both the raw aggregate ring XP (for HUD ring-tier display) and the derived
- * spirit_max (EPIC #279). Use this wherever both values are needed.
+ * spirit_max (EPIC #279, force-weighted since #511 Contract F / #520). Use this
+ * wherever both values are needed.
  *   aggregate_xp = SUM(xp) WHERE in_carry = 0        -- Reliquary rings only
- *   spirit_max   = SUM(max_uses) WHERE in_carry = 0
+ *   spirit_max   = SUM(max_uses × forceFromTier1(tier + 1)) WHERE in_carry = 0
  *                  × DIFFICULTY_MULTIPLIERS[player.difficulty]
+ * The stored `tier` column is 0-indexed (tierForXp-derived); `+1` normalizes it
+ * to the 1-indexed convention `forceFromTier1` is defined on, exactly as the
+ * AI-wiring path (AILoadout.ts effectiveTier) does. This is the single TS-side
+ * home of the force arithmetic — the boot-time recompute in db.ts encodes the
+ * same formula in raw SQL and MUST be kept in sync (see the comment there and
+ * tests/unit/spirit-formula.test.ts).
  * An empty Reliquary yields spirit_max = 0 by design — a new player earns their
  * first spirit by winning a ring and retiring it to the Reliquary. There is no
  * floor or starting grant.
@@ -1459,8 +1470,14 @@ export function spendSpiritAtomic(playerId: string, cost: number): boolean {
 export function getSpiritStats(playerId: string): { aggregateXp: number; spiritMax: number } {
   const xpRow = selectAggregateRingXp.get(playerId) as { xp_sum: number } | undefined;
   const aggregateXp = xpRow?.xp_sum ?? 0;
-  const usesRow = selectReliquaryMaxUsesSum.get(playerId) as { uses_sum: number } | undefined;
-  const usesSum = usesRow?.uses_sum ?? 0;
+  const reliquaryRings = selectReliquaryTierAndMaxUses.all(playerId) as Array<{
+    tier: number;
+    max_uses: number;
+  }>;
+  const usesSum = reliquaryRings.reduce(
+    (sum, r) => sum + r.max_uses * forceFromTier1(r.tier + 1),
+    0,
+  );
   const diffRow = selectPlayerDifficulty.get(playerId) as { difficulty: string } | undefined;
   const tier = (diffRow?.difficulty ?? 'seeker') as DifficultyTier;
   const multiplier = DIFFICULTY_MULTIPLIERS[tier] ?? DIFFICULTY_MULTIPLIERS.seeker;
