@@ -29,6 +29,12 @@ import {
 } from '../../client/src/objects/ui/RingManagementOverlay';
 import type { SwapSlot } from '../../client/src/objects/ui/SlotSwapManager';
 import type { RingData } from '../../client/src/objects/InventoryGrid';
+// #519 — RingCard fraction use-display + force badge. `force`/`naturalMaxUses`/
+// `forceFromTier1` are imported from the shared module (never hand-rolled here)
+// so the expected values below are computed via the SAME single source of truth
+// the client is required to import from — this is a pure-logic module (no
+// Phaser), safe to import directly in this Node vitest environment.
+import { force, forceFromTier1, naturalMaxUses } from '../../shared/tiers';
 
 // SLOT_KEYS mirrors the shared constant — ['thumb', 'a1', 'a2', 'd1', 'd2']
 const SLOT_KEYS = ['thumb', 'a1', 'a2', 'd1', 'd2'] as const;
@@ -734,6 +740,210 @@ describe('#389 SpecConformance: acceptance criteria', () => {
       nonCommentSrc.includes("'Spares'") || nonCommentSrc.includes('"Spares"'),
       'BattleHandOverlay.ts must not use "Spare"/"Spares" as a player-facing label — use "Bench"',
     ).toBe(false);
+  });
+
+});
+
+// ===========================================================================
+// Class 7b — #519 RingCard fraction use-display + force badge (Phase 1,
+// spec-driven). RingCard.ts is a Phaser Container (extends
+// Phaser.GameObjects.Container) and cannot be instantiated in this Node
+// vitest environment (no DOM/canvas) — this file's own header documents that
+// constraint for the whole suite. Following the established SpecConformance
+// convention above (source-scan against the real file content), these tests
+// assert the exact construction the acceptance criteria require, plus lock in
+// deterministic arithmetic (via the shared force()/naturalMaxUses() helpers,
+// never reimplemented here) for the string-format edge cases the spec calls
+// out by name: Tier-10 bounded width and the 0-current-uses boundary.
+// ===========================================================================
+
+describe('#519 SpecConformance: RingCard.setRing renders ${current}/${max} ⚡${force}', () => {
+
+  /** Isolate a named method body by matching its opening brace through the
+   * closing `\n  }` at 2-space class-member indent — mirrors the existing
+   * whole-file regex checks above but scoped so a match can't accidentally
+   * span into an unrelated method. */
+  function methodBody(src: string, methodSignatureRe: RegExp): string | null {
+    const m = src.match(methodSignatureRe);
+    if (!m) return null;
+    const start = m.index! + m[0].length;
+    const rest = src.slice(start);
+    const end = rest.search(/\n  \}/);
+    if (end === -1) return null;
+    return rest.slice(0, end);
+  }
+
+  it('Spec AC: RingCard.ts imports force from shared/tiers (hard reuse requirement, never reimplemented client-side)', () => {
+    const src = readClientSrc('objects/ui/RingCard.ts');
+    if (src === null) return;
+    expect(
+      src,
+      'RingCard.ts must import { force } (or a superset) from shared/tiers — #519 hard reuse requirement',
+    ).toMatch(/import\s*\{[^}]*\bforce\b[^}]*\}\s*from\s*['"][^'"]*shared\/tiers['"]/);
+  });
+
+  it('Spec AC: RingCard.setRing calls force(ring.xp) — the shared helper, called on the ring view\'s own xp', () => {
+    const src = readClientSrc('objects/ui/RingCard.ts');
+    if (src === null) return;
+    const body = methodBody(src, /setRing\([^)]*\)\s*:\s*[^{]*\{/);
+    expect(body, 'RingCard.ts must declare a setRing(...) method').not.toBeNull();
+    expect(
+      body,
+      'setRing must call force(ring.xp) — importing the shared helper is a hard requirement, not force(ring.tier) or a hand-rolled formula',
+    ).toMatch(/force\(\s*ring\.xp\s*\)/);
+  });
+
+  it('Spec AC: RingCard.setRing no longer calls usePips() for the pips label (dot-string replaced by fraction+force)', () => {
+    // #519 adversarial: usePips itself may remain exported (CampScene.ts still
+    // uses it for an unrelated necklace-charges label — it is NOT dead code), but
+    // setRing itself must stop calling it, or the old ●●●○○ dot string ships
+    // instead of the fraction+force format.
+    const src = readClientSrc('objects/ui/RingCard.ts');
+    if (src === null) return;
+    const body = methodBody(src, /setRing\([^)]*\)\s*:\s*[^{]*\{/);
+    expect(body).not.toBeNull();
+    expect(
+      body,
+      'setRing must not call usePips(...) — the pips label must be the fraction+force string',
+    ).not.toMatch(/usePips\(/);
+  });
+
+  it('Spec AC: RingCard.setRing pips label includes a force badge (⚡ glyph or a documented ASCII fallback)', () => {
+    // #519: the issue explicitly allows an ASCII fallback (e.g. F${force}) if the
+    // pixel font cannot render ⚡ — accept either, but force must appear in SOME
+    // form; a setRing that silently drops the badge must fail this test.
+    const src = readClientSrc('objects/ui/RingCard.ts');
+    if (src === null) return;
+    const body = methodBody(src, /setRing\([^)]*\)\s*:\s*[^{]*\{/);
+    expect(body).not.toBeNull();
+    const hasGlyph = body!.includes('⚡');
+    const hasAsciiFallback = /F\$\{|['"`]F['"`]\s*\+/.test(body!);
+    expect(
+      hasGlyph || hasAsciiFallback,
+      'setRing must render the force badge as ⚡ or a documented ASCII fallback (e.g. F${force}) — neither was found',
+    ).toBe(true);
+  });
+
+  it('Spec AC: pipsLabel is never conditionally hidden the way fuseGlyph is — force must be ALWAYS shown, not gated', () => {
+    // #519 acceptance criterion: force is always shown (force >= 1 always) —
+    // never conditionally hidden like the fuse glyph. Guard against a future
+    // regression that reuses the fuseGlyph's isFusionEligibleParent-style gate
+    // (or any .setVisible(false)) on pipsLabel.
+    const src = readClientSrc('objects/ui/RingCard.ts');
+    if (src === null) return;
+    const body = methodBody(src, /setRing\([^)]*\)\s*:\s*[^{]*\{/);
+    expect(body).not.toBeNull();
+    expect(
+      body,
+      'setRing must not call pipsLabel.setVisible(...) — the pips+force row has no visibility gate',
+    ).not.toMatch(/pipsLabel\.setVisible/);
+  });
+
+});
+
+describe('#519 Blinded full-mask contract: setPipsText(\'?\') replaces the WHOLE combined string', () => {
+
+  it('RingSlot.renderUses() masks with the bare \'?\' literal — no interpolation of force/xp alongside it', () => {
+    // #519 adversarial: force now lives in the SAME label as the use-count
+    // fraction. If a future edit only masked the fraction (e.g. `?/${max} ⚡
+    // ${force}`) the force badge would leak past Blinded. Assert the call site
+    // passes the bare '?' literal, and that the surrounding _usesHidden branch
+    // contains no template interpolation at all.
+    const src = readClientSrc('objects/RingSlot.ts');
+    if (src === null) return;
+    expect(
+      src,
+      "RingSlot must call card.setPipsText('?') with the bare '?' literal",
+    ).toMatch(/card\.setPipsText\(\s*['"]\?['"]\s*\)/);
+
+    const hiddenBranch = src.match(/if \(this\._usesHidden\) \{([\s\S]*?)\n {4}\}/);
+    expect(hiddenBranch, 'renderUses must have an if (this._usesHidden) branch').not.toBeNull();
+    expect(
+      hiddenBranch![1],
+      'the Blinded branch must not interpolate force/xp/currentUses/maxUses into the mask text — it must stay the bare "?"',
+    ).not.toMatch(/\$\{/);
+  });
+
+  it('RingCard.setPipsText(text) fully overwrites pipsLabel.text (no concatenation with the existing label)', () => {
+    const src = readClientSrc('objects/ui/RingCard.ts');
+    if (src === null) return;
+    const start = src.indexOf('setPipsText(text: string): void {');
+    expect(start, 'RingCard.ts must declare setPipsText(text: string): void').toBeGreaterThanOrEqual(0);
+    const body = src.slice(start, src.indexOf('\n  }', start));
+    expect(
+      body,
+      'setPipsText must call this.pipsLabel.setText(text) — a full overwrite of the combined string',
+    ).toMatch(/this\.pipsLabel\.setText\(\s*text\s*\)/);
+    expect(
+      body,
+      'setPipsText must not concatenate onto pipsLabel.text (that would leave part of the pre-mask string visible)',
+    ).not.toMatch(/pipsLabel\.text\s*\+/);
+  });
+
+});
+
+describe('#519 Tier-10 bounded-width: the documented worst-case fraction+force string (Phase 1 adversarial)', () => {
+  // The narrowest of the 5 RingCard consumers is the fusion-picker card in
+  // RingManagementOverlayClass.ts (FUSE_CARD_W = 50px); RingSlot is 58px,
+  // InventoryGrid is 64px, and CampScene's Heart/Combat cards + BenchHealthCombat
+  // are 70px. A live Phaser canvas isn't available in this Node vitest
+  // environment (see file header), so this locks the exact STRING the spec's
+  // own worked example claims — a regression that changes character count here
+  // is the earliest possible signal of a real clipping risk at 50px.
+
+  it('naturalMaxUses(9) / forceFromTier1(10) — the Tier-10 (1-indexed) values — are 12 and 6 per Contract A', () => {
+    expect(naturalMaxUses(9)).toBe(12);
+    expect(forceFromTier1(10)).toBe(6);
+  });
+
+  it('Tier-10 ring (max_uses=12, force=6) formats to exactly "12/12 ⚡6" — 9 characters', () => {
+    const maxUses = naturalMaxUses(9); // 0-indexed tier 9 == the game's "Tier 10"
+    const forceAtT10 = forceFromTier1(10);
+    const label = `${maxUses}/${maxUses} ⚡${forceAtT10}`;
+    expect(label).toBe('12/12 ⚡6');
+    expect(label.length, 'Tier-10 label character count — a regression here signals real clipping risk at 50px').toBe(9);
+  });
+
+  it('no natural tier 0..9 (0-indexed) produces a fraction+force label longer than the Tier-10 worst case', () => {
+    // #519 adversarial: sweep every natural tier and confirm none is WIDER than
+    // the documented Tier-10 worst case — a regression here would mean the
+    // acceptance criterion ("verify against Tier 10") checked the wrong tier.
+    let maxLen = 0;
+    for (let tier = 0; tier <= 9; tier++) {
+      const maxUses = naturalMaxUses(tier);
+      const f = forceFromTier1(tier + 1);
+      const label = `${maxUses}/${maxUses} ⚡${f}`;
+      maxLen = Math.max(maxLen, label.length);
+    }
+    expect(maxLen).toBe(9);
+  });
+
+});
+
+describe('#519 Phase 1 adversarial: 0-current-uses boundary does not break the fraction format', () => {
+
+  it('a ring at 0 current uses (drained mid-battle) formats as "0/5 ⚡2" — no NaN/empty/malformed fraction', () => {
+    // #519 adversarial: the old usePips() dot-string needed an explicit
+    // Math.max(0, current) repeat()-count guard against a negative count; the new
+    // template-literal format has no repeat() call, but the zero boundary is
+    // still the value most likely to expose an off-by-one in a currentUses ??
+    // fallback or a stringly-typed comparison. tier=2 -> max_uses=5, force=2.
+    const currentUses = 0;
+    const maxUses = naturalMaxUses(2);
+    const forceAtTier2 = forceFromTier1(3);
+    expect(maxUses).toBe(5);
+    expect(forceAtTier2).toBe(2);
+    const label = `${currentUses}/${maxUses} ⚡${forceAtTier2}`;
+    expect(label).toBe('0/5 ⚡2');
+  });
+
+  it('force(xp) for a brand-new ring (xp=0, 0 current uses) is still 1 — force never reads as falsy/0/undefined in the label', () => {
+    // #519 adversarial: force is documented as "always >= 1" — a fresh ring at
+    // xp=0 AND currentUses=0 (the absolute floor state) must not render "0/3 ⚡0"
+    // or "0/3 ⚡undefined".
+    expect(force(0)).toBe(1);
+    const label = `0/3 ⚡${force(0)}`;
+    expect(label).toBe('0/3 ⚡1');
   });
 
 });
