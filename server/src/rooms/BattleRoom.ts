@@ -4,11 +4,11 @@ import { PlayerState } from '../schemas/PlayerState';
 import { classifyTiming, resolveBlock } from '../game/BlockResolver';
 import { componentsOf, fusionParents, isFusion } from '../game/ElementSystem';
 import { canDoubleAttack } from '../game/DoubleAttack';
-import { force } from '../game/Tiers';
+import { force, forceFromTier1 } from '../game/Tiers';
 import * as StatusEffects from '../game/StatusEffects';
 import { AIController, type EnrageConfig } from '../game/ai/AIController';
 import { makeRng, AI_PROFILES, type AIProfile } from '../game/ai/AIProfiles';
-import { generateAILoadout, PERSONALITY_SPIRIT_MULT, computeNpcSpirit, scaleProfileByTier, skillRoll, effectiveTier as computeEffectiveTier, type SlotSpec } from '../game/ai/AILoadout';
+import { generateAILoadout, PERSONALITY_SPIRIT_MULT, computeNpcSpirit, scaleProfileByTier, skillRoll, effectiveTier as computeEffectiveTier, effectiveTier1Indexed, type SlotSpec } from '../game/ai/AILoadout';
 import * as StakeResolver from '../game/StakeResolver';
 import {
   consumeUse,
@@ -229,13 +229,19 @@ export class BattleRoom extends Room<{ state: BattleState }> {
    */
   private sessionToHeartRingId = new Map<string, string | null>();
   /**
-   * EPIC #511 Contract B — maps Colyseus sessionId → the human's heart-ring force
-   * (`force(heartRing.xp)`), the mitigation divisor in the force-scaled heart-loss
-   * formulas. Cached at seat time alongside `sessionToHeartRingId` so `resolveOrb`
-   * can pass the defender's `hpForce` into `resolveBlock` without re-deriving it.
-   * A seated human always has a heart ring (empty slot is rejected pre-duel), so a
-   * value is always present for human seats. The AI seat is NOT cached here — its
-   * interim `hpForce = 1` is applied at the resolveOrb lookup (TODO(#517)).
+   * EPIC #511 Contract B/E — maps Colyseus sessionId → that session's `hpForce`,
+   * the mitigation divisor in the force-scaled heart-loss formulas. Cached at
+   * seat time so `resolveOrb` can pass the defender's `hpForce` into
+   * `resolveBlock` without re-deriving it.
+   *   - Human seats (Contract B): `force(heartRing.xp)`, cached alongside
+   *     `sessionToHeartRingId`. A seated human always has a heart ring (an
+   *     empty slot is rejected pre-duel), so a value is always present.
+   *   - The AI seat (Contract E, #517): the AI has no HP-slot heart ring, so
+   *     its `hpForce` is derived synthetically —
+   *     `forceFromTier1(effectiveTier1Indexed(biome, personality, playerXp))`
+   *     — cached once in `onCreate` at AI seat time, using the SAME
+   *     `forceFromTier1` primitive the human/player path uses so the two
+   *     cannot drift at matched XP.
    */
   private sessionToHpForce = new Map<string, number>();
   /**
@@ -388,6 +394,18 @@ export class BattleRoom extends Room<{ state: BattleState }> {
           : undefined;
       this.seatPlayer(AI_ID, personality, aiSpec, aiOverrides);
 
+      // EPIC #511 Contract E (#517) — the AI seat has no HP-slot heart ring,
+      // so its `hpForce` is derived from the encounter's effective tier,
+      // normalized to 1-indexed BEFORE computing force (`effectiveTier1Indexed`
+      // fixes the floorTier/tierForXp indexing mismatch — see its docstring in
+      // AILoadout.ts), then run through the SAME `forceFromTier1` primitive the
+      // player path (`force`) uses. This replaces the #514 interim
+      // `sessionToHpForce` gap for the AI seat (resolveOrb previously
+      // hardcoded `defenderId === AI_ID ? 1 : ...`).
+      const aiBiome = this.npcBiome ?? 'forest';
+      const aiEffTier1 = effectiveTier1Indexed(aiBiome, personality, playerXp);
+      this.sessionToHpForce.set(AI_ID, forceFromTier1(aiEffTier1));
+
       // #261 — boss unique passives (data-driven, keyed by boss id). Applies the
       // seat-time effect (Bulwark: +1 use on both defense rings) and returns the
       // Heartwood charge count (Thornwood: first N heart-losses absorbed). No-op
@@ -418,8 +436,10 @@ export class BattleRoom extends Room<{ state: BattleState }> {
       // scaleProfileByTier is applied directly to the base profile — roamers get
       // the biome floor + skill-scaled element-mistake without bonus hearts/uses.
       const bossModdedProfile = mod ? this.buildBossProfile(personality, mod) : AI_PROFILES[personality];
-      const biomeForTier = this.npcBiome ?? 'forest';
-      const encTier = computeEffectiveTier(biomeForTier, personality, playerXp);
+      // aiBiome (computed above for the hpForce derivation) is the same biome
+      // fallback (`this.npcBiome ?? 'forest'`) — reused here rather than
+      // recomputed.
+      const encTier = computeEffectiveTier(aiBiome, personality, playerXp);
       const profileOverride = scaleProfileByTier(bossModdedProfile, encTier, skill);
       // #259 — enrage config (major boss only; threshold 0 disables it). The
       // enraged profile sharpens the already-modified profile further.
@@ -1645,12 +1665,13 @@ export class BattleRoom extends Room<{ state: BattleState }> {
     this.chargeParryWindowMs = null;
     const timing = classifyTiming(offsetMs, capture.submitted, parryMs, BLOCK_WINDOW_MS);
 
-    // EPIC #511 Contract B — the DEFENDER's heart-ring force mitigates heart loss.
-    // Human → the value cached at seat time; AI → interim 1 (no mitigation).
-    // TODO(#517): AI force wiring (Contract E) — replace the interim 1 with
-    // force(effectiveTier), including the tier-indexing normalization + difficulty
-    // re-check owned by that sub-issue. Do not treat this 1 as final.
-    const hpForce = defenderId === AI_ID ? 1 : (this.sessionToHpForce.get(defenderId) ?? 1);
+    // EPIC #511 Contract B/E — the DEFENDER's heart-ring force mitigates heart
+    // loss. Both human and AI sessions have their `hpForce` cached at seat time
+    // (see the `sessionToHpForce` field docstring above) — human from their
+    // equipped heart ring, AI from the indexing-normalized effective tier
+    // (#517). The `?? 1` fallback is defensive only (every seated session has
+    // an entry).
+    const hpForce = this.sessionToHpForce.get(defenderId) ?? 1;
 
     const result = resolveBlock(attackerRing, defenderRing, timing, hpForce);
 
