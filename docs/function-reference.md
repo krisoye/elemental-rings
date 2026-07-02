@@ -916,7 +916,7 @@ export interface ExchangeResultPayload {
   attackerElements: number[]; // component elements (1 for base, 2 for fusion)
   timing: 'PARRY' | 'BLOCK' | 'MISTIME' | 'NO_BLOCK';
   relationship: 'STRONG' | 'NEUTRAL' | 'WEAK';
-  defenderHeartLost: boolean; // pre-absorption verdict — may differ from actual hearts when a boss passive absorbs
+  defenderHeartsLost: number; // #513 — pre-absorption count (0 or 1 today; may exceed 1 once force scaling lands). May differ from actual hearts lost when a boss passive absorbs.
   rallyContinues: boolean;
   volleyedElement: number;
 }
@@ -960,8 +960,8 @@ export interface WonRingPayload {
 export interface BlockResult {
   timing: 'PARRY' | 'BLOCK' | 'MISTIME' | 'NO_BLOCK';
   relationship: 'STRONG' | 'NEUTRAL' | 'WEAK';
-  defenderHeartLost: boolean;
-  attackerHeartLost: boolean;
+  defenderHeartsLost: number; // #513 — count, not boolean; always 0 or 1 today
+  attackerHeartsLost: number; // #513 — forward-compat placeholder, always 0 today
   rallyContinues: boolean;
   volleyedElement: number;
   hitGaugeElements: number[];                       // gauge elements filled on an uncontested hit
