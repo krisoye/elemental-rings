@@ -104,6 +104,36 @@ export function effectiveTier(
 }
 
 /**
+ * #517 (EPIC #511 Contract E) — indexing-normalized twin of `effectiveTier`,
+ * for driving the AI's synthetic `hp_force` (the AI seat has no HP-slot heart
+ * ring). `effectiveTier` above MIXES indexing conventions: `floorTier` is
+ * 1-indexed (forest=1 … volcano=5) but `tierForXp` is 0-indexed, so feeding
+ * that raw max into `forceFromTier1` (which expects 1-indexed input, Contract
+ * A) silently under-powers the result by one force step whenever the
+ * `tierForXp` branch wins. This helper normalizes BOTH operands to 1-indexed
+ * BEFORE the max — `tierForXp(npcXp) + 1` — matching the exact convention the
+ * player path already uses (`force(xp) = forceFromTier1(tierForXp(xp) + 1)`
+ * in `shared/tiers.ts`), so `forceFromTier1(effectiveTier1Indexed(...))` can
+ * never drift from `force(xp)` at matched XP (see AILoadoutScaling.test.ts).
+ *
+ * Deliberately independent of `effectiveTier` (do NOT refactor either in
+ * terms of the other) — `effectiveTier`'s mixed-indexing VALUE is load-bearing
+ * for the σ / mistake-probability transfer functions in `scaleProfileByTier`
+ * and must not change.
+ *
+ * Reuses `npcEffectiveXp` / `floorTier` / `tierForXp` — no new XP-scaling
+ * logic is introduced here, only the indexing fix.
+ */
+export function effectiveTier1Indexed(
+  biome: string,
+  personality: AIPersonality,
+  playerBattleHandAvgXp: number,
+): number {
+  const npcXp = npcEffectiveXp(personality, playerBattleHandAvgXp);
+  return Math.max(floorTier(biome), tierForXp(npcXp) + 1);
+}
+
+/**
  * #492 — Scale an AIProfile by effectiveTier and skillRoll. Generalises
  * buildBossProfile (BattleRoom) to ALL NPCs, keying off the tier/skill pair
  * rather than a BossModifier. Higher tier ⇒ tighter σ; higher skill ⇒
