@@ -890,13 +890,23 @@ describe('#513 adversarial — heart-loss decrement loop bound (count=0 vs count
       if (!captured) captured = m;
     });
 
-    // Wait for the boss's attack to open a defense window, then press d2 well
-    // inside the BLOCK band (BLOCK_WINDOW_MS - 15, matching the convention used
-    // for BLOCK-timed presses in tests/integration/double-attack.test.ts).
+    // Wait for the boss's attack to open a defense window (DEFENSIVE's think-delay
+    // is 900-1500ms before it even selects the attack — see AIProfiles.ts — so this
+    // polling loop's 3000ms budget is required, not optional). Then press d2 AT the
+    // impact timestamp itself (offset ≈ 0) rather than deep inside the narrow
+    // BLOCK band (176-200ms): since defenderRing is EARTH, the relationship is
+    // NEUTRAL regardless of whether the press classifies as PARRY (<=175ms) or
+    // BLOCK (<=200ms) — resolveBlock's NEUTRAL branch does not distinguish timing
+    // at all. Targeting offset≈0 leaves ~175-200ms of slack against real
+    // scheduler/message-dispatch jitter in a live Colyseus room on either side,
+    // instead of the ~15ms of slack a BLOCK_WINDOW_MS-15 target leaves against the
+    // 200ms MISTIME ceiling — the original flaky failure showed relationship still
+    // NEUTRAL (the static EARTH matchup) but defenderHeartsLost=1, i.e. the press
+    // arrived a few ms late and crossed into MISTIME under real jitter.
     for (let i = 0; i < 60 && room.state.phase !== 'DEFEND_WINDOW'; i++) await sleep(50);
     expect(room.state.phase).toBe('DEFEND_WINDOW');
     const impact: number = room.impactTime;
-    await sleep(Math.max(0, impact + (BLOCK_WINDOW_MS - 15) - Date.now()));
+    await sleep(Math.max(0, impact - Date.now()));
     human.send('submitDefense', { slot: 'd2', pressTime: Date.now() });
     await sleep(BLOCK_WINDOW_MS + 400);
 
@@ -922,8 +932,18 @@ describe('#513 adversarial — heart-loss decrement loop bound (count=0 vs count
       if (!captured) captured = m;
     });
 
-    // Never defend — the boss's opening attack resolves as an uncontested NO_BLOCK hit.
-    await waitForResolve();
+    // Never defend — the boss's opening attack resolves as an uncontested NO_BLOCK
+    // hit. `waitForResolve()`'s single fixed sleep (TELEGRAPH_MS + BLOCK_WINDOW_MS
+    // + 250) only budgets for the POST-selection resolve window; it does not budget
+    // for DEFENSIVE's 900-1500ms think-delay BEFORE the boss even selects/telegraphs
+    // its attack (see AIProfiles.ts, thinkDelayMinMs/thinkDelayMaxMs, unscaled at
+    // gate tier's thinkMult=1.0). A single waitForResolve() call was arriving before
+    // the exchange had even happened, so exchangeResult was never captured. Poll for
+    // the message instead of guessing one fixed duration, generous enough to cover
+    // the worst-case think-delay plus a full resolve cycle (mirrors the polling
+    // pattern winAgainstBoss/driveAiTo already use elsewhere in this file for the
+    // same reason).
+    for (let i = 0; i < 60 && captured === null; i++) await sleep(100);
 
     expect(captured).not.toBeNull();
     expect(captured.timing).toBe('NO_BLOCK');
@@ -934,5 +954,5 @@ describe('#513 adversarial — heart-loss decrement loop bound (count=0 vs count
     // here) must be completely unaffected by landing a hit, proving the
     // attacker-side `for (i < result.attackerHeartsLost)` loop never runs.
     expect(room.state.players.get('AI').hearts).toBe(aiHeartsBefore);
-  }, 15000);
+  }, 20000);
 });
