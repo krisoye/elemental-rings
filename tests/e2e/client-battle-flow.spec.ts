@@ -67,7 +67,7 @@ test('scenario 3: BLOCK + NEUTRAL costs a use, no heart', async ({ browser }) =>
   const result = await lastResult(defender);
   expect(CAUGHT).toContain(result.timing);
   expect(result.relationship).toBe('NEUTRAL');
-  expect(result.defenderHeartLost).toBe(false);
+  expect(result.defenderHeartsLost).toBe(0);
 
   // Wait for the use decrement diff to apply, then confirm no heart was lost.
   await waitForMyRingUses(defender, 'd2', 2);
@@ -91,7 +91,7 @@ test('scenario 4: BLOCK + WEAK loses a heart', async ({ browser }) => {
   const result = await lastResult(defender);
   expect(CAUGHT).toContain(result.timing);
   expect(result.relationship).toBe('WEAK');
-  expect(result.defenderHeartLost).toBe(true);
+  expect(result.defenderHeartsLost).toBe(1);
 
   // Wait for the heart-loss diff to apply before asserting on state.
   await waitForMyHearts(defender, 2);

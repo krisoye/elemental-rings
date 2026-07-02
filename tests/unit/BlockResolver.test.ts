@@ -39,7 +39,7 @@ describe('resolveBlock — NO_BLOCK / MISTIME (uncontested hit)', () => {
   test('base FIRE no-block → 1 heart, hitGaugeElements [FIRE], blockGaugeDeltas empty, ring untouched', () => {
     const def = makeRing(WATER, 3);
     const r = resolveBlock(makeRing(FIRE, 3), def, 'NO_BLOCK');
-    expect(r.defenderHeartLost).toBe(true);
+    expect(r.defenderHeartsLost).toBe(1);
     expect(r.hitGaugeElements).toEqual([FIRE]);
     expect(r.blockGaugeDeltas).toEqual([]);
     expect(def.currentUses).toBe(3); // never committed
@@ -47,7 +47,7 @@ describe('resolveBlock — NO_BLOCK / MISTIME (uncontested hit)', () => {
 
   test('fused STEAM no-block → 1 heart, hitGaugeElements [FIRE, WATER], blockGaugeDeltas empty', () => {
     const r = resolveBlock(makeRing(STEAM, 3), makeRing(WATER, 3), 'NO_BLOCK');
-    expect(r.defenderHeartLost).toBe(true);
+    expect(r.defenderHeartsLost).toBe(1);
     expect(r.hitGaugeElements).toEqual([FIRE, WATER]);
     expect(r.blockGaugeDeltas).toEqual([]);
   });
@@ -55,7 +55,7 @@ describe('resolveBlock — NO_BLOCK / MISTIME (uncontested hit)', () => {
   test('MISTIME → 1 heart, gauge, defender ring −1 use', () => {
     const def = makeRing(WATER, 3);
     const r = resolveBlock(makeRing(FIRE, 3), def, 'MISTIME');
-    expect(r.defenderHeartLost).toBe(true);
+    expect(r.defenderHeartsLost).toBe(1);
     expect(r.hitGaugeElements).toEqual([FIRE]);
     expect(r.blockGaugeDeltas).toEqual([]);
     expect(def.currentUses).toBe(2);
@@ -74,7 +74,7 @@ describe('resolveBlock — NEUTRAL block (case 2 gauge)', () => {
     const def = makeRing(WATER, 3);
     const r = resolveBlock(makeRing(WIND, 3), def, 'BLOCK');
     expect(r.relationship).toBe('NEUTRAL');
-    expect(r.defenderHeartLost).toBe(false);
+    expect(r.defenderHeartsLost).toBe(0);
     expect(r.blockGaugeDeltas).toEqual([{ element: WATER, delta: 1.0 }]);
     expect(r.blockedGaugeElement).toEqual([]);
     expect(def.currentUses).toBe(2);
@@ -111,7 +111,7 @@ describe('resolveBlock — STRONG block (case 2 + case 3)', () => {
     const def = makeRing(WATER, 3);
     const r = resolveBlock(makeRing(FIRE, 3), def, 'BLOCK');
     expect(r.relationship).toBe('STRONG');
-    expect(r.defenderHeartLost).toBe(false);
+    expect(r.defenderHeartsLost).toBe(0);
     expect(r.blockGaugeDeltas).toEqual([{ element: WATER, delta: 1.0 }]);
     expect(r.blockedGaugeElement).toEqual([FIRE]);
     expect(r.clearAllGauges).toBe(false);
@@ -141,7 +141,7 @@ describe('resolveBlock — STRONG parry (case 4) + WEAK catch', () => {
     expect(r.rallyContinues).toBe(true);
     expect(r.clearAllGauges).toBe(true);
     expect(r.volleyedElement).toBe(WATER);
-    expect(r.defenderHeartLost).toBe(false);
+    expect(r.defenderHeartsLost).toBe(0);
     expect(def.currentUses).toBe(2);
   });
 
@@ -156,7 +156,7 @@ describe('resolveBlock — STRONG parry (case 4) + WEAK catch', () => {
     const def = makeRing(WOOD, 3);
     const r = resolveBlock(makeRing(FIRE, 3), def, 'BLOCK');
     expect(r.relationship).toBe('WEAK');
-    expect(r.defenderHeartLost).toBe(true);
+    expect(r.defenderHeartsLost).toBe(1);
     expect(r.blockGaugeDeltas).toEqual([]);
     expect(r.blockedGaugeElement).toEqual([]);
     expect(def.currentUses).toBe(2);
@@ -165,7 +165,7 @@ describe('resolveBlock — STRONG parry (case 4) + WEAK catch', () => {
   test('WEAK parry → 1 heart, no rally, no gauge', () => {
     const r = resolveBlock(makeRing(FIRE, 3), makeRing(WOOD, 3), 'PARRY');
     expect(r.relationship).toBe('WEAK');
-    expect(r.defenderHeartLost).toBe(true);
+    expect(r.defenderHeartsLost).toBe(1);
     expect(r.rallyContinues).toBe(false);
     expect(r.blockGaugeDeltas).toEqual([]);
   });
@@ -173,14 +173,14 @@ describe('resolveBlock — STRONG parry (case 4) + WEAK catch', () => {
   test('Wind defense is always WEAK even on a perfect parry', () => {
     const r = resolveBlock(makeRing(FIRE, 3), makeRing(WIND, 3), 'PARRY');
     expect(r.relationship).toBe('WEAK');
-    expect(r.defenderHeartLost).toBe(true);
+    expect(r.defenderHeartsLost).toBe(1);
     expect(r.rallyContinues).toBe(false);
   });
 
   test('Earth defense is always NEUTRAL — safe, never rallies', () => {
     const r = resolveBlock(makeRing(WOOD, 3), makeRing(EARTH, 3), 'PARRY');
     expect(r.relationship).toBe('NEUTRAL');
-    expect(r.defenderHeartLost).toBe(false);
+    expect(r.defenderHeartsLost).toBe(0);
     expect(r.rallyContinues).toBe(false);
     expect(r.clearAllGauges).toBe(false);
   });
@@ -235,7 +235,7 @@ describe('resolveBlock — STRONG+BLOCK simultaneous case-2 AND case-3 (C5 adver
     const r = resolveBlock(makeRing(WOOD, 3), def, 'BLOCK');
     // Both structures must be populated at once — neither replaces the other.
     expect(r.relationship).toBe('STRONG');
-    expect(r.defenderHeartLost).toBe(false);
+    expect(r.defenderHeartsLost).toBe(0);
     expect(r.blockGaugeDeltas).toEqual([{ element: FIRE, delta: 1.0 }]);
     expect(r.blockedGaugeElement.sort()).toEqual([ElementEnum.WOOD, ElementEnum.SHADOW].sort());
     // And rally does NOT trigger on a BLOCK (only PARRY triggers rally).
@@ -253,7 +253,7 @@ describe('resolveBlock — STRONG+BLOCK simultaneous case-2 AND case-3 (C5 adver
 });
 
 describe('resolveBlock — WEAK catch invariants (C5 adversarial)', () => {
-  // Spec (C5): a WEAK catch → defenderHeartLost=true, blockGaugeDeltas=[], rallyContinues=false.
+  // Spec (C5): a WEAK catch → defenderHeartsLost=1, blockGaugeDeltas=[], rallyContinues=false.
   // All three must hold on BOTH BLOCK and PARRY timing for a weak pair.
 
   test('PARRY timing on a WEAK pair → heart lost, no gauge, no rally, no clearAllGauges', () => {
@@ -261,7 +261,7 @@ describe('resolveBlock — WEAK catch invariants (C5 adversarial)', () => {
     const def = makeRing(WOOD, 3);
     const r = resolveBlock(makeRing(FIRE, 3), def, 'PARRY');
     expect(r.relationship).toBe('WEAK');
-    expect(r.defenderHeartLost).toBe(true);
+    expect(r.defenderHeartsLost).toBe(1);
     expect(r.blockGaugeDeltas).toEqual([]);
     expect(r.blockedGaugeElement).toEqual([]);
     expect(r.rallyContinues).toBe(false);
@@ -301,7 +301,7 @@ describe('resolveBlock — fractional force deltas (C5/C6 regression, re-derived
       { element: WATER, delta: 0.5 },
     ]);
     expect(r.blockedGaugeElement.sort()).toEqual([ElementEnum.WOOD, ElementEnum.SHADOW].sort());
-    expect(r.defenderHeartLost).toBe(false);
+    expect(r.defenderHeartsLost).toBe(0);
   });
 });
 
@@ -433,14 +433,14 @@ describe('resolveBlock — WEAK and STRONG+PARRY branches never evaluate force(x
     // adversarial #512 (impl-aware): the actual control flow in
     // BlockResolver.ts shows `1 / force(defenderRing.xp)` only inside the
     // `rel === 'NEUTRAL'` branch and the STRONG-but-not-PARRY branch. The WEAK
-    // branch only sets defenderHeartLost and never reads defenderRing.xp. A
+    // branch only sets defenderHeartsLost and never reads defenderRing.xp. A
     // corrupted/NaN xp on a WEAK-catching ring must not derail the result —
     // if force() were accidentally hoisted above the WEAK check, this NaN
     // would leak into a NaN gauge delta.
     const def = makeRing(WOOD, 3, NaN); // WOOD blocking FIRE → WEAK
     const r = resolveBlock(makeRing(FIRE, 3), def, 'BLOCK');
     expect(r.relationship).toBe('WEAK');
-    expect(r.defenderHeartLost).toBe(true);
+    expect(r.defenderHeartsLost).toBe(1);
     expect(r.blockGaugeDeltas).toEqual([]);
   });
 
@@ -478,7 +478,7 @@ describe('resolveBlock — realistic Ring.xp ceiling: uint32, not MAX_SAFE_INTEG
 describe('resolveBlock — compound fusion behaviour', () => {
   test('fused TIDAL attack on a no-block → exactly 1 heart, gauges [WATER, WOOD]', () => {
     const r = resolveBlock(makeRing(TIDAL, 3), null, 'NO_BLOCK');
-    expect(r.defenderHeartLost).toBe(true);
+    expect(r.defenderHeartsLost).toBe(1);
     expect(r.hitGaugeElements).toEqual([WATER, WOOD]);
   });
 
@@ -486,7 +486,7 @@ describe('resolveBlock — compound fusion behaviour', () => {
     const def = makeRing(TIDAL, 3);
     const r = resolveBlock(makeRing(STEAM, 3), def, 'BLOCK');
     expect(r.relationship).toBe('NEUTRAL');
-    expect(r.defenderHeartLost).toBe(false);
+    expect(r.defenderHeartsLost).toBe(0);
     // TIDAL = Water+Wood, both tracked → two full-rate entries at Tier 0.
     expect(r.blockGaugeDeltas).toEqual([
       { element: WATER, delta: 1.0 },
@@ -497,7 +497,7 @@ describe('resolveBlock — compound fusion behaviour', () => {
 
   test('fused-vs-fused on a no-block → 1 heart, both attacker tracked gauges fill', () => {
     const r = resolveBlock(makeRing(STEAM, 3), makeRing(TIDAL, 3), 'NO_BLOCK');
-    expect(r.defenderHeartLost).toBe(true);
+    expect(r.defenderHeartsLost).toBe(1);
     expect(r.hitGaugeElements).toEqual([FIRE, WATER]);
   });
 

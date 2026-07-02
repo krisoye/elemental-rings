@@ -79,7 +79,7 @@ test('scenario 1: Thornwood "Heartwood" absorbs the first hit (no heart lost)', 
     for (let i = 0; i < 60; i++) {
       const ex = W.__exchanges ?? [];
       for (let j = start; j < ex.length; j++) {
-        if (ex[j].defenderId === 'AI' && ex[j].defenderHeartLost) bossHit = true;
+        if (ex[j].defenderId === 'AI' && ex[j].defenderHeartsLost > 0) bossHit = true;
       }
       if (bossHit) break;
       const s = W.roomState();

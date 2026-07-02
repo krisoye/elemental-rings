@@ -370,7 +370,7 @@ test('hold A1 at sweet spot (~BASE_SWEEP_MS/2 = 600ms): no chargeMiss, defend ph
   });
   const results = await getMessages(defender, 'exchangeResult');
   expect(results.length).toBe(1);
-  expect(results[0].defenderHeartLost).toBe(true);
+  expect(results[0].defenderHeartsLost).toBe(1);
 
   await defender.waitForFunction(
     () => {

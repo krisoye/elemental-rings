@@ -361,7 +361,7 @@ describe('#260 — boss status-gauge pressure', () => {
       // on the human (NO_BLOCK / MISTIME with a heart lost).
       if (
         msg.attackerId === 'AI' &&
-        msg.defenderHeartLost &&
+        msg.defenderHeartsLost > 0 &&
         (msg.timing === 'NO_BLOCK' || msg.timing === 'MISTIME')
       ) {
         for (const el of msg.attackerElements) if (TRIANGLE.has(el)) triangleHits++;
@@ -455,11 +455,11 @@ describe('#261 — boss unique passives', () => {
     expect(startHearts).toBe(3);
 
     // Drive the human attacking; count exchanges where the boss was the defender
-    // and took an uncontested/weak hit (defenderHeartLost). The FIRST two such
+    // and took an uncontested/weak hit (defenderHeartsLost > 0). The FIRST two such
     // hits must NOT lower hearts (2 Heartwood charges); the 3rd should.
     let bossHitsTaken = 0;
     human.onMessage('exchangeResult', (msg: any) => {
-      if (msg.defenderId === 'AI' && msg.defenderHeartLost) bossHitsTaken++;
+      if (msg.defenderId === 'AI' && msg.defenderHeartsLost > 0) bossHitsTaken++;
     });
 
     for (let i = 0; i < 60 && room.state.phase !== 'ENDED'; i++) {

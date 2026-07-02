@@ -229,7 +229,7 @@ test('defender catches orb 1 (NEUTRAL, no rally) → orb 2 resolves independentl
   const results = await getMessages(defender, 'exchangeResult');
   expect(results.length).toBe(2);
   // Orb 1 was a NEUTRAL catch → no heart lost on orb 1.
-  expect(results[0].defenderHeartLost).toBe(false);
+  expect(results[0].defenderHeartsLost).toBe(0);
   // Orb 2 was NOT cancelled.
   const cancels = await getMessages(defender, 'doubleAttackCancelled');
   expect(cancels.length).toBe(0);
