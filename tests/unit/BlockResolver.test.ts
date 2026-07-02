@@ -7,7 +7,7 @@ import { ElementEnum } from '../../shared/types';
 import { fusionParents } from '../../server/src/game/ElementSystem';
 import { tierStartXp, force } from '../../server/src/game/Tiers';
 
-const { FIRE, WATER, EARTH, WIND, WOOD, TIDAL, STEAM } = ElementEnum;
+const { FIRE, WATER, EARTH, WIND, WOOD, TIDAL, STEAM, SHADOW, STORM, MUD, WILDFIRE } = ElementEnum;
 
 function makeRing(element: number, uses: number, xp = 0): Ring {
   const r = new Ring();
@@ -152,22 +152,26 @@ describe('resolveBlock — STRONG parry (case 4) + WEAK catch', () => {
     expect(r.blockGaugeDeltas).toEqual([{ element: FIRE, delta: 1.0 }]);
   });
 
-  test('WEAK catch (WOOD blocks FIRE) → 1 heart, no gauge movement, −1 use', () => {
+  // #515: a WEAK catch now fills the DEFENDER's own gauge at 1/force(defender.xp)
+  // per tracked component — mirroring the NEUTRAL branch — while still costing
+  // the full uncredited heart and never touching the attacker's gauge.
+  test('WEAK catch (WOOD blocks FIRE) → 1 heart, WOOD gauge fills at 1/force, −1 use', () => {
     const def = makeRing(WOOD, 3);
     const r = resolveBlock(makeRing(FIRE, 3), def, 'BLOCK', 1);
     expect(r.relationship).toBe('WEAK');
     expect(r.defenderHeartsLost).toBe(1);
-    expect(r.blockGaugeDeltas).toEqual([]);
+    expect(r.blockGaugeDeltas).toEqual([{ element: WOOD, delta: 1 / force(def.xp) }]);
     expect(r.blockedGaugeElement).toEqual([]);
     expect(def.currentUses).toBe(2);
   });
 
-  test('WEAK parry → 1 heart, no rally, no gauge', () => {
-    const r = resolveBlock(makeRing(FIRE, 3), makeRing(WOOD, 3), 'PARRY', 1);
+  test('WEAK parry → 1 heart, no rally, gauge still fills (#515 — catch-type does not gate the reversal)', () => {
+    const def = makeRing(WOOD, 3);
+    const r = resolveBlock(makeRing(FIRE, 3), def, 'PARRY', 1);
     expect(r.relationship).toBe('WEAK');
     expect(r.defenderHeartsLost).toBe(1);
     expect(r.rallyContinues).toBe(false);
-    expect(r.blockGaugeDeltas).toEqual([]);
+    expect(r.blockGaugeDeltas).toEqual([{ element: WOOD, delta: 1 / force(def.xp) }]);
   });
 
   test('Wind defense is always WEAK even on a perfect parry', () => {
@@ -252,17 +256,20 @@ describe('resolveBlock — STRONG+BLOCK simultaneous case-2 AND case-3 (C5 adver
   });
 });
 
-describe('resolveBlock — WEAK catch invariants (C5 adversarial)', () => {
-  // Spec (C5): a WEAK catch → defenderHeartsLost=1, blockGaugeDeltas=[], rallyContinues=false.
-  // All three must hold on BOTH BLOCK and PARRY timing for a weak pair.
+describe('resolveBlock — WEAK catch invariants (C5 adversarial, gauge behavior reversed by #515)', () => {
+  // Spec (C5, superseded by #515): a WEAK catch → defenderHeartsLost=1,
+  // rallyContinues=false, blockedGaugeElement=[] (case-3 decrement is a STRONG-only
+  // concept), clearAllGauges=false. blockGaugeDeltas is now NON-empty for a
+  // gauge-bearing defender (#515) — the "moves no gauge" half of the old contract
+  // was reversed; the other three invariants are untouched by #515 and still hold.
 
-  test('PARRY timing on a WEAK pair → heart lost, no gauge, no rally, no clearAllGauges', () => {
+  test('PARRY timing on a WEAK pair → heart lost, gauge fills, no rally, no clearAllGauges', () => {
     // FIRE attacks WOOD — WOOD is WEAK to FIRE in the triangle.
     const def = makeRing(WOOD, 3);
     const r = resolveBlock(makeRing(FIRE, 3), def, 'PARRY', 1);
     expect(r.relationship).toBe('WEAK');
     expect(r.defenderHeartsLost).toBe(1);
-    expect(r.blockGaugeDeltas).toEqual([]);
+    expect(r.blockGaugeDeltas).toEqual([{ element: WOOD, delta: 1 / force(def.xp) }]);
     expect(r.blockedGaugeElement).toEqual([]);
     expect(r.rallyContinues).toBe(false);
     expect(r.clearAllGauges).toBe(false);
@@ -428,20 +435,24 @@ describe('resolveBlock — NEUTRAL and STRONG+BLOCK branches stay numerically in
   });
 });
 
-describe('resolveBlock — WEAK and STRONG+PARRY branches never evaluate force(xp) (#512 Phase 2 impl-aware)', () => {
-  test('a WEAK catch with a NaN-xp defender still resolves correctly — force() is unreachable on this code path', () => {
-    // adversarial #512 (impl-aware): the actual control flow in
-    // BlockResolver.ts shows `1 / force(defenderRing.xp)` only inside the
-    // `rel === 'NEUTRAL'` branch and the STRONG-but-not-PARRY branch. The WEAK
-    // branch only sets defenderHeartsLost and never reads defenderRing.xp. A
-    // corrupted/NaN xp on a WEAK-catching ring must not derail the result —
-    // if force() were accidentally hoisted above the WEAK check, this NaN
-    // would leak into a NaN gauge delta.
+describe('resolveBlock — STRONG+PARRY branch never evaluates force(xp); WEAK branch now does (#512 Phase 2 impl-aware, revised by #515)', () => {
+  // #515 flips the control-flow fact the original #512 guard encoded here: before
+  // #515 the WEAK branch never read defenderRing.xp at all (it only set
+  // defenderHeartsLost). After #515 it evaluates `1 / force(defenderRing.xp)`
+  // exactly like the NEUTRAL branch (per the issue's reuse directive: "copy the
+  // NEUTRAL push loop verbatim"). A corrupted/NaN xp on a WEAK-catching ring now
+  // produces the SAME NaN-delta exposure the NEUTRAL branch already had — this is
+  // not a #515-specific hole, it is the WEAK branch reaching numeric parity with
+  // NEUTRAL, warts and all. Ring.xp is a uint32 in production, so NaN cannot occur
+  // there; this documents the pure-function edge, not a reachable game state.
+  test('a WEAK catch with a NaN-xp defender now computes force(xp) (#515) — NaN leaks into the gauge delta exactly like the NEUTRAL branch always has', () => {
     const def = makeRing(WOOD, 3, NaN); // WOOD blocking FIRE → WEAK
     const r = resolveBlock(makeRing(FIRE, 3), def, 'BLOCK', 1);
     expect(r.relationship).toBe('WEAK');
     expect(r.defenderHeartsLost).toBe(1);
-    expect(r.blockGaugeDeltas).toEqual([]);
+    expect(r.blockGaugeDeltas).toHaveLength(1);
+    expect(r.blockGaugeDeltas[0].element).toBe(WOOD);
+    expect(Number.isNaN(r.blockGaugeDeltas[0].delta)).toBe(true);
   });
 
   test('a STRONG parry with a NaN-xp defender still rallies correctly — case 4 never computes a force-based delta', () => {
@@ -830,5 +841,184 @@ describe('resolveBlock — Neutral-block and Neutral-parry share ONE literal bra
     // empty/mismatched capture (guards the regex itself against silent drift if
     // the surrounding source is reformatted).
     expect(neutralBranchSrc).toMatch(/defenderHeartsLost = Math\.max\(0, ceilDiv\(Math\.max\(0, atkForce - defForce\), hpForce\)\)/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// #515 — QA Phase 1 (spec-driven adversarial): weak-catch defense-gauge fill
+// reversal (GDD §7.1). A WEAK block/parry now fills the DEFENDER's own gauge at
+// 1/force(defender.xp) per tracked component — mirroring the NEUTRAL branch
+// exactly — while the attacker's-element gauge (hitGaugeElements) still never
+// fills on any catch, and the WEAK heart-loss formula (#514) is untouched.
+// ---------------------------------------------------------------------------
+describe('resolveBlock — WEAK-catch gauge fill reversal (#515)', () => {
+  describe('gauge-bearing defenders fill blockGaugeDeltas at 1/force(defender.xp)', () => {
+    test.each([
+      ['WOOD defender WEAK vs FIRE attacker (Fire beats Wood)', WOOD, FIRE],
+      ['WATER defender WEAK vs WOOD attacker (Wood beats Water)', WATER, WOOD],
+      ['FIRE defender WEAK vs WATER attacker (Water beats Fire)', FIRE, WATER],
+      ['SHADOW defender WEAK vs FIRE attacker (Fire beats Shadow, §3.5)', SHADOW, FIRE],
+    ] as const)('%s → Tier 0 blockGaugeDeltas [{element, delta:1.0}]', (_label, defEl, atkEl) => {
+      const def = makeRing(defEl, 3);
+      const r = resolveBlock(makeRing(atkEl, 3), def, 'BLOCK', 1);
+      expect(r.relationship).toBe('WEAK');
+      expect(r.blockGaugeDeltas).toEqual([{ element: defEl, delta: 1.0 }]);
+    });
+
+    test.each([
+      ['WOOD defender WEAK vs FIRE attacker', WOOD, FIRE],
+      ['WATER defender WEAK vs WOOD attacker', WATER, WOOD],
+      ['FIRE defender WEAK vs WATER attacker', FIRE, WATER],
+      ['SHADOW defender WEAK vs FIRE attacker', SHADOW, FIRE],
+    ] as const)('%s → Tier 2 (force 2) blockGaugeDeltas delta=0.5, not the old empty []', (_label, defEl, atkEl) => {
+      const def = makeRing(defEl, 3, tierStartXp(2));
+      const r = resolveBlock(makeRing(atkEl, 3), def, 'BLOCK', 1);
+      expect(r.relationship).toBe('WEAK');
+      expect(r.blockGaugeDeltas).toEqual([{ element: defEl, delta: 0.5 }]);
+    });
+  });
+
+  test('a WEAK catch fills gauge at the IDENTICAL rate as a NEUTRAL catch for the same defender element+tier (#515 — "same rate as a neutral block")', () => {
+    // WATER defender at Tier 2: NEUTRAL vs WIND (no triangle relation) and WEAK
+    // vs WOOD (Wood beats Water) must produce the exact same 1/force delta —
+    // the spec's own wording is directly testable this way, not just "some
+    // non-empty array happened to appear."
+    const xp = tierStartXp(2);
+    const neutralDef = makeRing(WATER, 3, xp);
+    const neutralResult = resolveBlock(makeRing(WIND, 3), neutralDef, 'BLOCK', 1);
+    expect(neutralResult.relationship).toBe('NEUTRAL');
+
+    const weakDef = makeRing(WATER, 3, xp);
+    const weakResult = resolveBlock(makeRing(WOOD, 3), weakDef, 'BLOCK', 1);
+    expect(weakResult.relationship).toBe('WEAK');
+
+    expect(weakResult.blockGaugeDeltas).toEqual(neutralResult.blockGaugeDeltas);
+  });
+
+  describe('non-gauge-bearing (Wind/Earth) defenders still push NO blockGaugeDeltas', () => {
+    // Wind defense is ALWAYS WEAK (ElementSystem.resolve hardcodes it); Earth
+    // defense is ALWAYS NEUTRAL and can therefore never reach the WEAK branch
+    // at all (see "Earth defense is always NEUTRAL" above) — so Wind is the
+    // only element that can actually exercise "WEAK catch, non-gauge-bearing
+    // defender" at runtime. trackedComponentsOf(WIND) is empty (Wind is not in
+    // GAUGE_BEARING), so the push loop iterates zero times regardless of tier.
+    test.each([
+      ['Tier 0', 0],
+      ['Tier 3 (force 3)', tierStartXp(3)],
+    ] as const)('Wind WEAK catch at %s → blockGaugeDeltas stays empty', (_label, xp) => {
+      const def = makeRing(WIND, 3, xp);
+      const r = resolveBlock(makeRing(FIRE, 3), def, 'BLOCK', 1);
+      expect(r.relationship).toBe('WEAK');
+      expect(r.blockGaugeDeltas).toEqual([]);
+    });
+  });
+
+  test('fusion defenders can never resolve WEAK — the "or a fusion with a tracked component" AC clause is unreachable at runtime', () => {
+    // adversarial #515: the issue's acceptance criteria mention gauge-bearing
+    // WEAK catches "or a fusion with a tracked component," but
+    // ElementSystem.resolve()'s defenderFusion branch is hardcoded to only ever
+    // return STRONG or NEUTRAL for a fusion defender ("a fusion has no
+    // weakness... never WEAK"). This test locks in that pre-existing invariant
+    // so nobody "fixes" BlockResolver's WEAK branch under the false assumption
+    // that a fusion defender can reach it — the fusion half of the AC is
+    // structurally vacuous given the current ElementSystem, not a gap in #515.
+    const fusionDefenders = [STEAM, TIDAL, WILDFIRE, STORM, MUD];
+    const baseAttackers = [FIRE, WATER, WOOD, WIND, EARTH];
+    for (const defEl of fusionDefenders) {
+      for (const atkEl of baseAttackers) {
+        const r = resolveBlock(makeRing(atkEl, 3), makeRing(defEl, 3), 'BLOCK', 1);
+        expect(r.relationship).not.toBe('WEAK');
+      }
+    }
+  });
+
+  test('hitGaugeElements (attacker gauge) stays empty on a WEAK catch — only uncontested hits fill it (regression)', () => {
+    // adversarial #515: the single easiest mistake in "mirror the NEUTRAL
+    // branch" is accidentally also touching hitGaugeElements (which the
+    // NO_BLOCK/MISTIME branch populates from the ATTACKER's tracked
+    // components) instead of only blockGaugeDeltas (which uses the DEFENDER's).
+    // Both BLOCK and PARRY timing are checked since #515 does not gate on timing.
+    const blockResult = resolveBlock(makeRing(FIRE, 3), makeRing(WOOD, 3), 'BLOCK', 1);
+    expect(blockResult.hitGaugeElements).toEqual([]);
+    const parryResult = resolveBlock(makeRing(FIRE, 3), makeRing(WOOD, 3), 'PARRY', 1);
+    expect(parryResult.hitGaugeElements).toEqual([]);
+  });
+
+  test('SHADOW-branch WEAK catch (a separate code path from the triangle) also never fills hitGaugeElements', () => {
+    // adversarial #515: SHADOW reaches WEAK via shadowRelationship, a
+    // completely separate branch from the triangle logic — worth its own
+    // explicit check that the attacker gauge stays untouched there too, not
+    // just for triangle-WEAK.
+    const r = resolveBlock(makeRing(FIRE, 3), makeRing(SHADOW, 3), 'BLOCK', 1);
+    expect(r.relationship).toBe('WEAK');
+    expect(r.hitGaugeElements).toEqual([]);
+    expect(r.blockGaugeDeltas).toEqual([{ element: SHADOW, delta: 1.0 }]);
+  });
+
+  describe('the WEAK heart-loss formula (#514) is completely unaffected by the gauge reversal', () => {
+    const tierRing = (el: number, tier1: number) => makeRing(el, 3, tierStartXp(tier1 - 1));
+
+    test('heart count is identical whether or not the defender is gauge-bearing, at matched force — gauge and heart formulas are independent axes', () => {
+      // T2 Fire (force 2) attacks a T4 defender (force 3) at hpForce=1 in both
+      // cases → max(1, ceilDiv(2,1)) = 2 hearts, regardless of whether the
+      // defender is WOOD (gauge-bearing, now fills gauge) or WIND (not
+      // gauge-bearing, gauge stays empty). If a future edit accidentally wired
+      // the new gauge branch INTO the heart formula (e.g. subtracting gauge
+      // fill from heart loss "for balance"), this equality would break.
+      const woodResult = resolveBlock(tierRing(FIRE, 2), tierRing(WOOD, 4), 'BLOCK', 1);
+      const windResult = resolveBlock(tierRing(FIRE, 2), tierRing(WIND, 4), 'BLOCK', 1);
+      expect(woodResult.relationship).toBe('WEAK');
+      expect(windResult.relationship).toBe('WEAK');
+      expect(woodResult.defenderHeartsLost).toBe(2);
+      expect(windResult.defenderHeartsLost).toBe(2);
+      expect(woodResult.defenderHeartsLost).toBe(windResult.defenderHeartsLost);
+      // ...while their gauge outcomes diverge exactly as expected.
+      expect(woodResult.blockGaugeDeltas).not.toEqual([]);
+      expect(windResult.blockGaugeDeltas).toEqual([]);
+    });
+
+    test('heart count for a gauge-bearing WEAK catch is unchanged from the pre-#515 formula across defender tiers — zero def_force credit still holds', () => {
+      // Re-derives the #514 "Wood's own tier gives zero credit" guarantee, now
+      // additionally confirming the newly non-empty blockGaugeDeltas does not
+      // perturb it. FIRE T2 (force 2) vs WOOD across tiers, hpForce=1 → always
+      // max(1, ceilDiv(2,1)) = 2 hearts, but the gauge delta DOES vary by the
+      // defender's own tier (unlike hearts) — proving the two are computed
+      // independently rather than one being derived from the other.
+      const vsT1 = resolveBlock(tierRing(FIRE, 2), tierRing(WOOD, 1), 'BLOCK', 1);
+      const vsT5 = resolveBlock(tierRing(FIRE, 2), tierRing(WOOD, 5), 'BLOCK', 1);
+      expect(vsT1.defenderHeartsLost).toBe(2);
+      expect(vsT5.defenderHeartsLost).toBe(2);
+      expect(vsT1.blockGaugeDeltas[0].delta).toBe(1 / force(tierStartXp(0)));
+      expect(vsT5.blockGaugeDeltas[0].delta).toBe(1 / force(tierStartXp(4)));
+      expect(vsT1.blockGaugeDeltas[0].delta).not.toBe(vsT5.blockGaugeDeltas[0].delta);
+    });
+  });
+
+  test('consumeUse stays exactly 1 on a weak catch that now also fills gauge (regression lock)', () => {
+    // adversarial #515: the defender-use-spend invariant predates this issue and
+    // must survive it untouched — the new gauge push loop must not accidentally
+    // call consumeUse again or skip the existing single call.
+    const def = makeRing(WOOD, 3);
+    const r = resolveBlock(makeRing(FIRE, 3), def, 'BLOCK', 1);
+    expect(r.relationship).toBe('WEAK');
+    expect(r.blockGaugeDeltas).not.toEqual([]); // the new #515 behavior is actually exercised
+    expect(def.currentUses).toBe(2); // exactly 1 use consumed, not 0 or 2
+  });
+
+  test('blockedGaugeElement (case-3 decrement) stays empty on a WEAK catch — that structure is STRONG-block-only, unrelated to #515', () => {
+    const r = resolveBlock(makeRing(FIRE, 3), makeRing(WOOD, 3), 'BLOCK', 1);
+    expect(r.relationship).toBe('WEAK');
+    expect(r.blockedGaugeElement).toEqual([]);
+  });
+
+  test('a fresh (xp=0) gauge-bearing defender never produces an Infinity or NaN delta on its very first WEAK catch', () => {
+    // adversarial #515 (mirrors the #512 divide-by-zero guard for the NEUTRAL
+    // branch): xp=0 is the game's real floor — a ring can be weak-caught before
+    // ever earning XP. force(0)=1, so delta must be a clean finite 1.0.
+    const def = makeRing(WOOD, 3, 0);
+    const r = resolveBlock(makeRing(FIRE, 3), def, 'BLOCK', 1);
+    expect(Number.isFinite(r.blockGaugeDeltas[0].delta)).toBe(true);
+    expect(r.blockGaugeDeltas[0].delta).toBeGreaterThan(0);
+    expect(r.blockGaugeDeltas[0].delta).toBe(1.0);
   });
 });
