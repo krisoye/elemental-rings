@@ -1010,10 +1010,14 @@ describe('#513 adversarial — heart-loss decrement loop bound (count=0 vs count
 // resolveOrb's heart-application went from a per-heart loop to a single N-heart
 // event: one Heartwood charge negates the ENTIRE exchange (all N hearts), and a
 // subsequent N-heart exchange lands in full. Driven deterministically: the AI's
-// defence rings default to xp=0 (force 1, the pre-#517 baseline) and its interim
-// hpForce is 1, so a force-3 WIND human attacker (always NEUTRAL — never weak,
-// never lets the boss strong-parry) makes EVERY boss-defender exchange cost
-// ceilDiv(3−1,1)=2 (blocked) or ceilDiv(3,1)=3 (uncontested) — always ≥ 2.
+// defence rings default to xp=0 (force 1) and `joinBoss` never supplies a
+// playerBattleHandAvgXp/token, so the boss's `hpForce` (#517,
+// forceFromTier1(effectiveTier1Indexed('forest', personality, 0))) is ALSO 1 —
+// max(floorTier('forest')=1, tierForXp(0)+1=1) = 1 → forceFromTier1(1) = 1,
+// coinciding with the pre-#517 interim at this zero-XP boundary. A force-3
+// WIND human attacker (always NEUTRAL — never weak, never lets the boss
+// strong-parry) makes EVERY boss-defender exchange cost ceilDiv(3−1,1)=2
+// (blocked) or ceilDiv(3,1)=3 (uncontested) — always ≥ 2.
 // ---------------------------------------------------------------------------
 describe('#514 — multi-heart pipeline + OQ-4 whole-exchange Heartwood absorb', () => {
   test('one Heartwood charge absorbs an entire N≥2 exchange (0 hearts lost), then the next N≥2 exchange lands in full', async () => {
@@ -1095,8 +1099,10 @@ describe('#514 — multi-heart pipeline + OQ-4 whole-exchange Heartwood absorb',
     const aiPs = room.state.players.get('AI');
     // Extinguish the boss's defense rings so every human hit is an uncontested
     // NO_BLOCK — with default (xp=0, force 1) rings on both sides and the AI's
-    // interim hpForce=1, this guarantees defenderHeartsLost = max(1, ceilDiv(1,1))
-    // = 1 EXACTLY on every exchange (never accidentally N≥2).
+    // hpForce=1 (#517: forceFromTier1(effectiveTier1Indexed('forest', ..., 0))
+    // = 1 at this zero-XP boundary, same as the pre-#517 interim), this
+    // guarantees defenderHeartsLost = max(1, ceilDiv(1,1)) = 1 EXACTLY on every
+    // exchange (never accidentally N≥2).
     for (const key of ['d1', 'd2'] as const) {
       const ring = aiPs.getSlot(key);
       ring.currentUses = 0;
@@ -1237,21 +1243,23 @@ describe('#514 — multi-heart pipeline + OQ-4 whole-exchange Heartwood absorb',
 });
 
 // ---------------------------------------------------------------------------
-// #514 — QA Phase 2 (implementation-aware): targets the actual call-site
-// structure now visible in the finished BattleRoom.ts — `resolveOrb`'s
-// `hpForce = defenderId === AI_ID ? 1 : (this.sessionToHpForce.get(defenderId)
-// ?? 1)` ternary (~L1653), and the `sessionToHpForce` cache populated from
-// `PlayerRepo.getHeartRing(playerId)` at seat time (~L659).
+// #514/#517 — QA Phase 2 (implementation-aware): targets the actual call-site
+// structure in BattleRoom.ts — `resolveOrb`'s `hpForce =
+// this.sessionToHpForce.get(defenderId) ?? 1` lookup (~L1653), now populated
+// for BOTH human and AI sessions at seat time. The AI branch (#517) is set in
+// `onCreate` from `forceFromTier1(effectiveTier1Indexed(biome, personality,
+// playerXp))` — see the `sessionToHpForce` field docstring (~L231).
 // ---------------------------------------------------------------------------
 
-describe('#514 Phase 2 impl-aware — AI-defender hpForce=1 interim baseline (documented TODO(#517) "before" snapshot)', () => {
-  test('a T4 (force 3) human attack against a non-boss AI defender costs exactly 3 hearts today, because BattleRoom hardcodes the AI hpForce to 1 (resolveOrb ternary) — this number MUST change the day #517 lands', async () => {
-    // #514 adversarial (impl-aware): the AI branch of the hpForce ternary is an
-    // interim value, not yet backed by any real force computation. This test
-    // pins the CURRENT observable consequence of that interim value through a
-    // plain (non-boss) vsAI duel, so #517's implementation can diff its own new
-    // behavior against a concrete, executable "before" — a comment alone ("TODO
-    // #517") cannot be diffed; a failing assertion can.
+describe('#514/#517 — AI-defender hpForce at zero player XP (pre/post-#517 boundary case)', () => {
+  test('a T4 (force 3) human attack against a zero-XP non-boss AI defender still costs exactly 3 hearts — the #514 interim (hpForce=1) and the #517 normalized value COINCIDE here', async () => {
+    // #514/#517 adversarial (impl-aware): at playerBattleHandAvgXp=0 (no token,
+    // no explicit override) in the default 'forest' biome, effectiveTier1Indexed
+    // = max(floorTier('forest')=1, tierForXp(0)+1=1) = 1, so
+    // forceFromTier1(1) = 1 — IDENTICAL to the old #514 interim hardcoded 1.
+    // This is a genuine coincidence of the zero-XP/forest-floor boundary, not a
+    // sign the wiring is a no-op; see the companion describe block below for a
+    // nonzero-XP case where the normalized value diverges from the old interim.
     const room = await colyseus.createRoom<any>('battle-ai', {
       vsAI: true,
       personality: 'AGGRESSIVE',
@@ -1297,11 +1305,66 @@ describe('#514 Phase 2 impl-aware — AI-defender hpForce=1 interim baseline (do
 
     expect(captured).not.toBeNull();
     expect(captured.timing).toBe('NO_BLOCK');
-    // max(1, ceilDiv(3, 1)) = 3 — the entire uncredited atkForce lands because
-    // hpForce is hardcoded to 1. When #517 wires the real AI hpForce, this
-    // number will legitimately change; a diff against THIS test is the intended
-    // signal that the TODO was actually addressed, not silently left in place.
+    // max(1, ceilDiv(3, 1)) = 3 — unchanged from the #514 interim because the
+    // normalized aiHpForce is ALSO 1 at this zero-XP/forest-floor boundary.
     expect(captured.defenderHeartsLost).toBe(3);
+  }, 20000);
+});
+
+describe('#517 — AI-defender hpForce reflects the indexing-normalized effective tier at nonzero player XP', () => {
+  test('a force-3 human attack against a non-boss AI defender scaled by playerBattleHandAvgXp costs FEWER hearts than the old hpForce=1 interim would have', async () => {
+    // #517: playerBattleHandAvgXp=1250 with AGGRESSIVE (multiplier 0.8) →
+    // npcXp = round(1250 × 0.8) = 1000 → tierForXp(1000) = 1 (0-indexed) →
+    // effTier1 = max(floorTier('forest')=1, 1+1=2) = 2 →
+    // aiHpForce = forceFromTier1(2) = 2.
+    // Against a force-3 attacker (uncontested NO_BLOCK): defenderHeartsLost =
+    // max(1, ceilDiv(3, 2)) = max(1, 2) = 2 — strictly less than the old
+    // interim's max(1, ceilDiv(3, 1)) = 3 (see the companion zero-XP test
+    // above), proving the AI now genuinely mitigates.
+    const room = await colyseus.createRoom<any>('battle-ai', {
+      vsAI: true,
+      personality: 'AGGRESSIVE',
+      aiSeed: 998,
+      aiHearts: 99,
+      playerBattleHandAvgXp: 1250,
+    });
+    const human = await colyseus.connectTo(room);
+    await room.waitForNextPatch();
+    await sleep(20);
+
+    const aiPs = room.state.players.get('AI');
+    for (const key of ['d1', 'd2'] as const) {
+      const ring = aiPs.getSlot(key);
+      ring.currentUses = 0;
+      ring.isExtinguished = true;
+    }
+
+    const hps = room.state.players.get(human.sessionId);
+    hps.a1.element = ElementEnum.FIRE;
+    hps.a1.isFusion = false;
+    hps.a1.fusionParents.clear();
+    hps.a1.xp = tierStartXp(3); // force(T4) = 3
+    hps.a1.currentUses = 5;
+    hps.a1.maxUses = 5;
+    hps.a1.isExtinguished = false;
+
+    let captured: any = null;
+    human.onMessage('exchangeResult', (m: any) => {
+      if (!captured && m.defenderId === 'AI') captured = m;
+    });
+
+    for (let i = 0; i < 90 && captured === null; i++) {
+      if (room.state.phase === 'ATTACK_SELECT' && room.state.currentAttackerId === human.sessionId) {
+        human.send('selectAttack', { slot: 'a1' });
+      }
+      await sleep(100);
+    }
+
+    expect(captured).not.toBeNull();
+    expect(captured.timing).toBe('NO_BLOCK');
+    // max(1, ceilDiv(3, 2)) = 2 — the AI's normalized hpForce=2 mitigates one
+    // heart off the force-3 hit, vs 3 hearts under the old hpForce=1 interim.
+    expect(captured.defenderHeartsLost).toBe(2);
   }, 20000);
 });
 
