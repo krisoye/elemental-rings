@@ -25,9 +25,9 @@ export class PlayerState extends Schema {
 
   // Elemental gauges — one per triangle element (FIRE/WATER/WOOD). Fill when an
   // attack with that triangle component lands uncontested. Wind/Earth have no
-  // gauge (GDD §7.1). float32 (not uint8) so tier-reduced block deltas
-  // (delta = 1/2^tier, e.g. 0.25 at Tier 2) accumulate fractionally; the HUD
-  // floors for display and status thresholds compare the raw float (#179, C6).
+  // gauge (GDD §7.1). float32 (not uint8) so force-reduced block deltas
+  // (delta = 1/force(xp), e.g. 0.5 at Tier 2, #512) accumulate fractionally; the
+  // HUD floors for display and status thresholds compare the raw float (#179, C6).
   @type('float32') fireGauge: number = 0;
   @type('float32') waterGauge: number = 0;
   @type('float32') woodGauge: number = 0;

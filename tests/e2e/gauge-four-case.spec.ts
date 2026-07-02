@@ -200,8 +200,11 @@ test('Drowning: waterGauge>=4 drains the highest-capacity attack ring (a1/a2) at
 
 // ── Scenario 6: Fractional gauge delta — Tier-1 defender ring produces delta≈0.5
 //
-// The block-gauge delta formula is `1 / 2^tierForXp(defenderRing.xp)`. A Tier-0
-// ring (xp<500) produces delta=1.0. A Tier-1 ring (xp>=500) produces delta=0.5.
+// The block-gauge delta formula is `1 / force(defenderRing.xp)` (#512). A Tier-0
+// ring (xp<500) has force=1 → delta=1.0. A Tier-1 ring (xp>=500) has force=2 →
+// delta=0.5 (unchanged from the pre-#512 `1/2^tier` formula at this exact tier —
+// force(T1)=2=2^1 — so this scenario is not a regression signal for the #512
+// change; it only distinguishes at Tier >= 2, see tests/unit/tiers-force.test.ts).
 // This test seeds the defender's D2 ring to XP=500 (Tier-1 threshold) via the
 // test-only `set-ring-xp` route BEFORE the battle starts, so the BattleRoom seats
 // it with xp=500 from the DB. The defender then NEUTRAL-catches a FIRE attack with
@@ -290,7 +293,7 @@ test('Block gauge: Tier-1 D2 ring produces fractional delta ≈ 0.5 on NEUTRAL c
   }, { timeout: 4000 });
 
   const me = await readMe(defender);
-  // Tier-1 ring → delta = 1/2^1 = 0.5. The gauge is broadcast as float32, so
+  // Tier-1 ring → force = 2 → delta = 1/force = 0.5. The gauge is broadcast as float32, so
   // toBeCloseTo(0.5, 5) tolerates any float32 rounding at the 5th decimal place.
   expect(me.fireGauge).toBeCloseTo(0.5, 5);
   expect(me.hearts).toBe(3); // NEUTRAL catch loses no heart

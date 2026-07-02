@@ -3,7 +3,7 @@ import { ElementEnum } from '../../../shared/types';
 import { Ring } from '../schemas/Ring';
 import { resolve, Relationship } from './ElementSystem';
 import { componentsOf, triangleComponentsOf } from './Fusions';
-import { tierForXp } from './Tiers';
+import { force } from './Tiers';
 import { consumeUse, setUses } from './ringHelpers';
 
 const { FIRE, WATER, WOOD, SHADOW } = ElementEnum;
@@ -59,8 +59,8 @@ function trackedComponentsOf(el: number): number[] {
  * - BLOCK / PARRY: the defender pays exactly 1 use.
  *     WEAK   → −1 heart, no gauge movement (a weak catch moves no gauge).
  *     NEUTRAL→ case 2 block gauge: each tracked parent of the DEFENDER fills its
- *              gauge by `delta = 1 / 2^tierForXp(defender.xp)` — full rate per
- *              tracked parent (Tier-2 Steam → Fire +0.250 AND Water +0.250).
+ *              gauge by `delta = 1 / force(defender.xp)` — full rate per
+ *              tracked parent (Tier-2 Steam → Fire +0.500 AND Water +0.500).
  *     STRONG + BLOCK → the NEUTRAL block deltas PLUS case-3 decrements: for each
  *              tracked parent of the defender that strong-beats the attack's primary
  *              element, push the beaten gauge(s) to blockedGaugeElement.
@@ -112,8 +112,8 @@ export function resolveBlock(
     // A weak catch — wrong element. Costs a heart, moves no gauge (§7.1).
     r.defenderHeartLost = true;
   } else if (rel === 'NEUTRAL') {
-    // Case 2 — block gauge: full tier-reduced rate per tracked parent.
-    const delta = 1 / Math.pow(2, tierForXp(defenderRing.xp));
+    // Case 2 — block gauge: full force-reduced rate per tracked parent.
+    const delta = 1 / force(defenderRing.xp);
     for (const el of defenderTracked) r.blockGaugeDeltas.push({ element: el, delta });
   } else {
     // STRONG.
@@ -125,7 +125,7 @@ export function resolveBlock(
       r.volleyedElement = triComps.length > 0 ? triComps[0] : 0;
     } else {
       // STRONG + BLOCK — case 2 deltas PLUS case 3 decrements.
-      const delta = 1 / Math.pow(2, tierForXp(defenderRing.xp));
+      const delta = 1 / force(defenderRing.xp);
       for (const el of defenderTracked) r.blockGaugeDeltas.push({ element: el, delta });
       for (const comp of defenderTracked) {
         const dec = STRONG_BLOCK_DECREMENT[comp]?.[attackPrimary];

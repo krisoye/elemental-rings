@@ -87,6 +87,50 @@ describe('naturalMaxUses — 3 + tier', () => {
 });
 
 // ---------------------------------------------------------------------------
+// #512 adversarial: server/src/game/Tiers.ts became a thin re-export shim
+// over the new shared/tiers.ts (moved verbatim, "byte-identical logic" per the
+// spec). Acceptance criteria requires "tests/unit/Tiers.test.ts passes
+// unchanged" — the tests above prove behavioral parity implicitly by still
+// passing. This block proves something stronger and more brittle-to-regress:
+// that the shim is a true re-export (referential identity), not a
+// copy-pasted fork that happens to behave the same today.
+// ---------------------------------------------------------------------------
+
+describe('Tiers.ts re-export shim — referentially identical to shared/tiers.ts (#512 adversarial)', () => {
+  test('tierStartXp/tierForXp/naturalMaxUses imported from server/src/game/Tiers are the SAME function objects as shared/tiers exports', async () => {
+    // adversarial #512: a future "helpful" edit that copy-pastes the tier math
+    // back into Tiers.ts instead of re-exporting would fork the two copies
+    // silently — behavioral tests would still pass today but the fork could
+    // drift on the next change to either file. Function identity catches this
+    // even when behavior still coincidentally matches.
+    const shared = await import('../../shared/tiers');
+    expect(tierStartXp).toBe(shared.tierStartXp);
+    expect(tierForXp).toBe(shared.tierForXp);
+    expect(naturalMaxUses).toBe(shared.naturalMaxUses);
+  });
+
+  test('force and forceFromTier1 are also re-exported from server/src/game/Tiers — every existing "from \'./Tiers\'" import site resolves unchanged', async () => {
+    const serverTiers = await import('../../server/src/game/Tiers');
+    const shared = await import('../../shared/tiers');
+    expect(serverTiers.force).toBe(shared.force);
+    expect(serverTiers.forceFromTier1).toBe(shared.forceFromTier1);
+  });
+
+  test('the shim exports EXACTLY the 5 documented names — no local addition has snuck into the "thin re-export" file (#512 Phase 2 impl-aware)', async () => {
+    // adversarial #512: reading the actual Tiers.ts source confirms it is a
+    // single `export { ... } from '../../../shared/tiers'` statement today.
+    // If a future change added even one locally-defined function or constant
+    // to Tiers.ts (breaking the "thin shim" contract the move was supposed to
+    // establish), this test catches the surface-area drift even though every
+    // individual re-exported function would still behave correctly.
+    const serverTiers = await import('../../server/src/game/Tiers');
+    expect(Object.keys(serverTiers).sort()).toEqual(
+      ['force', 'forceFromTier1', 'naturalMaxUses', 'tierForXp', 'tierStartXp'].sort(),
+    );
+  });
+});
+
+// ---------------------------------------------------------------------------
 // awardXP natural-crossing + boot migration. EPIC #173 C2/C8.
 //
 // db.ts is a process-wide singleton keyed off DB_PATH, so we set DB_PATH BEFORE

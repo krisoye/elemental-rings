@@ -321,8 +321,8 @@ export interface BlockResult {
   hitGaugeElements: number[];
   // blockGaugeDeltas — the DEFENDING ring's gauge fills on a NEUTRAL/STRONG block or
   //   parry (case 2). One entry per tracked-element (FIRE/WATER/WOOD/SHADOW) component
-  //   of the defender ring, each `delta = 1 / 2^tierForXp(defender.xp)` — full
-  //   tier-reduced rate per tracked parent (GDD §7.1). Empty when the defense did not
+  //   of the defender ring, each `delta = 1 / def_force` — full force-reduced rate
+  //   per tracked parent (GDD §7.1). Empty when the defense did not
   //   catch, on a WEAK catch (no gauge movement), or when the defender carries no
   //   tracked component (Wind/Earth/Dust).
   blockGaugeDeltas: { element: number; delta: number }[];

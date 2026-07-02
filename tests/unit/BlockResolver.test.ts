@@ -1,9 +1,11 @@
 import { describe, test, expect } from 'vitest';
+import fs from 'fs';
+import path from 'path';
 import { classifyTiming, resolveBlock } from '../../server/src/game/BlockResolver';
 import { Ring } from '../../server/src/schemas/Ring';
 import { ElementEnum } from '../../shared/types';
 import { fusionParents } from '../../server/src/game/ElementSystem';
-import { tierStartXp } from '../../server/src/game/Tiers';
+import { tierStartXp, force } from '../../server/src/game/Tiers';
 
 const { FIRE, WATER, EARTH, WIND, WOOD, TIDAL, STEAM } = ElementEnum;
 
@@ -84,14 +86,15 @@ describe('resolveBlock — NEUTRAL block (case 2 gauge)', () => {
     expect(r.blockGaugeDeltas).toEqual([{ element: FIRE, delta: 1.0 }]);
   });
 
-  test('Tier-2 STEAM defender NEUTRAL block → [{FIRE, 0.25}, {WATER, 0.25}] (full rate per parent)', () => {
-    // Steam vs Steam attacker is fused-vs-fused → NEUTRAL. Tier 2 → delta 1/2^2 = 0.25.
+  test('Tier-2 STEAM defender NEUTRAL block → [{FIRE, 0.5}, {WATER, 0.5}] (full rate per parent)', () => {
+    // Steam vs Steam attacker is fused-vs-fused → NEUTRAL. tierForXp(1500)=2 →
+    // force = forceFromTier1(3) = 2 → delta 1/2 = 0.5.
     const def = makeRing(STEAM, 3, tierStartXp(2));
     const r = resolveBlock(makeRing(STEAM, 3), def, 'BLOCK');
     expect(r.relationship).toBe('NEUTRAL');
     expect(r.blockGaugeDeltas).toEqual([
-      { element: FIRE, delta: 0.25 },
-      { element: WATER, delta: 0.25 },
+      { element: FIRE, delta: 0.5 },
+      { element: WATER, delta: 0.5 },
     ]);
   });
 
@@ -266,15 +269,18 @@ describe('resolveBlock — WEAK catch invariants (C5 adversarial)', () => {
   });
 });
 
-describe('resolveBlock — fractional tier deltas (C5/C6 regression)', () => {
-  // C5 mandates delta = 1/2^tier per tracked parent.
-  // Tier-1 base ring → delta 0.5; Tier-2 Steam → each parent delta 0.25.
+describe('resolveBlock — fractional force deltas (C5/C6 regression, re-derived #512)', () => {
+  // #512 mandates delta = 1/force(defender.xp) per tracked parent.
+  // Tier-1 base ring → force 2 → delta 0.5 (unchanged from the old 1/2^tier
+  // formula, since force(T1)=2=2^1). Tier-2 Steam → force 2 → each parent
+  // delta 0.5 (changed from the old 1/2^tier value of 0.25, since
+  // force(T2)=2 != 2^2=4).
   // The Tier-2 Steam case is already in the NEUTRAL block suite above; this
   // suite adds Tier-1 base and Tier-2 STEAM strong-block to complete the tier
   // ladder and lock in the formula.
 
   test('Tier-1 WATER base neutral block → blockGaugeDeltas [{WATER, 0.5}]', () => {
-    // Tier 1 starts at 500 XP; delta = 1/2^1 = 0.5.
+    // Tier 1 starts at 500 XP; tierForXp=1 → force = forceFromTier1(2) = 2 → delta 0.5.
     const def = makeRing(WATER, 3, tierStartXp(1));
     // WIND attack vs WATER defense → NEUTRAL (Wind is always neutral).
     const r = resolveBlock(makeRing(WIND, 3), def, 'BLOCK');
@@ -282,19 +288,188 @@ describe('resolveBlock — fractional tier deltas (C5/C6 regression)', () => {
     expect(r.blockGaugeDeltas).toEqual([{ element: WATER, delta: 0.5 }]);
   });
 
-  test('Tier-2 STEAM strong-blocks WOOD → case-2 [{FIRE,0.25},{WATER,0.25}] AND case-3 [WOOD,SHADOW]', () => {
+  test('Tier-2 STEAM strong-blocks WOOD → case-2 [{FIRE,0.5},{WATER,0.5}] AND case-3 [WOOD,SHADOW]', () => {
     // WOOD attack vs STEAM defense: STEAM has FIRE+WATER parents. FIRE strongly
-    // beats Wood (fusionBeats), so the defense is STRONG. Tier 2 → delta 0.25 each.
+    // beats Wood (fusionBeats), so the defense is STRONG. tierForXp(1500)=2 →
+    // force = forceFromTier1(3) = 2 → delta 0.5 each.
     // Case 3: FIRE beats WOOD → WOOD+SHADOW decremented.
     const def = makeRing(STEAM, 3, tierStartXp(2));
     const r = resolveBlock(makeRing(WOOD, 3), def, 'BLOCK');
     expect(r.relationship).toBe('STRONG');
     expect(r.blockGaugeDeltas).toEqual([
-      { element: FIRE, delta: 0.25 },
-      { element: WATER, delta: 0.25 },
+      { element: FIRE, delta: 0.5 },
+      { element: WATER, delta: 0.5 },
     ]);
     expect(r.blockedGaugeElement.sort()).toEqual([ElementEnum.WOOD, ElementEnum.SHADOW].sort());
     expect(r.defenderHeartLost).toBe(false);
+  });
+});
+
+describe('resolveBlock — 1/force gauge dampening: old vs new formula divergence (#512 adversarial)', () => {
+  // #512: the case-2 (NEUTRAL) and case-2-within-STRONG+BLOCK gauge delta
+  // changed from `1/2^tierForXp(xp)` to `1/force(xp)`. The two formulas
+  // coincide at tierForXp 0 and 1 (force(T0)=1=2^0, force(T1)=2=2^1) but
+  // provably diverge from tierForXp 2 onward. These tests lock in BOTH halves
+  // of that claim: the "unchanged" floor (regression-proofing against a future
+  // "cleanup" that reverts to the exponential formula without any test
+  // failing) and the "changed" ceiling (proving the new formula actually took
+  // effect, not just that some fraction was returned).
+
+  test('tierForXp 0 delta is UNCHANGED (1.0) — force(0)=1 coincides with the old 2^0', () => {
+    const def = makeRing(WATER, 3, tierStartXp(0));
+    const r = resolveBlock(makeRing(WIND, 3), def, 'BLOCK');
+    const oldFormulaDelta = 1 / Math.pow(2, 0);
+    expect(r.blockGaugeDeltas).toEqual([{ element: WATER, delta: 1 / force(tierStartXp(0)) }]);
+    expect(r.blockGaugeDeltas[0].delta).toBe(oldFormulaDelta); // still 1.0 under both formulas
+  });
+
+  test('tierForXp 1 delta is UNCHANGED (0.5) — force(T1)=2 coincides with the old 2^1', () => {
+    const def = makeRing(WATER, 3, tierStartXp(1));
+    const r = resolveBlock(makeRing(WIND, 3), def, 'BLOCK');
+    const oldFormulaDelta = 1 / Math.pow(2, 1);
+    expect(r.blockGaugeDeltas).toEqual([{ element: WATER, delta: 1 / force(tierStartXp(1)) }]);
+    expect(r.blockGaugeDeltas[0].delta).toBe(oldFormulaDelta); // still 0.5 under both formulas
+  });
+
+  test('tierForXp 2 defender fills at 0.50 (new 1/force), NOT the old 0.25 (1/2^tier) — the exact bite point the spec calls out', () => {
+    // adversarial #512: if BlockResolver regressed to 1/Math.pow(2, tier) this
+    // assertion fails at 0.25, proving the formula switch actually happened.
+    const def = makeRing(WATER, 3, tierStartXp(2));
+    const r = resolveBlock(makeRing(WIND, 3), def, 'BLOCK');
+    const oldFormulaDelta = 1 / Math.pow(2, 2); // 0.25 — must NOT be what we observe
+    expect(r.blockGaugeDeltas).toEqual([{ element: WATER, delta: 0.5 }]);
+    expect(r.blockGaugeDeltas[0].delta).not.toBe(oldFormulaDelta);
+  });
+
+  test('tierForXp 3 defender fills at 1/3 (force 3), the old formula would have given 1/8 = 0.125', () => {
+    const def = makeRing(WATER, 3, tierStartXp(3));
+    const r = resolveBlock(makeRing(WIND, 3), def, 'BLOCK');
+    const oldFormulaDelta = 1 / Math.pow(2, 3);
+    expect(r.blockGaugeDeltas[0].delta).toBeCloseTo(1 / 3, 10);
+    expect(r.blockGaugeDeltas[0].delta).not.toBe(oldFormulaDelta);
+  });
+
+  test('tierForXp 5 defender fills at 0.25 (force 4), the old formula would have given 1/32 = 0.03125', () => {
+    const def = makeRing(WATER, 3, tierStartXp(5));
+    const r = resolveBlock(makeRing(WIND, 3), def, 'BLOCK');
+    const oldFormulaDelta = 1 / Math.pow(2, 5);
+    expect(r.blockGaugeDeltas).toEqual([{ element: WATER, delta: 0.25 }]);
+    expect(r.blockGaugeDeltas[0].delta).not.toBe(oldFormulaDelta);
+  });
+
+  test('STRONG+BLOCK at tierForXp 2 applies the SAME 1/force divisor as NEUTRAL — the divisor change must land on BOTH branches', () => {
+    // adversarial #512: NEUTRAL and STRONG+BLOCK are two separate code
+    // branches in BlockResolver.ts, each with its own `const delta = ...`
+    // line. This test would still pass if only the NEUTRAL branch were fixed
+    // and STRONG+BLOCK were accidentally left on the old formula, UNLESS we
+    // assert the observed value is not what the old formula would produce.
+    const def = makeRing(FIRE, 3, tierStartXp(2)); // WOOD attacks FIRE → FIRE is STRONG
+    const r = resolveBlock(makeRing(WOOD, 3), def, 'BLOCK');
+    const oldFormulaDelta = 1 / Math.pow(2, 2); // 0.25
+    expect(r.relationship).toBe('STRONG');
+    expect(r.blockGaugeDeltas).toEqual([{ element: FIRE, delta: 0.5 }]);
+    expect(r.blockGaugeDeltas[0].delta).not.toBe(oldFormulaDelta);
+    expect(r.blockedGaugeElement.sort()).toEqual([ElementEnum.WOOD, ElementEnum.SHADOW].sort());
+  });
+
+  test('divide-by-zero guard: a brand-new (xp=0) defender ring never produces an Infinity or NaN gauge delta on its very first block', () => {
+    // adversarial #512: xp=0 is the game's actual floor, not a theoretical
+    // edge — every ring starts here and can be blocked before earning any XP.
+    const def = makeRing(WATER, 3, 0);
+    const r = resolveBlock(makeRing(WIND, 3), def, 'BLOCK');
+    expect(Number.isFinite(r.blockGaugeDeltas[0].delta)).toBe(true);
+    expect(r.blockGaugeDeltas[0].delta).toBeGreaterThan(0);
+  });
+});
+
+describe('BlockResolver.ts — no HEART_LOSS_CAP or clamp introduced alongside the force divisor (#512 adversarial)', () => {
+  test('source contains no HEART_LOSS_CAP constant, and the gauge delta is never clamped via Math.min', () => {
+    // adversarial #512: EPIC decision 1 explicitly forbids adding any
+    // heart-loss cap or clamp in this change. A well-intentioned "safety
+    // clamp" added later on the new, larger 1/force deltas would silently
+    // violate that EPIC contract without any behavioral test catching it,
+    // since a clamp would only ever narrow the range of values observed.
+    const src = fs.readFileSync(
+      path.join(__dirname, '../../server/src/game/BlockResolver.ts'),
+      'utf8',
+    );
+    expect(src).not.toMatch(/HEART_LOSS_CAP/);
+    expect(src).not.toMatch(/Math\.min\(\s*delta/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Phase 2 (implementation-aware) — targets the actual branch structure now
+// visible in the finished BlockResolver.ts: `1 / force(defenderRing.xp)` is
+// written as TWO separate literal expressions (one in the `rel === 'NEUTRAL'`
+// branch, one inside the STRONG-but-not-PARRY branch), and is NOT evaluated
+// at all inside the WEAK branch or the STRONG+PARRY (case 4) branch.
+// ---------------------------------------------------------------------------
+
+describe('resolveBlock — NEUTRAL and STRONG+BLOCK branches stay numerically in sync (#512 Phase 2 impl-aware)', () => {
+  test('at every tested defender tier, a NEUTRAL block and a STRONG block produce the identical per-parent delta for identical defender xp', () => {
+    // BlockResolver.ts has TWO independent `const delta = 1 / force(defenderRing.xp);`
+    // lines — one per branch, not a shared helper. A future edit to only one
+    // of them (e.g. hand-tuning the STRONG+BLOCK case for "balance") would
+    // silently desync the two relationship outcomes without any single-branch
+    // test catching it. Compare WATER-vs-WIND (NEUTRAL) against WATER-vs-FIRE
+    // (STRONG, Water beats Fire) at identical defender xp across several tiers.
+    for (const xp of [0, tierStartXp(1), tierStartXp(2), tierStartXp(3), tierStartXp(5)]) {
+      const neutralDef = makeRing(WATER, 3, xp);
+      const neutralResult = resolveBlock(makeRing(WIND, 3), neutralDef, 'BLOCK');
+      expect(neutralResult.relationship).toBe('NEUTRAL');
+
+      const strongDef = makeRing(WATER, 3, xp);
+      const strongResult = resolveBlock(makeRing(FIRE, 3), strongDef, 'BLOCK');
+      expect(strongResult.relationship).toBe('STRONG');
+
+      expect(strongResult.blockGaugeDeltas[0].delta).toBe(neutralResult.blockGaugeDeltas[0].delta);
+    }
+  });
+});
+
+describe('resolveBlock — WEAK and STRONG+PARRY branches never evaluate force(xp) (#512 Phase 2 impl-aware)', () => {
+  test('a WEAK catch with a NaN-xp defender still resolves correctly — force() is unreachable on this code path', () => {
+    // adversarial #512 (impl-aware): the actual control flow in
+    // BlockResolver.ts shows `1 / force(defenderRing.xp)` only inside the
+    // `rel === 'NEUTRAL'` branch and the STRONG-but-not-PARRY branch. The WEAK
+    // branch only sets defenderHeartLost and never reads defenderRing.xp. A
+    // corrupted/NaN xp on a WEAK-catching ring must not derail the result —
+    // if force() were accidentally hoisted above the WEAK check, this NaN
+    // would leak into a NaN gauge delta.
+    const def = makeRing(WOOD, 3, NaN); // WOOD blocking FIRE → WEAK
+    const r = resolveBlock(makeRing(FIRE, 3), def, 'BLOCK');
+    expect(r.relationship).toBe('WEAK');
+    expect(r.defenderHeartLost).toBe(true);
+    expect(r.blockGaugeDeltas).toEqual([]);
+  });
+
+  test('a STRONG parry with a NaN-xp defender still rallies correctly — case 4 never computes a force-based delta', () => {
+    // adversarial #512 (impl-aware): the STRONG+PARRY branch (case 4) takes
+    // the rallyContinues/clearAllGauges path and returns before the
+    // `1 / force(...)` expression that only exists in the STRONG-but-not-PARRY
+    // else-branch. A NaN xp here must not contaminate the rally result.
+    const def = makeRing(WATER, 3, NaN); // WATER parries FIRE → STRONG parry
+    const r = resolveBlock(makeRing(FIRE, 3), def, 'PARRY');
+    expect(r.relationship).toBe('STRONG');
+    expect(r.rallyContinues).toBe(true);
+    expect(r.clearAllGauges).toBe(true);
+    expect(r.blockGaugeDeltas).toEqual([]);
+  });
+});
+
+describe('resolveBlock — realistic Ring.xp ceiling: uint32, not MAX_SAFE_INTEGER (#512 Phase 2 impl-aware)', () => {
+  test('a defender at the maximum representable uint32 xp (2**32 - 1) still resolves a finite, positive gauge delta', () => {
+    // server/src/schemas/Ring.ts declares `@type('uint32') xp: number` — this
+    // is the actual ceiling the Colyseus schema will ever let defenderRing.xp
+    // reach in production, not Number.MAX_SAFE_INTEGER (the pure-function
+    // bound the tiers-force.test.ts Phase-1 pass probed).
+    const UINT32_MAX = 2 ** 32 - 1;
+    const def = makeRing(WATER, 3, UINT32_MAX);
+    const r = resolveBlock(makeRing(WIND, 3), def, 'BLOCK');
+    expect(r.relationship).toBe('NEUTRAL');
+    expect(Number.isFinite(r.blockGaugeDeltas[0].delta)).toBe(true);
+    expect(r.blockGaugeDeltas[0].delta).toBeGreaterThan(0);
   });
 });
 
