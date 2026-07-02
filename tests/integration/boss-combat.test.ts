@@ -858,3 +858,81 @@ describe('#328 — adversarial / boundary: grant path guards', () => {
     expect(matchById?.element).toBe(ElementEnum.BLOOM);
   }, 20000);
 });
+
+// ---------------------------------------------------------------------------
+// #513 — QA Phase 1 (spec-driven adversarial): the old pre-migration boolean
+// heart-loss field was retyped to the defenderHeartsLost integer count.
+// BattleRoom.resolveOrb's heart-application went from a single boolean `if`
+// check to `for (let i = 0; i < result.defenderHeartsLost; i++)`. These tests
+// probe the loop BOUND through real, observable hearts state (not just the
+// resolver's return value, which is already unit-tested in
+// BlockResolver.test.ts) — a count=0 exchange must run zero absorb/decrement
+// iterations, and a count=1 exchange must run exactly one (not zero, not two).
+// ---------------------------------------------------------------------------
+
+describe('#513 adversarial — heart-loss decrement loop bound (count=0 vs count=1)', () => {
+  test('a NEUTRAL block (defenderHeartsLost=0) leaves the human defender hearts completely untouched — the loop runs zero iterations', async () => {
+    // Boss AI attacks first (joinBoss seats it as currentAttackerId). Force the
+    // human's d2 ring to EARTH — Earth defense is always NEUTRAL regardless of
+    // the boss's attack element, so any BLOCK-timed catch guarantees
+    // defenderHeartsLost = 0 without needing to control the boss's own choice.
+    const { room, human } = await joinBoss('forest_bogwood_warden', 'DEFENSIVE', 555, {
+      aiHearts: 99, // boss never dies mid-test
+    });
+    const hps = room.state.players.get(human.sessionId);
+    hps.d2.element = ElementEnum.EARTH;
+    hps.d2.isFusion = false;
+    hps.d2.fusionParents.clear();
+    const heartsBefore = hps.hearts;
+
+    let captured: any = null;
+    human.onMessage('exchangeResult', (m: any) => {
+      if (!captured) captured = m;
+    });
+
+    // Wait for the boss's attack to open a defense window, then press d2 well
+    // inside the BLOCK band (BLOCK_WINDOW_MS - 15, matching the convention used
+    // for BLOCK-timed presses in tests/integration/double-attack.test.ts).
+    for (let i = 0; i < 60 && room.state.phase !== 'DEFEND_WINDOW'; i++) await sleep(50);
+    expect(room.state.phase).toBe('DEFEND_WINDOW');
+    const impact: number = room.impactTime;
+    await sleep(Math.max(0, impact + (BLOCK_WINDOW_MS - 15) - Date.now()));
+    human.send('submitDefense', { slot: 'd2', pressTime: Date.now() });
+    await sleep(BLOCK_WINDOW_MS + 400);
+
+    expect(captured).not.toBeNull();
+    expect(captured.relationship).toBe('NEUTRAL');
+    expect(captured.defenderHeartsLost).toBe(0);
+    // The tell: if the `for (i < result.defenderHeartsLost)` loop had an
+    // off-by-one (e.g. `<=` instead of `<`), a 0-count exchange would still
+    // decrement once even though the resolver said 0.
+    expect(hps.hearts).toBe(heartsBefore);
+  }, 15000);
+
+  test('an uncontested NO_BLOCK hit (defenderHeartsLost=1) decrements the human defender hearts by exactly 1 — not 0, not 2', async () => {
+    const { room, human } = await joinBoss('forest_bogwood_warden', 'DEFENSIVE', 777, {
+      aiHearts: 99,
+    });
+    const hps = room.state.players.get(human.sessionId);
+    const heartsBefore = hps.hearts;
+    const aiHeartsBefore = room.state.players.get('AI').hearts;
+
+    let captured: any = null;
+    human.onMessage('exchangeResult', (m: any) => {
+      if (!captured) captured = m;
+    });
+
+    // Never defend — the boss's opening attack resolves as an uncontested NO_BLOCK hit.
+    await waitForResolve();
+
+    expect(captured).not.toBeNull();
+    expect(captured.timing).toBe('NO_BLOCK');
+    expect(captured.defenderHeartsLost).toBe(1);
+    expect(hps.hearts).toBe(heartsBefore - 1);
+    // #513 adversarial: attackerHeartsLost is always 0 (forward-compat placeholder,
+    // never wired up by BlockResolver) — the boss's OWN hearts (it is the attacker
+    // here) must be completely unaffected by landing a hit, proving the
+    // attacker-side `for (i < result.attackerHeartsLost)` loop never runs.
+    expect(room.state.players.get('AI').hearts).toBe(aiHeartsBefore);
+  }, 15000);
+});

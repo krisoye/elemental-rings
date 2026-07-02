@@ -232,6 +232,8 @@ describe('Double attack: block one, parry two', () => {
   test('orb 1 BLOCK (EARTH/NEUTRAL), orb 2 ... resolves independently (two exchangeResults)', async () => {
     const { room, c1, c2 } = await joinBattle();
     const { attacker, defender } = setupDoubleAttacker(room, c1, c2);
+    const dps = room.state.players.get(defender.sessionId);
+    const heartsBefore = dps.hearts;
     const results = collect(defender, 'exchangeResult');
     const cancels = collect(defender, 'doubleAttackCancelled');
 
@@ -261,6 +263,14 @@ describe('Double attack: block one, parry two', () => {
     expect(cancels.length).toBe(0);
     // Orb 1 was a NEUTRAL catch (no heart lost on a neutral block).
     expect(results[0].defenderHeartsLost).toBe(0);
+    // #513 adversarial: orb 2 (EARTH catch again) is ALSO a NEUTRAL/0-count
+    // exchange. An off-by-one loop bound (e.g. `<=` instead of `<` in
+    // BattleRoom's `for (i < result.defenderHeartsLost)` decrement loop) would
+    // silently decrement on a 0-count exchange — two independent 0-count orbs
+    // make the bug visible twice instead of masking as "off by one, who'd
+    // notice", and the final hearts total is the tell.
+    expect(results[1].defenderHeartsLost).toBe(0);
+    expect(dps.hearts).toBe(heartsBefore);
   });
 });
 
@@ -288,6 +298,33 @@ describe('Double attack: KO on orb 1', () => {
     await sleep(TELEGRAPH_MS + 300);
     expect(results.length).toBe(1);
     expect(room.state.phase).toBe('ENDED');
+  });
+});
+
+describe('#513 adversarial — attackerHeartsLost forward-compat placeholder never fires', () => {
+  test('a lethal orb-1 KO on the defender never touches the ATTACKER hearts (attackerHeartsLost loop runs zero times even on the ending exchange)', async () => {
+    // #513 adversarial: BlockResolver always sets attackerHeartsLost=0 (a
+    // forward-compat placeholder for future rally counter-damage — see
+    // shared/types.ts BlockResult doc-comment). BattleRoom's
+    // `for (i < result.attackerHeartsLost)` loop must never execute, even on
+    // the single most dramatic exchange in a duel (the one that ends it) —
+    // that is exactly the kind of high-stakes branch where a careless future
+    // "counter damage" wire-up would first get exercised and could slip past
+    // review if only checked on quiet, non-KO exchanges.
+    const { room, c1, c2 } = await joinBattle();
+    const { attacker, defender } = setupDoubleAttacker(room, c1, c2);
+    const dps = room.state.players.get(defender.sessionId);
+    dps.hearts = 1; // orb-1 uncontested hit is lethal
+    const aps = room.state.players.get(attacker.sessionId);
+    const attackerHeartsBefore = aps.hearts;
+
+    attacker.send('selectDoubleAttack', { first: 'a1', second: 'a2', gapMs: 200 });
+    await room.waitForNextPatch();
+    await sleep(TELEGRAPH_MS + BLOCK_WINDOW_MS + 300);
+
+    expect(room.state.phase).toBe('ENDED');
+    expect(room.state.winnerId).toBe(attacker.sessionId);
+    expect(aps.hearts).toBe(attackerHeartsBefore);
   });
 });
 

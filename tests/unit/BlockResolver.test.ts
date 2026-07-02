@@ -473,6 +473,97 @@ describe('resolveBlock — realistic Ring.xp ceiling: uint32, not MAX_SAFE_INTEG
   });
 });
 
+// ---------------------------------------------------------------------------
+// #513 — QA Phase 1 (spec-driven adversarial): the pre-migration boolean fields
+// were retyped to defenderHeartsLost/attackerHeartsLost integer counts.
+// Behavior-preserving migration — value range is exactly {0,1} today (force
+// scaling to N>1 lands in the next sub-issue, #514). These tests lock in the
+// integer-count contract and guard against the old boolean names resurfacing.
+// ---------------------------------------------------------------------------
+
+describe('resolveBlock — defenderHeartsLost/attackerHeartsLost integer-count invariants (#513 adversarial)', () => {
+  // #513 adversarial: the field was retyped boolean→number. A regression that
+  // reintroduces `true`/`false` (e.g. a careless `r.defenderHeartsLost = true as any`)
+  // would still pass loose `.toBe(1)`/`.toBe(0)` assertions in JS test runners that
+  // don't distinguish — vitest's toBe uses Object.is, which DOES distinguish 1
+  // from true, but this test makes the type contract explicit and central rather
+  // than incidental to five separate describe blocks above.
+  test.each([
+    ['NO_BLOCK uncontested hit', () => resolveBlock(makeRing(FIRE, 3), makeRing(WATER, 3), 'NO_BLOCK')],
+    ['MISTIME uncontested hit', () => resolveBlock(makeRing(FIRE, 3), makeRing(WATER, 3), 'MISTIME')],
+    ['WEAK catch (BLOCK timing)', () => resolveBlock(makeRing(FIRE, 3), makeRing(WOOD, 3), 'BLOCK')],
+    ['WEAK catch (PARRY timing)', () => resolveBlock(makeRing(FIRE, 3), makeRing(WOOD, 3), 'PARRY')],
+    ['NEUTRAL block', () => resolveBlock(makeRing(WIND, 3), makeRing(WATER, 3), 'BLOCK')],
+    ['STRONG block', () => resolveBlock(makeRing(FIRE, 3), makeRing(WATER, 3), 'BLOCK')],
+    ['STRONG parry (case 4)', () => resolveBlock(makeRing(FIRE, 3), makeRing(WATER, 3), 'PARRY')],
+  ] as const)('%s → defenderHeartsLost is a strict {0,1} number, never boolean-like', (_label, run) => {
+    const r = run();
+    expect(typeof r.defenderHeartsLost).toBe('number');
+    expect(Number.isInteger(r.defenderHeartsLost)).toBe(true);
+    expect([0, 1]).toContain(r.defenderHeartsLost);
+  });
+
+  // #513 adversarial: attackerHeartsLost is a forward-compat placeholder (future
+  // rally counter-damage) — BlockResolver never wires it to anything today. A
+  // future edit that accidentally sets it on the rally/case-4 branch (the most
+  // plausible place someone would add "counter damage") must fail this guard.
+  test.each([
+    ['NO_BLOCK', () => resolveBlock(makeRing(FIRE, 3), makeRing(WATER, 3), 'NO_BLOCK')],
+    ['WEAK catch', () => resolveBlock(makeRing(FIRE, 3), makeRing(WOOD, 3), 'BLOCK')],
+    ['NEUTRAL block', () => resolveBlock(makeRing(WIND, 3), makeRing(WATER, 3), 'BLOCK')],
+    ['STRONG block', () => resolveBlock(makeRing(FIRE, 3), makeRing(WATER, 3), 'BLOCK')],
+    ['STRONG parry / rally (case 4 — the most plausible future wire-up site)', () =>
+      resolveBlock(makeRing(FIRE, 3), makeRing(WATER, 3), 'PARRY')],
+  ] as const)('%s → attackerHeartsLost stays exactly 0', (_label, run) => {
+    const r = run();
+    expect(r.attackerHeartsLost).toBe(0);
+  });
+});
+
+describe('#513 structural regression guard — old boolean field names purged from the entire codebase', () => {
+  // #513 acceptance criterion: the pre-migration boolean fields ("defender" +
+  // "HeartLost" / "attacker" + "HeartLost", no "s" before "Lost" — distinct from
+  // the surviving "...HeartsLost" count fields) must appear nowhere in server/,
+  // client/, shared/, or tests/. This walks the real directory tree rather than
+  // trusting any single file's diff, so a missed call site anywhere (including a
+  // file nobody thought to check) fails loudly instead of silently shipping a
+  // stale boolean read.
+  //
+  // The needles are built via concatenation (not a contiguous literal) so this
+  // guard test's OWN source — which must describe what it searches for — can
+  // never accidentally match itself and produce a false failure.
+  const OLD_DEFENDER_FIELD = ['defender', 'Heart', 'Lost'].join('');
+  const OLD_ATTACKER_FIELD = ['attacker', 'Heart', 'Lost'].join('');
+  const SELF_FILE = path.resolve(__filename);
+
+  function walkFiles(dir: string, exts: string[], out: string[] = []): string[] {
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+      if (entry.name === 'node_modules' || entry.name === 'dist' || entry.name.startsWith('.')) continue;
+      const full = path.join(dir, entry.name);
+      if (entry.isDirectory()) walkFiles(full, exts, out);
+      else if (exts.some((e) => entry.name.endsWith(e))) out.push(full);
+    }
+    return out;
+  }
+
+  test('the old boolean field names appear in zero files under server/, client/, shared/, tests/', () => {
+    const root = path.join(__dirname, '../..');
+    const offenders: string[] = [];
+    for (const d of ['server', 'client', 'shared', 'tests']) {
+      const full = path.join(root, d);
+      if (!fs.existsSync(full)) continue;
+      for (const file of walkFiles(full, ['.ts', '.tsx'])) {
+        if (path.resolve(file) === SELF_FILE) continue; // this guard's own needles would self-match
+        const content = fs.readFileSync(file, 'utf8');
+        if (content.includes(OLD_DEFENDER_FIELD) || content.includes(OLD_ATTACKER_FIELD)) {
+          offenders.push(path.relative(root, file));
+        }
+      }
+    }
+    expect(offenders).toEqual([]);
+  });
+});
+
 // A fusion ring is a single compound element: 1 heart per use, no per-component
 // heart loss, fused-vs-fused is always NEUTRAL.
 describe('resolveBlock — compound fusion behaviour', () => {
