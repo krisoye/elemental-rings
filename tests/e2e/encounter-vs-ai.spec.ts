@@ -729,12 +729,26 @@ test('#532 adversarial: driveAiDuel forfeit branch only fires once BOTH a1 and a
 });
 
 // #532 adversarial (implementation-aware): seatPlayer's `overrides?.uses`
-// (BattleRoom.ts ~L586) applies uniformly to EVERY combat slot key, not just
-// the defense pair a caller reaching for "aiUses" to weaken defense-only might
-// expect. This is a private path neither scenario 3/4 nor driveAiDuel's
-// docstring exercises. Checked at seat time (no duel driven) so a genuinely
-// unattack-capable AI can't hang the test.
-test('#532 adversarial: aiUses:0 zeroes ALL of the AIs combat rings at seat time (attack AND defense), not just defense', async ({ browser }) => {
+// (BattleRoom.ts ~L586) applies uniformly to EVERY combat slot key at seat
+// time, INCLUDING the attack pair — but that seat-time value is not what any
+// E2E client can ever actually observe for a1/a2. Traced empirically: with
+// the AI's own spirit pool > 0 (computeNpcSpirit off a non-boss NPC yields a
+// nonzero pool even for a fresh seeded account), AIController.onPhaseEnter's
+// decideRecharge (AIPolicy.ts ~L382-388) treats "both attack rings depleted +
+// spirit available" as an UNCONDITIONAL forced recharge — fired BEFORE the
+// personality switch and BEFORE the cannot-attack-so-forfeit check, and
+// BEFORE any E2E round-trip can complete (E2E_FAST's 20ms think-delay beats
+// Playwright's page.evaluate latency). So a1 reads back already-restored
+// (currentUses=3), never 0, on every run — this is deterministic game logic
+// (§6.3), NOT a client-sync race; a first attempt to "fix" this by waiting
+// for a1 to settle to 0 hung forever, because that state is never reachable
+// from outside the room. The one genuinely reliable, externally-observable
+// property of aiUses:0 — the one boss-combat.test.ts and other E2E specs
+// actually depend on — is that the DEFENSE pair (d1/d2) stays extinguished:
+// decideRecharge's forced branch only ever restores an ATTACK ring, never
+// touches defense, so the AI remains permanently unable to block. That is
+// what this test locks in.
+test('#532 adversarial: aiUses:0 leaves the AIs DEFENSE rings (d1/d2) permanently extinguished, even though its own recharge policy restores an attack ring', async ({ browser }) => {
   const ctx = await browser.newContext();
   await seedAuthToken(ctx);
   const page = await ctx.newPage();
@@ -750,6 +764,14 @@ test('#532 adversarial: aiUses:0 zeroes ALL of the AIs combat rings at seat time
     { timeout: 5000 },
   );
 
+  // Let the AI's forced-recharge turn (fires within ~20ms in E2E_FAST) run to
+  // completion — signaled by the turn handing back to the human — so we read
+  // the SETTLED post-recharge state rather than an in-flight one.
+  await page.waitForFunction(
+    () => (window as any).__room?.state?.currentAttackerId === (window as any).__room?.sessionId,
+    { timeout: 5000 },
+  );
+
   const ai = await page.evaluate(() => {
     const room = (window as any).__room;
     const opp = room.state.players.get('AI');
@@ -757,7 +779,7 @@ test('#532 adversarial: aiUses:0 zeroes ALL of the AIs combat rings at seat time
       currentUses: opp[k].currentUses,
       isExtinguished: opp[k].isExtinguished,
     });
-    return { a1: slot('a1'), a2: slot('a2'), d1: slot('d1'), d2: slot('d2') };
+    return { d1: slot('d1'), d2: slot('d2') };
   });
 
   for (const [name, s] of Object.entries(ai)) {
