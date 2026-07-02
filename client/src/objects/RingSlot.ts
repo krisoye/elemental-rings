@@ -1,5 +1,5 @@
 import Phaser from 'phaser';
-import { RingCard, usePips } from './ui/RingCard';
+import { RingCard } from './ui/RingCard';
 import { force } from '../../shared/tiers';
 
 // Card dimensions. Height raised to 90px to fit five rows (slot label /
