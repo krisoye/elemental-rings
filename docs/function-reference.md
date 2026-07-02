@@ -425,20 +425,23 @@ export function resolveBlock(
   attackerRing: Ring,
   defenderRing: Ring | null,
   timing: 'PARRY' | 'BLOCK' | 'MISTIME' | 'NO_BLOCK',
+  hpForce: number,
 ): BlockResult
 ```
 
-Resolves a single exchange and returns a `BlockResult` (defined in `shared/types.ts`). `defenderRing` is null when the defender committed no ring; the exchange resolves as NO_BLOCK in that case.
+Resolves a single exchange and returns a `BlockResult` (defined in `shared/types.ts`). `defenderRing` is null when the defender committed no ring; the exchange resolves as NO_BLOCK in that case. `hpForce` (#514, Contract B) is the DEFENDER's heart-ring force — the mitigation divisor. `atkForce = force(attackerRing.xp)` and `defForce = force(defenderRing.xp)` are derived internally; only `hpForce` (which the resolver cannot derive) is passed by the caller (`resolveOrb`). Heart counts use an integer-safe ceil `ceilDiv(a, b) = Math.floor((a + b − 1) / b)`.
 
-**Outcome rules (four-case gauge model):**
+**Outcome rules (force-scaled heart loss + four-case gauge model):**
 
-| Timing | Relationship | Effect |
-|--------|-------------|--------|
-| NO_BLOCK / MISTIME | any | −1 defender heart; each tracked attacker component fills its gauge +1 (MISTIME burns 1 defender use). |
-| BLOCK / PARRY | WEAK | −1 defender heart; no gauge movement. |
-| BLOCK / PARRY | NEUTRAL | Defender pays 1 use; block gauge deltas: `1 / force(defender.xp)` per tracked defender component. |
-| BLOCK | STRONG | Neutral deltas PLUS case-3 decrements on the beaten gauge(s). |
-| PARRY | STRONG | Rally continues; all tracked gauges clear (`clearAllGauges = true`). |
+| Timing | Relationship | `defenderHeartsLost` | Gauge / rally effect |
+|--------|-------------|----------------------|----------------------|
+| NO_BLOCK / MISTIME | any | `max(1, ceilDiv(atkForce, hpForce))` | Each tracked attacker component fills its gauge +1 (MISTIME burns 1 defender use). |
+| BLOCK / PARRY | WEAK | `max(1, ceilDiv(atkForce, hpForce))` — defending ring's own force gives zero credit | No gauge movement. |
+| BLOCK / PARRY | NEUTRAL | `max(0, ceilDiv(max(0, atkForce − defForce), hpForce))` — Parry-Neutral identical to Block-Neutral | Defender pays 1 use; block gauge deltas `1 / force(defender.xp)` per tracked defender component. |
+| BLOCK | STRONG | `max(0, ceilDiv(max(0, atkForce − defForce), hpForce))` | Neutral deltas PLUS case-3 decrements on the beaten gauge(s). |
+| PARRY | STRONG | `0` | Rally continues; all tracked gauges clear (`clearAllGauges = true`). |
+
+No `HEART_LOSS_CAP` — only the per-formula `max(1, …)` / `max(0, …)` floors. Uncapped overflow (hearts → 0 in one exchange) is the intended one-shot-KO outcome.
 
 ---
 
@@ -916,7 +919,7 @@ export interface ExchangeResultPayload {
   attackerElements: number[]; // component elements (1 for base, 2 for fusion)
   timing: 'PARRY' | 'BLOCK' | 'MISTIME' | 'NO_BLOCK';
   relationship: 'STRONG' | 'NEUTRAL' | 'WEAK';
-  defenderHeartsLost: number; // #513 — pre-absorption count (0 or 1 today; may exceed 1 once force scaling lands). May differ from actual hearts lost when a boss passive absorbs.
+  defenderHeartsLost: number; // #514 — force-scaled pre-absorption count (may exceed 1). max(1, ceilDiv(atkForce, hpForce)) for no-block/mistime/weak; max(0, ceilDiv(max(0, atkForce−defForce), hpForce)) for neutral/strong-block. May differ from actual hearts lost when a boss passive absorbs the whole exchange (OQ-4).
   rallyContinues: boolean;
   volleyedElement: number;
 }
@@ -960,7 +963,7 @@ export interface WonRingPayload {
 export interface BlockResult {
   timing: 'PARRY' | 'BLOCK' | 'MISTIME' | 'NO_BLOCK';
   relationship: 'STRONG' | 'NEUTRAL' | 'WEAK';
-  defenderHeartsLost: number; // #513 — count, not boolean; always 0 or 1 today
+  defenderHeartsLost: number; // #514 — force-scaled integer count; may exceed 1 (multi-heart exchange)
   attackerHeartsLost: number; // #513 — forward-compat placeholder, always 0 today
   rallyContinues: boolean;
   volleyedElement: number;
