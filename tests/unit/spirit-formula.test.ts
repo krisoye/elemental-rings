@@ -263,6 +263,86 @@ describe('db.ts recomputeSpiritMax() vs PlayerRepo.getSpiritStats() — drift gu
 });
 
 // ===========================================================================
+// Implementation-aware branches (#520 Phase 2 QA — visible only from the
+// finished code, not derivable from the spec alone)
+// ===========================================================================
+
+describe('implementation-specific branches (#520 Phase 2)', () => {
+  // #520 adversarial: the per-ring query's WHERE clause is `in_carry = 0 AND
+  // heart_slot = 0` — an AND, not an OR. A ring with exactly one flag set is
+  // excluded (already covered elsewhere), but this test nails down the full
+  // 2x2 boundary in one place, including the "both flags set" cell, so a
+  // future refactor to `OR` (which would under-exclude) or to checking only
+  // one column (which would over-include) fails loudly here.
+  test('the Reliquary filter requires BOTH in_carry=0 AND heart_slot=0 — every other flag combination is excluded', () => {
+    const p = makePlayer('void'); // ×1 isolates the raw per-ring math
+    makeRing(p, { tier: 9, maxUses: 12, inCarry: 1, heartSlot: 0 }); // in_carry alone excludes
+    makeRing(p, { tier: 9, maxUses: 12, inCarry: 0, heartSlot: 1 }); // heart_slot alone excludes
+    makeRing(p, { tier: 9, maxUses: 12, inCarry: 1, heartSlot: 1 }); // both set — still excluded
+    makeRing(p, { tier: 9, maxUses: 12, inCarry: 0, heartSlot: 0 }); // neither set — the only counted ring
+
+    expect(repo.getSpiritStats(p).spiritMax, 'TS path').toBe(72); // 12 × forceFromTier1(10) = 72
+    dbMod.recomputeSpiritMax();
+    expect(getPersistedSpiritMax(p), 'SQL boot-recompute path').toBe(72);
+  });
+
+  // #520 adversarial: DIFFICULTY_MULTIPLIERS is a Record<DifficultyTier, number>,
+  // but the `players.difficulty` column is a raw TEXT column with no DB-level
+  // CHECK constraint — a legacy/corrupted row could hold a value outside the
+  // 5-member union. getSpiritStats() falls back via `?? DIFFICULTY_MULTIPLIERS
+  // .seeker`; the SQL CASE falls back via its `ELSE 4`. Neither fallback is
+  // exercised by the acceptance table (which only uses valid DifficultyTier
+  // values), so this locks in that both encodings degrade the same way instead
+  // of one throwing/NaN-ing while the other silently defaults.
+  test('an unrecognized difficulty value falls back to the seeker (×4) multiplier in both encodings', () => {
+    const p = makePlayer('seeker');
+    dbInstance.prepare('UPDATE players SET difficulty = ? WHERE id = ?').run('legacy_unknown', p);
+    makeRing(p, { tier: 0, maxUses: 3 }); // pre-multiplier contribution: 3 × forceFromTier1(1) = 3
+
+    expect(repo.getSpiritStats(p).spiritMax, 'TS path falls back to seeker ×4').toBe(12);
+    dbMod.recomputeSpiritMax();
+    expect(getPersistedSpiritMax(p), 'SQL CASE ELSE falls back to seeker ×4').toBe(12);
+  });
+
+  // #520 adversarial: what if the boot-time recompute runs twice with no ring
+  // changes in between (e.g. a process restart loop, or a future caller that
+  // invokes it defensively)? recomputeSpiritMax() must be a pure function of
+  // current DB state, not accumulate/drift on repeated invocation.
+  test('calling recomputeSpiritMax() twice in a row with no ring changes is idempotent', () => {
+    const p = makePlayer('seeker');
+    for (const r of COMPOSITIONS.midTier) makeRing(p, r);
+
+    dbMod.recomputeSpiritMax();
+    const first = getPersistedSpiritMax(p);
+    dbMod.recomputeSpiritMax();
+    const second = getPersistedSpiritMax(p);
+
+    expect(second).toBe(first);
+    expect(second).toBe(384);
+  });
+
+  // #520 adversarial: recomputeSpiritMax() has a second statement
+  // (`UPDATE players SET spirit_current = MIN(spirit_current, spirit_max)`)
+  // that isn't in the acceptance criteria at all — it's only visible by reading
+  // db.ts. A brand-new player row defaults to spirit_max=50/spirit_current=50
+  // (schema.sql); once their real Reliquary composition drives spirit_max well
+  // below 50, spirit_current must be clamped down too, or a player could carry
+  // a spirit_current reading that exceeds their (now-authoritative) max.
+  test('recomputeSpiritMax() clamps spirit_current down when the new spirit_max shrinks below the schema-default 50', () => {
+    const p = makePlayer('void'); // fresh row: spirit_max=50, spirit_current=50 (schema.sql defaults)
+    makeRing(p, { tier: 0, maxUses: 3 }); // new max = 3 × forceFromTier1(1) × 1 = 3, far below 50
+
+    dbMod.recomputeSpiritMax();
+
+    expect(getPersistedSpiritMax(p)).toBe(3);
+    const row = dbInstance
+      .prepare('SELECT spirit_current FROM players WHERE id = ?')
+      .get(p) as { spirit_current: number };
+    expect(row.spirit_current, 'spirit_current must be clamped down, not left at the stale 50').toBe(3);
+  });
+});
+
+// ===========================================================================
 // Boot-recompute ORDERING regression (#520 P2 fix)
 // ===========================================================================
 //
