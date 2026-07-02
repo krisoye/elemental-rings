@@ -56,7 +56,7 @@ test('Shadow attack vs Wood defense resolves WEAK (heart lost) — Shadow beats 
   const result = await defender.evaluate(() => (window as any).__lastExchangeResult);
   expect(CAUGHT).toContain(result.timing);
   expect(result.relationship).toBe('WEAK');
-  expect(result.defenderHeartLost).toBe(true);
+  expect(result.defenderHeartsLost).toBe(1);
 
   await defender.waitForFunction(() => {
     const room = (window as any).__room;
@@ -89,7 +89,7 @@ test('Fire attack vs Shadow defense resolves WEAK (heart lost) — Fire dispels 
   const result = await defender.evaluate(() => (window as any).__lastExchangeResult);
   expect(CAUGHT).toContain(result.timing);
   expect(result.relationship).toBe('WEAK');
-  expect(result.defenderHeartLost).toBe(true);
+  expect(result.defenderHeartsLost).toBe(1);
 
   await defender.waitForFunction(() => {
     const room = (window as any).__room;
@@ -118,7 +118,7 @@ test('Shadow attack vs Water defense resolves NEUTRAL (safe, no heart)', async (
   const result = await defender.evaluate(() => (window as any).__lastExchangeResult);
   expect(CAUGHT).toContain(result.timing);
   expect(result.relationship).toBe('NEUTRAL');
-  expect(result.defenderHeartLost).toBe(false);
+  expect(result.defenderHeartsLost).toBe(0);
 
   const me = await readMe(defender);
   expect(me.hearts).toBe(3); // safe — no heart lost

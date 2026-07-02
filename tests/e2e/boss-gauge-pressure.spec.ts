@@ -43,7 +43,7 @@ async function measurePressure(
         if (seen.has(i)) continue;
         seen.add(i);
         const m = ex[i];
-        if (m.attackerId === 'AI' && m.defenderHeartLost && (m.timing === 'NO_BLOCK' || m.timing === 'MISTIME')) {
+        if (m.attackerId === 'AI' && m.defenderHeartsLost > 0 && (m.timing === 'NO_BLOCK' || m.timing === 'MISTIME')) {
           for (const el of m.attackerElements) if (TRIANGLE.has(el)) triangleHits++;
         }
       }

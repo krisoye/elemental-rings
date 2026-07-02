@@ -490,7 +490,7 @@ export class BattleScene extends Phaser.Scene {
     let outcome: Outcome | null = null;
 
     const { timing, relationship, rallyContinues, defenderHeartsLost } = result;
-    const defenderHeartLost = defenderHeartsLost > 0;
+    const heartLost = defenderHeartsLost > 0;
     const missed = timing === 'MISTIME' || timing === 'NO_BLOCK';
 
     if (missed) {
@@ -498,10 +498,10 @@ export class BattleScene extends Phaser.Scene {
     } else if (rallyContinues) {
       // PERFECT + STRONG
       outcome = { label: 'COUNTER!', color: '#ffdd00', size: '42px', flash: [255, 200, 50] };
-    } else if (timing === 'PARRY' && !defenderHeartLost) {
+    } else if (timing === 'PARRY' && !heartLost) {
       // PERFECT + NEUTRAL
       outcome = { label: 'PERFECT!', color: '#44eeff', size: '32px', flash: [100, 220, 255] };
-    } else if (defenderHeartLost) {
+    } else if (heartLost) {
       // PERFECT or GOOD + WEAK
       outcome = { label: 'ABSORBED', color: '#ff4444', size: '28px' };
     } else {

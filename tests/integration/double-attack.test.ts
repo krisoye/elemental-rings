@@ -260,7 +260,7 @@ describe('Double attack: block one, parry two', () => {
     expect(results.length).toBe(2);
     expect(cancels.length).toBe(0);
     // Orb 1 was a NEUTRAL catch (no heart lost on a neutral block).
-    expect(results[0].defenderHeartLost).toBe(false);
+    expect(results[0].defenderHeartsLost).toBe(0);
   });
 });
 
