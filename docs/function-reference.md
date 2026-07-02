@@ -144,6 +144,8 @@ export const SKILL_BAND: Record<NpcClass, { lo: number; hi: number }>
 
 `spiritFloor` is used in `computeNpcSpirit` (see `ai/AILoadout.ts`). Roamers use `max(spiritFloor, personalityBase)`; bosses use additive `personalityBase + spiritFloor`. Reproduced values from the old table: forest/gate=15, forest/sub=25, forest/major=40, snow/gate=40, snow/sub=50, snow/major=65, swamp/gate=65, swamp/sub=75, swamp/major=90, desert/gate=90, desert/sub=100, desert/major=115; plus volcano tier: gate=115, sub=125, major=140.
 
+<!-- doc-coverage-bypass: #521 constants.ts's #521 diff is a comment-only addition documenting a decision (spiritFloor stays as a decaying safety net, no value changed) — the formula shapes and values above are already accurate and unchanged. -->
+
 ---
 
 ### `shared/chargeConstants.ts`
