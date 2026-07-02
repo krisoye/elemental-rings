@@ -330,3 +330,211 @@ test('scenario 6: EncounterScene populates __encounterPreview', async ({ browser
 
   await ctx.close();
 });
+
+// ── #517 (EPIC #511 Contract E) — AI hp_force wiring + indexing normalization ──
+//
+// Determinism levers (same pattern as tests/e2e/force-heart-loss.spec.ts):
+//   • POST /api/test/mint-token provisions a fresh player without bcrypt.
+//   • POST /api/test/set-ring-xp boosts the human's a1 XP to ATTACK_XP=14000,
+//     so force(14000) = forceFromTier1(tierForXp(14000)+1) = forceFromTier1(8)
+//     = 5 (a fixed atkForce shared by both scenarios below).
+//   • __testSetState (E2E_TEST_ROUTES) zeroes the AI's d1/d2 uses so every human
+//     attack lands as an uncontested NO_BLOCK — isolates hpForce as the only
+//     variable in play.
+//   • __encounterSelectWithOverrides's aiOverrides argument is spread verbatim
+//     into the room-join options client-side (EncounterScene.startAIDuel:
+//     `...aiOverrides`), so passing `playerBattleHandAvgXp` and/or `npcId` here
+//     — fields outside its declared `{aiHearts?, aiUses?}` TS shape — still
+//     flows through to the real BattleRoomOptions at runtime, exactly like the
+//     established `aiHeartwoodCharges` precedent in force-heart-loss.spec.ts.
+
+// force(14000) = forceFromTier1(tierForXp(14000)+1) = forceFromTier1(8) = 5.
+const FORCE5_ATTACK_XP = 14000;
+
+interface MintResult {
+  token: string;
+  playerId: string;
+}
+
+/** Provision a fresh E2E player and return its token (no bcrypt). */
+async function mintToken(): Promise<MintResult> {
+  const res = await fetch(`${API_URL}/api/test/mint-token`, { method: 'POST' });
+  if (!res.ok) throw new Error(`mint-token failed (${res.status})`);
+  return (await res.json()) as MintResult;
+}
+
+/** GET /api/me → the player's rings + loadout (slot → ringId). */
+async function getLoadout(token: string): Promise<Record<string, string | null>> {
+  const res = await fetch(`${API_URL}/api/me`, { headers: { Authorization: `Bearer ${token}` } });
+  if (!res.ok) throw new Error(`/api/me failed (${res.status})`);
+  const { loadout } = (await res.json()) as { loadout: Record<string, string | null> };
+  return loadout;
+}
+
+/** Set a ring's XP to an absolute value via the test-only route. */
+async function setRingXP(token: string, ringId: string, xp: number): Promise<void> {
+  const res = await fetch(`${API_URL}/api/test/set-ring-xp`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+    body: JSON.stringify({ ringId, xp }),
+  });
+  if (!res.ok) throw new Error(`set-ring-xp failed (${res.status})`);
+}
+
+/**
+ * Mint a player, boost a1 to force 5, seed the token into a fresh context, walk
+ * Camp → Encounter, and launch a vsAI duel with the given personality + AI
+ * overrides (forwarded verbatim into BattleRoomOptions — see file docstring).
+ * Returns the live BattleScene page.
+ */
+async function startForceWiringDuel(
+  ctx: BrowserContext,
+  personality: string,
+  overrides: Record<string, unknown>,
+): Promise<Page> {
+  const { token } = await mintToken();
+  const loadout = await getLoadout(token);
+  if (loadout.a1) await setRingXP(token, loadout.a1 as string, FORCE5_ATTACK_XP);
+  await ctx.addInitScript(`localStorage.setItem('er_token', ${JSON.stringify(token)})`);
+
+  const page = await ctx.newPage();
+  await page.goto(URL);
+  await campToEncounter(page);
+  await waitForEncounter(page);
+  await page.evaluate(
+    ({ p, o }) => (window as any).__encounterSelectWithOverrides(p, o),
+    { p: personality, o: overrides },
+  );
+  await page.waitForFunction(() => (window as any).__room !== null, { timeout: 8000 });
+  await page.waitForFunction(
+    () => (window as any).__scene?.constructor.name === 'BattleScene',
+    { timeout: 5000 },
+  );
+  return page;
+}
+
+/** Zero the AI's defence rings so every human attack lands as NO_BLOCK. */
+async function disableAiDefence(page: Page): Promise<void> {
+  await page.evaluate(() =>
+    (window as any).__room.send('__testSetState', { target: 'opponent', uses: { d1: 0, d2: 0 } }),
+  );
+}
+
+/** Set the local player's hearts high so the AI's counter-attacks never KO it. */
+async function armorHuman(page: Page, hearts = 99): Promise<void> {
+  await page.evaluate(
+    (h) => (window as any).__room.send('__testSetState', { target: 'self', hearts: h }),
+    hearts,
+  );
+}
+
+/** Wait until it is the human's ATTACK_SELECT turn. */
+async function waitHumanTurn(page: Page, timeout = 20000): Promise<void> {
+  await page.waitForFunction(
+    () => {
+      const room = (window as any).__room;
+      return room?.state?.phase === 'ATTACK_SELECT' && room?.state?.currentAttackerId === room?.sessionId;
+    },
+    { timeout },
+  );
+}
+
+/**
+ * Fire one attack from the given slot and resolve to the resulting boss-defender
+ * exchangeResult (defenderId === 'AI'). Returns that exchange payload.
+ */
+async function attackAI(page: Page, slot: string): Promise<{ defenderHeartsLost: number }> {
+  await waitHumanTurn(page);
+  await page.evaluate(() => { (window as any).__lastExchangeResult = null; });
+  await page.evaluate((s) => (window as any).__room.send('selectAttack', { slot: s }), slot);
+  await page.waitForFunction(
+    () => {
+      const r = (window as any).__lastExchangeResult;
+      return r !== null && r.defenderId === 'AI';
+    },
+    { timeout: 12000 },
+  );
+  return page.evaluate(() => (window as any).__lastExchangeResult);
+}
+
+// ── Scenario 7: normalized hp_force mitigates a force-5 hit; a mid-tier AI
+//    survives longer than it would have under the old hpForce=1 interim ──────
+test('scenario 7: a normalized AI hp_force mitigates a force-5 human attack more than the pre-#517 interim would have', async ({ browser }) => {
+  // Duel 1 — "interim-equivalent" baseline: playerBattleHandAvgXp=0 in the
+  // default 'forest' biome → effTier1 = max(floorTier('forest')=1,
+  // tierForXp(0)+1=1) = 1 → aiHpForce = forceFromTier1(1) = 1 (identical to the
+  // pre-#517 interim's hardcoded 1).
+  const ctx1 = await browser.newContext();
+  const page1 = await startForceWiringDuel(ctx1, 'DEFENSIVE', {
+    aiHearts: 99,
+    playerBattleHandAvgXp: 0,
+  });
+  await armorHuman(page1);
+  await disableAiDefence(page1);
+  const exchange1 = await attackAI(page1, 'a1');
+  expect(exchange1.defenderHeartsLost).toBe(5); // max(1, ceilDiv(5, 1)) = 5
+  await ctx1.close();
+
+  // Duel 2 — normalized (#517): playerBattleHandAvgXp=2000 with DEFENSIVE
+  // (multiplier 1.0) → npcXp=2000 → tierForXp(2000)=2 (0-indexed) → effTier1 =
+  // max(floorTier('forest')=1, 2+1=3) = 3 → aiHpForce = forceFromTier1(3) = 2 —
+  // the exact acceptance-criteria worked example (see AILoadoutScaling.test.ts).
+  const ctx2 = await browser.newContext();
+  const page2 = await startForceWiringDuel(ctx2, 'DEFENSIVE', {
+    aiHearts: 99,
+    playerBattleHandAvgXp: 2000,
+  });
+  await armorHuman(page2);
+  await disableAiDefence(page2);
+  const exchange2 = await attackAI(page2, 'a1');
+  expect(exchange2.defenderHeartsLost).toBe(3); // max(1, ceilDiv(5, 2)) = 3
+  await ctx2.close();
+
+  // The SAME force-5 attack costs the AI strictly fewer hearts once the real
+  // hp_force is wired (3 < 5) — a mid-tier boss now survives longer per
+  // exchange than the unmitigated pre-#517 interim did.
+  expect(exchange2.defenderHeartsLost).toBeLessThan(exchange1.defenderHeartsLost);
+});
+
+// ── Scenario 8: floor-dominated and XP-dominated NPCs land on the same
+//    hp_force — proving the indexing normalization removed the off-by-one ────
+test('scenario 8: two NPCs on the same effective tier via different dominant branches (floorTier vs tierForXp) take identical force-5 damage', async ({ browser }) => {
+  // Duel A — floor-dominated: snow_npc_1 (biome 'snow', AGGRESSIVE, a roamer —
+  // no boss modifiers) with playerBattleHandAvgXp=0. npcXp=0 → tierForXp(0)=0
+  // → effTier1 = max(floorTier('snow')=2, 0+1=1) = 2 (the BIOME FLOOR wins) →
+  // aiHpForce = forceFromTier1(2) = 2.
+  const ctxA = await browser.newContext();
+  const pageA = await startForceWiringDuel(ctxA, 'AGGRESSIVE', {
+    npcId: 'snow_npc_1',
+    aiHearts: 99,
+    playerBattleHandAvgXp: 0,
+  });
+  await armorHuman(pageA);
+  await disableAiDefence(pageA);
+  const exchangeA = await attackAI(pageA, 'a1');
+  await ctxA.close();
+
+  // Duel B — XP-dominated: same npcId/biome, but playerBattleHandAvgXp=2500
+  // with AGGRESSIVE (multiplier 0.8) → npcXp=round(2500×0.8)=2000 →
+  // tierForXp(2000)=2 → effTier1 = max(floorTier('snow')=2, 2+1=3) = 3 (the
+  // TIERFORXP BRANCH wins, exceeding the floor) → aiHpForce =
+  // forceFromTier1(3) = 2 — the SAME hp_force as duel A, reached via the
+  // OTHER operand of the max().
+  const ctxB = await browser.newContext();
+  const pageB = await startForceWiringDuel(ctxB, 'AGGRESSIVE', {
+    npcId: 'snow_npc_1',
+    aiHearts: 99,
+    playerBattleHandAvgXp: 2500,
+  });
+  await armorHuman(pageB);
+  await disableAiDefence(pageB);
+  const exchangeB = await attackAI(pageB, 'a1');
+  await ctxB.close();
+
+  // Both duels resolve the SAME force-5 attack to max(1, ceilDiv(5, 2)) = 3
+  // hearts — floor-dominated and XP-dominated NPCs at the same normalized
+  // effective tier are indistinguishable to the mitigation formula.
+  expect(exchangeA.defenderHeartsLost).toBe(3);
+  expect(exchangeB.defenderHeartsLost).toBe(3);
+  expect(exchangeA.defenderHeartsLost).toBe(exchangeB.defenderHeartsLost);
+});
