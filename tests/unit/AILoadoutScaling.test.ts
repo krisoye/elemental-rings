@@ -8,14 +8,17 @@ import {
   previewOpponent,
   skillRoll,
   PERSONALITY_SPIRIT_MULT,
+  effectiveTier,
+  effectiveTier1Indexed,
 } from '../../server/src/game/ai/AILoadout';
 import { makeRng } from '../../server/src/game/ai/AIProfiles';
-import { tierForXp, naturalMaxUses } from '../../server/src/game/Tiers';
+import { tierForXp, naturalMaxUses, force, forceFromTier1 } from '../../server/src/game/Tiers';
 import {
   BOSS_MODIFIERS,
   CLASS_OFFSET,
   REGION_STEP,
   BIOME_ORDER,
+  floorTier,
 } from '../../server/src/game/constants';
 import {
   ElementEnum,
@@ -1258,5 +1261,172 @@ describe('#521 impl-aware — computeNpcSpirit branch-shape guards (additive bos
     expect(Math.floor(1304 * majorMult) + volcanoMajorFloor).toBe(1444);
     expect(computeNpcSpirit(232, 'DEFENSIVE', 'volcano', 'major')).toBe(372);
     expect(computeNpcSpirit(1304, 'DEFENSIVE', 'volcano', 'major')).toBe(1444);
+  });
+});
+
+// ============================================================================
+// effectiveTier1Indexed (#517, EPIC #511 Contract E) — indexing-normalization
+// ============================================================================
+//
+// effectiveTier (above/RegionDifficulty.test.ts) mixes indexing conventions:
+// floorTier is 1-indexed (forest=1…volcano=5) but tierForXp is 0-indexed.
+// effectiveTier1Indexed normalizes BOTH operands to 1-indexed BEFORE the max:
+//   effTier1 = max(floorTier(biome), tierForXp(npcXp) + 1)
+// so forceFromTier1(effectiveTier1Indexed(...)) can never drift from the
+// player path's force(xp) = forceFromTier1(tierForXp(xp) + 1) at matched XP.
+
+describe('effectiveTier1Indexed — formula (#517)', () => {
+  test('formula: max(floorTier(biome), tierForXp(npcXp) + 1)', () => {
+    const biome = 'forest';
+    const personality: AIPersonality = 'DEFENSIVE';
+    const avgXp = 2000;
+    const npcXp = npcEffectiveXp(personality, avgXp);
+    const expected = Math.max(floorTier(biome), tierForXp(npcXp) + 1);
+    expect(effectiveTier1Indexed(biome, personality, avgXp)).toBe(expected);
+  });
+
+  test('is always ≥ 1 (both operands are 1-indexed, tierForXp(x)+1 ≥ 1)', () => {
+    const biomes = ['forest', 'snow', 'swamp', 'desert', 'volcano', 'unknown_biome'];
+    const xps = [0, 10, 500, 1500, 3000, 5000, 100000];
+    for (const biome of biomes) {
+      for (const xp of xps) {
+        expect(effectiveTier1Indexed(biome, 'AGGRESSIVE', xp)).toBeGreaterThanOrEqual(1);
+      }
+    }
+  });
+
+  test('never less than floorTier(biome) (the biome floor operand)', () => {
+    const biomes = ['forest', 'snow', 'swamp', 'desert', 'volcano'];
+    for (const biome of biomes) {
+      const minTier = floorTier(biome);
+      for (const xp of [0, 100, 5000]) {
+        expect(effectiveTier1Indexed(biome, 'AGGRESSIVE', xp)).toBeGreaterThanOrEqual(minTier);
+      }
+    }
+  });
+});
+
+describe('effectiveTier1Indexed — acceptance-criteria worked example (#517)', () => {
+  test('npcEffectiveXp landing at tierForXp=2 (0-indexed) in forest (floorTier=1) → effTier1=3 → aiHpForce=2', () => {
+    // DEFENSIVE personality (multiplier 1.0) with avgXp=2000 → npcXp=2000,
+    // which sits in [1500, 3000) → tierForXp(2000) = 2 (0-indexed).
+    const biome = 'forest';
+    const personality: AIPersonality = 'DEFENSIVE';
+    const avgXp = 2000;
+
+    const npcXp = npcEffectiveXp(personality, avgXp);
+    expect(npcXp).toBe(2000);
+    expect(tierForXp(npcXp)).toBe(2); // the 0-indexed tierForXp branch
+    expect(floorTier(biome)).toBe(1); // forest floor
+
+    const effTier1 = effectiveTier1Indexed(biome, personality, avgXp);
+    expect(effTier1).toBe(3); // max(1, 2+1) = 3
+
+    const aiHpForce = forceFromTier1(effTier1);
+    expect(aiHpForce).toBe(2); // forceFromTier1(3) = floor((3+2)/2) = 2
+
+    // IDENTICAL to what a PLAYER ring of the same XP would get via force(xp) —
+    // no off-by-one between AI and player mitigation at matched XP.
+    expect(aiHpForce).toBe(force(npcXp));
+  });
+});
+
+describe('effectiveTier1Indexed — closes the under-powering off-by-one bug (#517)', () => {
+  test('a raw (un-normalized) mix of floorTier + tierForXp under-powers hp_force by one step vs the normalized fix', () => {
+    // npcXp=1000 sits in [500, 1500) → tierForXp(1000) = 1 (0-indexed).
+    // forest floorTier = 1.
+    const biome = 'forest';
+    const personality: AIPersonality = 'DEFENSIVE';
+    const avgXp = 1000;
+    const npcXp = npcEffectiveXp(personality, avgXp);
+    expect(npcXp).toBe(1000);
+    expect(tierForXp(npcXp)).toBe(1);
+    expect(floorTier(biome)).toBe(1);
+
+    // The BUG this issue closes: feeding the raw (mixed-indexing) effectiveTier
+    // straight into forceFromTier1, as if it were already 1-indexed.
+    const buggyRawMix = Math.max(floorTier(biome), tierForXp(npcXp)); // = max(1,1) = 1
+    const buggyForce = forceFromTier1(buggyRawMix); // forceFromTier1(1) = 1
+
+    // The FIX: normalize to 1-indexed BEFORE the max.
+    const effTier1 = effectiveTier1Indexed(biome, personality, avgXp);
+    expect(effTier1).toBe(2); // max(1, 1+1) = 2
+    const correctForce = forceFromTier1(effTier1); // forceFromTier1(2) = 2
+
+    // The bug silently under-powers hp_force by one step here (1 vs 2).
+    expect(buggyForce).toBe(1);
+    expect(correctForce).toBe(2);
+    expect(correctForce).not.toBe(buggyForce);
+
+    // The corrected value matches what a player ring of the same XP gets.
+    expect(correctForce).toBe(force(npcXp));
+  });
+});
+
+describe('effectiveTier1Indexed — parity with the player force(xp) formula whenever the XP branch wins (#517)', () => {
+  // When tierForXp(npcXp) + 1 ≥ floorTier(biome) (the XP branch wins the max),
+  // forceFromTier1(effectiveTier1Indexed(...)) must equal force(npcXp) exactly
+  // — same primitive, same 1-indexed convention, no drift.
+  const personalities: AIPersonality[] = ['AGGRESSIVE', 'DEFENSIVE', 'STATUS_HUNTER', 'RESILIENT'];
+  const xps = [0, 10, 300, 700, 1000, 1500, 2000, 3000, 5000, 8000];
+
+  for (const p of personalities) {
+    for (const xp of xps) {
+      test(`${p} avgXp=${xp} in forest (floor=1, XP branch always ≥ floor)`, () => {
+        const biome = 'forest'; // floorTier=1, so tierForXp(npcXp)+1 ≥ 1 always wins or ties
+        const npcXp = npcEffectiveXp(p, xp);
+        const effTier1 = effectiveTier1Indexed(biome, p, xp);
+        const aiHpForce = forceFromTier1(effTier1);
+        expect(aiHpForce).toBe(force(npcXp));
+      });
+    }
+  }
+});
+
+describe('effectiveTier1Indexed — two NPCs of identical XP, one floor-dominated one XP-dominated, receive the same hp_force (#517 E2E scenario 2 mirror)', () => {
+  test('a low-XP NPC in a high biome (floorTier wins) and a synthetic same-tier XP NPC in forest (tierForXp wins) get equal hp_force', () => {
+    // Volcano floorTier = 5. A low-XP AGGRESSIVE NPC there is floor-dominated.
+    const volcanoTier1 = effectiveTier1Indexed('volcano', 'AGGRESSIVE', 0);
+    expect(volcanoTier1).toBe(5); // max(5, tierForXp(0)+1=1) = 5
+    const volcanoForce = forceFromTier1(volcanoTier1);
+
+    // Construct a forest NPC whose XP alone drives it to the same 1-indexed
+    // tier (5) via the tierForXp branch: need tierForXp(npcXp) + 1 = 5, i.e.
+    // tierForXp(npcXp) = 4 → npcXp in [tierStartXp(4), tierStartXp(5)).
+    // tierStartXp(4) = 250*4*5 = 5000.
+    const forestTier1 = effectiveTier1Indexed('forest', 'AGGRESSIVE', 5000 / 0.8); // AGGRESSIVE mult=0.8
+    expect(tierForXp(npcEffectiveXp('AGGRESSIVE', 5000 / 0.8))).toBe(4);
+    expect(forestTier1).toBe(5); // max(1, 4+1) = 5
+    const forestForce = forceFromTier1(forestTier1);
+
+    // Both NPCs land on the SAME 1-indexed effective tier (5) via different
+    // dominant operands (floor vs XP), and therefore the SAME hp_force.
+    expect(forestForce).toBe(volcanoForce);
+  });
+});
+
+// ============================================================================
+// effectiveTier (pre-existing, mixed-indexing) — unchanged by #517
+// ============================================================================
+//
+// #517 is additive-only: effectiveTier's OWN mixed-indexing values (which
+// drive scaleProfileByTier's sigma/mistake-probability transfer functions)
+// must be byte-for-byte unchanged. This is a differential guard: if a future
+// refactor accidentally routes effectiveTier through the new 1-indexed
+// normalization, this test catches the drift immediately.
+
+describe('effectiveTier (pre-existing) — NOT repurposed or renumbered by #517', () => {
+  test('effectiveTier keeps its own (mixed-indexing) value, distinct from effectiveTier1Indexed', () => {
+    // npcXp=1000 in forest: effectiveTier (mixed) = max(1, tierForXp(1000)=1) = 1.
+    // effectiveTier1Indexed (normalized) = max(1, 1+1) = 2. They must differ here
+    // — proof effectiveTier was NOT quietly redirected to the new formula.
+    const biome = 'forest';
+    const personality: AIPersonality = 'DEFENSIVE';
+    const avgXp = 1000;
+    expect(effectiveTier(biome, personality, avgXp)).toBe(1);
+    expect(effectiveTier1Indexed(biome, personality, avgXp)).toBe(2);
+    expect(effectiveTier(biome, personality, avgXp)).not.toBe(
+      effectiveTier1Indexed(biome, personality, avgXp),
+    );
   });
 });
