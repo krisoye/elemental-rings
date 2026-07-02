@@ -32,7 +32,13 @@ Wind and Earth are the two **asymmetric neutrals**. Each is safe in exactly one 
 
 **Wind — the safe offensive option.** Wind attacks are always **Neutral**: no element can counter a Wind attack. Wind defense is always **Weak**: pressing D1/D2 with a Wind ring, even with correct timing, still takes the heart. Players who load Wind into attack slots gain reliable pressure with no elemental blowback; loading Wind into defense slots is a liability.
 
-**Earth — the safe defensive option.** Earth defenses are always **Neutral**: they can never be elementally punished. Earth attacks are always **Weak**: they land with no elemental advantage. Players who load Earth into defense slots get reliable coverage; loading Earth into attack slots is a liability.
+**Earth — the safe defensive option.** Earth defenses are always **Neutral**: they can never be elementally **punished**, but remain subject to raw force overflow when significantly outmatched in force — both block and parry. Earth attacks are always **Weak**: they land with no elemental advantage. Players who load Earth into defense slots get reliable coverage; loading Earth into attack slots is a liability.
+
+Every ring carries a tier-derived **force** stat (§4.2): a scalar that determines how much raw damage an attack pushes and how much a defending ring can absorb. Under the Neutral resolution formula, a defending ring's own `def_force` is a real subtractive shield against the attacker's `atk_force` — not an absolute wall — and whatever force is left over is mitigated by the equipped heart ring's `hp_force` and converted to an integer heart count: `max(0, ceil((atk_force − def_force) / hp_force))`. Earth's Neutral defense is heart-safe only when `def_force ≥ atk_force`: a high-force attacker can still bleed hearts through a low-force Earth ring.
+
+**Worked example:** a Tier-3 Wind attack (`atk_force` 2) against a Tier-1 Earth defense (`def_force` 1), with a Tier-1 heart ring (`hp_force` 1): `max(0, ceil((2 − 1) / 1))` = **1 heart lost**, even though Earth's Neutral relationship blocked any elemental punish.
+
+Wind's defense fares worse in the identical matchup. Because Wind defense is always **Weak**, it gets **zero** ring-force credit — `def_force` never subtracts, so the full `atk_force` passes straight through to hp mitigation: `max(1, ceil(atk_force / hp_force))`. The same Tier-3 Wind attack against a Tier-1 Wind defense with the same Tier-1 heart ring costs `max(1, ceil(2 / 1))` = **2 hearts** — worse than Earth's 1, consistent with Wind being a defensive liability.
 
 - Neither Wind nor Earth fills gauges. Neither triggers status effects.
 - **Design intent:** Wind favors aggressive/offensive loadouts; Earth favors patient/defensive loadouts. A player cannot load both safety valves into both attack and defense simultaneously without sacrificing elemental pressure entirely — committing to safety in one role costs you upside in the other.
