@@ -1,6 +1,7 @@
 import { test, expect } from '@playwright/test';
 import { driveAiDuel } from './helpers';
 import { returnFromBattle } from './helpers/returnFromBattle';
+import { forceFromTier1 } from '../../shared/tiers';
 
 // #41 — Spirit / food system E2E. Asserts on REAL server state (API responses)
 // and the CampScene __campState hook. Sleep costs food and restores spirit;
@@ -11,6 +12,7 @@ const API_URL = 'http://localhost:2568';
 interface Ring {
   id: string;
   element: number;
+  tier: number;
   max_uses: number;
   current_uses: number;
   in_carry: number;
@@ -40,9 +42,11 @@ function authJson(token: string): Record<string, string> {
 test('spirit: GET /api/me returns spirit_max, spirit_current, food_units', async () => {
   const { token } = await register();
   const { player, rings } = await me(token);
-  // EPIC #279 — spirit_max = SUM(Reliquary max_uses) × difficulty multiplier.
-  // A fresh player carries 5 starter rings and rests 5 in the Reliquary (each
-  // max_uses = 3). On the default 'seeker' tier (×4): (5 × 3) × 4 = 60.
+  // EPIC #279 — spirit_max = SUM(Reliquary max_uses × force) × difficulty
+  // multiplier (force-weighted since EPIC #511 Contract F, #520). A fresh
+  // player's rings all sit at tier 0 (force = 1), so the unweighted sum below
+  // is exact here. Carries 5 starter rings and rests 5 in the Reliquary (each
+  // max_uses = 3). On the default 'seeker' tier (×4): (5 × 3 × 1) × 4 = 60.
   const reliquaryUses = rings
     .filter((r) => r.in_carry === 0)
     .reduce((sum, r) => sum + r.max_uses, 0);
@@ -655,13 +659,18 @@ test('spirit: aggregate_xp counts only Reliquary rings, not carried rings', asyn
 // asserts the exact expected spirit_max immediately after the mutation with no
 // secondary trigger needed.
 //
-// Constants (seeker multiplier=4; starter Reliquary = 5 rings each max_uses=3):
+// Constants (seeker multiplier=4; starter Reliquary = 5 rings each max_uses=3,
+// tier=0 → force=1 (EPIC #511 Contract F, #520): SUM(max_uses × force) = SUM
+// (max_uses) unweighted at tier 0, so the starter-only numbers below are
+// unaffected by the force-weighting formula change.
 //   SEEKER_MULTIPLIER = 4
 //   STARTER_RELIQUARY_SUM = 5 × 3 = 15 → spirit_max = 60
-// After fusing/merging two Reliquary rings (each XP-bumped to 500, max_uses=3)
-// into one child (max_uses = 3 + tierForXp(1000) = 3 + 1 = 4):
-//   spirit_max = (15 - 3 - 3 + 4) × 4 = 13 × 4 = 52
-// After discarding one Reliquary ring (max_uses=3):
+// After fusing/merging two Reliquary rings (each XP-bumped to 500, tier still
+// 0/max_uses=3 — setRingXP only writes the xp column, not tier/max_uses)
+// into one child (tier = tierForXp(1000) = 1 → max_uses = 3 + 1 = 4, force =
+// forceFromTier1(1 + 1) = 2, weighted contribution = 4 × 2 = 8):
+//   spirit_max = (15 - 3 - 3 + 4×2) × 4 = 17 × 4 = 68
+// After discarding one (unbumped, tier-0/force-1) Reliquary ring (max_uses=3):
 //   spirit_max = (15 - 3) × 4 = 12 × 4 = 48
 
 const SEEKER_MULTIPLIER = 4; // DIFFICULTY_MULTIPLIERS['seeker'] per shared/types.ts
@@ -718,16 +727,20 @@ test('spirit: spirit_max is recomputed immediately after fusion of two Reliquary
   });
   expect(fuseRes.status).toBe(200);
   const { ring: child } = await fuseRes.json();
-  // Child: max_uses = 3 + tierForXp(1000) = 3 + 1 = 4. Parents removed: 3 + 3 = 6.
+  // Child: max_uses = 3 + tierForXp(1000) = 3 + 1 = 4, tier = 1. Parents removed:
+  // 3 + 3 = 6 (both still tier 0/force 1 — never recomputed after the XP bump).
   expect(child.max_uses).toBe(4);
 
   // Immediately assert spirit_max from GET /api/me (which reports getSpiritStats —
-  // the live recomputed value). Must equal (15 - 3 - 3 + 4) × 4 = 52.
-  // Pre-fix the stored column was still 60; post-fix it syncs to match live.
+  // the live recomputed value). Must equal (15 - 3 - 3 + 4×force(child)) × 4 = 68
+  // (EPIC #511 Contract F, #520 — was 52 pre-force-weighting).
+  // Pre-fix (#481) the stored column was still 60; post-fix it syncs to match live.
+  const childForce = forceFromTier1(child.tier + 1);
   const expectedSpiritMax =
-    (STARTER_RELIQUARY_SUM - fire.max_uses - water.max_uses + child.max_uses) * SEEKER_MULTIPLIER;
+    (STARTER_RELIQUARY_SUM - fire.max_uses - water.max_uses + child.max_uses * childForce) *
+    SEEKER_MULTIPLIER;
   const { player: after } = await me(token);
-  expect(after.spirit_max).toBe(expectedSpiritMax);
+  expect(after.spirit_max).toBe(expectedSpiritMax); // 68
   // Verify spirit_current is clamped to the new max (no ghost spirit above the cap).
   expect(after.spirit_current).toBeLessThanOrEqual(after.spirit_max);
 });
@@ -759,14 +772,17 @@ test('spirit: spirit_max is recomputed immediately after merge of two Reliquary 
   });
   expect(mergeRes.status).toBe(200);
   const { ring: child } = await mergeRes.json();
-  // Merged child: XP = 500+500=1000 → Tier 1 → max_uses = 3+1 = 4. Parents: 3+3=6.
+  // Merged child: XP = 500+500=1000 → Tier 1 → max_uses = 3+1 = 4, tier = 1.
+  // Parents: 3+3=6 (still tier 0/force 1).
   expect(child.max_uses).toBe(4);
 
-  // (15 - 3 - 3 + 4) × 4 = 52
+  // (15 - 3 - 3 + 4×force(child)) × 4 = 68 (EPIC #511 Contract F, #520 — was 52)
+  const childForce = forceFromTier1(child.tier + 1);
   const expectedSpiritMax =
-    (STARTER_RELIQUARY_SUM - e1.max_uses - e2.max_uses + child.max_uses) * SEEKER_MULTIPLIER;
+    (STARTER_RELIQUARY_SUM - e1.max_uses - e2.max_uses + child.max_uses * childForce) *
+    SEEKER_MULTIPLIER;
   const { player: after } = await me(token);
-  expect(after.spirit_max).toBe(expectedSpiritMax);
+  expect(after.spirit_max).toBe(expectedSpiritMax); // 68
   expect(after.spirit_current).toBeLessThanOrEqual(after.spirit_max);
 });
 
@@ -874,13 +890,15 @@ test('spirit: spirit_current is clamped to new spirit_max after Reliquary discar
 });
 
 // ── FUSION clamp: spirit_current ≤ spirit_max (clamp not strictly reachable) ──
-// #481 adversarial: after fusing two Reliquary rings, spirit_max = 52 which is
-// above the fresh player's spirit_current of 50. The clamp is called but does not
-// fire (52 ≥ 50). Weaker assertion: spirit_current must not exceed spirit_max.
-// A strict-equality test is not reachable on the standard starter path because
-// the fusion child's max_uses (4) always leaves spirit_max (52) above the DB
-// default spirit_current (50). The clamp call is still tested here — if it
-// incorrectly *reduced* spirit_current below 50 the test would catch that.
+// #481 adversarial: after fusing two Reliquary rings, spirit_max = 68 (EPIC #511
+// Contract F, #520 — was 52 pre-force-weighting) which is above the fresh
+// player's spirit_current of 50. The clamp is called but does not fire
+// (68 ≥ 50). Weaker assertion: spirit_current must not exceed spirit_max. A
+// strict-equality test is not reachable on the standard starter path because
+// the fusion child's weighted contribution (4 × force(tier 1) = 8) always
+// leaves spirit_max (68) above the DB default spirit_current (50). The clamp
+// call is still tested here — if it incorrectly *reduced* spirit_current below
+// 50 the test would catch that.
 test('spirit: spirit_current does not exceed spirit_max after Reliquary fusion (#481 clamp)', async () => {
   const { token } = await register();
   const { rings } = await me(token);
@@ -897,19 +915,25 @@ test('spirit: spirit_current does not exceed spirit_max after Reliquary fusion (
     body: JSON.stringify({ ringId1: fire.id, ringId2: water.id }),
   });
   expect(fuseRes.status).toBe(200);
+  const { ring: child } = await fuseRes.json();
 
-  // spirit_max = 52 (> 50 = spirit_current) → clamp called but does not reduce.
-  // spirit_current must remain ≤ spirit_max; must not have been incorrectly zeroed
-  // or truncated by the clamp call.
+  // spirit_max = (15-3-3+4×force(child)) × 4 = 68 (> 50 = spirit_current) →
+  // clamp called but does not reduce. spirit_current must remain ≤ spirit_max;
+  // must not have been incorrectly zeroed or truncated by the clamp call.
+  const expectedSpiritMax =
+    (STARTER_RELIQUARY_SUM - fire.max_uses - water.max_uses +
+      child.max_uses * forceFromTier1(child.tier + 1)) *
+    SEEKER_MULTIPLIER;
   const { player: after } = await me(token);
-  expect(after.spirit_max).toBe(52); // (15-3-3+4)×4
+  expect(after.spirit_max).toBe(expectedSpiritMax); // 68
   expect(after.spirit_current).toBeLessThanOrEqual(after.spirit_max);
   expect(after.spirit_current).toBeGreaterThan(0); // clamp must never zero-out a valid balance
 });
 
 // ── MERGE clamp: spirit_current ≤ spirit_max (same reasoning as fusion) ───────
 // #481 adversarial: same shape as the fusion clamp test but for POST /api/rings/merge.
-// spirit_max post-merge = 52 > 50 = spirit_current → clamp is called, does not fire.
+// spirit_max post-merge = 68 > 50 = spirit_current (EPIC #511 Contract F, #520
+// — was 52) → clamp is called, does not fire.
 test('spirit: spirit_current does not exceed spirit_max after Reliquary merge (#481 clamp)', async () => {
   const { token } = await register();
   const { rings } = await me(token);
@@ -927,10 +951,16 @@ test('spirit: spirit_current does not exceed spirit_max after Reliquary merge (#
     body: JSON.stringify({ ringId1: e1.id, ringId2: e2.id, shrineId: 'forest_thornado_shrine' }),
   });
   expect(mergeRes.status).toBe(200);
+  const { ring: child } = await mergeRes.json();
 
-  // spirit_max = 52 > 50 = spirit_current → clamp called but does not reduce.
+  // spirit_max = (15-3-3+4×force(child)) × 4 = 68 > 50 = spirit_current →
+  // clamp called but does not reduce.
+  const expectedSpiritMax =
+    (STARTER_RELIQUARY_SUM - e1.max_uses - e2.max_uses +
+      child.max_uses * forceFromTier1(child.tier + 1)) *
+    SEEKER_MULTIPLIER;
   const { player: after } = await me(token);
-  expect(after.spirit_max).toBe(52);
+  expect(after.spirit_max).toBe(expectedSpiritMax); // 68
   expect(after.spirit_current).toBeLessThanOrEqual(after.spirit_max);
   expect(after.spirit_current).toBeGreaterThan(0);
 });
@@ -945,9 +975,11 @@ test('spirit: spirit_current does not exceed spirit_max after Reliquary merge (#
 // Scenario: fuse one WIND (a1, in_carry=1) + one EARTH (thumb, in_carry=1)
 // carried ring → DUST (valid fusion). Starter battle hand: EARTH(thumb)/WIND(a1/a2)
 // /EARTH(d1/d2). Both elements are in carry. After fusion child lands in Reliquary:
-//   Reliquary before = 5 rings × 3 max_uses = 15 → spirit_max_live = 60
-//   Child (DUST, max_uses=4) joins Reliquary → sum = 15+4 = 19 → spirit_max = 76
-//   spirit_current (50, DB default) < 76 → MIN(50,76) = 50 → unchanged.
+//   Reliquary before = 5 rings × 3 max_uses × force(tier 0)=1 = 15 → spirit_max_live = 60
+//   Child (DUST, max_uses=4, tier=1, force=forceFromTier1(2)=2) joins Reliquary →
+//   weighted sum = 15 + 4×2 = 23 → spirit_max = 92 (EPIC #511 Contract F, #520 —
+//   was 76 pre-force-weighting)
+//   spirit_current (50, DB default) < 92 → MIN(50,92) = 50 → unchanged.
 test('spirit: clamp does not reduce spirit_current when fusion raises spirit_max (#481 clamp)', async () => {
   const { token } = await register();
   const { rings } = await me(token);
@@ -973,10 +1005,12 @@ test('spirit: clamp does not reduce spirit_current when fusion raises spirit_max
   const { ring: child } = await fuseRes.json();
   expect(child.max_uses).toBe(4); // Tier 1 (1000 XP) → 3+1=4
 
-  // Parents removed from carry (not Reliquary) → Reliquary gains child (max_uses=4).
-  // spirit_max = (15 + 4) × 4 = 76. spirit_current must stay at 50 (MIN(50,76)=50).
+  // Parents removed from carry (not Reliquary) → Reliquary gains child
+  // (max_uses=4, weighted by force(tier 1)=2). spirit_max = (15 + 4×2) × 4 = 92.
+  // spirit_current must stay at 50 (MIN(50,92)=50).
+  const childForce = forceFromTier1(child.tier + 1);
   const { player: after } = await me(token);
-  expect(after.spirit_max).toBe(spiritMaxBefore + child.max_uses * SEEKER_MULTIPLIER);
+  expect(after.spirit_max).toBe(spiritMaxBefore + child.max_uses * childForce * SEEKER_MULTIPLIER); // 92
   // #481 adversarial: clamp must never lower spirit_current when spirit_max rises.
   // If spirit_current changed here, clampSpiritCurrent was applied incorrectly.
   expect(after.spirit_current).toBe(spiritCurrentBefore);
