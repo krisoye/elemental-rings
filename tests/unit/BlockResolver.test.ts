@@ -649,6 +649,19 @@ describe('resolveBlock — force-scaled heart loss (#514 Contract B)', () => {
       expect(r.relationship).toBe('WEAK');
       expect(r.defenderHeartsLost).toBe(2);
     });
+    // #514 QA Phase 1 adversarial: push "zero credit" to its most tempting-to-
+    // get-wrong extreme — a VERY high-force Wood ring (T10, force 6) that WOULD
+    // swing the NEUTRAL/STRONG clamp all the way to 0 if its force were
+    // mistakenly credited here (max(0, ceilDiv(max(0, 4−6), 1)) = 0, same shape
+    // as the NEUTRAL/STRONG branches above). The actual WEAK formula must ignore
+    // defForce entirely and still bleed the full max(1, ceilDiv(4,1)) = 4 — a
+    // stark 4-vs-0 contrast that would catch even a partial-credit regression
+    // (e.g. someone averaging in a fraction of defForce "for balance").
+    test('T6 Fire (force 4) vs a T10 Wood (force 6) — full 4-heart cost lands despite Wood dwarfing the attacker in force', () => {
+      const r = resolveBlock(tierRing(FIRE, 6), tierRing(WOOD, 10), 'BLOCK', 1);
+      expect(r.relationship).toBe('WEAK');
+      expect(r.defenderHeartsLost).toBe(4);
+    });
   });
 
   describe('No-block / Mistime — max(1, ceilDiv(atkForce, hpForce)), hp_force mitigates', () => {
@@ -679,6 +692,20 @@ describe('resolveBlock — force-scaled heart loss (#514 Contract B)', () => {
       const r = resolveBlock(tierRing(WIND, 3), tierRing(WATER, 3), 'BLOCK', 1);
       expect(r.relationship).toBe('NEUTRAL');
       expect(r.defenderHeartsLost).toBe(0);
+    });
+    // #514 QA Phase 1 adversarial: the case above uses EQUAL force (2 vs 2) — the
+    // boundary, but not the clamp's interior. It would still pass even if the
+    // outer `max(0, ...)` were accidentally dropped, since atkForce − defForce is
+    // exactly 0 either way. A defender whose force STRICTLY EXCEEDS the
+    // attacker's (a well-invested defensive ring facing a weaker attacker) is the
+    // case that actually exercises the clamp: without `max(0, ...)`, ceilDiv would
+    // floor-divide a NEGATIVE numerator and could silently produce a negative
+    // heart count (i.e. heal the defender) instead of correctly flooring at 0.
+    test('defForce STRICTLY greater than atkForce (well-invested defender vs a weaker attacker) → exactly 0 hearts, never negative (Wind T1 force 1 vs Water T10 force 6)', () => {
+      const r = resolveBlock(tierRing(WIND, 1), tierRing(WATER, 10), 'BLOCK', 1);
+      expect(r.relationship).toBe('NEUTRAL');
+      expect(r.defenderHeartsLost).toBe(0);
+      expect(r.defenderHeartsLost).toBeGreaterThanOrEqual(0);
     });
     test('atkForce > defForce → bled count (Wind T4 force 3 vs Water T1 force 1, hp 1 → 2)', () => {
       const r = resolveBlock(tierRing(WIND, 4), tierRing(WATER, 1), 'BLOCK', 1);
@@ -715,6 +742,17 @@ describe('resolveBlock — force-scaled heart loss (#514 Contract B)', () => {
       expect(r.relationship).toBe('STRONG');
       expect(r.defenderHeartsLost).toBe(0);
     });
+    // #514 QA Phase 1 adversarial: same clamp-interior argument as the NEUTRAL
+    // suite above, but for the STRONG+BLOCK branch's INDEPENDENT `max(0, ...)`
+    // call — a separate literal expression in BlockResolver.ts, not a shared
+    // helper (see the Phase 2 branch-desync guard near the end of this file). A
+    // well-invested Water ring strong-blocking a much weaker Fire attack must
+    // clamp to 0, not go negative.
+    test('defForce STRICTLY greater than atkForce on a STRONG block → exactly 0 hearts, never negative (Fire T1 force 1 strong-blocked by Water T10 force 6)', () => {
+      const r = resolveBlock(tierRing(FIRE, 1), tierRing(WATER, 10), 'BLOCK', 1);
+      expect(r.relationship).toBe('STRONG');
+      expect(r.defenderHeartsLost).toBe(0);
+    });
   });
 
   describe('STRONG parry stays 0 hearts regardless of force gap', () => {
@@ -740,5 +778,57 @@ describe('resolveBlock — force-scaled heart loss (#514 Contract B)', () => {
       expect(Number.isInteger(r.defenderHeartsLost)).toBe(true);
       expect(r.defenderHeartsLost).toBe(2);
     });
+
+    // #514 QA Phase 1 adversarial: ceilDiv(a,b) = floor((a+b-1)/b) is the ONE
+    // load-bearing arithmetic primitive behind every heart-loss formula in this
+    // resolver, but it is not exported — these cases drive it indirectly through
+    // the formula that exposes it 1:1 (NO_BLOCK's max(1, ceilDiv(atkForce,
+    // hpForce))). The sweep specifically targets the boundary shapes most likely
+    // to hide an off-by-one in a hand-rolled integer ceil: a===b exactly (small
+    // AND large), and a exactly one less than a clean multiple of b (the shape a
+    // naive `Math.ceil(a/b)` float implementation is most prone to mis-round due
+    // to floating-point representation error — precisely why this resolver avoids
+    // Math.ceil in favor of the integer-only formula).
+    test.each([
+      ['ceilDiv(1,1)=1 — a=b at the minimum (T1 atk, hpForce 1)', 1, 1, 1],
+      ['ceilDiv(2,1)=2 — no mitigation (T2 atk, hpForce 1)', 2, 1, 2],
+      ['ceilDiv(2,2)=1 — a=b exact, small (T2 atk, hpForce 2)', 2, 2, 1],
+      ['ceilDiv(3,3)=1 — a=b exact, larger (T4 atk, hpForce 3)', 4, 3, 1],
+      ['ceilDiv(5,3)=2 — a is exactly one less than 2×b (T8 atk, hpForce 3)', 8, 3, 2],
+      ['ceilDiv(5,2)=3 — a is exactly one less than 3×b (T8 atk, hpForce 2)', 8, 2, 3],
+      ['ceilDiv(5,6)=1 — a one less than b itself still ceils to 1, never 0 (T8 atk, hpForce 6)', 8, 6, 1],
+      ['ceilDiv(6,1)=6 — ladder-ceiling force, no mitigation (T10 atk, hpForce 1)', 10, 1, 6],
+    ] as const)('%s', (_label, atkTier1, hpForce, expected) => {
+      const r = resolveBlock(tierRing(FIRE, atkTier1), makeRing(WATER, 3), 'NO_BLOCK', hpForce);
+      expect(r.defenderHeartsLost).toBe(expected);
+    });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// #514 — QA Phase 2 (implementation-aware): targets the actual branch structure
+// now visible in the finished resolveBlock — the `rel === 'NEUTRAL'` branch
+// computes `defenderHeartsLost` with a SINGLE literal expression that is never
+// gated on `timing`, which is exactly what makes Block-Neutral and Parry-Neutral
+// "literally the same code path" (per the code review). A future edit that
+// "cleans up" this branch by splitting it into a BLOCK sub-case and a PARRY
+// sub-case (e.g. to hand-tune one of them) would silently break OQ-1's
+// no-flat-0-special-case guarantee without any single-timing test catching it,
+// since each half would still individually look correct.
+// ---------------------------------------------------------------------------
+describe('resolveBlock — Neutral-block and Neutral-parry share ONE literal branch, not two (#514 Phase 2 impl-aware structural guard)', () => {
+  test('the `rel === \'NEUTRAL\'` branch source never references `timing` — proving BLOCK and PARRY cannot silently diverge inside it', () => {
+    const src = fs.readFileSync(
+      path.join(__dirname, '../../server/src/game/BlockResolver.ts'),
+      'utf8',
+    );
+    const match = src.match(/else if \(rel === 'NEUTRAL'\) \{([\s\S]*?)\} else \{/);
+    expect(match).not.toBeNull();
+    const neutralBranchSrc = match![1];
+    expect(neutralBranchSrc).not.toMatch(/timing/);
+    // Sanity: the extracted snippet is actually the heart-loss formula, not an
+    // empty/mismatched capture (guards the regex itself against silent drift if
+    // the surrounding source is reformatted).
+    expect(neutralBranchSrc).toMatch(/defenderHeartsLost = Math\.max\(0, ceilDiv\(Math\.max\(0, atkForce - defForce\), hpForce\)\)/);
   });
 });
