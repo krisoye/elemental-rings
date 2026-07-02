@@ -489,7 +489,8 @@ export class BattleScene extends Phaser.Scene {
     type Outcome = { label: string; color: string; size: string; flash?: [number, number, number] };
     let outcome: Outcome | null = null;
 
-    const { timing, relationship, rallyContinues, defenderHeartLost } = result;
+    const { timing, relationship, rallyContinues, defenderHeartsLost } = result;
+    const defenderHeartLost = defenderHeartsLost > 0;
     const missed = timing === 'MISTIME' || timing === 'NO_BLOCK';
 
     if (missed) {

@@ -793,10 +793,10 @@ export class BattleRoom extends Room<{ state: BattleState }> {
     attackerSlot: string,
     defenderSessionId: string,
     defenderSlot: string,
-    result: { timing: string; relationship: string; defenderHeartLost: boolean },
+    result: { timing: string; relationship: string; defenderHeartsLost: number },
   ): void {
     const isCounter = result.timing === 'PARRY' && result.relationship === 'STRONG';
-    const isHit = result.defenderHeartLost;
+    const isHit = result.defenderHeartsLost > 0;
 
     const atkXp = isCounter ? XP_ATK_COUNTER : isHit ? XP_ATK_HIT : XP_ATK_BLOCK;
     this.addXp(attackerSessionId, attackerSlot, atkXp);
@@ -805,7 +805,7 @@ export class BattleRoom extends Room<{ state: BattleState }> {
     if (result.timing !== 'NO_BLOCK' && defenderSlot) {
       const defXp = isCounter
         ? XP_DEF_COUNTER
-        : !result.defenderHeartLost
+        : result.defenderHeartsLost === 0
           ? XP_DEF_BLOCK
           : XP_DEF_WEAK;
       this.addXp(defenderSessionId, defenderSlot, defXp);
@@ -1633,20 +1633,23 @@ export class BattleRoom extends Room<{ state: BattleState }> {
     // Award outcome-based XP for the engaged attack/defense rings.
     this.awardExchangeXp(attackerId, attackerSlot, defenderId, capture.slotKey, result);
 
-    // Heart-loss resolution. Each lost heart is a plain decrement (floored at 0).
-    // #261 — Thornwood "Heartwood" absorbs the boss's first N heart-losses (the
-    // hit is redirected to the Thumb) before the decrement applies.
+    // Heart-loss resolution. Each lost heart is a plain decrement (floored at 0),
+    // driven by the resolver's count (0 or 1 today; force scaling may raise N in
+    // a future sub-issue). #261 — Thornwood "Heartwood" absorbs the boss's first
+    // N heart-losses (the hit is redirected to the Thumb) before the decrement
+    // applies; one absorb check fires per lost-heart point, preserving the
+    // existing single-charge semantics for N ≤ 1.
     let aiHeartActuallyLost = false;
-    if (result.defenderHeartLost) {
+    for (let i = 0; i < result.defenderHeartsLost; i++) {
       if (!this.absorbBossHeartLoss(defenderId)) {
         defenderPlayer.hearts = Math.max(0, defenderPlayer.hearts - 1);
         if (defenderId === AI_ID) aiHeartActuallyLost = true;
       }
     }
-    // attackerHeartLost is always false in the current BlockResolver (forward compat
+    // attackerHeartsLost is always 0 in the current BlockResolver (forward compat
     // for future rally counter-damage); the absorb wrapper is preserved in case it
     // fires (e.g. a boss attacker taking reflected damage).
-    if (result.attackerHeartLost) {
+    for (let i = 0; i < result.attackerHeartsLost; i++) {
       if (!this.absorbBossHeartLoss(attackerId)) {
         attackerPlayer.hearts = Math.max(0, attackerPlayer.hearts - 1);
         if (attackerId === AI_ID) aiHeartActuallyLost = true;
@@ -1701,7 +1704,7 @@ export class BattleRoom extends Room<{ state: BattleState }> {
       attackerElements: componentsOf(attackerRing.element),
       timing,
       relationship: result.relationship,
-      defenderHeartLost: result.defenderHeartLost,
+      defenderHeartsLost: result.defenderHeartsLost,
       rallyContinues: result.rallyContinues,
       volleyedElement: result.volleyedElement,
     };
