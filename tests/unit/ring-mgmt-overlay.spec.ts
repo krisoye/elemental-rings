@@ -949,6 +949,158 @@ describe('#519 Phase 1 adversarial: 0-current-uses boundary does not break the f
 });
 
 // ===========================================================================
+// Class 7c — #519 Phase 2 impl-aware: branches now visible in the finished
+// RingCard.ts / RingSlot.ts, written after the import-path bug fix (commit
+// 74ac3af corrected RingSlot's `../../shared/tiers` to `../../../shared/tiers`
+// — `npx tsc --noEmit` in client/ is now clean, so both files' actual
+// force-computation call sites are live and stable to scan).
+// ===========================================================================
+
+describe('#519 Phase 2 impl-aware: RingSlot.updateFromRing order-of-operations', () => {
+
+  it('updateFromRing calls renderUses() AFTER card.setRing(...) — Blinded masking must have the final word', () => {
+    // #519 Phase 2 adversarial: RingCard.setRing ALWAYS writes the real
+    // fraction+force string (force is "always shown", never conditionally gated
+    // — locked by the Phase 1 pipsLabel.setVisible check). RingSlot's Blinded
+    // masking is a SEPARATE call (renderUses -> card.setPipsText('?')). If a
+    // future refactor reordered these two calls, setRing's real string would
+    // paint AFTER the mask and silently un-hide the Blinded player's own uses.
+    const src = readClientSrc('objects/RingSlot.ts');
+    if (src === null) return;
+    const m = src.match(/updateFromRing\([^)]*\)\s*:\s*void\s*\{([\s\S]*?)\n {2}\}/);
+    expect(m, 'RingSlot.ts must declare updateFromRing(...): void').not.toBeNull();
+    const body = m![1];
+    const setRingIdx = body.indexOf('this.card.setRing(');
+    const renderUsesIdx = body.indexOf('this.renderUses()');
+    expect(setRingIdx, 'updateFromRing must call this.card.setRing(...)').toBeGreaterThanOrEqual(0);
+    expect(renderUsesIdx, 'updateFromRing must call this.renderUses()').toBeGreaterThanOrEqual(0);
+    expect(
+      renderUsesIdx,
+      'renderUses() must run AFTER card.setRing(...) so Blinded masking is not immediately overwritten by the real fraction+force string',
+    ).toBeGreaterThan(setRingIdx);
+  });
+
+});
+
+describe('#519 Phase 2 impl-aware: RingSlot.renderUses() branch order and cached-state contract', () => {
+
+  it('the Blinded (_usesHidden) check runs BEFORE the _lastRing null-guard — masking works even before any ring data has ever arrived', () => {
+    // #519 Phase 2 adversarial: a RingSlot can in principle receive
+    // setUsesHidden(true) (e.g. a Shadow-gauge state diff) before its first
+    // updateFromRing call has populated _lastRing. If the null-guard ran first,
+    // an early Blinded signal on a not-yet-rendered slot would silently no-op
+    // instead of masking.
+    const src = readClientSrc('objects/RingSlot.ts');
+    if (src === null) return;
+    const m = src.match(/private renderUses\(\)\s*:\s*void\s*\{([\s\S]*?)\n {2}\}/);
+    expect(m, 'RingSlot.ts must declare a private renderUses(): void method').not.toBeNull();
+    const body = m![1];
+    const hiddenIdx = body.indexOf('if (this._usesHidden)');
+    const nullGuardIdx = body.indexOf('if (!r) return;');
+    expect(hiddenIdx, 'renderUses must check this._usesHidden').toBeGreaterThanOrEqual(0);
+    expect(nullGuardIdx, 'renderUses must guard on a null _lastRing').toBeGreaterThanOrEqual(0);
+    expect(
+      nullGuardIdx,
+      'the Blinded check must come BEFORE the _lastRing null-guard, or masking would depend on ring data having already arrived',
+    ).toBeGreaterThan(hiddenIdx);
+  });
+
+  it('the reveal path (not Blinded) computes force from the CACHED _lastRing.xp (r.xp) — the un-blind reveal needs no new server push', () => {
+    // #519 Phase 2: setUsesHidden(false) alone (no accompanying ring update) must
+    // restore the correct fraction+force from whatever ring state was last
+    // synced. This locks in that renderUses reads r.xp (the cached field),
+    // mirroring the force(ring.xp) call-site convention Phase 1 locked for
+    // RingCard.setRing.
+    const src = readClientSrc('objects/RingSlot.ts');
+    if (src === null) return;
+    const m = src.match(/private renderUses\(\)\s*:\s*void\s*\{([\s\S]*?)\n {2}\}/);
+    expect(m).not.toBeNull();
+    const body = m![1];
+    expect(
+      body,
+      'the non-Blinded branch must call force(r.xp) — the cached _lastRing field, not a live ring.xp argument',
+    ).toMatch(/force\(\s*r\.xp\s*\)/);
+  });
+
+  it('RingSlot._lastRing type was widened to include xp (#519) — currentUses/maxUses alone are insufficient once the pips label depends on force(xp)', () => {
+    // #519 Phase 2: before this issue, _lastRing only needed {currentUses,
+    // maxUses} (the dot-string never depended on xp). Lock the widened field
+    // declaration itself so a future revert doesn't silently drop xp (which
+    // renderUses now dereferences on every non-Blinded render).
+    const src = readClientSrc('objects/RingSlot.ts');
+    if (src === null) return;
+    expect(
+      src,
+      '_lastRing must be typed to include xp: number alongside currentUses/maxUses',
+    ).toMatch(/_lastRing:\s*\{\s*currentUses:\s*number;\s*maxUses:\s*number;\s*xp:\s*number\s*\}\s*\|\s*null/);
+  });
+
+});
+
+describe('#519 Phase 2 impl-aware: force badge reads xp, never the (also-present) tier field', () => {
+
+  it('RingCard.setRing computes the force badge from ring.xp, never ring.tier — RingCardData carries both, only xp is load-bearing for force', () => {
+    // #519 Phase 2 adversarial: RingCardData.tier is still present on the type
+    // (retained for callers, per the interface's own doc comment) even though
+    // the Tier row was dropped from the card body by #389. A future edit could
+    // easily reach for the nearby ring.tier instead of ring.xp when wiring the
+    // force badge — same object, plausible-looking field, wrong semantics (tier
+    // here is whatever the caller passes, not guaranteed in sync with xp).
+    const src = readClientSrc('objects/ui/RingCard.ts');
+    if (src === null) return;
+    const m = src.match(/setRing\([^)]*\)\s*:\s*[^{]*\{([\s\S]*?)\n {2}\}/);
+    expect(m).not.toBeNull();
+    const body = m![1];
+    expect(body, 'setRing must call force(ring.xp)').toMatch(/force\(\s*ring\.xp\s*\)/);
+    expect(body, 'setRing must never call force(ring.tier)').not.toMatch(/force\(\s*ring\.tier\s*\)/);
+  });
+
+  it('RingSlot.renderUses computes the force badge from r.xp (cached), never r.tier', () => {
+    const src = readClientSrc('objects/RingSlot.ts');
+    if (src === null) return;
+    const m = src.match(/private renderUses\(\)\s*:\s*void\s*\{([\s\S]*?)\n {2}\}/);
+    expect(m).not.toBeNull();
+    const body = m![1];
+    expect(body, 'renderUses must call force(r.xp)').toMatch(/force\(\s*r\.xp\s*\)/);
+    expect(body, 'renderUses must never call force(r.tier)').not.toMatch(/force\(\s*r\.tier\s*\)/);
+  });
+
+});
+
+describe('#519 Phase 2 impl-aware: architectural invariant — only RingSlot.ts calls setPipsText() directly', () => {
+
+  it('no file other than RingSlot.ts calls <card>.setPipsText(...) — every other consumer relies exclusively on RingCard.setRing for the force badge', () => {
+    // #519 Phase 2: the 5 documented RingCard consumers are RingSlot,
+    // InventoryGrid, BenchHealthCombat (heart/won/RECHARGE cards),
+    // RingManagementOverlayClass (fusion-picker r1/r2), and CampScene
+    // (heart/combat cards). All but RingSlot must go through setRing()
+    // exclusively — a direct setPipsText(...) call anywhere else would be a
+    // second, independently-maintained render path that can silently drift
+    // from the force(ring.xp) contract Phase 1 locked on setRing.
+    function walkTs(dir: string): string[] {
+      if (!fs.existsSync(dir)) return [];
+      return fs.readdirSync(dir, { withFileTypes: true }).flatMap((e) => {
+        const full = path.join(dir, e.name);
+        if (e.isDirectory()) return walkTs(full);
+        return e.isFile() && e.name.endsWith('.ts') ? [full] : [];
+      });
+    }
+    const violations = walkTs(CLIENT_SRC).filter((f) => {
+      const rel = path.relative(CLIENT_SRC, f);
+      if (rel === path.join('objects', 'RingSlot.ts')) return false;
+      if (rel === path.join('objects', 'ui', 'RingCard.ts')) return false; // declares the method itself
+      const contents = fs.readFileSync(f, 'utf8');
+      return /\.setPipsText\(/.test(contents);
+    });
+    expect(
+      violations.map((f) => path.relative(CLIENT_SRC, f)),
+      'setPipsText(...) must only be called from RingSlot.ts (the Blinded masking path) — every other consumer must rely on RingCard.setRing',
+    ).toHaveLength(0);
+  });
+
+});
+
+// ===========================================================================
 // Class 8 — CampScene COMBAT cluster: local-space coordinates (Phase 2)
 // ===========================================================================
 
