@@ -84,14 +84,15 @@ describe('resolveBlock — NEUTRAL block (case 2 gauge)', () => {
     expect(r.blockGaugeDeltas).toEqual([{ element: FIRE, delta: 1.0 }]);
   });
 
-  test('Tier-2 STEAM defender NEUTRAL block → [{FIRE, 0.25}, {WATER, 0.25}] (full rate per parent)', () => {
-    // Steam vs Steam attacker is fused-vs-fused → NEUTRAL. Tier 2 → delta 1/2^2 = 0.25.
+  test('Tier-2 STEAM defender NEUTRAL block → [{FIRE, 0.5}, {WATER, 0.5}] (full rate per parent)', () => {
+    // Steam vs Steam attacker is fused-vs-fused → NEUTRAL. tierForXp(1500)=2 →
+    // force = forceFromTier1(3) = 2 → delta 1/2 = 0.5.
     const def = makeRing(STEAM, 3, tierStartXp(2));
     const r = resolveBlock(makeRing(STEAM, 3), def, 'BLOCK');
     expect(r.relationship).toBe('NEUTRAL');
     expect(r.blockGaugeDeltas).toEqual([
-      { element: FIRE, delta: 0.25 },
-      { element: WATER, delta: 0.25 },
+      { element: FIRE, delta: 0.5 },
+      { element: WATER, delta: 0.5 },
     ]);
   });
 
@@ -266,15 +267,18 @@ describe('resolveBlock — WEAK catch invariants (C5 adversarial)', () => {
   });
 });
 
-describe('resolveBlock — fractional tier deltas (C5/C6 regression)', () => {
-  // C5 mandates delta = 1/2^tier per tracked parent.
-  // Tier-1 base ring → delta 0.5; Tier-2 Steam → each parent delta 0.25.
+describe('resolveBlock — fractional force deltas (C5/C6 regression, re-derived #512)', () => {
+  // #512 mandates delta = 1/force(defender.xp) per tracked parent.
+  // Tier-1 base ring → force 2 → delta 0.5 (unchanged from the old 1/2^tier
+  // formula, since force(T1)=2=2^1). Tier-2 Steam → force 2 → each parent
+  // delta 0.5 (changed from the old 1/2^tier value of 0.25, since
+  // force(T2)=2 != 2^2=4).
   // The Tier-2 Steam case is already in the NEUTRAL block suite above; this
   // suite adds Tier-1 base and Tier-2 STEAM strong-block to complete the tier
   // ladder and lock in the formula.
 
   test('Tier-1 WATER base neutral block → blockGaugeDeltas [{WATER, 0.5}]', () => {
-    // Tier 1 starts at 500 XP; delta = 1/2^1 = 0.5.
+    // Tier 1 starts at 500 XP; tierForXp=1 → force = forceFromTier1(2) = 2 → delta 0.5.
     const def = makeRing(WATER, 3, tierStartXp(1));
     // WIND attack vs WATER defense → NEUTRAL (Wind is always neutral).
     const r = resolveBlock(makeRing(WIND, 3), def, 'BLOCK');
@@ -282,16 +286,17 @@ describe('resolveBlock — fractional tier deltas (C5/C6 regression)', () => {
     expect(r.blockGaugeDeltas).toEqual([{ element: WATER, delta: 0.5 }]);
   });
 
-  test('Tier-2 STEAM strong-blocks WOOD → case-2 [{FIRE,0.25},{WATER,0.25}] AND case-3 [WOOD,SHADOW]', () => {
+  test('Tier-2 STEAM strong-blocks WOOD → case-2 [{FIRE,0.5},{WATER,0.5}] AND case-3 [WOOD,SHADOW]', () => {
     // WOOD attack vs STEAM defense: STEAM has FIRE+WATER parents. FIRE strongly
-    // beats Wood (fusionBeats), so the defense is STRONG. Tier 2 → delta 0.25 each.
+    // beats Wood (fusionBeats), so the defense is STRONG. tierForXp(1500)=2 →
+    // force = forceFromTier1(3) = 2 → delta 0.5 each.
     // Case 3: FIRE beats WOOD → WOOD+SHADOW decremented.
     const def = makeRing(STEAM, 3, tierStartXp(2));
     const r = resolveBlock(makeRing(WOOD, 3), def, 'BLOCK');
     expect(r.relationship).toBe('STRONG');
     expect(r.blockGaugeDeltas).toEqual([
-      { element: FIRE, delta: 0.25 },
-      { element: WATER, delta: 0.25 },
+      { element: FIRE, delta: 0.5 },
+      { element: WATER, delta: 0.5 },
     ]);
     expect(r.blockedGaugeElement.sort()).toEqual([ElementEnum.WOOD, ElementEnum.SHADOW].sort());
     expect(r.defenderHeartLost).toBe(false);
