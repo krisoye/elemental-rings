@@ -390,6 +390,54 @@ describe('fuseRings — DB transaction (§4.6)', () => {
     // Complement: a bug mirroring parent2 (or ORing the two flags) would yield 1 here.
     expect(fuseWithCarry(0, 1)).toBe(0);
   });
+
+  // ── spare-grid cap on the crafted ring (review follow-up, #543) ──────────────
+  // When both parents sit in loadout slots (exempt from spare_ring_max) and the
+  // crafted ring inherits in_carry=1, it lands UNASSIGNED in the spare grid with no
+  // compensating decrease. Before the guard this silently overflowed the cap — the
+  // in_carry fix was the first path able to insert into the spare grid at all.
+
+  test('both parents in loadout, spare grid at max → fuse throws (no silent overflow)', () => {
+    const p = makePlayer(db);
+    db.prepare('UPDATE players SET spare_ring_max = ? WHERE id = ?').run(2, p);
+    // Fill the spare grid to exactly the cap: 2 unassigned carried rings.
+    const s1 = makeRing(db, p, DUST, T2_XP);
+    const s2 = makeRing(db, p, DUST, T2_XP);
+    db.prepare('UPDATE rings SET in_carry = 1 WHERE id IN (?, ?)').run(s1, s2);
+    // Both parents carried and slotted into the loadout (exempt from the cap). The
+    // crafted ring inherits parent1.in_carry=1, so it is spare-grid-bound.
+    const fire = makeRing(db, p, FIRE, T2_XP);
+    const water = makeRing(db, p, WATER, T2_XP);
+    repo.saveLoadout(p, { a1: fire, a2: water });
+    db.prepare('UPDATE rings SET in_carry = 1 WHERE id IN (?, ?)').run(fire, water);
+
+    expect(() => repo.fuseRings(p, fire, water)).toThrow(/spare grid full/i);
+    // Rolled back: both parents intact, no crafted ring inserted.
+    const rings = repo.getRingsByOwner(p);
+    expect(rings.find((r) => r.id === fire)).toBeDefined();
+    expect(rings.find((r) => r.id === water)).toBeDefined();
+    expect(rings).toHaveLength(4); // 2 fillers + 2 parents, nothing crafted
+  });
+
+  test('both parents in loadout, spare grid one below max → fuse succeeds (boundary)', () => {
+    const p = makePlayer(db);
+    db.prepare('UPDATE players SET spare_ring_max = ? WHERE id = ?').run(2, p);
+    // Spare grid at cap − 1 = 1, so the crafted ring's +1 lands exactly at the cap.
+    const s1 = makeRing(db, p, DUST, T2_XP);
+    db.prepare('UPDATE rings SET in_carry = 1 WHERE id = ?').run(s1);
+    const fire = makeRing(db, p, FIRE, T2_XP);
+    const water = makeRing(db, p, WATER, T2_XP);
+    repo.saveLoadout(p, { a1: fire, a2: water });
+    db.prepare('UPDATE rings SET in_carry = 1 WHERE id IN (?, ?)').run(fire, water);
+
+    const newId = repo.fuseRings(p, fire, water);
+    const crafted = repo.getRingsByOwner(p).find((r) => r.id === newId);
+    expect(crafted).toBeDefined();
+    expect(crafted!.in_carry).toBe(1); // mirrors parent1 → spare grid
+    // Parents consumed; grid now holds the filler + the crafted ring = 2 = cap.
+    const spareCount = repo.getRingsByOwner(p).filter((r) => r.in_carry === 1).length;
+    expect(spareCount).toBe(2);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -1082,6 +1130,52 @@ describe('mergeRings — DB transaction (§4.7, #431)', () => {
   test('mixed the other way (parent1 resting, parent2 carried) → mirrors parent1 (in_carry=0)', () => {
     // Complement: a bug mirroring parent2 (or ORing the two flags) would yield 1 here.
     expect(mergeWithCarry(0, 1)).toBe(0);
+  });
+
+  // ── spare-grid cap on the crafted ring (review follow-up, #543) ──────────────
+  // Both parents in loadout slots (same element) are exempt from spare_ring_max;
+  // the crafted ring inherits in_carry=1 and lands UNASSIGNED in the spare grid,
+  // so it is +1 with no offsetting decrease. Guard must reject an over-cap merge.
+
+  test('both parents in loadout, spare grid at max → merge throws (no silent overflow)', () => {
+    const p = makePlayer(db);
+    db.prepare('UPDATE players SET spare_ring_max = ? WHERE id = ?').run(2, p);
+    // Fill the spare grid to exactly the cap: 2 unassigned carried rings.
+    const s1 = makeRing(db, p, WIND, T1_XP);
+    const s2 = makeRing(db, p, WIND, T1_XP);
+    db.prepare('UPDATE rings SET in_carry = 1 WHERE id IN (?, ?)').run(s1, s2);
+    // Both parents are the same element, carried, and slotted into the loadout.
+    const e1 = makeRing(db, p, EARTH, T1_XP);
+    const e2 = makeRing(db, p, EARTH, T1_XP);
+    repo.saveLoadout(p, { a1: e1, a2: e2 });
+    db.prepare('UPDATE rings SET in_carry = 1 WHERE id IN (?, ?)').run(e1, e2);
+
+    expect(() => repo.mergeRings(p, e1, e2)).toThrow(/spare grid full/i);
+    // Rolled back: both parents intact, no crafted ring inserted.
+    const rings = repo.getRingsByOwner(p);
+    expect(rings.find((r) => r.id === e1)).toBeDefined();
+    expect(rings.find((r) => r.id === e2)).toBeDefined();
+    expect(rings).toHaveLength(4); // 2 fillers + 2 parents, nothing crafted
+  });
+
+  test('both parents in loadout, spare grid one below max → merge succeeds (boundary)', () => {
+    const p = makePlayer(db);
+    db.prepare('UPDATE players SET spare_ring_max = ? WHERE id = ?').run(2, p);
+    // Spare grid at cap − 1 = 1, so the crafted ring's +1 lands exactly at the cap.
+    const s1 = makeRing(db, p, WIND, T1_XP);
+    db.prepare('UPDATE rings SET in_carry = 1 WHERE id = ?').run(s1);
+    const e1 = makeRing(db, p, EARTH, T1_XP);
+    const e2 = makeRing(db, p, EARTH, T1_XP);
+    repo.saveLoadout(p, { a1: e1, a2: e2 });
+    db.prepare('UPDATE rings SET in_carry = 1 WHERE id IN (?, ?)').run(e1, e2);
+
+    const newId = repo.mergeRings(p, e1, e2);
+    const crafted = repo.getRingsByOwner(p).find((r) => r.id === newId);
+    expect(crafted).toBeDefined();
+    expect(crafted!.in_carry).toBe(1); // mirrors parent1 → spare grid
+    // Parents consumed; grid now holds the filler + the crafted ring = 2 = cap.
+    const spareCount = repo.getRingsByOwner(p).filter((r) => r.in_carry === 1).length;
+    expect(spareCount).toBe(2);
   });
 });
 
