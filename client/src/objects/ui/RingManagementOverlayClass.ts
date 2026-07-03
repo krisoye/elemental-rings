@@ -13,7 +13,6 @@ import {
   isFusionEligibleParent,
   fusionOf,
   fusionParents,
-  MIN_FUSION_PARENT_XP,
 } from '../../../../shared/fusions';
 import { FusedCardFill } from '../fusedFill';
 import {
@@ -1000,18 +999,15 @@ export class RingManagementOverlay {
 
   /**
    * Compute the merge result element (if any) from the current two parent rings.
-   * Both parents must share the same element and each independently clear Tier 1
-   * (≥ MIN_FUSION_PARENT_XP). Unlike fusion, isFusionEligibleParent is NOT used
-   * here — fusion rings (Steam, Thornado, etc.) are valid merge parents.
+   * Both parents must share the same element — there is no XP or tier floor.
+   * Unlike fusion, isFusionEligibleParent is NOT used here — fusion rings
+   * (Steam, Thornado, etc.) are valid merge parents.
    */
   private computeMergeResult(): { mrElement: number | null; eligible: boolean } {
     const r1 = this.mergeParent1;
     const r2 = this.mergeParent2;
     if (!r1 || !r2) return { mrElement: null, eligible: false };
     if (r1.element !== r2.element) return { mrElement: null, eligible: false };
-    if (r1.xp < MIN_FUSION_PARENT_XP || r2.xp < MIN_FUSION_PARENT_XP) {
-      return { mrElement: null, eligible: false };
-    }
     return { mrElement: r1.element, eligible: true };
   }
 
