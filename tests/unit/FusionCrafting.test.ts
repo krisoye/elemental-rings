@@ -667,25 +667,47 @@ describe('mergeRings — DB transaction (§4.7, #431)', () => {
 
   // ── XP boundary ────────────────────────────────────────────────────────────
 
-  test('parent at exactly 499 XP (one below Tier-1 floor) → throws Tier-1 error', () => {
-    // #431 adversarial: off-by-one — the gate is >= 500 (not > 499). A > comparison
-    // would silently accept 499-XP rings. This pins the correct boundary.
+  test('parent at exactly 499 XP (sub-Tier-1, floor removed) → merge succeeds', () => {
+    // #540: the Tier-1 floor was removed — a 499-XP parent (formerly rejected)
+    // now merges like any other same-element pair.
     const p = makePlayer(db);
-    const f1 = makeRing(db, p, FIRE, 499); // one below
-    const f2 = makeRing(db, p, FIRE, 600); // clears floor
+    const f1 = makeRing(db, p, FIRE, 499);
+    const f2 = makeRing(db, p, FIRE, 600);
 
-    expect(() => repo.mergeRings(p, f1, f2)).toThrow(/Tier 1/);
-    expect(repo.getRingsByOwner(p)).toHaveLength(2); // both intact
+    const newId = repo.mergeRings(p, f1, f2);
+    const result = repo.getRingsByOwner(p).find((r) => r.id === newId);
+    expect(result).toBeDefined();
+    expect(result!.xp).toBe(499 + 600);
   });
 
-  test('parent at exactly 500 XP (exactly Tier-1 floor) → merge succeeds', () => {
-    // #431 adversarial: complement of the 499 test — >= 500 must accept exactly 500.
+  test('parent at exactly 500 XP → merge succeeds', () => {
+    // Ordinary same-element merge at the former (now-irrelevant) Tier-1 value.
     const p = makePlayer(db);
-    const f1 = makeRing(db, p, FIRE, 500); // exactly at floor
+    const f1 = makeRing(db, p, FIRE, 500);
     const f2 = makeRing(db, p, FIRE, 500);
 
     const newId = repo.mergeRings(p, f1, f2);
     expect(repo.getRingsByOwner(p).find((r) => r.id === newId)).toBeDefined();
+  });
+
+  test('two 0-XP parents → merge succeeds: xp=0, tier=0, max_uses=3 (naturalMaxUses(0))', () => {
+    // #540: merge has no XP floor — two 0-XP rings collapse into one 0-XP ring.
+    // This is a net capacity loss (3+3 combined uses down to 3), not an exploit,
+    // since merge only sums XP with no multiplier.
+    const p = makePlayer(db);
+    const e1 = makeRing(db, p, EARTH, 0);
+    const e2 = makeRing(db, p, EARTH, 0);
+
+    const newId = repo.mergeRings(p, e1, e2);
+    const result = repo.getRingsByOwner(p).find((r) => r.id === newId);
+    expect(result).toBeDefined();
+    expect(result!.xp).toBe(0);
+    expect(result!.tier).toBe(0);
+    expect(result!.max_uses).toBe(naturalMaxUses(0));
+    expect(result!.max_uses).toBe(3);
+    // Both parents deleted.
+    expect(repo.getRingsByOwner(p).find((r) => r.id === e1)).toBeUndefined();
+    expect(repo.getRingsByOwner(p).find((r) => r.id === e2)).toBeUndefined();
   });
 
   test('XP overflow: two very high-XP rings (10000+10000) → tier and max_uses correct', () => {
