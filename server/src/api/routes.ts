@@ -439,10 +439,10 @@ apiRouter.put('/api/rings/swap', requireAuth, requirePlayer, (req: Request, res:
 /**
  * POST /api/rings/merge — merge two same-element rings into one stronger ring
  * at an unsealed shrine (#431, GDD §4.7). Body: { ringId1, ringId2, shrineId }.
- * Both rings must be owned, share the same element, each independently reach
- * Tier 1 (≥ 500 XP), and neither may be escrowed or the player's pending WON
- * ring. The shrine must be unsealed. Returns the new ring on 200; descriptive
- * 400 on any validation failure. Requires auth.
+ * Both rings must be owned and share the same element, and neither may be
+ * escrowed or the player's pending WON ring. The shrine must be unsealed.
+ * Returns the new ring on 200; descriptive 400 on any validation failure.
+ * Requires auth.
  */
 apiRouter.post('/api/rings/merge', requireAuth, requirePlayer, (req: Request, res: Response): void => {
   const playerId = req.playerId as string;

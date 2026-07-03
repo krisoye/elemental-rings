@@ -1070,8 +1070,7 @@ export const fuseRings = db.transaction(
  * Merge two same-element rings into a single stronger ring (GDD §4.7).
  *
  * Validates (in order): two distinct rings owned by the player; same element
- * (fusion elements allowed — Steam+Steam OK); each independently at Tier 1 or
- * above (`tierForXp(xp) >= 1`, ≥ 500 XP); neither escrowed; neither is the
+ * (fusion elements allowed — Steam+Steam OK); neither escrowed; neither is the
  * player's pending WON ring. On success inserts the merged ring via
  * `insertFusionRing` (same schema — `parent_dominant` already present),
  * clears each parent from any loadout slot, then permanently deletes both
@@ -1100,11 +1099,6 @@ export const mergeRings = db.transaction(
     // §4.7 — both parents must share the same element.
     if (r1.element !== r2.element) {
       throw new Error('Both rings must share the same element to merge');
-    }
-
-    // §4.7 — each parent must independently reach at least Tier 1 (≥ 500 XP).
-    if (tierForXp(r1.xp) < 1 || tierForXp(r2.xp) < 1) {
-      throw new Error('Both rings must reach Tier 1 to merge');
     }
 
     // §4.7 — neither parent may be escrowed (staked).
