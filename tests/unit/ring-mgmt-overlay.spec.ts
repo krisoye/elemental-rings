@@ -3798,6 +3798,53 @@ describe('#431 merge mode: COLUMN_LABELS and publishRingMgmtState', () => {
     ).toContain('BENCH_GRID_TOP_Y - 20');
   });
 
+  // #540 adversarial: computeMergeResult's body must not reference the fusion XP
+  // floor at all — a partial revert (e.g. removing the throw but leaving the
+  // comparison) would silently keep eligible:false for any sub-500 XP pair.
+  it('computeMergeResult body does not reference MIN_FUSION_PARENT_XP (#540 floor removed)', () => {
+    const src = readClientSrc('objects/ui/RingManagementOverlayClass.ts');
+    if (src === null) return;
+    const lines = src.split('\n');
+    const methodStart = lines.findIndex((l) => /private\s+computeMergeResult\s*\(/.test(l));
+    expect(methodStart, 'computeMergeResult must exist').toBeGreaterThan(-1);
+    // Collect the full method body up to its closing brace at method indentation.
+    const methodEnd = lines.findIndex(
+      (l, i) => i > methodStart && /^\s{2}\}/.test(l),
+    );
+    const methodBody = lines.slice(methodStart, methodEnd > methodStart ? methodEnd : methodStart + 15).join('\n');
+    expect(
+      methodBody,
+      '#540: computeMergeResult must not check MIN_FUSION_PARENT_XP — merge has no XP floor',
+    ).not.toContain('MIN_FUSION_PARENT_XP');
+  });
+
+  // #540 adversarial: the now-unused import must be fully removed, not just
+  // unreferenced in computeMergeResult — a stray import would mask a partial revert.
+  it('RingManagementOverlayClass.ts does not import MIN_FUSION_PARENT_XP (#540)', () => {
+    const src = readClientSrc('objects/ui/RingManagementOverlayClass.ts');
+    if (src === null) return;
+    expect(
+      src,
+      '#540: MIN_FUSION_PARENT_XP import must be dropped — merge no longer uses the fusion XP floor',
+    ).not.toContain('MIN_FUSION_PARENT_XP');
+  });
+
+  // #540 adversarial: the element-equality check must still gate eligibility even
+  // though the XP floor is gone — cross-element pairs at ANY XP (including both at
+  // MIN_FUSION_PARENT_XP-clearing values) must remain ineligible for the right reason.
+  it('computeMergeResult still early-returns on element mismatch before any XP logic (#540)', () => {
+    const src = readClientSrc('objects/ui/RingManagementOverlayClass.ts');
+    if (src === null) return;
+    const lines = src.split('\n');
+    const methodStart = lines.findIndex((l) => /private\s+computeMergeResult\s*\(/.test(l));
+    if (methodStart < 0) return;
+    const methodBody = lines.slice(methodStart, methodStart + 15).join('\n');
+    expect(
+      methodBody,
+      'element mismatch guard (r1.element !== r2.element) must remain — the only eligibility gate left',
+    ).toMatch(/r1\.element\s*!==\s*r2\.element/);
+  });
+
 });
 
 // ===========================================================================

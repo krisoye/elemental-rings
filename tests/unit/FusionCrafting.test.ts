@@ -895,4 +895,190 @@ describe('mergeRings — DB transaction (§4.7, #431)', () => {
     const result = repo.getRingsByOwner(p).find((r) => r.id === newId);
     expect(result!.xp).toBe(XP1 + XP2); // 3600 — exact arithmetic
   });
+
+  // ── #540 — non-Tier-1 tier boundaries (floor removal must not disturb tierForXp) ──
+
+  test('#540: merged XP lands exactly on the T1→T2 boundary (1500) → tier=2, max_uses=5', () => {
+    // #540 adversarial: the removed floor only gated the OLD T1 boundary (500).
+    // This locks in that tierForXp is still consulted correctly for every other
+    // boundary — a hardcoded "tier = mergedXp >= 500 ? 1 : 0" regression would fail here.
+    const p = makePlayer(db);
+    const r1 = makeRing(db, p, WIND, 1499);
+    const r2 = makeRing(db, p, WIND, 1); // 1499 + 1 = 1500 exactly
+
+    const newId = repo.mergeRings(p, r1, r2);
+    const result = repo.getRingsByOwner(p).find((r) => r.id === newId);
+    expect(result!.xp).toBe(tierStartXp(2));
+    expect(result!.tier).toBe(2);
+    expect(result!.max_uses).toBe(naturalMaxUses(2));
+    expect(result!.max_uses).toBe(5);
+  });
+
+  test('#540: merged XP one below the T1→T2 boundary (1499) stays tier=1, max_uses=4', () => {
+    // #540 adversarial: complement of the boundary test above — one XP short of
+    // the T2 threshold must NOT cross tiers, even though both parents individually
+    // clear the old (now-removed) 500-XP floor.
+    const p = makePlayer(db);
+    const r1 = makeRing(db, p, WIND, 1499);
+    const r2 = makeRing(db, p, WIND, 0);
+
+    const newId = repo.mergeRings(p, r1, r2);
+    const result = repo.getRingsByOwner(p).find((r) => r.id === newId);
+    expect(result!.xp).toBe(1499);
+    expect(result!.tier).toBe(1);
+    expect(result!.max_uses).toBe(4);
+  });
+
+  // ── #540 — asymmetric sub-floor combinations (the floor's whole purpose was to gate these) ──
+
+  test('#540: 0-XP parent + high-XP parent (asymmetric) merges additively, no floor rejection', () => {
+    // #540 adversarial: this is exactly the shape the OLD floor was designed to
+    // reject (one parent far below Tier 1). Confirms the guard is gone, not just
+    // relaxed, and that the result is purely additive with no XP clamping.
+    const p = makePlayer(db);
+    const r1 = makeRing(db, p, EARTH, 0);
+    const r2 = makeRing(db, p, EARTH, 5000);
+
+    const newId = repo.mergeRings(p, r1, r2);
+    const result = repo.getRingsByOwner(p).find((r) => r.id === newId);
+    expect(result!.xp).toBe(5000);
+    expect(result!.tier).toBe(tierForXp(5000));
+  });
+
+  test('#540: parent_dominant resolves correctly when the lower-XP parent is exactly 0 (falsy-value edge case)', () => {
+    // #540 adversarial: 0 is falsy in JS — a ternary rewritten with `r1.xp &&` short-
+    // circuit logic (instead of `r1.xp > r2.xp`) would misclassify a 0-XP parent.
+    // Verifies the strict numeric comparison still holds at the new reachable floor.
+    const p = makePlayer(db);
+    const s1 = makeRing(db, p, STEAM, 0);
+    const s2 = makeRing(db, p, STEAM, 1200);
+
+    const newId = repo.mergeRings(p, s1, s2);
+    const result = repo.getRingsByOwner(p).find((r) => r.id === newId);
+    expect(result!.parent_dominant).toBe(STEAM); // s2 (higher XP) dominates
+  });
+
+  test('#540: both parents at exactly 1 XP → xp=2, tier=0, max_uses=3', () => {
+    // #540 adversarial: smallest nonzero asymmetry-free case above the new floor
+    // of "none" — pins that even trivial XP still sums exactly and stays tier 0.
+    const p = makePlayer(db);
+    const r1 = makeRing(db, p, FIRE, 1);
+    const r2 = makeRing(db, p, FIRE, 1);
+
+    const newId = repo.mergeRings(p, r1, r2);
+    const result = repo.getRingsByOwner(p).find((r) => r.id === newId);
+    expect(result!.xp).toBe(2);
+    expect(result!.tier).toBe(0);
+    expect(result!.max_uses).toBe(3);
+  });
+
+  // ── #540 — other guards must still fire independent of the removed floor ──────
+
+  test('#540: escrowed guard still fires when BOTH parents are sub-floor (0 XP) — not silently allowed', () => {
+    // #540 adversarial: the most important guard-isolation regression. Before #540,
+    // a sub-500-XP escrowed ring would have been rejected by the (now-removed) floor
+    // check FIRST, masking whether the escrow guard itself still worked. Now that the
+    // floor is gone, this is the only test that proves the escrow guard independently
+    // fires for 0-XP rings rather than silently permitting them through.
+    const p = makePlayer(db);
+    const r1 = makeRing(db, p, WIND, 0, 5, 1 /* escrowed */);
+    const r2 = makeRing(db, p, WIND, 0);
+
+    expect(() => repo.mergeRings(p, r1, r2)).toThrow(/escrowed/i);
+    expect(repo.getRingsByOwner(p)).toHaveLength(2); // both intact — not merged
+  });
+
+  test('#540: pending WON guard still fires when BOTH parents are sub-floor (0 XP)', () => {
+    // #540 adversarial: mirrors the escrow case above for the pending-ring guard —
+    // proves the pending check is truly independent of XP, not accidentally
+    // short-circuited by the floor removal.
+    const p = makePlayer(db);
+    const won = makeRing(db, p, EARTH, 0);
+    db.prepare('UPDATE rings SET pending = 1 WHERE id = ?').run(won);
+    const other = makeRing(db, p, EARTH, 0);
+
+    expect(() => repo.mergeRings(p, won, other)).toThrow(/pending/i);
+    expect(repo.getRingsByOwner(p)).toHaveLength(2);
+  });
+
+  test('#540: cross-element guard still fires for two 0-XP parents (element check, not XP, is the reason)', () => {
+    // #540 adversarial: with the floor gone, a 0-XP FIRE + 0-XP WATER pair must be
+    // rejected for "same element", not silently pass through some now-dead
+    // XP-floor branch that happened to also block cross-element pairs.
+    const p = makePlayer(db);
+    const fire = makeRing(db, p, FIRE, 0);
+    const water = makeRing(db, p, WATER, 0);
+
+    expect(() => repo.mergeRings(p, fire, water)).toThrow(/same element/i);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// #540 — Tier-1 floor removal: spec conformance (server source + fusion isolation)
+// ---------------------------------------------------------------------------
+
+describe('Tier-1 floor removal — spec conformance (#540)', () => {
+  let repo: typeof import('../../server/src/persistence/PlayerRepo');
+  let db: import('better-sqlite3').Database;
+
+  function makeRing(
+    dbArg: import('better-sqlite3').Database,
+    playerId: string,
+    element: number,
+    xp: number,
+    maxUses = 5,
+  ): string {
+    const id = `sc_${element}_${Math.random().toString(36).slice(2)}`;
+    dbArg.prepare(
+      `INSERT INTO rings (id, owner_id, element, tier, max_uses, current_uses, xp)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    ).run(id, playerId, element, tierForXp(xp), maxUses, maxUses, xp);
+    return id;
+  }
+
+  function makePlayer(dbArg: import('better-sqlite3').Database): string {
+    const id = `scp_${Math.random().toString(36).slice(2)}`;
+    dbArg.prepare(`INSERT INTO players (id, username, password_hash) VALUES (?, ?, ?)`).run(
+      id, `u_${id}`, 'x',
+    );
+    dbArg.prepare(
+      `INSERT INTO loadout (player_id, thumb, a1, a2, d1, d2) VALUES (?, NULL, NULL, NULL, NULL, NULL)`,
+    ).run(id);
+    return id;
+  }
+
+  beforeAll(async () => {
+    repo = await import('../../server/src/persistence/PlayerRepo');
+    db = (await import('../../server/src/persistence/db')).db;
+  });
+
+  // #540 adversarial: the exact removed error string must not exist anywhere in
+  // server source — a leftover dead branch (unreachable but still present) would
+  // pass every functional test above while leaving stale, confusing code behind.
+  test('"Both rings must reach Tier 1 to merge" no longer exists in PlayerRepo.ts source', () => {
+    const repoSrc = fs.readFileSync(
+      path.resolve(__dirname, '../../server/src/persistence/PlayerRepo.ts'),
+      'utf8',
+    );
+    expect(repoSrc).not.toContain('Both rings must reach Tier 1 to merge');
+  });
+
+  // #540 adversarial: the single most important guard-isolation regression — Fusion
+  // (a completely separate code path, fuseRings) must still enforce its own
+  // independent Tier-1 floor. A shared-helper refactor that accidentally deleted
+  // the check from both functions would only be caught here, not by merge tests.
+  test('fuseRings still rejects a sub-500 XP parent with /Tier 1/ (fusion floor untouched by #540)', () => {
+    const p = makePlayer(db);
+    const fire = makeRing(db, p, FIRE, 499);
+    const water = makeRing(db, p, WATER, 600);
+
+    expect(() => repo.fuseRings(p, fire, water)).toThrow(/Tier 1/);
+    expect(repo.getRingsByOwner(p)).toHaveLength(2); // both intact — fusion rejected
+  });
+
+  // #540 adversarial: complement — MIN_FUSION_PARENT_XP must remain exactly 500 so
+  // fusion's balance is byte-for-byte unchanged by the merge-side spec change.
+  test('MIN_FUSION_PARENT_XP is still exactly 500 after #540 (fusion floor unchanged)', () => {
+    expect(MIN_FUSION_PARENT_XP).toBe(500);
+  });
 });
