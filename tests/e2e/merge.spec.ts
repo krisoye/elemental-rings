@@ -688,3 +688,71 @@ test('merge: Steam+Steam merge → element=Steam, parent_dominant=higher-XP pare
   expect(after.find((r: any) => r.id === steamA.id)).toBeUndefined();
   expect(after.find((r: any) => r.id === steamB.id)).toBeUndefined();
 });
+
+// ── in_carry inheritance: merged ring inherits parent1's carry location ─────────
+// Regression guard for the pre-existing insertFusionRing bug: the shared INSERT
+// never set in_carry, so every merged ring silently defaulted to in_carry=0 and
+// landed resting in the Reliquary — even when both parents were carried — which
+// also bypassed the Reliquary cap. The fix mirrors parent1's in_carry. This
+// asserts the merged ring is CARRIED (not silently resting) end-to-end via /api/me.
+//
+// Starter carry layout (seedStarterInventory): the battle hand carries three EARTH
+// rings (Thumb, D1, D2 — in_carry=1); the Reliquary rests two EARTH rings
+// (in_carry=0). We select by in_carry explicitly rather than by array position.
+function carriedRingsOfElement(rings: any[], element: number, count: number): any[] {
+  const found = rings.filter((x) => x.element === element && x.in_carry === 1).slice(0, count);
+  if (found.length < count) throw new Error(`need ${count} carried rings of element ${element}`);
+  return found;
+}
+
+function restingRingsOfElement(rings: any[], element: number, count: number): any[] {
+  const found = rings.filter((x) => x.element === element && x.in_carry === 0).slice(0, count);
+  if (found.length < count) throw new Error(`need ${count} resting rings of element ${element}`);
+  return found;
+}
+
+test('merge: two CARRIED parents → merged ring is carried (in_carry=1), not silently in the Reliquary', async () => {
+  const token = await registerPlayer();
+  const { rings } = await getMe(token);
+  const [earth1, earth2] = carriedRingsOfElement(rings, EARTH, 2);
+  expect(earth1.in_carry).toBe(1);
+  expect(earth2.in_carry).toBe(1);
+  await setRingXP(token, earth1.id, TIER1_XP);
+  await setRingXP(token, earth2.id, TIER1_XP);
+  await unlockShrine(token, TEST_SHRINE_ID);
+
+  const res = await mergeRings(token, earth1.id, earth2.id, TEST_SHRINE_ID);
+  expect(res.status).toBe(200);
+  const { ring } = await res.json();
+
+  // The bug would leave the merged ring at in_carry=0 (resting) despite carried parents.
+  const { rings: after } = await getMe(token);
+  const merged = after.find((r: any) => r.id === ring.id);
+  expect(merged).toBeDefined();
+  expect(merged.in_carry).toBe(1);
+  // Both parents consumed.
+  expect(after.find((r: any) => r.id === earth1.id)).toBeUndefined();
+  expect(after.find((r: any) => r.id === earth2.id)).toBeUndefined();
+});
+
+test('merge: two RESTING parents → merged ring rests (in_carry=0) — proves the flag is mirrored, not hardcoded', async () => {
+  // Complement to the carried case above: a regression that hardcoded in_carry=1
+  // (over-correcting the bug) would wrongly carry a merge of two resting rings.
+  const token = await registerPlayer();
+  const { rings } = await getMe(token);
+  const [earth1, earth2] = restingRingsOfElement(rings, EARTH, 2);
+  expect(earth1.in_carry).toBe(0);
+  expect(earth2.in_carry).toBe(0);
+  await setRingXP(token, earth1.id, TIER1_XP);
+  await setRingXP(token, earth2.id, TIER1_XP);
+  await unlockShrine(token, TEST_SHRINE_ID);
+
+  const res = await mergeRings(token, earth1.id, earth2.id, TEST_SHRINE_ID);
+  expect(res.status).toBe(200);
+  const { ring } = await res.json();
+
+  const { rings: after } = await getMe(token);
+  const merged = after.find((r: any) => r.id === ring.id);
+  expect(merged).toBeDefined();
+  expect(merged.in_carry).toBe(0);
+});

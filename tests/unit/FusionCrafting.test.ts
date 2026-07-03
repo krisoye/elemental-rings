@@ -354,6 +354,42 @@ describe('fuseRings — DB transaction (§4.6)', () => {
     expect(rings[0].id).toBe(newId);
     expect(rings[0].element).toBe(ElementEnum.BLOOM);
   });
+
+  // ── in_carry inheritance (bug fix: child mirrors parent1, not DEFAULT 0) ─────
+  // Regression guard for the pre-existing insertFusionRing bug: the shared INSERT
+  // never set in_carry, so every fused ring silently took the schema DEFAULT (0)
+  // and landed resting in the Reliquary regardless of where its parents were. The
+  // fix mirrors parent1's in_carry. These cases pin all four (r1, r2) combinations
+  // so a regression to the DEFAULT (or to mirroring parent2) is caught.
+
+  /** Fuse FIRE+WATER with the parents' in_carry set to the given flags. */
+  function fuseWithCarry(carry1: number, carry2: number): number {
+    const p = makePlayer(db);
+    const fire = makeRing(db, p, FIRE, T2_XP);
+    const water = makeRing(db, p, WATER, T2_XP);
+    db.prepare('UPDATE rings SET in_carry = ? WHERE id = ?').run(carry1, fire);
+    db.prepare('UPDATE rings SET in_carry = ? WHERE id = ?').run(carry2, water);
+    const newId = repo.fuseRings(p, fire, water);
+    return repo.getRingsByOwner(p).find((r) => r.id === newId)!.in_carry;
+  }
+
+  test('both parents carried (1,1) → fused ring carried (in_carry=1)', () => {
+    expect(fuseWithCarry(1, 1)).toBe(1);
+  });
+
+  test('both parents resting (0,0) → fused ring rests (in_carry=0)', () => {
+    expect(fuseWithCarry(0, 0)).toBe(0);
+  });
+
+  test('mixed (parent1 carried, parent2 resting) → mirrors parent1 (in_carry=1)', () => {
+    // The load-bearing case: proves the child mirrors parent1, not parent2.
+    expect(fuseWithCarry(1, 0)).toBe(1);
+  });
+
+  test('mixed the other way (parent1 resting, parent2 carried) → mirrors parent1 (in_carry=0)', () => {
+    // Complement: a bug mirroring parent2 (or ORing the two flags) would yield 1 here.
+    expect(fuseWithCarry(0, 1)).toBe(0);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -1010,6 +1046,42 @@ describe('mergeRings — DB transaction (§4.7, #431)', () => {
     const water = makeRing(db, p, WATER, 0);
 
     expect(() => repo.mergeRings(p, fire, water)).toThrow(/same element/i);
+  });
+
+  // ── in_carry inheritance (bug fix: child mirrors parent1, not DEFAULT 0) ─────
+  // Regression guard for the pre-existing insertFusionRing bug that Merge inherited
+  // from Fusion: the shared INSERT never set in_carry, so every merged ring silently
+  // took the schema DEFAULT (0) and landed resting in the Reliquary — even when its
+  // parents were carried — which also bypassed the Reliquary cap. The fix mirrors
+  // parent1's in_carry. All four (r1, r2) combinations are pinned.
+
+  /** Merge two same-element EARTH rings with the given in_carry flags on the parents. */
+  function mergeWithCarry(carry1: number, carry2: number): number {
+    const p = makePlayer(db);
+    const e1 = makeRing(db, p, EARTH, T1_XP);
+    const e2 = makeRing(db, p, EARTH, T1_XP);
+    db.prepare('UPDATE rings SET in_carry = ? WHERE id = ?').run(carry1, e1);
+    db.prepare('UPDATE rings SET in_carry = ? WHERE id = ?').run(carry2, e2);
+    const newId = repo.mergeRings(p, e1, e2);
+    return repo.getRingsByOwner(p).find((r) => r.id === newId)!.in_carry;
+  }
+
+  test('both parents carried (1,1) → merged ring carried (in_carry=1)', () => {
+    expect(mergeWithCarry(1, 1)).toBe(1);
+  });
+
+  test('both parents resting (0,0) → merged ring rests (in_carry=0)', () => {
+    expect(mergeWithCarry(0, 0)).toBe(0);
+  });
+
+  test('mixed (parent1 carried, parent2 resting) → mirrors parent1 (in_carry=1)', () => {
+    // The load-bearing case: proves the child mirrors parent1, not parent2.
+    expect(mergeWithCarry(1, 0)).toBe(1);
+  });
+
+  test('mixed the other way (parent1 resting, parent2 carried) → mirrors parent1 (in_carry=0)', () => {
+    // Complement: a bug mirroring parent2 (or ORing the two flags) would yield 1 here.
+    expect(mergeWithCarry(0, 1)).toBe(0);
   });
 });
 
