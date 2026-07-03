@@ -1041,6 +1041,22 @@ export const fuseRings = db.transaction(
     const parentDominant = r1.xp > r2.xp ? r1.element : r2.xp > r1.xp ? r2.element : -1;
 
     const newRingId = uuidv4();
+
+    // Spare-grid cap. The crafted ring mirrors parent1's in_carry. When in_carry=0
+    // it rests in the Reliquary: parent1 was already there, so −1/+1 is net-neutral
+    // and no check is needed. When in_carry=1 the crafted ring lands UNASSIGNED —
+    // no loadout slot is reassigned to it — so it always enters the spare grid (+1).
+    // That is NOT automatically net-neutral: a parent sitting in a loadout slot is
+    // exempt from spare_ring_max, so consuming it frees no spare capacity. Only a
+    // parent that was itself a spare-grid ring offsets the +1. Guard with the same
+    // primitive packLoadout uses; the throw rolls back the whole transaction.
+    if (r1.in_carry === 1) {
+      assertSpareWithinMax(playerId, {
+        addingToSpare: [newRingId],
+        removingFromSpare: [ringId1, ringId2],
+      });
+    }
+
     insertFusionRing.run({
       id: newRingId,
       owner_id: playerId,
@@ -1050,10 +1066,9 @@ export const fuseRings = db.transaction(
       current_uses: fusedMaxUses,
       xp: fusedXp,
       parent_dominant: parentDominant,
-      // Bug fix: mirror parent1's carry location instead of silently defaulting
-      // to the Reliquary (in_carry=0). The fused ring lands in the same pool as
-      // parent1 (loadout/bench if carried, Reliquary if resting). Parent1's pool
-      // is net-neutral (−1 parent, +1 fused), so no cap can be exceeded.
+      // Mirror parent1's carry location instead of defaulting to the Reliquary
+      // (in_carry=0). Reliquary lands are net-neutral (−1 parent, +1 fused); the
+      // spare-grid land is guarded by the assertSpareWithinMax check above.
       in_carry: r1.in_carry,
     });
 
@@ -1127,6 +1142,22 @@ export const mergeRings = db.transaction(
     const parentDominant = r1.xp > r2.xp ? r1.element : r2.xp > r1.xp ? r2.element : -1;
 
     const newRingId = uuidv4();
+
+    // Spare-grid cap. The crafted ring mirrors parent1's in_carry. When in_carry=0
+    // it rests in the Reliquary: parent1 was already there, so −1/+1 is net-neutral
+    // and no check is needed. When in_carry=1 the crafted ring lands UNASSIGNED —
+    // no loadout slot is reassigned to it — so it always enters the spare grid (+1).
+    // That is NOT automatically net-neutral: a parent sitting in a loadout slot is
+    // exempt from spare_ring_max, so consuming it frees no spare capacity. Only a
+    // parent that was itself a spare-grid ring offsets the +1. Guard with the same
+    // primitive packLoadout uses; the throw rolls back the whole transaction.
+    if (r1.in_carry === 1) {
+      assertSpareWithinMax(playerId, {
+        addingToSpare: [newRingId],
+        removingFromSpare: [ringId1, ringId2],
+      });
+    }
+
     insertFusionRing.run({
       id: newRingId,
       owner_id: playerId,
@@ -1136,10 +1167,9 @@ export const mergeRings = db.transaction(
       current_uses: mergedMaxUses,
       xp: mergedXp,
       parent_dominant: parentDominant,
-      // Bug fix: mirror parent1's carry location instead of silently defaulting
-      // to the Reliquary (in_carry=0). The merged ring lands in the same pool as
-      // parent1 (loadout/bench if carried, Reliquary if resting). Parent1's pool
-      // is net-neutral (−1 parent, +1 merged), so no cap can be exceeded.
+      // Mirror parent1's carry location instead of defaulting to the Reliquary
+      // (in_carry=0). Reliquary lands are net-neutral (−1 parent, +1 merged); the
+      // spare-grid land is guarded by the assertSpareWithinMax check above.
       in_carry: r1.in_carry,
     });
 
