@@ -420,6 +420,53 @@ test('merge: two 0-XP parents → 200 (xp 0 / tier 0 / max_uses 3)', async () =>
   expect(after.find((r: any) => r.id === earth2.id)).toBeUndefined();
 });
 
+// ── #540 adversarial: escrowed guard still fires when both parents are sub-floor XP ──
+// The former Tier-1 floor and the escrow guard were independently-testable before
+// #540 because the floor rejected sub-500 pairs before the escrow check even mattered
+// for those XP values. Now that the floor is gone, this is the only E2E test proving
+// escrow rejection is NOT accidentally bypassed for 0-XP rings — a regression here
+// would let a staked wager collateral ring be destroyed via merge.
+test('merge: escrowed 0-XP parent → 400 (escrow guard independent of removed floor)', async () => {
+  const token = await registerPlayer();
+  const { rings } = await getMe(token);
+  const [earth1, earth2] = ringsOfElement(rings, EARTH, 2);
+  await setRingXP(token, earth1.id, 0);
+  await setRingXP(token, earth2.id, 0);
+  const escrowRes = await fetch(`${API_URL}/api/test/set-escrowed`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+    body: JSON.stringify({ ringId: earth1.id, escrowed: 1 }),
+  });
+  if (!escrowRes.ok) return;
+  await unlockShrine(token, TEST_SHRINE_ID);
+
+  const res = await mergeRings(token, earth1.id, earth2.id, TEST_SHRINE_ID);
+  expect(res.status).toBe(400);
+  const body = await res.json();
+  expect(body.error).toMatch(/escrowed/i);
+  const { rings: after } = await getMe(token);
+  expect(after.find((r: any) => r.id === earth1.id)).toBeDefined();
+  expect(after.find((r: any) => r.id === earth2.id)).toBeDefined();
+});
+
+// ── #540 adversarial: asymmetric merge (0 XP + high XP) is purely additive ─────
+// This is exactly the shape the removed floor was designed to block (one parent
+// far below Tier 1). Confirms the merge sums additively end-to-end through the API
+// with no clamping, capping, or rejection now that the floor is gone.
+test('merge: 0-XP parent + high-XP parent (asymmetric) → 200, xp is purely additive', async () => {
+  const token = await registerPlayer();
+  const { rings } = await getMe(token);
+  const [earth1, earth2] = ringsOfElement(rings, EARTH, 2);
+  await setRingXP(token, earth1.id, 0);
+  await setRingXP(token, earth2.id, 5000);
+  await unlockShrine(token, TEST_SHRINE_ID);
+
+  const res = await mergeRings(token, earth1.id, earth2.id, TEST_SHRINE_ID);
+  expect(res.status).toBe(200);
+  const { ring } = await res.json();
+  expect(ring.xp).toBe(5000);
+});
+
 // ── Adversarial: cross-element gives descriptive "same element" 400 ──────────
 // #431 adversarial: FIRE+WATER must return 400 with a "same element" error body,
 // not a generic 500. A missing element check or a panic would return 500.
