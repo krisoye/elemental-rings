@@ -138,7 +138,7 @@ Merge is a same-element ritual performed at any unsealed shrine. Two rings of th
 
 **Merge rules:**
 - Both parent rings must share the **same element** — base or fusion. A Thornado ring and a Steam ring cannot merge (different elements); two Steam rings can.
-- Each parent must independently be at least **Tier 1** (≥ 500 XP). This is the same floor as fusion — low-level rings are not eligible.
+- There is **no XP or tier floor** on either parent. Unlike fusion, rings of **any** XP (including 0) may be merged. Because merge only sums XP (no multiplier), consolidating low-XP rings trades total ring capacity for a single higher-XP ring — a deliberate declutter choice, not a power gain.
 - Neither parent may be **escrowed** (staked) or the player's pending WON ring.
 - The player must be at an **unsealed shrine** — the shrine must have been previously unlocked with a ring-key. Sealed shrines reject merge requests.
 - Both parent rings are consumed; they cease to exist.
@@ -150,7 +150,7 @@ Merge is a same-element ritual performed at any unsealed shrine. Two rings of th
 - `max_uses = 3 + tier` — the same pure-XP rule every ring follows (§4.2); `current_uses` starts at `max_uses` (full)
 - For fusion-element merges: `parent_dominant` records the element of the higher-XP parent (for two-tone card rendering); on a tie it is set to −1 (static order)
 
-**Use-throughput tradeoff.** Two rings each with `max_uses = 4` (Tier 1) collapse into one ring with `max_uses` derived from the combined XP. This is generally one full-capacity ring instead of two partial ones. The player gains XP consolidation and tier uplift but loses the ability to run two separate ring charges per combat.
+**Use-throughput tradeoff.** Two rings each with `max_uses = 4` (Tier 1) collapse into one ring with `max_uses` derived from the combined XP. This is generally one full-capacity ring instead of two partial ones. The player gains XP consolidation and tier uplift but loses the ability to run two separate ring charges per combat. At the extreme, two 0-XP rings (`max_uses = 3` each, combined capacity 6) collapse into one 0-XP ring (`naturalMaxUses(0) = 3`) — capacity strictly decreases, since merge only sums XP with no tier or capacity bonus.
 
 **Fusion depth is not increased.** Merging two Steam rings produces a Steam ring at the combined XP — it does not become a deeper compound. Maximum fusion depth stays at two base elements.
 
