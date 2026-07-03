@@ -148,8 +148,8 @@ const insertPlayer = db.prepare(
 // element at fusion time). Base/granted rings keep the schema DEFAULT (-1) via
 // insertRing, signalling "render in static order".
 const insertFusionRing = db.prepare(
-  `INSERT INTO rings (id, owner_id, element, tier, max_uses, current_uses, xp, parent_dominant)
-   VALUES (@id, @owner_id, @element, @tier, @max_uses, @current_uses, @xp, @parent_dominant)`,
+  `INSERT INTO rings (id, owner_id, element, tier, max_uses, current_uses, xp, parent_dominant, in_carry)
+   VALUES (@id, @owner_id, @element, @tier, @max_uses, @current_uses, @xp, @parent_dominant, @in_carry)`,
 );
 const insertLoadout = db.prepare(
   `INSERT INTO loadout (player_id, thumb, a1, a2, d1, d2)
@@ -1050,6 +1050,11 @@ export const fuseRings = db.transaction(
       current_uses: fusedMaxUses,
       xp: fusedXp,
       parent_dominant: parentDominant,
+      // Bug fix: mirror parent1's carry location instead of silently defaulting
+      // to the Reliquary (in_carry=0). The fused ring lands in the same pool as
+      // parent1 (loadout/bench if carried, Reliquary if resting). Parent1's pool
+      // is net-neutral (−1 parent, +1 fused), so no cap can be exceeded.
+      in_carry: r1.in_carry,
     });
 
     // Consume both parents: null them out of any loadout slot, then delete.
@@ -1131,6 +1136,11 @@ export const mergeRings = db.transaction(
       current_uses: mergedMaxUses,
       xp: mergedXp,
       parent_dominant: parentDominant,
+      // Bug fix: mirror parent1's carry location instead of silently defaulting
+      // to the Reliquary (in_carry=0). The merged ring lands in the same pool as
+      // parent1 (loadout/bench if carried, Reliquary if resting). Parent1's pool
+      // is net-neutral (−1 parent, +1 merged), so no cap can be exceeded.
+      in_carry: r1.in_carry,
     });
 
     // Consume both parents: null them out of any loadout slot, then delete.
