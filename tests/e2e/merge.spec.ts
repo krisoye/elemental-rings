@@ -8,9 +8,11 @@ const FIRE = 0;
 const WATER = 1;
 const EARTH = 2;
 const STEAM = 5; // Fire+Water fusion element
-// Merge requires both parents to reach at least Tier 1 (≥ 500 XP). Two parents
-// at exactly 500 XP each yields 1000 XP combined — still Tier 1 (T2 starts at
-// 1500). max_uses = 3 + tierForXp(1000) = 3 + 1 = 4.
+// Merge has no XP or tier floor — rings of any XP (including 0) may merge.
+// TIER1_XP is retained as an arbitrary representative XP value for tests that
+// don't care about the specific number. Two parents at exactly 500 XP each
+// yields 1000 XP combined — still Tier 1 (T2 starts at 1500). max_uses =
+// 3 + tierForXp(1000) = 3 + 1 = 4.
 const TIER1_XP = 500;
 const MERGED_XP = TIER1_XP * 2; // 1000 — additive
 const MERGED_TIER = 1;          // tierForXp(1000) = 1
@@ -143,25 +145,25 @@ test('merge: different-element rings → 400', async () => {
   expect(after.find((r: any) => r.id === water.id)).toBeDefined();
 });
 
-// ── Scenario 3: Sub-Tier-1 parent is rejected ─────────────────────────────────
-test('merge: sub-Tier-1 parent (< 500 XP) → 400', async () => {
+// ── Scenario 3: Sub-Tier-1 parent merges successfully (floor removed) ─────────
+test('merge: sub-Tier-1 parent (< 500 XP) → 200 (floor removed)', async () => {
   const token = await registerPlayer();
   const { rings } = await getMe(token);
   // Use the two starter EARTH rings so we don't need to grant extra rings.
   const [earth1, earth2] = ringsOfElement(rings, EARTH, 2);
-  await setRingXP(token, earth1.id, 400); // below Tier 1
+  await setRingXP(token, earth1.id, 400); // below the former Tier-1 floor
   await setRingXP(token, earth2.id, TIER1_XP);
   await unlockShrine(token, TEST_SHRINE_ID);
 
   const res = await mergeRings(token, earth1.id, earth2.id, TEST_SHRINE_ID);
-  expect(res.status).toBe(400);
-  const body = await res.json();
-  expect(body.error).toMatch(/Tier 1/i);
+  expect(res.status).toBe(200);
+  const { ring } = await res.json();
+  expect(ring.xp).toBe(400 + TIER1_XP);
 
-  // Both rings intact.
+  // Both parents deleted.
   const { rings: after } = await getMe(token);
-  expect(after.find((r: any) => r.id === earth1.id)).toBeDefined();
-  expect(after.find((r: any) => r.id === earth2.id)).toBeDefined();
+  expect(after.find((r: any) => r.id === earth1.id)).toBeUndefined();
+  expect(after.find((r: any) => r.id === earth2.id)).toBeUndefined();
 });
 
 // ── Scenario 4: Sealed shrine → 400 ──────────────────────────────────────────
@@ -358,35 +360,30 @@ test('merge: escrowed parent ring → 400', async () => {
   expect(after.find((r: any) => r.id === earth2.id)).toBeDefined();
 });
 
-// ── Adversarial: 499 XP (just under floor) → 400; 500 XP → 200 ──────────────
-// #431 adversarial: the Tier-1 floor is exactly 500 XP. The off-by-one test
-// covers the >= boundary: 499 must be rejected but 500 must succeed. Both
-// parents at 499 is not sufficient — the spec requires 500 per-parent.
-test('merge: parent at exactly 499 XP → 400 (one below Tier-1 floor)', async () => {
+// ── Sub-floor XP still merges (former Tier-1 boundary is now irrelevant) ────
+// #540: the Tier-1 floor was removed — 499 XP parents (formerly "one below the
+// floor") now merge exactly like any other same-element pair.
+test('merge: two parents at 499 XP (sub-floor) → 200', async () => {
   const token = await registerPlayer();
   const { rings } = await getMe(token);
   const [earth1, earth2] = ringsOfElement(rings, EARTH, 2);
-  await setRingXP(token, earth1.id, 499); // one below floor
-  await setRingXP(token, earth2.id, TIER1_XP);
+  await setRingXP(token, earth1.id, 499);
+  await setRingXP(token, earth2.id, 499);
   await unlockShrine(token, TEST_SHRINE_ID);
 
   const res = await mergeRings(token, earth1.id, earth2.id, TEST_SHRINE_ID);
-  expect(res.status).toBe(400);
-  const body = await res.json();
-  expect(body.error).toMatch(/Tier 1/i);
-  // Both rings intact.
-  const { rings: after } = await getMe(token);
-  expect(after.find((r: any) => r.id === earth1.id)).toBeDefined();
-  expect(after.find((r: any) => r.id === earth2.id)).toBeDefined();
+  expect(res.status).toBe(200);
+  const { ring } = await res.json();
+  expect(ring.xp).toBe(998);
+  expect(ring.tier).toBe(1);
+  expect(ring.max_uses).toBe(4);
 });
 
-test('merge: parent at exactly 500 XP → 200 (exactly the Tier-1 floor)', async () => {
-  // #431 adversarial: 500 is the exact boundary — complement of the 499 test.
-  // A > comparison (instead of >=) would silently lock out freshly-minted T1 rings.
+test('merge: two parents at 500 XP → 200 (ordinary same-element merge)', async () => {
   const token = await registerPlayer();
   const { rings } = await getMe(token);
   const [earth1, earth2] = ringsOfElement(rings, EARTH, 2);
-  await setRingXP(token, earth1.id, 500); // exactly at floor
+  await setRingXP(token, earth1.id, 500);
   await setRingXP(token, earth2.id, 500);
   await unlockShrine(token, TEST_SHRINE_ID);
 
@@ -396,6 +393,31 @@ test('merge: parent at exactly 500 XP → 200 (exactly the Tier-1 floor)', async
   expect(ring.xp).toBe(1000);
   expect(ring.tier).toBe(1);
   expect(ring.max_uses).toBe(4);
+});
+
+// ── 0-XP + 0-XP merge → 200 (net capacity loss, not an exploit) ─────────────
+// #540: merge is purely additive, so two 0-XP rings simply collapse into one
+// 0-XP ring — combined max_uses drops from 3+3=6 down to naturalMaxUses(0)=3.
+test('merge: two 0-XP parents → 200 (xp 0 / tier 0 / max_uses 3)', async () => {
+  const token = await registerPlayer();
+  const { rings } = await getMe(token);
+  const [earth1, earth2] = ringsOfElement(rings, EARTH, 2);
+  await setRingXP(token, earth1.id, 0);
+  await setRingXP(token, earth2.id, 0);
+  await unlockShrine(token, TEST_SHRINE_ID);
+
+  const res = await mergeRings(token, earth1.id, earth2.id, TEST_SHRINE_ID);
+  expect(res.status).toBe(200);
+  const { ring } = await res.json();
+  expect(ring.xp).toBe(0);
+  expect(ring.tier).toBe(0);
+  expect(ring.max_uses).toBe(3);
+  expect(ring.current_uses).toBe(3);
+
+  // Both parents deleted.
+  const { rings: after } = await getMe(token);
+  expect(after.find((r: any) => r.id === earth1.id)).toBeUndefined();
+  expect(after.find((r: any) => r.id === earth2.id)).toBeUndefined();
 });
 
 // ── Adversarial: cross-element gives descriptive "same element" 400 ──────────
