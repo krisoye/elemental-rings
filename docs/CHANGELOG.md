@@ -339,6 +339,7 @@ This document tracks all releases and major changes to elemental-rings.
   spawns the player in the Snow biome instead of the Forest.
 
 - Anchorage campfire modal: ESC now properly closes the modal instead of leaving it visible while corrupting the `overlayOpen` state. The ESC keyboard handler now checks for `campfireModal?.isOpen()` before falling through to the battle-hand overlay branch, preventing the state corruption that caused the X button to fail after rest or summon actions.
+- Campfire modal close gesture (ESC / ✕) no longer freezes after Rest or Summon — status-fade tween on a destroyed placeholder modal was throwing `TypeError` on every RAF frame, permanently breaking Phaser's render loop.
 - **Snow bridges walkable**: Removed `'non-empty'` collision override for `SnowScene`'s `behind` layer; bridge tiles from `ts_snow` placed in that layer now use `'property'` mode (no collision unless `collides: true` is set), so the player can cross bridges in the Snow biome.
 - **Forest-to-snow bridge walkable**: Fixed `forest_snow_gate` bridge tiles (ts_snow planks in the `behind` layer) being impassable. `ForestScene` now uses `'property'` collision mode for that screen's `behind` layer; obstacle tiles (`berry_and_trees`, `terrain_plains_fantasy`) were tagged `collides: true` in the map JSON so walls/trees still block while bridge planks remain walkable.
 
