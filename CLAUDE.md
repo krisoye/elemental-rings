@@ -175,6 +175,6 @@ Before designing or implementing any system, read the relevant GDD section (see 
 
 ---
 
-## Changelog Fragments
+## Changelog
 
-User-visible PRs should include a changelog fragment in `docs/changelog.d/<issue>.md` or `docs/changelog.d/<issue>-<pr>.md`. Do **not** edit `docs/CHANGELOG.md` directly — it is managed by `scripts/compile_changelog.sh`. Read `docs/changelog.d/README.md` for the fragment format and naming convention. During `/pm sweep`, the compile script consolidates all fragments into CHANGELOG.md and deletes the processed fragment files.
+User-visible PRs should include an entry in `docs/CHANGELOG.md` under the `## [Unreleased]` section. Use Keep-a-Changelog section headers: `### Added`, `### Changed`, `### Removed`, `### Fixed`, `### Deprecated`, or `### Security`. Each entry is a bullet point; longer descriptions can span multiple lines. Group related changes together under the appropriate section.
