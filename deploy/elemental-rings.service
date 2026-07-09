@@ -18,7 +18,7 @@
 # Notes:
 #   - Colyseus WebSocket + Express REST API share port 2567
 #   - SQLite DB at $DB_PATH (default /var/lib/elemental-rings/elemental.db)
-#   - Data dir: /var/lib/elemental-rings/ (chown deploy:svcdata, chmod 2775)
+#   - Data dir: /var/lib/elemental-rings/ (chown svcapp:svcappdata, chmod 2775)
 
 [Unit]
 Description=Elemental Rings Game Server
@@ -29,8 +29,8 @@ StartLimitBurst=3
 
 [Service]
 Type=simple
-User=deploy
-Group=svcdata
+User=svcapp
+Group=svcappdata
 UMask=0002
 WorkingDirectory=/home/deploy/prod/elemental-rings/server
 ExecStart=/usr/bin/npm run dev

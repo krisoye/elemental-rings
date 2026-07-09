@@ -22,7 +22,7 @@ After=network.target elemental-rings.service
 
 [Service]
 Type=simple
-User=deploy
+User=svcapp
 WorkingDirectory=/home/deploy/prod/elemental-rings/client
 ExecStart=/usr/bin/npm run dev
 Restart=on-failure
