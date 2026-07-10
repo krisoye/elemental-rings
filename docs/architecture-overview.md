@@ -254,7 +254,10 @@ Deploy via the `ws deploy elemental-rings` pattern documented in the home `CLAUD
 
 ```bash
 # Colyseus server (dev)
-cd server && npm run dev
+# Set DB_PATH to a writable throwaway file — when unset it defaults to
+# /var/lib/elemental-rings/elemental.db (the sandbox-writable prod path), which
+# a regular dev user typically cannot create. See server/src/persistence/dbPath.ts.
+cd server && DB_PATH=./data/dev.db npm run dev
 
 # Phaser client (dev)
 cd client && npm run dev
