@@ -4,7 +4,8 @@
   "private": true,
   "scripts": {
     "dev": "ts-node-dev --respawn --transpile-only src/../index.ts",
-    "build": "tsc",
+    "build": "tsc && npm run copy-assets",
+    "copy-assets": "mkdir -p dist/server/src/persistence && cp src/persistence/schema.sql dist/server/src/persistence/schema.sql",
     "start": "node dist/server/index.js",
     "test": "vitest run"
   },

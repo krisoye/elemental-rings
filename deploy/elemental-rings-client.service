@@ -1,5 +1,25 @@
-# Elemental Rings Client — Vite dev server
-# =========================================
+# Elemental Rings Client — static preview of the built Vite bundle
+# ================================================================
+#
+# Serves the BUILT client bundle (client/dist/), NOT the Vite dev server.
+# `ws deploy` runs deploy/install.sh, which builds client/ (npm run build →
+# tsc && vite build → client/dist/) before this unit starts. `vite preview`
+# is a plain static file server over that bundle — no dev middleware, no HMR,
+# no file watchers, no on-the-fly transforms. `vite` is already a client
+# devDependency, so this adds zero new dependencies (chosen over adding a
+# separate static-server package for exactly that reason). It writes nothing,
+# so it needs no ReadWritePaths.
+#
+# ExecStart invokes vite's bin DIRECTLY via node (node node_modules/vite/bin/
+# vite.js …) rather than `npx vite …` on purpose: npx may try to write a cache
+# under $HOME, which ProtectHome=read-only makes read-only — a direct node
+# invocation avoids that failure mode entirely. Verified to serve under a
+# read-only HOME (see the HITL runbook on the PR).
+#
+# --host binds all interfaces (0.0.0.0) so LAN machines can reach it; --port
+# pins 8080. Note: `vite preview` does NOT inherit server.host/server.port from
+# vite.config.ts (that block configures the dev server only), so both flags are
+# passed explicitly here.
 #
 # Installation (handled automatically by `ws deploy elemental-rings`):
 #   1. Copy to /etc/systemd/system/elemental-rings-client.service
@@ -14,6 +34,8 @@
 #   - Serves the Phaser client on port 8080 (all interfaces)
 #   - LAN access: http://192.168.4.140:8080
 #   - __SERVER_URL__ defaults to ws://<page-hostname>:2567 at runtime
+#   - The app + node_modules live under /home/deploy/prod/elemental-rings, read
+#     by svcapp via the platform runtime ACL — hence ProtectHome=read-only.
 
 [Unit]
 Description=Elemental Rings Client
@@ -24,12 +46,37 @@ After=network.target elemental-rings.service
 Type=simple
 User=svcapp
 WorkingDirectory=/home/deploy/prod/elemental-rings/client
-ExecStart=/usr/bin/npm run dev
+ExecStart=/usr/bin/node node_modules/vite/bin/vite.js preview --host --port 8080
 Restart=on-failure
 RestartSec=10
 StandardOutput=journal
 StandardError=journal
 SyslogIdentifier=elemental-rings-client
+
+# --- systemd hardening ------------------------------------------------------
+# Lighter than the game server: this process writes NOTHING (static file
+# server), so there is no ReadWritePaths. It is still LAN-exposed on :8080,
+# so the standard sandbox still applies. ProtectHome=read-only (NOT yes)
+# because it must read client/dist + node_modules under /home/deploy/prod.
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=read-only
+PrivateTmp=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+RestrictNamespaces=yes
+LockPersonality=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+# Empty set: binds :8080 (> 1024), needs no capabilities.
+CapabilityBoundingSet=
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
+# DO NOT set MemoryDenyWriteExecute=yes — the preview server runs on Node/V8,
+# whose JIT requires writable+executable memory; MDWE makes it abort on start.
 
 [Install]
 WantedBy=multi-user.target

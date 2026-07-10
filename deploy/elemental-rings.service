@@ -1,6 +1,12 @@
 # Elemental Rings Game Server — Colyseus (WebSocket) + Express (REST auth API)
 # ============================================================================
 #
+# Runs the BUILT artifact (node dist/server/index.js), NOT `npm run dev`.
+# `ws deploy` runs deploy/install.sh, which builds server/ (npm run build →
+# tsc + schema.sql asset copy → dist/server/index.js) before this unit starts.
+# There is no tsc/ts-node/watcher at runtime — this is a plain, hardenable
+# node process, which is what lets the sandbox block below be this strict.
+#
 # Installation (handled automatically by `ws deploy elemental-rings`):
 #   1. Copy to /etc/systemd/system/elemental-rings.service
 #   2. Create env drop-in with secrets (one-time, not managed by ws deploy):
@@ -19,6 +25,10 @@
 #   - Colyseus WebSocket + Express REST API share port 2567
 #   - SQLite DB at $DB_PATH (default /var/lib/elemental-rings/elemental.db)
 #   - Data dir: /var/lib/elemental-rings/ (chown svcapp:svcappdata, chmod 2775)
+#   - The app + node_modules live under /home/deploy/prod/elemental-rings, read
+#     by svcapp via the platform runtime ACL — hence ProtectHome=read-only
+#     (NOT yes): the process must READ its code/deps under /home but writes
+#     ONLY to /var/lib/elemental-rings.
 
 [Unit]
 Description=Elemental Rings Game Server
@@ -33,12 +43,47 @@ User=svcapp
 Group=svcappdata
 UMask=0002
 WorkingDirectory=/home/deploy/prod/elemental-rings/server
-ExecStart=/usr/bin/npm run dev
+ExecStart=/usr/bin/node dist/server/index.js
 Restart=on-failure
 RestartSec=10
 StandardOutput=journal
 StandardError=journal
 SyslogIdentifier=elemental-rings
+
+# --- systemd hardening ------------------------------------------------------
+# This is the platform's most externally-exposed service: it accepts untrusted
+# multiplayer WebSocket + REST traffic, holds JWT_SECRET, and writes the SQLite
+# store of user accounts / sessions / game state. Every directive below is
+# verified against the BUILT artifact (see the HITL runbook on the PR) — a wrong
+# one silently breaks the exposed server, so relax deliberately, not blindly.
+NoNewPrivileges=yes
+ProtectSystem=strict
+# read-only, NOT yes: the app + node_modules are under /home/deploy/prod and
+# MUST remain readable. yes would hide /home entirely and the process couldn't
+# load its own code.
+ProtectHome=read-only
+# The ONE writable path: the SQLite store (elemental.db + -wal/-shm). Under
+# ProtectSystem=strict everything else (incl. /var) is read-only; this punches
+# the single write hole the app needs.
+ReadWritePaths=/var/lib/elemental-rings
+PrivateTmp=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+RestrictNamespaces=yes
+LockPersonality=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+# Empty set: the server binds :2567 (> 1024), so it needs no capabilities at
+# all — not even CAP_NET_BIND_SERVICE.
+CapabilityBoundingSet=
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
+# DO NOT set MemoryDenyWriteExecute=yes here. Node/V8's JIT allocates memory
+# that is simultaneously writable and executable; MDWE makes V8 abort on start.
+# It is NOT a safe hardening add-on for a Node process — leave it off.
 
 [Install]
 WantedBy=multi-user.target
