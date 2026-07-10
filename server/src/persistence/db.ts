@@ -3,14 +3,22 @@ import fs from 'fs';
 import path from 'path';
 import { RELIQUARY_BASE_CAP } from '../game/constants';
 import { tierForXp, naturalMaxUses } from '../game/Tiers';
+import { resolveDbPath, ensureDbDir } from './dbPath';
 
 // DB path is env-driven so production can point at a persistent volume
-// (DB_PATH=/var/lib/elemental-rings/elemental.db via the systemd unit) while
-// local dev and E2E use a throwaway file. Default resolves to server/data/.
-const DB_PATH = process.env.DB_PATH || path.join(__dirname, '../../data/elemental.db');
+// (DB_PATH=/var/lib/elemental-rings/elemental.db via the systemd override.conf
+// drop-in) while tests/E2E set a throwaway file. When DB_PATH is unset/blank it
+// falls back to the documented, sandbox-writable /var/lib default rather than a
+// path inside the (read-only, under the sandbox) source tree — see dbPath.ts.
+const DB_PATH = resolveDbPath();
+// Log the resolved path at startup so an operator can see which DB is in use
+// (e.g. to confirm the override.conf DB_PATH took effect vs. the default).
+console.log(`[db] SQLite path resolved to ${DB_PATH}`);
 
 // Auto-create the parent directory so opening never fails on a missing folder.
-fs.mkdirSync(path.dirname(DB_PATH), { recursive: true });
+// Under the sandbox the writable data dir already exists, so this is a no-op;
+// a genuine, unrecoverable failure surfaces an actionable error (see dbPath.ts).
+ensureDbDir(DB_PATH);
 
 /** Process-wide singleton connection. better-sqlite3 is synchronous. */
 export const db: Database.Database = new Database(DB_PATH);
