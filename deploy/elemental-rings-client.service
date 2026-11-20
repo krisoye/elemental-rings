@@ -38,6 +38,7 @@
 #     by svcapp via the platform runtime ACL — hence ProtectHome=read-only.
 
 [Unit]
+X-Resource-Class=service
 Description=Elemental Rings Client
 Documentation=https://github.com/krisoye/elemental-rings
 After=network.target elemental-rings.service
@@ -52,6 +53,11 @@ RestartSec=10
 StandardOutput=journal
 StandardError=journal
 SyslogIdentifier=elemental-rings-client
+# Resource contract (project-tracker#313 RC-1, class service): hard cap well above
+# the observed peak, swap bounded to <=25% of MemoryMax so a capped service
+# fails on its own instead of spilling into the shared swap.
+MemoryMax=512M
+MemorySwapMax=128M
 
 # --- systemd hardening ------------------------------------------------------
 # Lighter than the game server: this process writes NOTHING (static file
