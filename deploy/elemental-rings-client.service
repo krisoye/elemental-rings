@@ -42,6 +42,11 @@ X-Resource-Class=service
 Description=Elemental Rings Client
 Documentation=https://github.com/krisoye/elemental-rings
 After=network.target elemental-rings.service
+# A unit that cannot start must stop and show as failed instead of restarting
+# forever: with Restart=on-failure and RestartSec=10 the default limit (5 starts
+# in 10 s) never trips. These keys belong in [Unit]; in [Service] systemd ignores them.
+StartLimitIntervalSec=300
+StartLimitBurst=5
 
 [Service]
 Type=simple
@@ -72,7 +77,12 @@ ProtectKernelTunables=yes
 ProtectKernelModules=yes
 ProtectKernelLogs=yes
 ProtectControlGroups=yes
-RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+# AF_NETLINK: `vite preview --host` lists the network interfaces to print its
+# "Network:" URLs; node does that through getifaddrs(), which opens a netlink
+# socket. Without AF_NETLINK it fails with errno 97 and the process exits
+# (elemental-rings#554). CapabilityBoundingSet= is empty and NoNewPrivileges is
+# set, so the process can read interface info but cannot change networking.
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
 RestrictNamespaces=yes
 LockPersonality=yes
 RestrictRealtime=yes
